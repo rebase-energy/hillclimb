@@ -1,0 +1,19 @@
+backend: claude-code
+model: sonnet
+
+budget:
+  total_s: 7200          # wall-clock budget for a run
+  agent_timeout_s: 1800  # max seconds per operator (agent) call
+  exec_timeout_s: 1800   # max seconds per solution.py execution
+  stop_margin_s: 300     # stop the loop when less than this remains
+
+search:
+  num_drafts: 3
+  max_debug_depth: 3
+
+paths:
+  runs_dir: runs
+  tasks_dir: tasks
+  runtime_python: .runtime-venv/bin/python
+  mlebench_python: ../mle-bench/.venv/bin/python
+  mlebench_data_dir: null   # null = mlebench's default cache dir

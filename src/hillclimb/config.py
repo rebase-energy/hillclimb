@@ -1,0 +1,54 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import yaml
+from pydantic import BaseModel
+
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "default.yaml"
+
+
+class BudgetConfig(BaseModel):
+    total_s: int = 7200
+    agent_timeout_s: int = 1800
+    exec_timeout_s: int = 1800
+    stop_margin_s: int = 300
+
+
+class SearchConfig(BaseModel):
+    num_drafts: int = 3
+    max_debug_depth: int = 3
+
+
+class PathsConfig(BaseModel):
+    runs_dir: Path = Path("runs")
+    tasks_dir: Path = Path("tasks")
+    runtime_python: Path = Path(".runtime-venv/bin/python")
+    mlebench_python: Path = Path("../mle-bench/.venv/bin/python")
+    mlebench_data_dir: Path | None = None
+
+
+class Config(BaseModel):
+    backend: str = "claude-code"
+    model: str = "sonnet"
+    budget: BudgetConfig = BudgetConfig()
+    search: SearchConfig = SearchConfig()
+    paths: PathsConfig = PathsConfig()
+
+    @classmethod
+    def load(cls, path: Path | None = None, **overrides) -> Config:
+        """Load YAML config; non-None keyword overrides win over file values."""
+        config_path = path or DEFAULT_CONFIG_PATH
+        data = {}
+        if config_path.exists():
+            data = yaml.safe_load(config_path.read_text()) or {}
+        config = cls.model_validate(data)
+        for key, value in overrides.items():
+            if value is None:
+                continue
+            if "." in key:
+                section, field = key.split(".", 1)
+                setattr(getattr(config, section), field, value)
+            else:
+                setattr(config, key, value)
+        return config

@@ -1,0 +1,28 @@
+[project]
+name = "rebase-hillclimb"
+version = "0.1.0"
+description = "Auto-hillclimbing CLI for ML engineering tasks: deterministic greedy search over agent-drafted solutions"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "typer>=0.12",
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+    "pydot>=4.0.1",
+]
+
+[project.scripts]
+hillclimb = "hillclimb.cli:app"
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hillclimb"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: long-running integration tests"]

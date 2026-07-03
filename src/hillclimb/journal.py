@@ -1,0 +1,85 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from hillclimb.node import Node
+
+
+class Journal:
+    """Append-only JSONL journal of search nodes.
+
+    Events: `node_created` (node enters the tree, status=pending) and
+    `node_result` (terminal state for the node). The in-memory view is the
+    replay of all events; the file is never rewritten, which is what makes
+    `resume` and `status` safe against crashes mid-run.
+    """
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.nodes: dict[str, Node] = {}
+        if path.exists():
+            self._replay()
+
+    def _replay(self) -> None:
+        for line in self.path.read_text().splitlines():
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            record.pop("event", None)
+            node = Node.model_validate(record)
+            self.nodes[node.node_id] = node
+
+    def _append(self, event: str, node: Node) -> None:
+        record = {"event": event, **node.model_dump()}
+        with self.path.open("a") as f:
+            f.write(json.dumps(record) + "\n")
+        self.nodes[node.node_id] = node.model_copy(deep=True)
+
+    def node_created(self, node: Node) -> None:
+        self._append("node_created", node)
+
+    def node_result(self, node: Node) -> None:
+        self._append("node_result", node)
+
+    # --- queries ---
+
+    def get(self, node_id: str) -> Node:
+        return self.nodes[node_id]
+
+    def next_node_id(self) -> str:
+        return f"n{len(self.nodes):03d}"
+
+    def children(self, node_id: str) -> list[Node]:
+        return [n for n in self.nodes.values() if n.parent_id == node_id]
+
+    def drafts(self) -> list[Node]:
+        return [n for n in self.nodes.values() if n.operator == "draft"]
+
+    def scored_nodes(self) -> list[Node]:
+        return [n for n in self.nodes.values() if n.is_scored]
+
+    def best_node(self, lower_is_better: bool) -> Node | None:
+        scored = self.scored_nodes()
+        if not scored:
+            return None
+        return min(scored, key=lambda n: n.val_score if lower_is_better else -n.val_score)
+
+    def pending_nodes(self) -> list[Node]:
+        return [n for n in self.nodes.values() if n.status == "pending"]
+
+    def debug_chain(self, node_id: str) -> list[Node]:
+        """The failed node being repaired plus every debug attempt so far,
+        oldest first (the context a DEBUG operator needs)."""
+        chain = [self.get(node_id)]
+        while chain[0].operator == "debug" and chain[0].parent_id:
+            chain.insert(0, self.get(chain[0].parent_id))
+        return chain
+
+    def siblings(self, node_id: str) -> list[Node]:
+        node = self.get(node_id)
+        return [
+            n
+            for n in self.nodes.values()
+            if n.parent_id == node.parent_id and n.node_id != node_id
+        ]

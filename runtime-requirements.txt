@@ -1,0 +1,10 @@
+# Packages available to generated solution scripts (the runtime venv).
+# Keep in sync with the "Available packages" line in prompts/contract.md.
+pandas
+numpy
+scikit-learn
+xgboost
+lightgbm
+torch
+torchvision
+pillow
