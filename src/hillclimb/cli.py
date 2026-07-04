@@ -444,7 +444,8 @@ def tree(
 @app.command()
 def watch():
     """Live TUI: experiments, problem runs, candidates, and selected-candidate details.
-    Keys: enter=open/details, esc=close/back, s=stop run, x=prune candidate, q=quit."""
+    Keys: enter=open/details, esc=close/back, +/-=resize details, s=stop run,
+    x=prune candidate, q=quit."""
     from hillclimb.watch import WatchApp
 
     WatchApp(Config.load()).run()

@@ -588,10 +588,16 @@ def _lower_is_better(config: Config, run_dir: Path) -> bool:
 
 from textual.app import App, ComposeResult  # noqa: E402
 from textual.binding import Binding  # noqa: E402
+from textual import events  # noqa: E402
+from textual.scrollbar import ScrollBar  # noqa: E402
 from textual.screen import ModalScreen, Screen  # noqa: E402
 from textual.widgets import DataTable, Footer, Header, Label, RichLog, Static  # noqa: E402
 
 REFRESH_S = 2.0
+DETAIL_DEFAULT_HEIGHT = 10
+DETAIL_MIN_HEIGHT = 6
+DETAIL_STEP = 2
+DETAIL_MAX_FRACTION = 0.7
 
 
 @dataclass(frozen=True)
@@ -693,12 +699,147 @@ class ConfirmScreen(ModalScreen[bool]):
         self.dismiss(False)
 
 
+def _mouse_event_y(event: events.MouseEvent) -> int:
+    if getattr(event, "_screen_y", None) is not None:
+        return int(event._screen_y)
+    if event.screen_y is not None:
+        return int(event.screen_y)
+    widget = getattr(event, "widget", None)
+    if widget is not None:
+        return int(widget.region.y + event.y)
+    return int(event.y)
+
+
+def _mouse_event_x(event: events.MouseEvent) -> int:
+    if getattr(event, "_screen_x", None) is not None:
+        return int(event._screen_x)
+    if event.screen_x is not None:
+        return int(event.screen_x)
+    widget = getattr(event, "widget", None)
+    if widget is not None:
+        return int(widget.region.x + event.x)
+    return int(event.x)
+
+
+class DetailDivider(Static):
+    """Draggable splitter between the candidate table and detail panel."""
+
+    def on_mouse_down(self, event: events.MouseDown) -> None:
+        screen = self.screen
+        if getattr(screen, "_detail_node_id", None) is None:
+            return
+        screen._begin_detail_drag(_mouse_event_y(event))
+        self.capture_mouse()
+        event.prevent_default()
+        event.stop()
+
+    def on_mouse_move(self, event: events.MouseMove) -> None:
+        screen = self.screen
+        if not getattr(screen, "_dragging_detail", False):
+            return
+        screen._drag_detail_to(_mouse_event_y(event))
+        event.prevent_default()
+        event.stop()
+
+    def on_mouse_up(self, event: events.MouseUp) -> None:
+        screen = self.screen
+        if not getattr(screen, "_dragging_detail", False):
+            return
+        screen._end_detail_drag()
+        self.release_mouse()
+        event.prevent_default()
+        event.stop()
+
+
+class CandidateHorizontalScrollBar(ScrollBar):
+    """Horizontal table scrollbar that doubles as the detail resize handle."""
+
+    DIRECTION_THRESHOLD = 1
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._last_drag_x = 0
+        self._last_drag_y = 0
+        self._drag_active = False
+
+    async def _on_mouse_down(self, event: events.MouseDown) -> None:
+        screen = self.screen
+        if getattr(screen, "_detail_node_id", None) is None:
+            await super()._on_mouse_down(event)
+            return
+        self._drag_active = True
+        self._last_drag_x = _mouse_event_x(event)
+        self._last_drag_y = _mouse_event_y(event)
+        self.capture_mouse()
+        event.prevent_default()
+        event.stop()
+
+    async def _on_mouse_move(self, event: events.MouseMove) -> None:
+        screen = self.screen
+        if not self._drag_active:
+            await super()._on_mouse_move(event)
+            return
+        if getattr(screen, "_detail_node_id", None) is None:
+            await super()._on_mouse_move(event)
+            return
+        x = _mouse_event_x(event)
+        y = _mouse_event_y(event)
+        dx = x - self._last_drag_x
+        dy = y - self._last_drag_y
+        if max(abs(dx), abs(dy)) < self.DIRECTION_THRESHOLD:
+            event.prevent_default()
+            event.stop()
+            return
+        if abs(dx) > abs(dy):
+            if isinstance(self.parent, DataTable):
+                self.parent.scroll_to(
+                    x=max(0, min(self.parent.max_scroll_x, self.parent.scroll_x + dx)),
+                    animate=False,
+                    immediate=True,
+                    force=True,
+                )
+        else:
+            screen._set_detail_height(screen._detail_height - dy)
+        self._last_drag_x = x
+        self._last_drag_y = y
+        event.prevent_default()
+        event.stop()
+
+    async def _on_mouse_up(self, event: events.MouseUp) -> None:
+        if not self._drag_active:
+            await super()._on_mouse_up(event)
+            return
+        self._drag_active = False
+        self.release_mouse()
+        event.prevent_default()
+        event.stop()
+
+
+class CandidateTable(DataTable):
+    """Candidate tree table whose horizontal scrollbar can also resize details."""
+
+    @property
+    def horizontal_scrollbar(self) -> ScrollBar:
+        if self._horizontal_scrollbar is not None:
+            return self._horizontal_scrollbar
+        self._horizontal_scrollbar = scroll_bar = CandidateHorizontalScrollBar(
+            vertical=False,
+            name="horizontal",
+            thickness=self.scrollbar_size_horizontal,
+        )
+        self._horizontal_scrollbar.display = False
+        self.app._start_widget(self, scroll_bar)
+        return scroll_bar
+
+
 class CandidateScreen(Screen):
     """One problem run: candidate tree plus optional selected-candidate details."""
 
     BINDINGS = [
         Binding("escape", "close_detail_or_back", "back"),
         Binding("enter", "open_detail", "details", priority=True),
+        Binding("+", "grow_detail", "larger detail"),
+        Binding("-", "shrink_detail", "smaller detail"),
         Binding("s", "stop_run", "stop run"),
         Binding("x", "prune_node", "prune candidate"),
         Binding("q", "app.quit", "quit"),
@@ -706,10 +847,14 @@ class CandidateScreen(Screen):
 
     DEFAULT_CSS = """
     CandidateScreen #candidates { height: 1fr; }
+    CandidateScreen #detail-divider {
+        height: 1;
+        background: $surface;
+        color: $secondary;
+        text-align: center;
+    }
     CandidateScreen #candidate-detail {
-        height: 40%;
-        min-height: 8;
-        border-top: solid $secondary;
+        min-height: 6;
         padding: 0 1;
     }
     CandidateScreen #runline { height: 1; padding: 0 1; background: $surface; }
@@ -720,20 +865,44 @@ class CandidateScreen(Screen):
         self.config = config
         self.run_dir = run_dir
         self._detail_node_id: str | None = None
+        self._detail_height = DETAIL_DEFAULT_HEIGHT
+        self._dragging_detail = False
+        self._drag_start_y = 0
+        self._drag_start_height = DETAIL_DEFAULT_HEIGHT
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         yield Label(id="runline")
-        yield DataTable(id="candidates", cursor_type="row")
+        yield CandidateTable(id="candidates", cursor_type="row")
+        yield DetailDivider(" drag to resize details ", id="detail-divider")
         yield RichLog(id="candidate-detail", wrap=True, markup=False, auto_scroll=False)
         yield Footer()
 
     def on_mount(self) -> None:
         table = self.query_one("#candidates", DataTable)
         table.add_columns("candidate", "operator", "status", "val", "hold", "marks", "summary")
-        self.query_one("#candidate-detail", RichLog).styles.display = "none"
+        self._set_detail_visible(False)
         self.refresh_data()
         self.set_interval(REFRESH_S, self.refresh_data)
+
+    def _max_detail_height(self) -> int:
+        screen_height = self.size.height or DETAIL_DEFAULT_HEIGHT
+        return max(DETAIL_MIN_HEIGHT, int(screen_height * DETAIL_MAX_FRACTION))
+
+    def _clamp_detail_height(self, height: int) -> int:
+        return max(DETAIL_MIN_HEIGHT, min(height, self._max_detail_height()))
+
+    def _set_detail_height(self, height: int) -> None:
+        self._detail_height = self._clamp_detail_height(height)
+        self.query_one("#candidate-detail", RichLog).styles.height = self._detail_height
+
+    def _set_detail_visible(self, visible: bool) -> None:
+        display = "block" if visible else "none"
+        self.query_one("#detail-divider", Static).styles.display = display
+        detail = self.query_one("#candidate-detail", RichLog)
+        detail.styles.display = display
+        if visible:
+            self._set_detail_height(self._detail_height)
 
     def refresh_data(self) -> None:
         from rich.text import Text
@@ -772,7 +941,7 @@ class CandidateScreen(Screen):
             return
         detail = self.query_one("#candidate-detail", RichLog)
         snapshot = ScrollSnapshot(detail.scroll_x, detail.scroll_y)
-        detail.styles.display = "block"
+        self._set_detail_visible(True)
         detail.clear()
         for renderable in candidate_detail_renderables(self.run_dir, journal, self._detail_node_id):
             detail.write(renderable, expand=True)
@@ -792,7 +961,7 @@ class CandidateScreen(Screen):
         self._detail_node_id = None
         detail = self.query_one("#candidate-detail", RichLog)
         detail.clear()
-        detail.styles.display = "none"
+        self._set_detail_visible(False)
 
     def _selected_node_id(self) -> str | None:
         table = self.query_one("#candidates", DataTable)
@@ -820,6 +989,29 @@ class CandidateScreen(Screen):
             self._close_detail()
         else:
             self.app.pop_screen()
+
+    def action_grow_detail(self) -> None:
+        if self._detail_node_id is not None:
+            self._set_detail_height(self._detail_height + DETAIL_STEP)
+
+    def action_shrink_detail(self) -> None:
+        if self._detail_node_id is not None:
+            self._set_detail_height(self._detail_height - DETAIL_STEP)
+
+    def _begin_detail_drag(self, y: int) -> None:
+        self._dragging_detail = True
+        self._drag_start_y = y
+        self._drag_start_height = self._detail_height
+
+    def _drag_detail_to(self, y: int) -> None:
+        self._set_detail_height(self._drag_start_height + self._drag_start_y - y)
+
+    def _end_detail_drag(self) -> None:
+        self._dragging_detail = False
+
+    def on_resize(self) -> None:
+        if self._detail_node_id is not None:
+            self._set_detail_height(self._detail_height)
 
     def action_stop_run(self) -> None:
         def go(confirmed: bool | None) -> None:

@@ -14,6 +14,8 @@ from hillclimb.journal import Journal
 from hillclimb.node import Node
 from hillclimb.status import RunStatus, write_status
 from hillclimb.watch import (
+    DETAIL_MIN_HEIGHT,
+    DETAIL_STEP,
     WatchApp,
     candidate_detail_lines,
     candidate_detail_renderables,
@@ -61,6 +63,48 @@ def make_run(
     if status is not None:
         write_status(run_dir, status)
     return run_dir
+
+
+def make_demo_run(
+    tmp_path: Path,
+    run_id: str,
+    status: RunStatus | None = None,
+    *,
+    wide: bool = False,
+) -> tuple[Path, Config]:
+    runs_dir = tmp_path / "runs"
+    write_experiment(
+        runs_dir,
+        ExperimentMeta(
+            experiment_id="demo-exp",
+            name="Demo",
+            target="demo",
+            problem_ids=["circle-packing"],
+        ),
+    )
+    run_dir = make_run(runs_dir, run_id, status or RunStatus(run_id=run_id, state="done"))
+    if wide:
+        journal = Journal(run_dir / "journal.jsonl")
+        for i in range(3, 12):
+            journal.node_result(
+                Node(
+                    node_id=f"n{i:03d}",
+                    operator="draft",
+                    status="ok",
+                    val_score=float(i),
+                    summary="wide summary " * 20,
+                )
+            )
+    config = Config()
+    config.paths.runs_dir = runs_dir
+    return run_dir, config
+
+
+async def open_candidate_detail(pilot) -> None:
+    await pilot.press("enter")
+    await pilot.press("enter")
+    await pilot.press("enter")
+    await pilot.pause()
 
 
 def test_scan_experiments_with_status(tmp_path: Path):
@@ -380,28 +424,11 @@ async def test_node_table_refresh_preserves_scroll_offsets(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_candidate_detail_panel_opens_updates_and_closes(tmp_path: Path):
-    runs_dir = tmp_path / "runs"
-    write_experiment(
-        runs_dir,
-        ExperimentMeta(
-            experiment_id="demo-exp",
-            name="Demo",
-            target="demo",
-            problem_ids=["circle-packing"],
-        ),
-    )
-    run_dir = make_run(
-        runs_dir,
-        "detail-run",
-        RunStatus(run_id="detail-run", state="done"),
-    )
+    run_dir, config = make_demo_run(tmp_path, "detail-run")
     (run_dir / "nodes" / "n000").mkdir(parents=True, exist_ok=True)
     (run_dir / "nodes" / "n001").mkdir(parents=True, exist_ok=True)
     (run_dir / "nodes" / "n000" / "notes.md").write_text("baseline copy\n")
     (run_dir / "nodes" / "n001" / "notes.md").write_text("draft heuristic\n")
-
-    config = Config()
-    config.paths.runs_dir = runs_dir
 
     app = WatchApp(config)
     async with app.run_test(size=(80, 20)) as pilot:
@@ -409,12 +436,15 @@ async def test_candidate_detail_panel_opens_updates_and_closes(tmp_path: Path):
         await pilot.press("enter")
         await pilot.pause()
         detail = app.screen.query_one("#candidate-detail")
+        divider = app.screen.query_one("#detail-divider")
         assert str(detail.styles.display) == "none"
+        assert str(divider.styles.display) == "none"
 
         await pilot.press("enter")
         await pilot.pause()
         assert app.screen._detail_node_id == "n000"
         assert str(detail.styles.display) != "none"
+        assert str(divider.styles.display) != "none"
 
         await pilot.press("down")
         await pilot.pause()
@@ -424,4 +454,154 @@ async def test_candidate_detail_panel_opens_updates_and_closes(tmp_path: Path):
         await pilot.pause()
         assert app.screen._detail_node_id is None
         assert str(detail.styles.display) == "none"
+        assert str(divider.styles.display) == "none"
         assert app.screen.__class__.__name__ == "CandidateScreen"
+
+
+@pytest.mark.asyncio
+async def test_candidate_detail_panel_resizes_and_clamps(tmp_path: Path):
+    _, config = make_demo_run(tmp_path, "resizable-run")
+
+    app = WatchApp(config)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await open_candidate_detail(pilot)
+        screen = app.screen
+        initial = screen._detail_height
+
+        await pilot.press("+")
+        await pilot.pause()
+        assert screen._detail_height == initial + DETAIL_STEP
+
+        await pilot.press("-")
+        await pilot.pause()
+        assert screen._detail_height == initial
+
+        screen._set_detail_height(1)
+        assert screen._detail_height == DETAIL_MIN_HEIGHT
+
+        screen._set_detail_height(999)
+        assert screen._detail_height == screen._max_detail_height()
+
+
+@pytest.mark.asyncio
+async def test_candidate_detail_divider_drag_resizes(tmp_path: Path):
+    _, config = make_demo_run(tmp_path, "drag-run")
+
+    app = WatchApp(config)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await open_candidate_detail(pilot)
+        screen = app.screen
+        divider = screen.query_one("#detail-divider")
+        initial = screen._detail_height
+
+        assert await pilot.mouse_down("#detail-divider", offset=(1, 0))
+        await pilot.hover(offset=(divider.region.x + 1, divider.region.y - 3))
+        await pilot.pause()
+        assert screen._detail_height == initial + 3
+
+        await pilot.mouse_up(offset=(divider.region.x + 1, divider.region.y - 3))
+        assert not screen._dragging_detail
+
+
+@pytest.mark.asyncio
+async def test_candidate_table_scrollbar_row_drag_resizes(tmp_path: Path):
+    _, config = make_demo_run(tmp_path, "table-bottom-drag-run", wide=True)
+
+    app = WatchApp(config)
+    async with app.run_test(size=(50, 24)) as pilot:
+        await open_candidate_detail(pilot)
+        screen = app.screen
+        table = screen.query_one("#candidates")
+        hbar = table.horizontal_scrollbar
+        initial = screen._detail_height
+
+        assert hbar.__class__.__name__ == "CandidateHorizontalScrollBar"
+        assert table.max_scroll_x > 0
+        assert await pilot.mouse_down(offset=(hbar.region.x + 1, hbar.region.y))
+        await pilot.hover(offset=(hbar.region.x + 1, hbar.region.y - 3))
+        await pilot.pause()
+        assert screen._detail_height == initial + 3
+
+        await pilot.mouse_up(offset=(hbar.region.x + 1, hbar.region.y - 3))
+        assert not screen._dragging_detail
+
+
+@pytest.mark.asyncio
+async def test_candidate_table_scrollbar_horizontal_drag_scrolls(tmp_path: Path):
+    _, config = make_demo_run(tmp_path, "table-horizontal-scroll-run", wide=True)
+
+    app = WatchApp(config)
+    async with app.run_test(size=(50, 24)) as pilot:
+        await open_candidate_detail(pilot)
+        screen = app.screen
+        table = screen.query_one("#candidates")
+        hbar = table.horizontal_scrollbar
+        initial_height = screen._detail_height
+        initial_scroll = table.scroll_x
+
+        assert hbar.__class__.__name__ == "CandidateHorizontalScrollBar"
+        assert table.max_scroll_x > 0
+        assert await pilot.mouse_down(offset=(hbar.region.x + 1, hbar.region.y))
+        await pilot.hover(offset=(hbar.region.x + 12, hbar.region.y))
+        await pilot.pause()
+
+        assert table.scroll_x > initial_scroll
+        assert screen._detail_height == initial_height
+
+        await pilot.mouse_up(offset=(hbar.region.x + 12, hbar.region.y))
+
+
+@pytest.mark.asyncio
+async def test_candidate_table_scrollbar_switches_scroll_then_resize_in_one_drag(tmp_path: Path):
+    _, config = make_demo_run(tmp_path, "scroll-then-resize-run", wide=True)
+
+    app = WatchApp(config)
+    async with app.run_test(size=(50, 24)) as pilot:
+        await open_candidate_detail(pilot)
+        screen = app.screen
+        table = screen.query_one("#candidates")
+        hbar = table.horizontal_scrollbar
+        initial_height = screen._detail_height
+        initial_scroll = table.scroll_x
+
+        assert await pilot.mouse_down(offset=(hbar.region.x + 1, hbar.region.y))
+        await pilot.hover(offset=(hbar.region.x + 12, hbar.region.y))
+        await pilot.pause()
+        assert table.scroll_x > initial_scroll
+        assert screen._detail_height == initial_height
+
+        after_scroll = table.scroll_x
+        await pilot.hover(offset=(hbar.region.x + 12, hbar.region.y - 3))
+        await pilot.pause()
+        assert table.scroll_x == after_scroll
+        assert screen._detail_height == initial_height + 3
+
+        await pilot.mouse_up(offset=(hbar.region.x + 12, hbar.region.y - 3))
+
+
+@pytest.mark.asyncio
+async def test_candidate_table_scrollbar_switches_resize_then_scroll_in_one_drag(tmp_path: Path):
+    _, config = make_demo_run(tmp_path, "resize-then-scroll-run", wide=True)
+
+    app = WatchApp(config)
+    async with app.run_test(size=(50, 24)) as pilot:
+        await open_candidate_detail(pilot)
+        screen = app.screen
+        table = screen.query_one("#candidates")
+        hbar = table.horizontal_scrollbar
+        initial_height = screen._detail_height
+        initial_scroll = table.scroll_x
+
+        assert await pilot.mouse_down(offset=(hbar.region.x + 1, hbar.region.y))
+        await pilot.hover(offset=(hbar.region.x + 1, hbar.region.y - 3))
+        await pilot.pause()
+        assert screen._detail_height == initial_height + 3
+        assert table.scroll_x == initial_scroll
+
+        after_resize = screen._detail_height
+        await pilot.hover(offset=(hbar.region.x + 12, hbar.region.y - 3))
+        await pilot.pause()
+        assert screen._detail_height == after_resize
+        assert table.scroll_x > initial_scroll
+
+        await pilot.mouse_up(offset=(hbar.region.x + 12, hbar.region.y - 3))

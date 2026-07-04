@@ -45,7 +45,8 @@ states (derived, shown by `status` and the TUI):
 In the candidate view, press enter or click a candidate to open the bottom
 detail panel. That panel follows the highlighted candidate and shows notes,
 scores, lineage, execution output, and any agent stream. Press escape to close
-the detail panel; press escape again to go back.
+the detail panel; press escape again to go back. Drag the divider or use `+` /
+`-` to resize the detail panel.
 
 | state | meaning |
 |---|---|

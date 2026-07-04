@@ -16,6 +16,7 @@ The design is deliberately three-layered:
 3. **`hillclimb watch`** — a live TUI you keep open beside the agent:
    experiments → problem runs → candidate trees, with an on-demand candidate
    detail panel for notes, scores, lineage, output, and agent stream when present.
+   Drag the divider or use `+` / `-` to resize the detail panel.
 
 ## Install
 
