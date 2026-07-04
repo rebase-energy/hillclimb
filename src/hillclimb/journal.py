@@ -6,6 +6,14 @@ from pathlib import Path
 from hillclimb.node import Node
 
 
+def _ranks(values: list[float], lower_is_better: bool) -> list[float]:
+    """Average-tie ranks, 1 = best."""
+    order = sorted(values, reverse=not lower_is_better)
+    return [
+        (order.index(v) + 1 + len(order) - 1 - order[::-1].index(v) + 1) / 2 for v in values
+    ]
+
+
 class Journal:
     """Append-only JSONL journal of search nodes.
 
@@ -64,6 +72,31 @@ class Journal:
         if not scored:
             return None
         return min(scored, key=lambda n: n.val_score if lower_is_better else -n.val_score)
+
+    def selected_node(self, lower_is_better: bool, mode: str = "rank-blend") -> Node | None:
+        """Node whose submission ships. Falls back to val_score when no node
+        has a holdout score (holdout disabled / legacy runs).
+
+        rank-blend (default): min(val_rank + holdout_rank) — robust when either
+        signal is unreliable: an overfit val score is vetoed by its holdout
+        rank, a noisy holdout outlier is vetoed by its val rank. `holdout` and
+        `val` select by a single signal.
+        """
+        with_holdout = [n for n in self.scored_nodes() if n.holdout_score is not None]
+        if not with_holdout or mode == "val":
+            return self.best_node(lower_is_better)
+        if mode == "holdout":
+            return min(
+                with_holdout,
+                key=lambda n: n.holdout_score if lower_is_better else -n.holdout_score,
+            )
+        val_rank = _ranks([n.val_score for n in with_holdout], lower_is_better)
+        hold_rank = _ranks([n.holdout_score for n in with_holdout], lower_is_better)
+        direction = 1 if lower_is_better else -1
+        return min(
+            zip(with_holdout, val_rank, hold_rank),
+            key=lambda t: (t[1] + t[2], direction * t[0].holdout_score, direction * t[0].val_score),
+        )[0]
 
     def pending_nodes(self) -> list[Node]:
         return [n for n in self.nodes.values() if n.status == "pending"]

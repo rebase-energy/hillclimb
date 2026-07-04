@@ -41,6 +41,18 @@ score = accuracy_score(y_val, val_pred)
 sub = sample.copy()
 sub[target_col] = pd.Series(model.predict(X_test)).astype(sample[target_col].dtype)
 sub.to_csv("submission.csv", index=False)
+
+holdout_path = data / "holdout.csv"
+if holdout_path.exists():
+    holdout = pd.read_csv(holdout_path)
+    X_hold = holdout.drop(columns=[id_col], errors="ignore")[X.columns]
+    for col in X_hold.columns:
+        if not pd.api.types.is_numeric_dtype(X_hold[col]):
+            cats = pd.Categorical(X_hold[col].astype(str)).categories
+            X_hold[col] = pd.Categorical(X_hold[col].astype(str), categories=cats).codes
+    hold_sub = pd.DataFrame({{id_col: holdout[id_col]}})
+    hold_sub[target_col] = pd.Series(model.predict(X_hold)).astype(sample[target_col].dtype)
+    hold_sub.to_csv("holdout_predictions.csv", index=False)
 {bug}
 print(f"val_score: {{score}}")
 '''

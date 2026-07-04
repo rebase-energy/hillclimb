@@ -58,6 +58,25 @@ def resolve_run_dir(config: Config, run_id: str | None) -> Path:
     return candidates[-1]
 
 
+def _build_holdout(config: Config, task: TaskSpec, run_dir: Path):
+    if not config.holdout.enabled:
+        return None
+    from hillclimb.holdout import build_data_view
+
+    info = build_data_view(
+        task.data_dir,
+        run_dir,
+        task.sample_submission,
+        config.holdout.fraction,
+        config.holdout.seed,
+    )
+    if info is None:
+        typer.echo("holdout: disabled for this task (no train.csv or targets not inferable)")
+    else:
+        typer.echo(f"holdout: {info.n_holdout} rows hidden (targets: {', '.join(info.target_cols)})")
+    return info
+
+
 def _execute(config: Config, task: TaskSpec, run_dir: Path, budget: BudgetManager) -> None:
     journal = Journal(run_dir / "journal.jsonl")
     searcher = GreedySearcher(
@@ -69,16 +88,20 @@ def _execute(config: Config, task: TaskSpec, run_dir: Path, budget: BudgetManage
         budget=budget,
         run_dir=run_dir,
         log=typer.echo,
+        holdout=_build_holdout(config, task, run_dir),
     )
     try:
-        best = searcher.run()
+        selected = searcher.run()
     except ParkedRun as exc:
         typer.echo(f"\nRate limited: {exc}")
         typer.echo(f"Resume later with: hillclimb resume {run_dir.name}")
         raise typer.Exit(2)
-    if best is not None:
+    if selected is not None:
+        scores = f"val_score={selected.val_score}"
+        if selected.holdout_score is not None:
+            scores += f", holdout={selected.holdout_score:.5g}"
         typer.echo(
-            f"\nDone. Best node {best.node_id}: val_score={best.val_score} "
+            f"\nDone. Selected node {selected.node_id}: {scores} "
             f"({task.metric_name}, {'lower' if task.lower_is_better else 'higher'} is better)"
         )
     else:
@@ -93,9 +116,12 @@ def run(
     budget: str = typer.Option(None, help="Wall-clock budget, e.g. 2h / 30m"),
     backend: str = typer.Option(None, help="Operator backend: claude-code | dummy"),
     model: str = typer.Option(None, help="Model for operator calls, e.g. sonnet / opus"),
+    holdout: bool = typer.Option(True, "--holdout/--no-holdout", help="Hidden selection holdout"),
 ):
     """Start a hillclimb run on a task."""
     config = Config.load(backend=backend, model=model)
+    if not holdout:
+        config.holdout.enabled = False
     spec = load_task(task, config)
     total_s = parse_budget(budget) if budget else spec.time_budget_s
     run_id = f"{datetime.now():%Y%m%d-%H%M%S}-{spec.task_id}"
@@ -108,6 +134,9 @@ def run(
                 "backend": config.backend,
                 "model": config.model,
                 "budget_s": total_s,
+                "holdout_enabled": config.holdout.enabled,
+                "holdout_seed": config.holdout.seed,
+                "holdout_fraction": config.holdout.fraction,
                 "started_at": datetime.now().isoformat(),
             }
         )
@@ -123,6 +152,9 @@ def resume(run_id: str = typer.Argument("latest")):
     run_dir = resolve_run_dir(config, run_id)
     meta = yaml.safe_load((run_dir / "run.yaml").read_text())
     config = Config.load(backend=meta["backend"], model=meta["model"])
+    config.holdout.enabled = meta.get("holdout_enabled", False)  # legacy runs: off
+    config.holdout.seed = meta.get("holdout_seed", config.holdout.seed)
+    config.holdout.fraction = meta.get("holdout_fraction", config.holdout.fraction)
     spec = load_task(meta["task"], config)
     journal = Journal(run_dir / "journal.jsonl")
     spent = sum(
@@ -147,11 +179,16 @@ def status(run_id: str = typer.Argument("latest")):
     typer.echo(f"Run {run_dir.name} — {len(journal.nodes)} nodes")
     for node in journal.nodes.values():
         score = f"{node.val_score:.5f}" if node.val_score is not None else "-"
-        best = " *BEST*" if node.is_best else ""
+        hold = f" hold={node.holdout_score:.5f}" if node.holdout_score is not None else ""
+        marks = (" *SELECTED*" if node.is_selected else "") + (" *best-val*" if node.is_best else "")
         parent = f" <- {node.parent_id}" if node.parent_id else ""
         typer.echo(
-            f"  {node.node_id} {node.operator:<9} {node.status:<9} score={score}{best}{parent}  {node.summary[:80]}"
+            f"  {node.node_id} {node.operator:<9} {node.status:<9} val={score}{hold}{marks}{parent}  {node.summary[:70]}"
         )
+    scored = [n for n in journal.nodes.values() if n.val_score is not None and n.holdout_score is not None]
+    if scored:
+        gaps = [abs(n.val_score - n.holdout_score) for n in scored]
+        typer.echo(f"val→holdout gap: mean {sum(gaps)/len(gaps):.5g}, max {max(gaps):.5g} over {len(scored)} nodes")
 
 
 @app.command()
@@ -215,10 +252,12 @@ def smoke(
         budget=BudgetManager(1800, stop_margin_s=0),
         run_dir=run_dir,
         log=typer.echo,
+        holdout=_build_holdout(config, spec, run_dir),
     )
     node = searcher.run_operator("draft", None)
     typer.echo(f"\nnode:        {node.node_id} status={node.status}")
     typer.echo(f"val_score:   {node.val_score}")
+    typer.echo(f"holdout:     {node.holdout_score} (error: {node.execution.holdout_error})")
     typer.echo(f"session_id:  {node.backend.session_id}")
     typer.echo(f"cost_usd:    {node.backend.cost_usd}")
     typer.echo(f"num_turns:   {node.backend.num_turns}")

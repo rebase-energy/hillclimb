@@ -38,6 +38,33 @@ def task(tmp_path: Path) -> TaskSpec:
 
 
 @pytest.fixture
+def task_larger(tmp_path: Path) -> TaskSpec:
+    """Bigger fixture task (30 rows) so a 30% holdout split is meaningful.
+    target = feature > 0, so holdout accuracy is fully controllable."""
+    data_dir = tmp_path / "public-large"
+    data_dir.mkdir()
+    n = 30
+    features = [(-1.0 if i % 2 else 1.0) * (1 + i) for i in range(n)]
+    rows = ["id,feature,target"] + [
+        f"{i},{features[i]},{1 if features[i] > 0 else 0}" for i in range(n)
+    ]
+    (data_dir / "train.csv").write_text("\n".join(rows) + "\n")
+    (data_dir / "test.csv").write_text("id,feature\n100,0.5\n101,-0.5\n")
+    (data_dir / "sample_submission.csv").write_text("id,target\n100,0\n101,0\n")
+    (data_dir / "description.md").write_text("Predict target from feature.")
+    return TaskSpec(
+        task_id="synthetic-large",
+        comp_id="synthetic-large",
+        data_dir=data_dir,
+        description="Predict target from feature.",
+        metric_name="accuracy",
+        lower_is_better=False,
+        sample_submission=data_dir / "sample_submission.csv",
+        time_budget_s=3600,
+    )
+
+
+@pytest.fixture
 def config(tmp_path: Path) -> Config:
     cfg = Config()
     cfg.paths.runs_dir = tmp_path / "runs"

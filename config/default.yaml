@@ -11,6 +11,13 @@ search:
   num_drafts: 3
   max_debug_depth: 3
 
+holdout:
+  enabled: true
+  fraction: 0.1
+  seed: 42
+  climb_on: val          # documented seam; only 'val' implemented
+  selection: rank-blend  # rank-blend | holdout | val — how the shipped submission is picked
+
 paths:
   runs_dir: runs
   tasks_dir: tasks

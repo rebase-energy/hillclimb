@@ -23,7 +23,10 @@ def _label(node, lower_is_better: bool) -> str:
         parts[0] += f"/{node.complexity}"
     parts[0] += "]"
     if node.val_score is not None:
-        parts.append(f"val = {node.val_score:.5g}")
+        line = f"val = {node.val_score:.5g}"
+        if node.holdout_score is not None:
+            line += f" / hold = {node.holdout_score:.5g}"
+        parts.append(line)
     elif node.status != "ok":
         parts.append(node.status)
     summary = (node.summary or "").strip()
@@ -61,8 +64,8 @@ def build_tree(journal: Journal, lower_is_better: bool, title: str = "") -> pydo
         fontsize=16,
         fontname="Helvetica",
     )
-    best = journal.best_node(lower_is_better)
-    best_id = best.node_id if best else None
+    selected = journal.selected_node(lower_is_better)
+    best_id = selected.node_id if selected else None
 
     for node in journal.nodes.values():
         fill = BEST_FILL if node.node_id == best_id else STATUS_FILL.get(node.status, "#ffffff")
@@ -93,7 +96,7 @@ def build_tree(journal: Journal, lower_is_better: bool, title: str = "") -> pydo
 
     legend = pydot.Cluster(graph_name="legend", label="legend", fontsize=10, fontname="Helvetica")
     for name, color in (("scored", STATUS_FILL["ok"]), ("failed", STATUS_FILL["buggy"]),
-                        ("abandoned", STATUS_FILL["abandoned"]), ("best", BEST_FILL)):
+                        ("abandoned", STATUS_FILL["abandoned"]), ("selected", BEST_FILL)):
         legend.add_node(pydot.Node(f"legend_{name}", label=name, shape="box",
                                    style="rounded,filled", fillcolor=color,
                                    fontsize=9, fontname="Helvetica"))

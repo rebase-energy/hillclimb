@@ -56,3 +56,28 @@ def test_next_node_id(tmp_path: Path):
     assert journal.next_node_id() == "n000"
     journal.node_result(make_node("n000", operator="baseline"))
     assert journal.next_node_id() == "n001"
+
+
+def test_rank_blend_selection_robust_to_holdout_outlier(tmp_path):
+    """The leaf-classification failure: a lucky-holdout early node must not
+    beat a node that ranks well on BOTH signals (lower_is_better metric)."""
+    journal = Journal(tmp_path / "j.jsonl")
+    journal.node_result(make_node("nA", status="ok", val_score=0.046, holdout_score=0.093))
+    journal.node_result(make_node("nB", status="ok", val_score=0.138, holdout_score=0.084))
+    journal.node_result(make_node("nC", status="ok", val_score=0.054, holdout_score=0.099))
+    assert journal.selected_node(True).node_id == "nA"           # rank-blend
+    assert journal.selected_node(True, "holdout").node_id == "nB"  # naive argmax
+    assert journal.selected_node(True, "val").node_id == "nA"
+
+
+def test_rank_blend_vetoes_val_overfit(tmp_path):
+    journal = Journal(tmp_path / "j.jsonl")
+    journal.node_result(make_node("honest", status="ok", val_score=0.80, holdout_score=0.85))
+    journal.node_result(make_node("overfit", status="ok", val_score=0.99, holdout_score=0.40))
+    assert journal.selected_node(False).node_id == "honest"
+
+
+def test_rank_blend_ties_and_missing_holdout(tmp_path):
+    journal = Journal(tmp_path / "j.jsonl")
+    journal.node_result(make_node("n1", status="ok", val_score=0.5))
+    assert journal.selected_node(False).node_id == "n1"  # no holdout anywhere → val

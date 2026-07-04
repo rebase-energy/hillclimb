@@ -168,3 +168,90 @@ def test_agent_failure_counter_resets_on_success(task, config):
     searcher, journal, _ = make_searcher(task, config, backend, max_nodes=6)
     best = searcher.run()  # must NOT raise ParkedRun
     assert best.val_score == 0.8
+
+
+def holdout_script(val: float, holdout_pred_flip: bool = False) -> str:
+    """Fixture script that writes all three artifacts. holdout_pred_flip
+    controls holdout accuracy: False → perfect, True → all-wrong."""
+    return f'''
+import pandas as pd
+sample = pd.read_csv("data/sample_submission.csv")
+sample.to_csv("submission.csv", index=False)
+hold = pd.read_csv("data/holdout.csv")
+truth = (hold["feature"] > 0)  # matches the fixture's target rule
+pred = ~truth if {holdout_pred_flip} else truth
+pd.DataFrame({{"id": hold["id"], "target": pred.astype(int)}}).to_csv(
+    "holdout_predictions.csv", index=False)
+print("val_score: {val}")
+'''
+
+
+def make_holdout_searcher(task, config, backend, tmp_path, max_nodes=10):
+    from hillclimb.holdout import build_data_view
+
+    run_dir = create_run_dir(config.paths.runs_dir, "test-run")
+    info = build_data_view(task.data_dir, run_dir, task.sample_submission, 0.3, 42)
+    assert info is not None
+    journal = Journal(run_dir / "journal.jsonl")
+    searcher = GreedySearcher(
+        task=task, config=config, journal=journal, backend=backend,
+        executor=LocalExecutor(Path(sys.executable)),
+        budget=BudgetManager(3600, stop_margin_s=1),
+        run_dir=run_dir, max_nodes=max_nodes, log=lambda *_: None, holdout=info,
+    )
+    return searcher, journal, run_dir
+
+
+def test_selection_by_holdout_not_val(task_larger, config):
+    """The leaf-classification scenario: highest val_score but bad holdout
+    must NOT be selected; selection = argmax holdout."""
+    backend = FakeBackend()
+    backend.queue(script=holdout_script(0.70), notes="honest draft\n")
+    backend.queue(script=holdout_script(0.99, holdout_pred_flip=True), notes="overfit draft\n")
+    backend.queue(script=holdout_script(0.80), notes="honest draft 2\n")
+    searcher, journal, run_dir = make_holdout_searcher(task_larger, config, backend, None, max_nodes=4)
+    selected = searcher.run()
+
+    overfit = journal.get("n002")
+    assert overfit.val_score == 0.99 and overfit.holdout_score == 0.0  # flipped preds
+    assert overfit.is_best  # it IS the val-best (climbing signal)
+    assert not overfit.is_selected
+    assert selected.holdout_score == 1.0
+    assert selected.node_id in ("n001", "n003")
+    # best/ holds the selected node's submission, not the val-best's
+    assert (run_dir / "best" / "solution.py").read_text() == (
+        Path(selected.workspace) / "solution.py").read_text()
+
+
+def test_missing_holdout_predictions_is_buggy(task_larger, config):
+    backend = FakeBackend()
+    backend.queue(script=ok_script(0.9), notes="wrote no holdout preds\n")
+    backend.queue(script=holdout_script(0.6), notes="compliant\n")
+    searcher, journal, _ = make_holdout_searcher(task_larger, config, backend, None, max_nodes=3)
+    searcher.run()
+    bad = journal.get("n001")
+    assert bad.status == "buggy"
+    assert "holdout_predictions.csv" in bad.execution.holdout_error
+    # and the debug prompt explains it
+    assert any("holdout_predictions.csv" in r.prompt for r in backend.requests if r.operator == "debug")
+
+
+def test_holdout_prompt_mentions_contract(task_larger, config):
+    backend = FakeBackend()
+    backend.queue(script=holdout_script(0.7), notes="d\n")
+    searcher, _, _ = make_holdout_searcher(task_larger, config, backend, None, max_nodes=2)
+    searcher.run()
+    prompt = backend.requests[0].prompt
+    assert "holdout_predictions.csv" in prompt
+    assert "holdout.csv" in prompt
+
+
+def test_no_holdout_falls_back_to_val_selection(task, config):
+    backend = FakeBackend()
+    backend.queue(script=ok_script(0.6), notes="a\n")
+    backend.queue(script=ok_script(0.9), notes="b\n")
+    backend.queue(script=ok_script(0.7), notes="c\n")
+    searcher, journal, _ = make_searcher(task, config, backend, max_nodes=4)
+    selected = searcher.run()
+    assert selected.val_score == 0.9
+    assert journal.selected_node(False).node_id == selected.node_id

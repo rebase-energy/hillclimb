@@ -3,14 +3,18 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+import pandas as pd
+
 from hillclimb.backends.base import OperatorBackend, OperatorRequest
 from hillclimb.baseline import write_baseline
 from hillclimb.budget import BudgetManager
 from hillclimb.config import Config
 from hillclimb.executor import Executor
+from hillclimb.holdout import HoldoutInfo
 from hillclimb.journal import Journal
 from hillclimb.node import BackendInfo, ExecInfo, Node, utcnow
 from hillclimb.prompts.render import COMPLEXITY_CUES, render
+from hillclimb.scoring import ScoringError, score
 from hillclimb.task import TaskSpec
 from hillclimb.workspace import create_node_workspace
 
@@ -47,6 +51,7 @@ class GreedySearcher:
         run_dir: Path,
         max_nodes: int = 50,
         log=print,
+        holdout: HoldoutInfo | None = None,
     ):
         self.task = task
         self.config = config
@@ -57,7 +62,14 @@ class GreedySearcher:
         self.run_dir = run_dir
         self.max_nodes = max_nodes
         self.log = log
+        self.holdout = holdout
         self._consecutive_failures = 0
+        existing = journal.selected_node(task.lower_is_better, config.holdout.selection)
+        self._selection_id = existing.node_id if existing else None  # resume-safe
+
+    @property
+    def data_dir(self) -> Path:
+        return self.holdout.data_view if self.holdout else self.task.data_dir
 
     # --- main loop ---
 
@@ -72,7 +84,9 @@ class GreedySearcher:
                 + (f" -> {target.node_id}" if target else "")
             )
             self.run_operator(operator, target)
-        return self.journal.best_node(self.task.lower_is_better)
+        return self.journal.selected_node(
+            self.task.lower_is_better, self.config.holdout.selection
+        )
 
     def decide(self) -> tuple[str, Node | None]:
         nodes = list(self.journal.nodes.values())
@@ -112,7 +126,7 @@ class GreedySearcher:
             else None
         )
         workspace = create_node_workspace(
-            self.run_dir, node_id, self.task.data_dir, parent_solution
+            self.run_dir, node_id, self.data_dir, parent_solution
         )
         complexity = self._draft_complexity() if operator == "draft" else None
         prompt = self.build_prompt(operator, target, complexity)
@@ -205,19 +219,63 @@ class GreedySearcher:
         )
 
         if exec_result.ok:
-            previous_best = self.journal.best_node(self.task.lower_is_better)
-            node.status = "ok"
+            holdout_score, holdout_error = self._score_holdout(workspace)
             node.val_score = exec_result.val_score
-            if previous_best is None or self._improves(exec_result.val_score, previous_best.val_score):
-                node.is_best = True
-                shutil.copy(workspace / "submission.csv", self.run_dir / "best" / "submission.csv")
-                shutil.copy(solution, self.run_dir / "best" / "solution.py")
-                self.log(f"  new best: {node.node_id} val_score={node.val_score}")
+            if holdout_error is not None:
+                node.status = "buggy"
+                node.execution.holdout_error = holdout_error
+            else:
+                previous_best = self.journal.best_node(self.task.lower_is_better)
+                node.status = "ok"
+                node.holdout_score = holdout_score
+                if previous_best is None or self._improves(exec_result.val_score, previous_best.val_score):
+                    node.is_best = True
         else:
             node.status = "buggy"
         node.finished_at = utcnow()
         self.journal.node_result(node)
+        if node.status == "ok":
+            self._sync_selection()
         return node
+
+    def _sync_selection(self) -> None:
+        """Keep best/ pointing at the currently selected node. Selection is
+        recomputed over the whole tree because rank-blend can shift between
+        existing nodes when a new one lands."""
+        selected = self.journal.selected_node(
+            self.task.lower_is_better, self.config.holdout.selection
+        )
+        if selected is None or selected.node_id == self._selection_id:
+            return
+        self._selection_id = selected.node_id
+        src = Path(selected.workspace)
+        shutil.copy(src / "submission.csv", self.run_dir / "best" / "submission.csv")
+        if (src / "solution.py").exists():
+            shutil.copy(src / "solution.py", self.run_dir / "best" / "solution.py")
+        selected.is_selected = True
+        self.journal.node_result(selected)  # append updated record (replay keeps last)
+        scores = f"val_score={selected.val_score}"
+        if selected.holdout_score is not None:
+            scores += f" holdout={selected.holdout_score:.5g}"
+        self.log(f"  new selection: {selected.node_id} {scores}")
+
+    def _score_holdout(self, workspace: Path) -> tuple[float | None, str | None]:
+        """Score holdout predictions; (score, None) on success, (None, reason)
+        on contract violation, (None, None) when holdout is disabled."""
+        if self.holdout is None:
+            return None, None
+        pred_path = workspace / "holdout_predictions.csv"
+        if not pred_path.exists():
+            return None, "`holdout_predictions.csv` was not written"
+        try:
+            predictions = pd.read_csv(pred_path)
+            answers = pd.read_csv(self.holdout.answers_path)
+            value = score(self.task.metric_name, answers, predictions, self.holdout.id_col)
+        except ScoringError as e:
+            return None, f"holdout_predictions.csv could not be scored: {e}"
+        except Exception as e:
+            return None, f"holdout_predictions.csv is unreadable: {e}"
+        return value, None
 
     def _improves(self, score: float, best: float) -> bool:
         return score < best if self.task.lower_is_better else score > best
@@ -236,12 +294,18 @@ class GreedySearcher:
     # --- prompt assembly ---
 
     def build_prompt(self, operator: str, target: Node | None, complexity: str | None) -> str:
+        holdout_clause = ""
+        if self.holdout is not None:
+            holdout_clause = render(
+                "holdout_clause", sample_name=self.task.sample_submission.name
+            ).rstrip()
         contract = render(
             "contract",
             metric_name=self.task.metric_name,
             exec_timeout_min=self.config.budget.exec_timeout_s // 60,
             runtime_pkgs=self._runtime_pkgs(),
             time_remaining=self.budget.remaining_str(),
+            holdout_clause=holdout_clause,
         )
         direction = "lower is better" if self.task.lower_is_better else "higher is better"
         if operator == "draft":
@@ -294,6 +358,8 @@ class GreedySearcher:
             problems.append("`submission.csv` was not written")
         if node.val_score is None:
             problems.append("no final `val_score: <float>` line was printed")
+        if execution.holdout_error:
+            problems.append(execution.holdout_error)
         if problems:
             return "The script ran to completion but violated the contract: " + "; ".join(problems) + "."
         return "The script failed."
@@ -307,9 +373,9 @@ class GreedySearcher:
 
     def _data_listing(self, limit: int = 50) -> str:
         entries = []
-        for path in sorted(self.task.data_dir.rglob("*")):
+        for path in sorted(self.data_dir.rglob("*")):
             if path.is_file():
-                relative = path.relative_to(self.task.data_dir)
+                relative = path.relative_to(self.data_dir)
                 entries.append(f"- {relative} ({_human_size(path.stat().st_size)})")
             if len(entries) >= limit:
                 entries.append("- ... (truncated)")

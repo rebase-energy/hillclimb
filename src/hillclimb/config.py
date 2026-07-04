@@ -20,6 +20,14 @@ class SearchConfig(BaseModel):
     max_debug_depth: int = 3
 
 
+class HoldoutConfig(BaseModel):
+    enabled: bool = True
+    fraction: float = 0.1
+    seed: int = 42
+    climb_on: str = "val"  # seam only; 'holdout' climbing is a future experiment
+    selection: str = "rank-blend"  # rank-blend | holdout | val
+
+
 class PathsConfig(BaseModel):
     runs_dir: Path = Path("runs")
     tasks_dir: Path = Path("tasks")
@@ -33,6 +41,7 @@ class Config(BaseModel):
     model: str = "sonnet"
     budget: BudgetConfig = BudgetConfig()
     search: SearchConfig = SearchConfig()
+    holdout: HoldoutConfig = HoldoutConfig()
     paths: PathsConfig = PathsConfig()
 
     @classmethod

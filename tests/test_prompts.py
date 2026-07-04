@@ -8,10 +8,21 @@ def test_render_replaces_tokens():
         exec_timeout_min=30,
         runtime_pkgs="pandas, numpy",
         time_remaining="1h 30m",
+        holdout_clause="",
     )
     assert "accuracy" in text
     assert "30 minutes" in text
     assert "{{" not in text
+    with_holdout = render(
+        "contract",
+        metric_name="accuracy",
+        exec_timeout_min=30,
+        runtime_pkgs="pandas, numpy",
+        time_remaining="1h 30m",
+        holdout_clause=render("holdout_clause", sample_name="sample_submission.csv").rstrip(),
+    )
+    assert "holdout_predictions.csv" in with_holdout
+    assert "{{" not in with_holdout
 
 
 def test_render_safe_with_braces():
