@@ -1,0 +1,8 @@
+problem_id: circle-packing
+metric: sum-radii
+lower_is_better: false
+description: description.md
+sample_submission: sample_submission.csv
+verifier: verify.py
+time_budget_s: 900
+allow_network: false

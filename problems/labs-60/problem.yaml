@@ -1,0 +1,8 @@
+problem_id: labs-60
+metric: autocorrelation-energy
+lower_is_better: true
+description: description.md
+sample_submission: sample_submission.csv
+verifier: verify.py
+time_budget_s: 900
+allow_network: false

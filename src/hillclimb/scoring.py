@@ -69,6 +69,17 @@ def _rmse(y_true: pd.DataFrame, pred: pd.DataFrame) -> float:
     )
 
 
+def _nrmse(y_true: pd.DataFrame, pred: pd.DataFrame) -> float:
+    """RMSE / mean(|y_true|). Normalized by mean absolute value because signed
+    targets (e.g. net load with solar export) can have a near-zero mean, which
+    would explode a mean-normalized ratio; range is outlier-sensitive. On a
+    fixed holdout any normalizer is a constant, so ranking matches RMSE."""
+    denom = float(np.mean(np.abs(y_true.iloc[:, 0].astype(float))))
+    if denom == 0:
+        raise ScoringError("NRMSE undefined: mean absolute target is zero")
+    return _rmse(y_true, pred) / denom
+
+
 def _mean_column_wise_rmsle(y_true: pd.DataFrame, pred: pd.DataFrame) -> float:
     scores = [
         _rmsle_column(y_true[c].astype(float).to_numpy(), pred[c].astype(float).to_numpy())
@@ -90,6 +101,7 @@ METRICS = {
     "multi-class-log-loss": _multi_class_log_loss,
     "rmse": _rmse,
     "root-mean-squared-error": _rmse,
+    "nrmse": _nrmse,
     "mean-column-wise-rmsle": _mean_column_wise_rmsle,
     "micro-f1": _micro_f1,
 }
@@ -98,6 +110,7 @@ LOWER_IS_BETTER = {
     "multi-class-log-loss",
     "rmse",
     "root-mean-squared-error",
+    "nrmse",
     "mean-column-wise-rmsle",
 }
 

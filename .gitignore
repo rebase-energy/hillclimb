@@ -5,3 +5,6 @@ cache/
 __pycache__/
 *.egg-info/
 .pytest_cache/
+tasks/data/**/*.csv
+tasks/data/**/*.zip
+.gstack/

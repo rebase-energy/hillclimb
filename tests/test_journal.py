@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from hillclimb.journal import Journal
@@ -81,3 +82,64 @@ def test_rank_blend_ties_and_missing_holdout(tmp_path):
     journal = Journal(tmp_path / "j.jsonl")
     journal.node_result(make_node("n1", status="ok", val_score=0.5))
     assert journal.selected_node(False).node_id == "n1"  # no holdout anywhere → val
+
+
+def test_replay_skips_non_node_events(tmp_path: Path):
+    path = tmp_path / "j.jsonl"
+    journal = Journal(path)
+    journal.node_result(make_node("n001", status="ok", val_score=0.5))
+    journal.control_event("prune", node_id="n001", pruned=["n001"], source="cli")
+
+    reloaded = Journal(path)
+    assert set(reloaded.nodes) == {"n001"}
+    assert '"event": "control"' in path.read_text()  # audit line survives
+
+
+def test_legacy_lines_without_pruned_field_replay(tmp_path: Path):
+    path = tmp_path / "j.jsonl"
+    record = make_node("n001", status="ok", val_score=0.5).model_dump()
+    record.pop("pruned")
+    record.pop("pruned_reason")
+    path.write_text(json.dumps({"event": "node_result", **record}) + "\n")
+    journal = Journal(path)
+    assert journal.get("n001").pruned is False
+
+
+def test_pruned_reappend_wins_on_replay(tmp_path: Path):
+    path = tmp_path / "j.jsonl"
+    journal = Journal(path)
+    node = make_node("n001", status="ok", val_score=0.5)
+    journal.node_result(node)
+    node.pruned = True
+    journal.node_result(node)
+
+    reloaded = Journal(path)
+    assert reloaded.get("n001").pruned is True
+
+
+def test_queries_exclude_pruned(tmp_path: Path):
+    journal = Journal(tmp_path / "j.jsonl")
+    journal.node_result(make_node("n001", status="ok", val_score=0.5))
+    journal.node_result(make_node("n002", status="ok", val_score=0.9, pruned=True))
+    journal.node_result(make_node("n003", operator="improve", parent_id="n001", pruned=True))
+
+    assert [n.node_id for n in journal.scored_nodes()] == ["n001"]
+    assert [n.node_id for n in journal.drafts()] == ["n001"]
+    assert journal.best_node(lower_is_better=False).node_id == "n001"
+    assert journal.children("n001") == []
+    assert [n.node_id for n in journal.children("n001", include_pruned=True)] == ["n003"]
+
+
+def test_descendants_walks_whole_subtree(tmp_path: Path):
+    journal = Journal(tmp_path / "j.jsonl")
+    journal.node_result(make_node("n001"))
+    journal.node_result(make_node("n002", operator="improve", parent_id="n001"))
+    journal.node_result(make_node("n003", operator="debug", parent_id="n002", pruned=True))
+    journal.node_result(make_node("n004"))
+    assert {n.node_id for n in journal.descendants("n001")} == {"n002", "n003"}
+
+
+def test_next_node_id_never_collides_with_gaps(tmp_path: Path):
+    journal = Journal(tmp_path / "j.jsonl")
+    journal.node_result(make_node("n005"))  # gap: only n005 exists
+    assert journal.next_node_id() == "n006"  # count-based would say n001

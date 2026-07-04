@@ -18,9 +18,16 @@ holdout:
   climb_on: val          # documented seam; only 'val' implemented
   selection: rank-blend  # rank-blend | holdout | val — how the shipped submission is picked
 
+ensemble:
+  enabled: true
+  reserve_fraction: 0.2  # last 20% of budget: try combining top candidates
+  top_k: 3
+  max_attempts: 2
+
 paths:
   runs_dir: runs
-  tasks_dir: tasks
+  problems_dir: problems
   runtime_python: .runtime-venv/bin/python
   mlebench_python: ../mle-bench/.venv/bin/python
   mlebench_data_dir: null   # null = mlebench's default cache dir
+  kaggle_bin: ../mle-bench/.venv/bin/kaggle  # for `hillclimb submit` (late submissions)

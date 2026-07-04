@@ -25,6 +25,19 @@ def test_ok_script(executor, tmp_path):
     assert result.submission_ok
 
 
+def test_verifier_scores_submission(executor, tmp_path):
+    script = tmp_path / "solution.py"
+    script.write_text('open("submission.csv", "w").write("id\\n")\n')
+    verifier = tmp_path / "verify.py"
+    verifier.write_text('print("checked")\nprint("val_score: 0.42")\n')
+
+    result = executor.execute(script, tmp_path, timeout_s=30, verifier=verifier)
+
+    assert result.ok
+    assert result.val_score == 0.42
+    assert "checked" in Path(result.stdout_path).read_text()
+
+
 def test_crash(executor, tmp_path):
     result = run_script(executor, tmp_path, 'raise RuntimeError("boom")')
     assert not result.ok

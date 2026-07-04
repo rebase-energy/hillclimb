@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import shutil
 from pathlib import Path
 
@@ -9,13 +10,15 @@ from hillclimb.backends.base import OperatorBackend, OperatorRequest
 from hillclimb.baseline import write_baseline
 from hillclimb.budget import BudgetManager
 from hillclimb.config import Config
+from hillclimb.control import ControlCommand, apply_prune, read_commands, resync_best
 from hillclimb.executor import Executor
 from hillclimb.holdout import HoldoutInfo
 from hillclimb.journal import Journal
 from hillclimb.node import BackendInfo, ExecInfo, Node, utcnow
 from hillclimb.prompts.render import COMPLEXITY_CUES, render
 from hillclimb.scoring import ScoringError, score
-from hillclimb.task import TaskSpec
+from hillclimb.status import CurrentNode, NodeCounts, ScoreRef, StatusWriter
+from hillclimb.problem import ProblemSpec
 from hillclimb.workspace import create_node_workspace
 
 TAIL_CHARS = 2000
@@ -23,6 +26,11 @@ TAIL_CHARS = 2000
 
 class ParkedRun(Exception):
     """Raised when the backend hits a rate limit; the run can be resumed."""
+
+
+class StopRequested(Exception):
+    """Raised on a graceful stop (control command or SIGTERM); the run can
+    be resumed."""
 
 
 def tail(path: Path, chars: int = TAIL_CHARS) -> str:
@@ -42,7 +50,7 @@ class GreedySearcher:
 
     def __init__(
         self,
-        task: TaskSpec,
+        problem: ProblemSpec,
         config: Config,
         journal: Journal,
         backend: OperatorBackend,
@@ -52,8 +60,9 @@ class GreedySearcher:
         max_nodes: int = 50,
         log=print,
         holdout: HoldoutInfo | None = None,
+        status: StatusWriter | None = None,
     ):
-        self.task = task
+        self.problem = problem
         self.config = config
         self.journal = journal
         self.backend = backend
@@ -63,21 +72,33 @@ class GreedySearcher:
         self.max_nodes = max_nodes
         self.log = log
         self.holdout = holdout
+        self.status = status
         self._consecutive_failures = 0
-        existing = journal.selected_node(task.lower_is_better, config.holdout.selection)
+        for stale in journal.pending_nodes():
+            # a pending node at construction time means a previous orchestrator
+            # process died mid-operator (crash/kill); the node's work is
+            # unaccounted and must not block decide() forever
+            stale.status = "abandoned"
+            stale.summary = stale.summary or "orchestrator died mid-operator (crash recovery)"
+            stale.finished_at = utcnow()
+            journal.node_result(stale)
+            log(f"  recovered stale pending node {stale.node_id} -> abandoned")
+        existing = journal.selected_node(problem.lower_is_better, config.holdout.selection)
         self._selection_id = existing.node_id if existing else None  # resume-safe
 
     @property
     def data_dir(self) -> Path:
-        return self.holdout.data_view if self.holdout else self.task.data_dir
+        return self.holdout.data_view if self.holdout else self.problem.data_dir
 
     # --- main loop ---
 
     def run(self) -> Node | None:
         if not self.journal.nodes:
-            self.journal.node_result(write_baseline(self.task, self.run_dir))
+            self.journal.node_result(write_baseline(self.problem, self.run_dir))
             self.log("baseline submission written (sample_submission copy)")
         while not self.budget.should_stop() and len(self.journal.nodes) < self.max_nodes:
+            self._process_control()
+            self._status(current=None)
             operator, target = self.decide()
             self.log(
                 f"[{self.budget.remaining_str()} left] {operator}"
@@ -85,23 +106,137 @@ class GreedySearcher:
             )
             self.run_operator(operator, target)
         return self.journal.selected_node(
-            self.task.lower_is_better, self.config.holdout.selection
+            self.problem.lower_is_better, self.config.holdout.selection
         )
+
+    # --- status reporting ---
+
+    def _status(self, **fields) -> None:
+        if self.status is None:
+            return
+        nodes = self.journal.nodes.values()
+        fields.setdefault(
+            "nodes",
+            NodeCounts(
+                total=len(self.journal.nodes),
+                ok=sum(1 for n in nodes if n.status == "ok"),
+                buggy=sum(1 for n in nodes if n.status == "buggy"),
+                pruned=sum(1 for n in nodes if getattr(n, "pruned", False)),
+            ),
+        )
+        best = self.journal.best_node(self.problem.lower_is_better)
+        if best is not None:
+            fields.setdefault("best", ScoreRef(node_id=best.node_id, val_score=best.val_score))
+        selected = self.journal.selected_node(
+            self.problem.lower_is_better, self.config.holdout.selection
+        )
+        if selected is not None:
+            fields.setdefault(
+                "selected",
+                ScoreRef(
+                    node_id=selected.node_id,
+                    val_score=selected.val_score,
+                    holdout_score=selected.holdout_score,
+                ),
+            )
+        self.status.update(**fields)
+
+    def _process_control(self) -> None:
+        """Apply queued user commands (runs/<id>/control/) between operators.
+        Prunes are applied before a stop so nothing is left half-processed."""
+        commands = read_commands(self.run_dir)
+        stop: ControlCommand | None = None
+        for path, cmd in sorted(commands, key=lambda pc: pc[1].action != "prune"):
+            path.unlink(missing_ok=True)
+            if cmd.action == "stop":
+                stop = cmd
+            elif cmd.action == "prune" and cmd.node_id:
+                try:
+                    pruned = apply_prune(self.journal, cmd.node_id, cmd.reason, cmd.source)
+                except ValueError as exc:
+                    self.log(f"  prune {cmd.node_id} rejected: {exc}")
+                    continue
+                if not pruned:
+                    continue
+                self.log(f"  pruned {', '.join(pruned)} (by {cmd.source})")
+                if self._selection_id in pruned:
+                    self._selection_id = resync_best(
+                        self.run_dir,
+                        self.journal,
+                        self.problem.lower_is_better,
+                        self.config.holdout.selection,
+                    )
+        if stop is not None:
+            self.journal.control_event("stop", reason=stop.reason, source=stop.source)
+            raise StopRequested(f"stop requested by {stop.source}")
 
     def decide(self) -> tuple[str, Node | None]:
         nodes = list(self.journal.nodes.values())
-        last = next((n for n in reversed(nodes) if n.status in ("ok", "buggy")), None)
+        last = next(
+            (n for n in reversed(nodes) if n.status in ("ok", "buggy") and not n.pruned), None
+        )
         if last is not None and last.status == "buggy":
             chain = self.journal.debug_chain(last.node_id)
             depth = sum(1 for n in chain if n.operator == "debug")
             if depth < self.config.search.max_debug_depth:
                 return "debug", last
+        if self._should_ensemble():
+            return "ensemble", self._ensemble_candidates()[0]
         if self._scored_branches() < self.config.search.num_drafts:
             return "draft", None
-        best = self.journal.best_node(self.task.lower_is_better)
+        best = self.journal.best_node(self.problem.lower_is_better)
         if best is None:
             return "draft", None
         return "improve", best
+
+    # --- ensemble stage ---
+
+    def _in_ensemble_window(self) -> bool:
+        # window sits ABOVE the stop margin, else margin swallows it: with a
+        # 45m budget, reserve(540s) - margin(300s) left a 240s slot that one
+        # improve cycle stepped over entirely
+        reserve = self.budget.total_s * self.config.ensemble.reserve_fraction
+        return self.budget.remaining() <= reserve + self.budget.stop_margin_s
+
+    def _should_ensemble(self) -> bool:
+        cfg = self.config.ensemble
+        if not cfg.enabled or not self._in_ensemble_window():
+            return False
+        attempts = sum(1 for n in self.journal.nodes.values() if n.operator == "ensemble")
+        if attempts >= cfg.max_attempts or self._ensemble_succeeded():
+            return False
+        return len(self._ensemble_candidates()) >= 2
+
+    def _ensemble_succeeded(self) -> bool:
+        for node in self.journal.nodes.values():
+            if node.status != "ok":
+                continue
+            root = self.journal.debug_chain(node.node_id)[0]
+            if root.operator == "ensemble":
+                return True
+        return False
+
+    def _ensemble_candidates(self) -> list[Node]:
+        """Top-k scored non-ensemble nodes by the selection rule, deduped by
+        script content so near-identical improves don't fill the slots."""
+        ranked = self.journal.ranked_nodes(
+            self.problem.lower_is_better, self.config.holdout.selection
+        )
+        picked, seen_hashes = [], set()
+        for node in ranked:
+            if node.operator == "ensemble":
+                continue
+            solution = Path(node.workspace) / "solution.py"
+            if not solution.exists():
+                continue
+            digest = hashlib.md5(solution.read_bytes()).hexdigest()
+            if digest in seen_hashes:
+                continue
+            seen_hashes.add(digest)
+            picked.append(node)
+            if len(picked) >= self.config.ensemble.top_k:
+                break
+        return picked
 
     def _scored_branches(self) -> int:
         """Draft branches whose subtree contains at least one scored node."""
@@ -126,16 +261,25 @@ class GreedySearcher:
             else None
         )
         workspace = create_node_workspace(
-            self.run_dir, node_id, self.data_dir, parent_solution
+            self.run_dir,
+            node_id,
+            self.data_dir,
+            self.problem.problem_dir,
+            parent_solution,
         )
+        candidates = None
+        if operator == "ensemble":
+            candidates = self._ensemble_candidates()
+            for i, cand in enumerate(candidates, 1):
+                shutil.copy(Path(cand.workspace) / "solution.py", workspace / f"candidate_{i}.py")
         complexity = self._draft_complexity() if operator == "draft" else None
-        prompt = self.build_prompt(operator, target, complexity)
+        prompt = self.build_prompt(operator, target, complexity, candidates)
         (workspace / "prompt.md").write_text(prompt)
 
-        chain_session = None
-        if operator == "debug" and target is not None:
-            chain_session = self._chain_session(target)
-
+        # NOTE: no session resume across nodes — Claude Code scopes sessions to
+        # the cwd, and every node has its own workspace, so --resume can't find
+        # a sibling workspace's session. The debug prompt carries the chain's
+        # failed-fix history from the journal instead.
         node = Node(
             node_id=node_id,
             parent_id=target.node_id if target else None,
@@ -158,7 +302,11 @@ class GreedySearcher:
                 self.config.budget.agent_timeout_s, max(60, int(self.budget.remaining()))
             ),
             model=self.config.model,
-            resume_session_id=chain_session,
+        )
+        self._status(
+            current=CurrentNode(
+                node_id=node_id, operator=operator, phase="agent", workspace=str(workspace)
+            )
         )
         result = self.backend.invoke(request)
         node.backend = BackendInfo(
@@ -209,7 +357,17 @@ class GreedySearcher:
         exec_timeout = min(
             self.config.budget.exec_timeout_s, max(60, int(self.budget.remaining() - 30))
         )
-        exec_result = self.executor.execute(solution, workspace, exec_timeout)
+        self._status(
+            current=CurrentNode(
+                node_id=node_id, operator=operator, phase="exec", workspace=str(workspace)
+            )
+        )
+        exec_result = self.executor.execute(
+            solution,
+            workspace,
+            exec_timeout,
+            verifier=self.problem.verifier,
+        )
         node.execution = ExecInfo(
             returncode=exec_result.returncode,
             duration_s=exec_result.duration_s,
@@ -225,7 +383,7 @@ class GreedySearcher:
                 node.status = "buggy"
                 node.execution.holdout_error = holdout_error
             else:
-                previous_best = self.journal.best_node(self.task.lower_is_better)
+                previous_best = self.journal.best_node(self.problem.lower_is_better)
                 node.status = "ok"
                 node.holdout_score = holdout_score
                 if previous_best is None or self._improves(exec_result.val_score, previous_best.val_score):
@@ -236,6 +394,7 @@ class GreedySearcher:
         self.journal.node_result(node)
         if node.status == "ok":
             self._sync_selection()
+        self._status(current=None)
         return node
 
     def _sync_selection(self) -> None:
@@ -243,17 +402,13 @@ class GreedySearcher:
         recomputed over the whole tree because rank-blend can shift between
         existing nodes when a new one lands."""
         selected = self.journal.selected_node(
-            self.task.lower_is_better, self.config.holdout.selection
+            self.problem.lower_is_better, self.config.holdout.selection
         )
         if selected is None or selected.node_id == self._selection_id:
             return
-        self._selection_id = selected.node_id
-        src = Path(selected.workspace)
-        shutil.copy(src / "submission.csv", self.run_dir / "best" / "submission.csv")
-        if (src / "solution.py").exists():
-            shutil.copy(src / "solution.py", self.run_dir / "best" / "solution.py")
-        selected.is_selected = True
-        self.journal.node_result(selected)  # append updated record (replay keeps last)
+        self._selection_id = resync_best(
+            self.run_dir, self.journal, self.problem.lower_is_better, self.config.holdout.selection
+        )
         scores = f"val_score={selected.val_score}"
         if selected.holdout_score is not None:
             scores += f" holdout={selected.holdout_score:.5g}"
@@ -270,7 +425,7 @@ class GreedySearcher:
         try:
             predictions = pd.read_csv(pred_path)
             answers = pd.read_csv(self.holdout.answers_path)
-            value = score(self.task.metric_name, answers, predictions, self.holdout.id_col)
+            value = score(self.problem.metric_name, answers, predictions, self.holdout.id_col)
         except ScoringError as e:
             return None, f"holdout_predictions.csv could not be scored: {e}"
         except Exception as e:
@@ -278,41 +433,82 @@ class GreedySearcher:
         return value, None
 
     def _improves(self, score: float, best: float) -> bool:
-        return score < best if self.task.lower_is_better else score > best
+        return score < best if self.problem.lower_is_better else score > best
 
     def _draft_complexity(self) -> str:
         index = len(self.journal.drafts())
         return "minimal" if index == 0 else "moderate" if index == 1 else "advanced"
 
-    def _chain_session(self, target: Node) -> str | None:
-        """Resume the debug chain's agent session so it remembers prior fixes."""
-        for node in reversed(self.journal.debug_chain(target.node_id)):
-            if node.backend.session_id:
-                return node.backend.session_id
-        return None
-
     # --- prompt assembly ---
 
-    def build_prompt(self, operator: str, target: Node | None, complexity: str | None) -> str:
+    def build_prompt(
+        self,
+        operator: str,
+        target: Node | None,
+        complexity: str | None,
+        candidates: list[Node] | None = None,
+    ) -> str:
         holdout_clause = ""
         if self.holdout is not None:
+            if self.holdout.strategy == "time-tail":
+                if self.holdout.group_col:
+                    scope = f"the most recent rows of each `{self.holdout.group_col}` block"
+                elif self.holdout.time_cutoff:
+                    scope = f"all rows from {self.holdout.time_cutoff} onward"
+                else:
+                    scope = "the most recent rows"
+                split_note = (
+                    f"These rows are the chronological TAIL of the training data ({scope}), "
+                    "held out by the orchestrator. Treat them as a true forecast: do not "
+                    "train on them, and do not use any information from the holdout period."
+                )
+            else:
+                split_note = "These rows were held out at random from the training data."
+            # class-columns problems (target column holds class names, e.g.
+            # spooky's `author`): predictions must be per-class probability
+            # columns in submission format, NOT the raw target column — an
+            # agent following the literal column name writes hard labels the
+            # log-loss scorer can't grade
+            sample_cols = pd.read_csv(self.problem.sample_submission, nrows=0).columns
+            if set(self.holdout.target_cols) <= set(sample_cols):
+                target_cols_note = ", ".join(f"`{c}`" for c in self.holdout.target_cols)
+            else:
+                pred_cols = [c for c in sample_cols if c != sample_cols[0]]
+                shown = ", ".join(f"`{c}`" for c in pred_cols[:6])
+                if len(pred_cols) > 6:
+                    shown += f", … ({len(pred_cols)} columns)"
+                target_cols_note = (
+                    f"the same prediction columns as submission.csv: {shown}"
+                )
             holdout_clause = render(
-                "holdout_clause", sample_name=self.task.sample_submission.name
+                "holdout_clause",
+                holdout_id_col=self.holdout.id_col,
+                holdout_target_cols=target_cols_note,
+                holdout_split_note=split_note,
             ).rstrip()
+        network_note = (
+            "Internet access IS available at execution time — this problem's rules "
+            "permit fetching external data; cache downloads to files in the "
+            "working directory so reruns don't refetch."
+            if self.problem.allow_network
+            else "Assume no internet access at execution time."
+        )
         contract = render(
             "contract",
-            metric_name=self.task.metric_name,
+            metric_name=self.problem.metric_name,
             exec_timeout_min=self.config.budget.exec_timeout_s // 60,
             runtime_pkgs=self._runtime_pkgs(),
             time_remaining=self.budget.remaining_str(),
             holdout_clause=holdout_clause,
+            network_note=network_note,
+            verifier_clause=self._verifier_clause(),
         )
-        direction = "lower is better" if self.task.lower_is_better else "higher is better"
+        direction = "lower is better" if self.problem.lower_is_better else "higher is better"
         if operator == "draft":
             return render(
                 "draft",
-                description=self.task.description,
-                metric_name=self.task.metric_name,
+                description=self.problem.description,
+                metric_name=self.problem.metric_name,
                 direction=direction,
                 data_listing=self._data_listing(),
                 complexity_cue=COMPLEXITY_CUES[complexity or "minimal"],
@@ -332,12 +528,27 @@ class GreedySearcher:
                 debug_history=self._node_summaries(attempts) or "(none — this is the first fix attempt)",
                 contract=contract,
             )
+        if operator == "ensemble":
+            assert candidates
+            table = "\n".join(
+                f"- `candidate_{i}.py` — validation {self.problem.metric_name}: "
+                f"**{c.val_score:.5g}** ({c.node_id}): {c.summary or '(no summary)'}"
+                for i, c in enumerate(candidates, 1)
+            )
+            return render(
+                "ensemble",
+                description=self.problem.description,
+                metric_name=self.problem.metric_name,
+                direction=direction,
+                candidates_table=table,
+                contract=contract,
+            )
         if operator == "improve":
             assert target is not None
             return render(
                 "improve",
-                description=self.task.description,
-                metric_name=self.task.metric_name,
+                description=self.problem.description,
+                metric_name=self.problem.metric_name,
                 direction=direction,
                 best_score=target.val_score,
                 stdout_tail=target.execution.stdout_tail,
@@ -364,6 +575,23 @@ class GreedySearcher:
             return "The script ran to completion but violated the contract: " + "; ".join(problems) + "."
         return "The script failed."
 
+    def _verifier_clause(self) -> str:
+        if self.problem.verifier is None:
+            return (
+                "- prints exactly one line `val_score: <float>` "
+                f"(your validation {self.problem.metric_name}) as the FINAL line of stdout"
+            )
+        try:
+            verifier_name = self.problem.verifier.relative_to(self.problem.problem_dir)
+        except ValueError:
+            verifier_name = self.problem.verifier.name
+        return (
+            f"- writes `./submission.csv`; the orchestrator then runs "
+            f"`./problem/{verifier_name}` and uses the verifier's final "
+            "`val_score: <float>` line as the official validation score. "
+            "Do not print your own `val_score:` line."
+        )
+
     def _node_summaries(self, nodes: list[Node]) -> str:
         lines = []
         for node in nodes:
@@ -373,9 +601,9 @@ class GreedySearcher:
 
     def _data_listing(self, limit: int = 50) -> str:
         entries = []
-        for path in sorted(self.data_dir.rglob("*")):
+        for path in sorted(self.problem.problem_dir.rglob("*")):
             if path.is_file():
-                relative = path.relative_to(self.data_dir)
+                relative = path.relative_to(self.problem.problem_dir)
                 entries.append(f"- {relative} ({_human_size(path.stat().st_size)})")
             if len(entries) >= limit:
                 entries.append("- ... (truncated)")

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
 
-OPERATORS = ("baseline", "draft", "debug", "improve")
+OPERATORS = ("baseline", "draft", "debug", "improve", "ensemble")
 STATUSES = ("pending", "ok", "buggy", "parked", "abandoned")
 
 
@@ -44,6 +44,8 @@ class Node(BaseModel):
     holdout_score: float | None = None  # orchestrator-computed, hidden from agent
     is_best: bool = False       # best by agent-reported val_score (climbing signal)
     is_selected: bool = False   # best by holdout score (final-submission signal)
+    pruned: bool = False        # user cut this lineage; status stays intact
+    pruned_reason: str | None = None
     summary: str = ""
     created_at: str = Field(default_factory=utcnow)
     finished_at: str | None = None

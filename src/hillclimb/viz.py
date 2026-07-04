@@ -14,7 +14,14 @@ STATUS_FILL = {
     "pending": "#ffffff",
 }
 BEST_FILL = "#fff59d"       # gold: the run's final best node
-EDGE_STYLE = {"debug": "dashed", "improve": "solid", "draft": "solid", "baseline": "solid"}
+PRUNED_FILL = "#eeeeee"     # light gray + dashed border: user cut this lineage
+EDGE_STYLE = {
+    "debug": "dashed",
+    "improve": "solid",
+    "draft": "solid",
+    "baseline": "solid",
+    "ensemble": "bold",
+}
 
 
 def _label(node, lower_is_better: bool) -> str:
@@ -69,12 +76,16 @@ def build_tree(journal: Journal, lower_is_better: bool, title: str = "") -> pydo
 
     for node in journal.nodes.values():
         fill = BEST_FILL if node.node_id == best_id else STATUS_FILL.get(node.status, "#ffffff")
+        style = "rounded,filled"
+        if node.pruned:
+            fill = PRUNED_FILL
+            style = "rounded,filled,dashed"
         graph.add_node(
             pydot.Node(
                 node.node_id,
                 label=_label(node, lower_is_better),
                 shape="box",
-                style="rounded,filled",
+                style=style,
                 fillcolor=fill,
                 fontname="Helvetica",
                 fontsize=10,
@@ -87,8 +98,8 @@ def build_tree(journal: Journal, lower_is_better: bool, title: str = "") -> pydo
                     node.parent_id,
                     node.node_id,
                     style=EDGE_STYLE.get(node.operator, "solid"),
-                    color="#c62828" if node.operator == "debug" else "#455a64",
-                    label=node.operator if node.operator == "debug" else "",
+                    color={"debug": "#c62828", "ensemble": "#6a1b9a"}.get(node.operator, "#455a64"),
+                    label=node.operator if node.operator in ("debug", "ensemble") else "",
                     fontsize=8,
                     fontname="Helvetica",
                 )

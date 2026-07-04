@@ -1,0 +1,13 @@
+# Kaggle community competition (finished; late submissions open).
+comp_id: energy-forecasting-data-challenge-public
+metric: rmse
+lower_is_better: true
+data_dir: data/energy-forecasting-data-challenge-public
+holdout:
+  strategy: time-tail
+  time_col: time
+  id_col: time
+  target_cols: [residual_load]
+  group_col: dataset_id
+  drop_cols: [load, P]   # train-only columns; residual_load = load - P would leak exactly
+  fraction: 0.083        # ~7 trailing days per ~84-day block = the real test horizon

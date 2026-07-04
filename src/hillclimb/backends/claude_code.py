@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
+import threading
 import time
+from pathlib import Path
 
 from hillclimb.backends.base import OperatorRequest, OperatorResult
 
@@ -25,11 +28,68 @@ RATE_LIMIT_MARKERS = (
     "out of extra usage",
 )
 
+STREAM_FILE = "agent_stream.jsonl"
+PID_FILE = "agent.pid"
+
+
+def _has_rate_limit_marker(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in RATE_LIMIT_MARKERS)
+
+
+class _StreamReader(threading.Thread):
+    """Drains the agent's stdout line-by-line into agent_stream.jsonl so the
+    transcript is observable while the call is still running (watch TUI tails
+    this file), and keeps the final `result` message for the caller.
+
+    Rate-limit markers are deliberately NOT matched against ordinary
+    transcript lines — an agent that merely *mentions* limits (or fixes code
+    that does) would park the run. Only error-shaped messages count: a
+    `result` with is_error, or non-JSON noise lines (CLI error banners)."""
+
+    def __init__(self, stdout, stream_path: Path):
+        super().__init__(daemon=True, name="agent-stream-reader")
+        self.stdout = stdout
+        self.stream_path = stream_path
+        self.result_payload: dict | None = None
+        self.rate_limited = False
+
+    def run(self) -> None:
+        with self.stream_path.open("w") as sink:
+            for line in self.stdout:
+                sink.write(line)
+                sink.flush()
+                try:
+                    message = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    # non-JSON output from the CLI itself (error banners)
+                    if _has_rate_limit_marker(line):
+                        self.rate_limited = True
+                    continue
+                if isinstance(message, dict) and message.get("type") == "result":
+                    self.result_payload = message
+                    if message.get("is_error") and _has_rate_limit_marker(
+                        str(message.get("result", ""))
+                    ):
+                        self.rate_limited = True
+
+
+def _kill_group(proc: subprocess.Popen) -> None:
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    proc.wait()
+
 
 class ClaudeCodeBackend:
     """One operator call = one headless Claude Code invocation, cwd-scoped to
     the node workspace. Auth comes from the interactive `claude` login (Max
-    subscription) or CLAUDE_CODE_OAUTH_TOKEN in the environment."""
+    subscription) or CLAUDE_CODE_OAUTH_TOKEN in the environment.
+
+    Runs with `--output-format stream-json` so the transcript lands
+    incrementally in <workspace>/agent_stream.jsonl, and exposes the child
+    pid in <workspace>/agent.pid while the call is in flight."""
 
     name = "claude-code"
 
@@ -41,7 +101,8 @@ class ClaudeCodeBackend:
             self.claude_bin,
             "-p",
             "--output-format",
-            "json",
+            "stream-json",
+            "--verbose",  # required by the CLI for -p with stream-json
             "--permission-mode",
             "bypassPermissions",
             "--model",
@@ -49,45 +110,80 @@ class ClaudeCodeBackend:
         ]
         if request.resume_session_id:
             cmd += ["--resume", request.resume_session_id]
-        start = time.monotonic()
-        try:
-            proc = subprocess.run(
-                cmd,
-                input=request.prompt,
-                capture_output=True,
-                text=True,
-                cwd=request.workspace,
-                timeout=request.timeout_s,
-                env=subscription_env(),
-            )
-        except subprocess.TimeoutExpired:
-            return OperatorResult(
-                ok=False,
-                duration_s=time.monotonic() - start,
-                error_kind="timeout",
-                error_message=f"agent call exceeded {request.timeout_s}s",
-            )
-        duration = time.monotonic() - start
 
-        raw_path = request.workspace / "agent_raw.json"
+        workspace = Path(request.workspace)
+        stream_path = workspace / STREAM_FILE
+        pid_path = workspace / PID_FILE
+        stderr_path = workspace / "agent_stderr.log"
+        start = time.monotonic()
+        timed_out = False
+        reader: _StreamReader | None = None
+        proc: subprocess.Popen | None = None
+        try:
+            with stderr_path.open("w") as stderr_sink:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=stderr_sink,
+                    text=True,
+                    cwd=request.workspace,
+                    env=subscription_env(),
+                    start_new_session=True,  # own process group → killable as a unit
+                )
+                pid_path.write_text(str(proc.pid))
+                reader = _StreamReader(proc.stdout, stream_path)
+                reader.start()
+                try:
+                    proc.stdin.write(request.prompt)
+                    proc.stdin.close()
+                except BrokenPipeError:
+                    pass  # process died instantly; returncode tells the story
+                try:
+                    proc.wait(timeout=request.timeout_s)
+                except subprocess.TimeoutExpired:
+                    timed_out = True
+                    _kill_group(proc)
+        finally:
+            pid_path.unlink(missing_ok=True)
+            if proc is not None and proc.poll() is None:
+                # e.g. StopRequested raised by a signal handler while in wait()
+                _kill_group(proc)
+            if reader is not None:
+                reader.join(timeout=5)
+
+        duration = time.monotonic() - start
+        payload = reader.result_payload or {}
+        stderr_text = stderr_path.read_text(errors="replace") if stderr_path.exists() else ""
+
+        raw_path = workspace / "agent_raw.json"
         raw_path.write_text(
-            json.dumps({"stdout": proc.stdout, "stderr": proc.stderr, "cmd": cmd})
+            json.dumps(
+                {
+                    "cmd": cmd,
+                    "returncode": proc.returncode,
+                    "stderr": stderr_text[-4000:],
+                    "result": payload or None,
+                }
+            )
         )
 
-        payload: dict = {}
-        try:
-            payload = json.loads(proc.stdout)
-        except (json.JSONDecodeError, ValueError):
-            pass
-
-        combined = (proc.stdout + proc.stderr).lower()
-        if any(marker in combined for marker in RATE_LIMIT_MARKERS):
+        if timed_out:
             return OperatorResult(
                 ok=False,
                 duration_s=duration,
                 raw_output_path=str(raw_path),
+                error_kind="timeout",
+                error_message=f"agent call exceeded {request.timeout_s}s",
+            )
+        if reader.rate_limited or _has_rate_limit_marker(stderr_text):
+            return OperatorResult(
+                ok=False,
+                session_id=payload.get("session_id"),
+                duration_s=duration,
+                raw_output_path=str(raw_path),
                 error_kind="rate_limited",
-                error_message=str(payload.get("result", proc.stderr))[:500],
+                error_message=str(payload.get("result") or stderr_text)[:500],
             )
         if proc.returncode != 0 or payload.get("is_error"):
             return OperatorResult(
@@ -96,7 +192,15 @@ class ClaudeCodeBackend:
                 duration_s=duration,
                 raw_output_path=str(raw_path),
                 error_kind="error",
-                error_message=str(payload.get("result") or proc.stderr or "")[:500],
+                error_message=str(payload.get("result") or stderr_text or "")[:500],
+            )
+        if not payload:
+            return OperatorResult(
+                ok=False,
+                duration_s=duration,
+                raw_output_path=str(raw_path),
+                error_kind="error",
+                error_message="agent exited 0 but emitted no result message",
             )
         return OperatorResult(
             ok=True,

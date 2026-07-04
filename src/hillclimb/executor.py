@@ -33,7 +33,13 @@ class ExecResult(BaseModel):
 
 
 class Executor(Protocol):
-    def execute(self, script: Path, workspace: Path, timeout_s: int) -> ExecResult: ...
+    def execute(
+        self,
+        script: Path,
+        workspace: Path,
+        timeout_s: int,
+        verifier: Path | None = None,
+    ) -> ExecResult: ...
 
 
 def parse_val_score(stdout_text: str) -> float | None:
@@ -57,13 +63,21 @@ class LocalExecutor:
         # symlink path or the interpreter escapes the venv's site-packages
         self.python = python.absolute()
 
-    def execute(self, script: Path, workspace: Path, timeout_s: int) -> ExecResult:
+    def execute(
+        self,
+        script: Path,
+        workspace: Path,
+        timeout_s: int,
+        verifier: Path | None = None,
+    ) -> ExecResult:
         script = script.absolute()
         workspace = workspace.absolute()
+        verifier = verifier.absolute() if verifier is not None else None
         stdout_path = workspace / "exec_stdout.log"
         stderr_path = workspace / "exec_stderr.log"
         start = time.monotonic()
         timed_out = False
+        returncode: int | None = None
         with stdout_path.open("w") as out, stderr_path.open("w") as err:
             proc = subprocess.Popen(
                 [str(self.python), str(script)],
@@ -81,10 +95,30 @@ class LocalExecutor:
                 except ProcessLookupError:
                     pass
                 proc.wait()
+            returncode = proc.returncode
+            if not timed_out and proc.returncode == 0 and verifier is not None:
+                remaining = max(1, int(timeout_s - (time.monotonic() - start)))
+                verifier_proc = subprocess.Popen(
+                    [str(self.python), str(verifier)],
+                    cwd=workspace,
+                    stdout=out,
+                    stderr=err,
+                    start_new_session=True,
+                )
+                try:
+                    verifier_proc.wait(timeout=remaining)
+                except subprocess.TimeoutExpired:
+                    timed_out = True
+                    try:
+                        os.killpg(os.getpgid(verifier_proc.pid), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    verifier_proc.wait()
+                returncode = verifier_proc.returncode
         duration = time.monotonic() - start
         stdout_text = stdout_path.read_text()
         return ExecResult(
-            returncode=proc.returncode,
+            returncode=returncode,
             duration_s=duration,
             timed_out=timed_out,
             stdout_path=str(stdout_path),

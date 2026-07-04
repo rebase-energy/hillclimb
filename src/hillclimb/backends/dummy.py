@@ -59,6 +59,14 @@ print(f"val_score: {{score}}")
 
 BUGGY_LINE = "undefined_variable_to_trigger_debug  # noqa"
 
+VERIFIER_PROBLEM_TEMPLATE = '''\
+import shutil
+from pathlib import Path
+
+sample = Path("problem") / "sample_submission.csv"
+shutil.copy(sample, "submission.csv")
+'''
+
 
 class DummyBackend:
     """Emits canned sklearn scripts so the whole loop can run without an LLM.
@@ -71,6 +79,12 @@ class DummyBackend:
 
     def invoke(self, request: OperatorRequest) -> OperatorResult:
         self.calls += 1
+        if not (request.workspace / "data" / "train.csv").exists():
+            script = VERIFIER_PROBLEM_TEMPLATE
+            note = "baseline copy for verifier-defined problem"
+            (request.workspace / "solution.py").write_text(script)
+            (request.workspace / "notes.md").write_text(note + "\n")
+            return OperatorResult(ok=True, session_id=f"dummy-{self.calls}", duration_s=0.0)
         if request.operator == "draft" and self.calls == 1:
             script = SOLVER_TEMPLATE.format(max_iter=50, bug=BUGGY_LINE)
             note = "buggy first draft (HistGradientBoosting, 50 iters)"
@@ -80,6 +94,9 @@ class DummyBackend:
         elif request.operator == "improve":
             script = SOLVER_TEMPLATE.format(max_iter=300, bug="")
             note = "improve: raise max_iter 100 -> 300"
+        elif request.operator == "ensemble":
+            script = SOLVER_TEMPLATE.format(max_iter=500, bug="")
+            note = "ensemble: blend of top candidates (canned stand-in)"
         else:
             script = SOLVER_TEMPLATE.format(max_iter=100, bug="")
             note = f"draft #{self.calls} (HistGradientBoosting, 100 iters)"

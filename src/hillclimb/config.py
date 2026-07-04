@@ -28,12 +28,20 @@ class HoldoutConfig(BaseModel):
     selection: str = "rank-blend"  # rank-blend | holdout | val
 
 
+class EnsembleConfig(BaseModel):
+    enabled: bool = True
+    reserve_fraction: float = 0.2  # final slice of budget reserved for ensembling
+    top_k: int = 3
+    max_attempts: int = 2
+
+
 class PathsConfig(BaseModel):
     runs_dir: Path = Path("runs")
-    tasks_dir: Path = Path("tasks")
+    problems_dir: Path = Path("problems")
     runtime_python: Path = Path(".runtime-venv/bin/python")
     mlebench_python: Path = Path("../mle-bench/.venv/bin/python")
     mlebench_data_dir: Path | None = None
+    kaggle_bin: Path = Path("../mle-bench/.venv/bin/kaggle")
 
 
 class Config(BaseModel):
@@ -42,6 +50,7 @@ class Config(BaseModel):
     budget: BudgetConfig = BudgetConfig()
     search: SearchConfig = SearchConfig()
     holdout: HoldoutConfig = HoldoutConfig()
+    ensemble: EnsembleConfig = EnsembleConfig()
     paths: PathsConfig = PathsConfig()
 
     @classmethod

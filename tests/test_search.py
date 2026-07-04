@@ -7,9 +7,10 @@ import pytest
 
 from hillclimb.backends.fake import FakeBackend
 from hillclimb.budget import BudgetManager
+from hillclimb.control import ControlCommand, write_command
 from hillclimb.executor import LocalExecutor
 from hillclimb.journal import Journal
-from hillclimb.search import GreedySearcher, ParkedRun
+from hillclimb.search import GreedySearcher, ParkedRun, StopRequested
 from hillclimb.workspace import create_run_dir
 from tests.conftest import CRASH_SCRIPT, ok_script
 
@@ -18,7 +19,7 @@ def make_searcher(task, config, backend, max_nodes=10, budget_s=3600):
     run_dir = create_run_dir(config.paths.runs_dir, "test-run")
     journal = Journal(run_dir / "journal.jsonl")
     searcher = GreedySearcher(
-        task=task,
+        problem=task,
         config=config,
         journal=journal,
         backend=backend,
@@ -111,7 +112,7 @@ def test_rate_limit_parks_run(task, config):
     backend2.queue(script=ok_script(0.9), notes="another\n")
     run_dir2_journal = Journal(run_dir / "journal.jsonl")
     searcher2 = GreedySearcher(
-        task=task, config=config, journal=run_dir2_journal, backend=backend2,
+        problem=task, config=config, journal=run_dir2_journal, backend=backend2,
         executor=LocalExecutor(Path(sys.executable)),
         budget=BudgetManager(3600, stop_margin_s=1),
         run_dir=run_dir, max_nodes=len(run_dir2_journal.nodes) + 2, log=lambda *_: None,
@@ -170,6 +171,86 @@ def test_agent_failure_counter_resets_on_success(task, config):
     assert best.val_score == 0.8
 
 
+def test_stop_command_stops_before_any_operator(task, config):
+    backend = FakeBackend()  # empty queue: any invoke would raise
+    searcher, journal, run_dir = make_searcher(task, config, backend, max_nodes=5)
+    write_command(run_dir, ControlCommand(action="stop", source="cli"))
+
+    with pytest.raises(StopRequested):
+        searcher.run()
+    assert backend.requests == []
+    assert journal.get("n000").operator == "baseline"  # baseline still written
+    assert '"event": "control"' in (run_dir / "journal.jsonl").read_text()
+
+
+def test_stop_is_graceful_current_operator_finishes(task, config):
+    class StopDroppingBackend(FakeBackend):
+        def __init__(self, run_dir):
+            super().__init__()
+            self.run_dir = run_dir
+
+        def invoke(self, request):
+            write_command(self.run_dir, ControlCommand(action="stop", source="tui"))
+            return super().invoke(request)
+
+    run_dir_probe = create_run_dir(config.paths.runs_dir, "graceful-run")
+    backend = StopDroppingBackend(run_dir_probe)
+    backend.queue(script=ok_script(0.6), notes="draft\n")
+    journal = Journal(run_dir_probe / "journal.jsonl")
+    searcher = GreedySearcher(
+        problem=task, config=config, journal=journal, backend=backend,
+        executor=LocalExecutor(Path(sys.executable)),
+        budget=BudgetManager(3600, stop_margin_s=1),
+        run_dir=run_dir_probe, max_nodes=5, log=lambda *_: None,
+    )
+    with pytest.raises(StopRequested):
+        searcher.run()
+    # the operator that was in flight when stop arrived completed and scored
+    assert journal.get("n001").status == "ok"
+    assert journal.get("n001").val_score == 0.6
+
+
+def test_prune_buggy_tip_redirects_to_draft(task, config):
+    backend = FakeBackend()
+    backend.queue(script=CRASH_SCRIPT, notes="buggy draft\n")
+    searcher, journal, run_dir = make_searcher(task, config, backend, max_nodes=5)
+    searcher.run_operator("draft", None)  # first node: n000 (no baseline written here)
+    assert searcher.decide()[0] == "debug"  # would keep debugging
+
+    write_command(run_dir, ControlCommand(action="prune", node_id="n000", source="cli"))
+    searcher._process_control()
+
+    assert journal.get("n000").pruned
+    assert searcher.decide() == ("draft", None)  # buggy tip no longer targeted
+
+
+def test_prune_scored_branch_makes_engine_redraft(task, config):
+    backend = FakeBackend()
+    backend.queue(script=ok_script(0.6), notes="a\n")
+    backend.queue(script=ok_script(0.7), notes="b\n")
+    backend.queue(script=ok_script(0.5), notes="c\n")
+    searcher, journal, run_dir = make_searcher(task, config, backend, max_nodes=10)
+    for _ in range(3):
+        searcher.run_operator("draft", None)  # n000..n002, best/selected = n001 (0.7)
+    assert searcher.decide()[0] == "improve"  # 3 scored branches → improve best
+
+    write_command(run_dir, ControlCommand(action="prune", node_id="n001", source="cli"))
+    searcher._process_control()
+
+    assert searcher.decide() == ("draft", None)  # only 2 scored branches remain
+    # selection repointed away from the pruned branch
+    assert journal.selected_node(False).node_id == "n000"
+    assert (run_dir / "best" / "submission.csv").exists()
+
+
+def test_prune_unknown_node_is_rejected_not_fatal(task, config):
+    backend = FakeBackend()
+    searcher, journal, run_dir = make_searcher(task, config, backend, max_nodes=5)
+    write_command(run_dir, ControlCommand(action="prune", node_id="n999", source="cli"))
+    searcher._process_control()  # must not raise
+    assert all(not n.pruned for n in journal.nodes.values())
+
+
 def holdout_script(val: float, holdout_pred_flip: bool = False) -> str:
     """Fixture script that writes all three artifacts. holdout_pred_flip
     controls holdout accuracy: False → perfect, True → all-wrong."""
@@ -194,7 +275,7 @@ def make_holdout_searcher(task, config, backend, tmp_path, max_nodes=10):
     assert info is not None
     journal = Journal(run_dir / "journal.jsonl")
     searcher = GreedySearcher(
-        task=task, config=config, journal=journal, backend=backend,
+        problem=task, config=config, journal=journal, backend=backend,
         executor=LocalExecutor(Path(sys.executable)),
         budget=BudgetManager(3600, stop_margin_s=1),
         run_dir=run_dir, max_nodes=max_nodes, log=lambda *_: None, holdout=info,
@@ -246,6 +327,48 @@ def test_holdout_prompt_mentions_contract(task_larger, config):
     assert "holdout.csv" in prompt
 
 
+def test_time_tail_prompt_names_id_col_and_warns_chronological(tmp_path, config):
+    import pandas as pd
+
+    from hillclimb.holdout import HoldoutOverride, build_data_view
+    from hillclimb.problem import ProblemSpec
+
+    d = tmp_path / "ts-public"
+    d.mkdir()
+    ts = pd.date_range("2025-05-01", periods=100, freq="h").strftime("%Y-%m-%d %H:%M:%S")
+    pd.DataFrame({"timestamp_utc": ts, "net_load_kwh": range(100)}).to_csv(
+        d / "train.csv", index=False
+    )
+    pd.DataFrame({"row_id": [0], "net_load_kwh": [0.0]}).to_csv(
+        d / "sample_submission.csv", index=False
+    )
+    (d / "description.md").write_text("forecast")
+    override = HoldoutOverride(
+        strategy="time-tail", time_col="timestamp_utc", id_col="timestamp_utc",
+        target_cols=["net_load_kwh"], fraction=0.1,
+    )
+    ts_task = ProblemSpec(
+        problem_id="ts", problem_dir=d, data_dir=d, description="forecast",
+        metric_name="nrmse", lower_is_better=True,
+        sample_submission=d / "sample_submission.csv", time_budget_s=3600,
+        holdout=override,
+    )
+    run_dir = create_run_dir(config.paths.runs_dir, "ts-run")
+    info = build_data_view(d, run_dir, ts_task.sample_submission, 0.1, 42, override=override)
+    searcher = GreedySearcher(
+        problem=ts_task, config=config, journal=Journal(run_dir / "journal.jsonl"),
+        backend=FakeBackend(), executor=LocalExecutor(Path(sys.executable)),
+        budget=BudgetManager(3600, stop_margin_s=1),
+        run_dir=run_dir, log=lambda *_: None, holdout=info,
+    )
+    prompt = searcher.build_prompt("draft", None, "minimal")
+    assert "`timestamp_utc`" in prompt
+    assert "chronological TAIL" in prompt
+    assert "do not train on them" in prompt
+    assert info.time_cutoff in prompt
+    assert "{{" not in prompt
+
+
 def test_no_holdout_falls_back_to_val_selection(task, config):
     backend = FakeBackend()
     backend.queue(script=ok_script(0.6), notes="a\n")
@@ -255,3 +378,150 @@ def test_no_holdout_falls_back_to_val_selection(task, config):
     selected = searcher.run()
     assert selected.val_score == 0.9
     assert journal.selected_node(False).node_id == selected.node_id
+
+
+def make_ensemble_searcher(task, config, backend, spent_frac=0.0, max_nodes=12):
+    """Searcher with controllable budget position (spent_frac of total)."""
+    run_dir = create_run_dir(config.paths.runs_dir, "test-run")
+    journal = Journal(run_dir / "journal.jsonl")
+    searcher = GreedySearcher(
+        problem=task, config=config, journal=journal, backend=backend,
+        executor=LocalExecutor(Path(sys.executable)),
+        budget=BudgetManager(1000, stop_margin_s=1, spent_s=1000 * spent_frac),
+        run_dir=run_dir, max_nodes=max_nodes, log=lambda *_: None,
+    )
+    return searcher, journal, run_dir
+
+
+def distinct_script(val: float) -> str:
+    return ok_script(val) + f"# variant {val}\n"
+
+
+def test_ensemble_triggers_in_reserve_window(task, config):
+    backend = FakeBackend()
+    backend.queue(script=distinct_script(0.6), notes="draft a\n")
+    backend.queue(script=distinct_script(0.7), notes="draft b\n")
+    backend.queue(script=distinct_script(0.5), notes="draft c\n")
+    backend.queue(script=distinct_script(0.9), notes="blended\n")
+    # 85% spent -> inside the 20% reserve window from the start
+    searcher, journal, run_dir = make_ensemble_searcher(task, config, backend, spent_frac=0.85)
+    # not yet: fewer than 2 scored candidates
+    assert searcher.decide() == ("draft", None)
+    searcher.run_operator("draft", None)
+    assert searcher.decide()[0] == "draft"  # still 1 candidate short? no: 1 scored
+    searcher.run_operator("draft", None)
+    op, tgt = searcher.decide()
+    assert op == "ensemble"
+    assert tgt.node_id == "n001"  # top candidate (val 0.7) is the lineage parent
+    node = searcher.run_operator(op, tgt)
+    assert node.operator == "ensemble"
+    assert node.status == "ok"
+    # candidates were seeded into the workspace
+    ws = Path(node.workspace)
+    assert (ws / "candidate_1.py").exists() and (ws / "candidate_2.py").exists()
+    # prompt contains the table and the instruction
+    prompt = backend.requests[-1].prompt
+    assert "candidate_1.py" in prompt and "at least two" in prompt
+    # no further ensemble once one succeeded
+    assert searcher._should_ensemble() is False
+
+
+def test_ensemble_not_triggered_outside_window_or_disabled(task, config):
+    backend = FakeBackend()
+    backend.queue(script=distinct_script(0.6), notes="a\n")
+    backend.queue(script=distinct_script(0.7), notes="b\n")
+    searcher, _, _ = make_ensemble_searcher(task, config, backend, spent_frac=0.0)
+    searcher.run_operator("draft", None)
+    searcher.run_operator("draft", None)
+    assert searcher._should_ensemble() is False  # plenty of budget left
+    config.ensemble.enabled = False
+    searcher2, _, _ = make_ensemble_searcher(task, config, backend, spent_frac=0.9)
+    assert searcher2._should_ensemble() is False
+
+
+def test_ensemble_candidates_dedupe_identical_scripts(task, config):
+    backend = FakeBackend()
+    backend.queue(script=ok_script(0.6), notes="a\n")
+    backend.queue(script=ok_script(0.6), notes="identical twin\n")
+    searcher, _, _ = make_ensemble_searcher(task, config, backend, spent_frac=0.85)
+    searcher.run_operator("draft", None)
+    searcher.run_operator("draft", None)
+    assert len(searcher._ensemble_candidates()) == 1  # deduped
+    assert searcher._should_ensemble() is False       # so no ensemble
+
+
+def test_buggy_ensemble_gets_debugged_and_counts_as_success(task, config):
+    backend = FakeBackend()
+    backend.queue(script=distinct_script(0.6), notes="a\n")
+    backend.queue(script=distinct_script(0.7), notes="b\n")
+    backend.queue(script=CRASH_SCRIPT, notes="broken blend\n")
+    backend.queue(script=distinct_script(0.9), notes="fixed blend\n")
+    searcher, journal, _ = make_ensemble_searcher(task, config, backend, spent_frac=0.85)
+    searcher.run_operator("draft", None)
+    searcher.run_operator("draft", None)
+    op, tgt = searcher.decide()
+    assert op == "ensemble"
+    bad = searcher.run_operator(op, tgt)
+    assert bad.status == "buggy"
+    op2, tgt2 = searcher.decide()
+    assert op2 == "debug" and tgt2.node_id == bad.node_id
+    fixed = searcher.run_operator(op2, tgt2)
+    assert fixed.status == "ok"
+    assert searcher._ensemble_succeeded() is True  # via the debug chain root
+
+
+def test_holdout_clause_uses_submission_columns_for_class_targets(tmp_path, config):
+    """spooky-style task: target col `author` is not a submission column, so
+    the clause must direct predictions to submission format, not `author`."""
+    from hillclimb.problem import ProblemSpec
+
+    d = tmp_path / "pub"
+    d.mkdir()
+    rows = "".join(f"{i},x,{a}\n" for i, a in enumerate(["EAP", "HPL", "MWS"] * 10))
+    (d / "train.csv").write_text("id,text,author\n" + rows)
+    (d / "sample_submission.csv").write_text("id,EAP,HPL,MWS\n9,0.3,0.3,0.4\n")
+    (d / "description.md").write_text("d")
+    spec = ProblemSpec(
+        problem_id="t", problem_dir=d, data_dir=d, description="d",
+        metric_name="multi-class-log-loss", lower_is_better=True,
+        sample_submission=d / "sample_submission.csv", time_budget_s=600,
+    )
+    backend = FakeBackend()
+    backend.queue(script=ok_script(0.5), notes="d\n")
+    run_dir = create_run_dir(config.paths.runs_dir, "clause-test")
+    from hillclimb.holdout import build_data_view
+
+    info = build_data_view(d, run_dir, spec.sample_submission, 0.2, 42)
+    searcher = GreedySearcher(
+        problem=spec, config=config, journal=Journal(run_dir / "journal.jsonl"),
+        backend=backend, executor=LocalExecutor(Path(sys.executable)),
+        budget=BudgetManager(600, stop_margin_s=1), run_dir=run_dir,
+        max_nodes=2, log=lambda *_: None, holdout=info,
+    )
+    prompt = searcher.build_prompt("draft", None, "minimal")
+    assert "same prediction columns as submission.csv" in prompt
+    assert "`EAP`" in prompt
+    assert "prediction column(s): `author`" not in prompt
+
+
+def test_stale_pending_node_recovered_on_resume(task, config):
+    """If the orchestrator dies mid-operator, the pending node must be
+    abandoned at next construction, not block the tree forever."""
+    from hillclimb.node import Node
+
+    run_dir = create_run_dir(config.paths.runs_dir, "crash-test")
+    journal = Journal(run_dir / "journal.jsonl")
+    journal.node_created(Node(node_id="n001", operator="draft", workspace=str(run_dir)))
+    assert journal.get("n001").status == "pending"
+
+    backend = FakeBackend()
+    backend.queue(script=ok_script(0.5), notes="post-crash draft\n")
+    searcher = GreedySearcher(
+        problem=task, config=config, journal=journal, backend=backend,
+        executor=LocalExecutor(Path(sys.executable)),
+        budget=BudgetManager(3600, stop_margin_s=1),
+        run_dir=run_dir, max_nodes=2, log=lambda *_: None,
+    )
+    assert journal.get("n001").status == "abandoned"
+    best = searcher.run()  # loop proceeds normally
+    assert best is not None

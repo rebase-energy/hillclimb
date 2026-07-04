@@ -55,6 +55,26 @@ def test_rmse():
     assert score("rmse", answers, preds, "id") == pytest.approx(2.0)
 
 
+def test_nrmse():
+    answers = frame(id=[1, 2], net_load_kwh=[-10.0, 20.0])
+    preds = frame(id=[1, 2], net_load_kwh=[-8.0, 22.0])
+    # rmse 2.0 / mean(|y|) 15.0
+    assert score("nrmse", answers, preds, "id") == pytest.approx(2.0 / 15.0)
+
+
+def test_nrmse_zero_denominator():
+    answers = frame(id=[1, 2], y=[0.0, 0.0])
+    preds = frame(id=[1, 2], y=[1.0, -1.0])
+    with pytest.raises(ScoringError, match="NRMSE undefined"):
+        score("nrmse", answers, preds, "id")
+
+
+def test_nrmse_is_lower_better():
+    from hillclimb.scoring import LOWER_IS_BETTER
+
+    assert "nrmse" in LOWER_IS_BETTER
+
+
 def test_alignment_by_id_not_order():
     answers = frame(id=[1, 2], target=[0, 1])
     preds = frame(id=[2, 1], target=[1, 0])  # reversed order, correct by id
