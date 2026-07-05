@@ -28,6 +28,8 @@ search), or `latest` (the default).
 ```bash
 uv run hillclimb run <problem> --name "Run name" --budget 2h
 uv run hillclimb run problems/demo-suite.yaml --name "Demo"  # one search per suite problem
+uv run hillclimb run emflow://gefcom2014:solar --budget 2h   # emflow problem (agents write Predictors)
+uv run hillclimb run emflow://gefcom2014 --budget 2h         # virtual suite: all variants
 uv run hillclimb run <problem> --backend dummy   # fast no-agent backend for testing
 ```
 

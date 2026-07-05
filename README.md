@@ -60,6 +60,27 @@ Run
 `hillclimb watch` opens on the Runs screen. Metadata carries
 `schema_version: 2`; directories from the pre-v2 flat layout are ignored.
 
+## emflow problems (optional extra)
+
+With the `emflow` extra installed (`pip install 'rebase-hillclimb[emflow]'`),
+targets of the form `emflow://<name>` run problems from
+[emflow](https://github.com/rebase-energy/emflow)'s registry — agents author
+`Predictor` classes (`solution.py` exposing `get_model()`), a generic
+evaluator fits and scores them on the problem's validation split, and the
+hidden holdout is a second evaluator run. A bare package name is a virtual
+suite (one search per variant):
+
+```bash
+uv run hillclimb run emflow://gefcom2014:solar --budget 2h   # one track
+uv run hillclimb run emflow://gefcom2014 --budget 2h         # all four tracks
+```
+
+The baseline candidate (`c000`) is the benchmark's reference model evaluated
+for real, and a finished search ends with one official emflow Verifier run
+(leaderboard row + rank, with `n_trials` recorded for selection honesty).
+Programmatic use: `hillclimb.run_search("emflow://gefcom2014:solar",
+budget_s=7200)`.
+
 ## Defining Problems
 
 A problem is a folder. Users define new problems without changing Python code:
