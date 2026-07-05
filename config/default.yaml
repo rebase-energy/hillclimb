@@ -28,6 +28,10 @@ paths:
   runs_dir: runs
   problems_dir: problems
   runtime_python: .runtime-venv/bin/python
+  emflow_runtime_python: .runtime-venv-emflow/bin/python
   mlebench_python: ../mle-bench/.venv/bin/python
   mlebench_data_dir: null   # null = mlebench's default cache dir
   kaggle_bin: ../mle-bench/.venv/bin/kaggle  # for `hillclimb submit` (late submissions)
+
+emflow:
+  source: -e ../emflow  # local checkout; published installs use the git URL default
