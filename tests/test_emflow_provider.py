@@ -77,3 +77,59 @@ def test_baseline_discovery():
 def test_csv_path_unaffected(config, tmp_path):
     with pytest.raises(FileNotFoundError):
         load_problem("does-not-exist", config)
+
+
+def test_emflow_contract_prompt(econfig):
+    """The emflow contract teaches the Predictor API and never mentions the
+    CSV artifacts; the quantile note reflects the problem."""
+    import sys
+    from pathlib import Path
+
+    from hillclimb.backends.fake import FakeBackend
+    from hillclimb.budget import BudgetManager
+    from hillclimb.executor import LocalExecutor
+    from hillclimb.journal import Journal
+    from hillclimb.search import GreedySearcher
+
+    spec = load_problem("emflow://swedish-temperatures:ar", econfig)
+    search_dir = econfig.paths.runs_dir / "prompt-test"
+    (search_dir / "candidates").mkdir(parents=True)
+    searcher = GreedySearcher(
+        problem=spec, config=econfig, journal=Journal(search_dir / "journal.jsonl"),
+        backend=FakeBackend(), executor=LocalExecutor(Path(sys.executable)),
+        budget=BudgetManager(600, stop_margin_s=1), search_dir=search_dir,
+        log=lambda *_: None,
+    )
+    prompt = searcher.build_prompt("draft", None, "minimal")
+    assert "get_model()" in prompt
+    assert "swedish-temperatures:ar" in prompt
+    assert "FeaturePredictor" in prompt
+    assert 'output_kind = "point"' in prompt  # MAE problem: point forecasts
+    assert "do NOT write\n   `submission.csv`" in prompt.replace("\r", "") or "do NOT write" in prompt
+    assert "matching `./problem/sample_submission.csv`" not in prompt  # CSV contract absent
+    assert "writes `./submission.csv`" not in prompt
+    assert "{{" not in prompt  # all tokens rendered
+
+
+def test_quantile_note_literal():
+    from hillclimb.problem import ProblemSpec
+    from hillclimb.search import GreedySearcher
+
+    note = GreedySearcher._quantile_note
+    spec = ProblemSpec(
+        kind="emflow", problem_id="q", problem_dir=Path("."), data_dir=Path("."),
+        description="", metric_name="pinball", lower_is_better=True,
+        time_budget_s=600, emflow_problem="x",
+        emflow_quantiles=[i / 100 for i in range(1, 100)],
+    )
+    class Stub:  # noqa: N801 — minimal receiver for the unbound method
+        problem = spec
+    rendered = note(Stub())
+    assert "tuple(i / 100 for i in range(1, 100))" in rendered
+    spec2 = spec.model_copy(update={"emflow_quantiles": [0.1, 0.5, 0.9]})
+    class Stub2:
+        problem = spec2
+    assert "(0.1, 0.5, 0.9)" in note(Stub2())
+
+
+from pathlib import Path  # noqa: E402

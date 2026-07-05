@@ -83,6 +83,7 @@ def load_emflow_problem(name: str, config: Config) -> ProblemSpec:
     problem.load_dataset()  # pre-warm the HF cache so agent-time evals run offline
     cache_root = config.paths.runs_dir.parent / "cache"
     problem_dir = materialize_problem_dir(problem, name, cache_root)
+    quantiles = getattr(problem.env("validation"), "quantiles", None)
     return ProblemSpec(
         kind="emflow",
         problem_id=_slug(name),
@@ -97,6 +98,7 @@ def load_emflow_problem(name: str, config: Config) -> ProblemSpec:
         holdout_mode="evaluator",
         emflow_problem=name,
         emflow_baseline=_find_baseline(name),
+        emflow_quantiles=list(quantiles) if quantiles else None,
     )
 
 

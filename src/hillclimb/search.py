@@ -512,8 +512,9 @@ class GreedySearcher:
             if self.problem.allow_network
             else "Assume no internet access at execution time."
         )
+        contract_template = "contract_emflow" if self.problem.kind == "emflow" else "contract"
         contract = render(
-            "contract",
+            contract_template,
             metric_name=self.problem.metric_name,
             exec_timeout_min=self.config.budget.exec_timeout_s // 60,
             runtime_pkgs=self._runtime_pkgs(),
@@ -521,6 +522,8 @@ class GreedySearcher:
             holdout_clause=holdout_clause,
             network_note=network_note,
             verifier_clause=self._verifier_clause(),
+            emflow_problem=self.problem.emflow_problem or "",
+            quantile_note=self._quantile_note(),
         )
         direction = "lower is better" if self.problem.lower_is_better else "higher is better"
         if operator == "draft":
@@ -597,6 +600,21 @@ class GreedySearcher:
         if problems:
             return "The script ran to completion but violated the contract: " + "; ".join(problems) + "."
         return "The script failed."
+
+    def _quantile_note(self) -> str:
+        """Class-attribute stanza for the emflow contract's Predictor stub."""
+        q = self.problem.emflow_quantiles
+        if not q:
+            return '# output_kind = "point" (default): predictions carry one "point" column'
+        grid = [i / 100 for i in range(1, 100)]
+        if [round(v, 6) for v in q] == [round(v, 6) for v in grid]:
+            literal = "tuple(i / 100 for i in range(1, 100))"
+        else:
+            literal = "(" + ", ".join(f"{v:g}" for v in q) + ")"
+        return (
+            'output_kind = "quantiles"\n'
+            f"    quantiles = {literal}  # {len(q)} levels — prediction columns must match exactly"
+        )
 
     def _verifier_clause(self) -> str:
         if self.problem.verifier is None:

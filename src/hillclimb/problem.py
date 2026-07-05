@@ -40,6 +40,7 @@ class ProblemSpec(BaseModel):
     allow_network: bool = False
     emflow_problem: str | None = None   # registry name, e.g. "gefcom2014:solar"
     emflow_baseline: str | None = None  # module exposing get_model(), if any
+    emflow_quantiles: list[float] | None = None  # probabilistic problems only
 
 
 class SuiteSpec(BaseModel):
