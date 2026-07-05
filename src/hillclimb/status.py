@@ -9,7 +9,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from hillclimb.budget import BudgetManager
-from hillclimb.node import utcnow
+from hillclimb.candidate import utcnow
 
 STATUS_FILE = "status.json"
 
@@ -30,15 +30,18 @@ class BudgetStatus(BaseModel):
     remaining_s: float = 0.0
 
 
-class NodeCounts(BaseModel):
+class CandidateCounts(BaseModel):
+    """Counts candidates, not trials — revisit if a tuning loop adds
+    multiple trials per candidate."""
+
     total: int = 0
     ok: int = 0
     buggy: int = 0
     pruned: int = 0
 
 
-class CurrentNode(BaseModel):
-    node_id: str
+class CurrentCandidate(BaseModel):
+    candidate_id: str
     operator: str
     phase: str  # agent | exec
     workspace: str
@@ -47,39 +50,40 @@ class CurrentNode(BaseModel):
 
 
 class ScoreRef(BaseModel):
-    node_id: str
+    candidate_id: str
     val_score: float | None = None
     holdout_score: float | None = None
 
 
-class RunStatus(BaseModel):
-    run_id: str
+class SearchStatus(BaseModel):
+    search_id: str
+    run_id: str = ""
     state: str = "running"  # one of WRITTEN_STATES
     pid: int | None = None
     started_at: str = Field(default_factory=utcnow)
     updated_at: str = Field(default_factory=utcnow)
     heartbeat_interval_s: int = HEARTBEAT_INTERVAL_S
     budget: BudgetStatus = Field(default_factory=BudgetStatus)
-    nodes: NodeCounts = Field(default_factory=NodeCounts)
-    current: CurrentNode | None = None
+    candidates: CandidateCounts = Field(default_factory=CandidateCounts)
+    current: CurrentCandidate | None = None
     best: ScoreRef | None = None
     selected: ScoreRef | None = None
     last_error: str | None = None
 
 
-def write_status(run_dir: Path, status: RunStatus) -> None:
+def write_status(search_dir: Path, status: SearchStatus) -> None:
     """Atomic write so readers never see a half-written file."""
-    tmp = run_dir / (STATUS_FILE + ".tmp")
+    tmp = search_dir / (STATUS_FILE + ".tmp")
     tmp.write_text(status.model_dump_json(indent=2))
-    os.replace(tmp, run_dir / STATUS_FILE)
+    os.replace(tmp, search_dir / STATUS_FILE)
 
 
-def read_status(run_dir: Path) -> RunStatus | None:
-    path = run_dir / STATUS_FILE
+def read_status(search_dir: Path) -> SearchStatus | None:
+    path = search_dir / STATUS_FILE
     if not path.exists():
         return None
     try:
-        return RunStatus.model_validate_json(path.read_text())
+        return SearchStatus.model_validate_json(path.read_text())
     except (json.JSONDecodeError, ValueError):
         return None
 
@@ -103,14 +107,14 @@ def _age_s(iso: str) -> float:
     return (datetime.now(timezone.utc) - then).total_seconds()
 
 
-def effective_state(run_dir: Path) -> str:
-    """What a reader should believe about this run.
+def effective_state(search_dir: Path) -> str:
+    """What a reader should believe about this search.
 
     `running` requires the engine's own claim AND a live pid AND a fresh
-    heartbeat (defends against PID reuse); otherwise the run `crashed`.
-    Runs predating status.json report `unknown`.
+    heartbeat (defends against PID reuse); otherwise the search `crashed`.
+    Searches predating status.json report `unknown`.
     """
-    status = read_status(run_dir)
+    status = read_status(search_dir)
     if status is None:
         return "unknown"
     if status.state != "running":
@@ -127,14 +131,14 @@ def effective_state(run_dir: Path) -> str:
 
 
 class StatusWriter:
-    """Single writer of a run's status.json, owned by the engine process.
+    """Single writer of a search's status.json, owned by the engine process.
 
     Thread-safe because the heartbeat runs on a daemon thread while the
     search loop updates fields from the main thread.
     """
 
-    def __init__(self, run_dir: Path, status: RunStatus, budget: BudgetManager | None = None):
-        self.run_dir = run_dir
+    def __init__(self, search_dir: Path, status: SearchStatus, budget: BudgetManager | None = None):
+        self.search_dir = search_dir
         self.status = status
         self.budget = budget
         self._lock = threading.Lock()
@@ -150,7 +154,7 @@ class StatusWriter:
                 spent_s=round(self.budget.elapsed(), 1),
                 remaining_s=round(self.budget.remaining(), 1),
             )
-        write_status(self.run_dir, self.status)
+        write_status(self.search_dir, self.status)
 
     def update(self, **fields) -> None:
         with self._lock:

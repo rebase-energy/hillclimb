@@ -130,7 +130,7 @@ def _resolve_columns(
 
 def build_data_view(
     public_dir: Path,
-    run_dir: Path,
+    search_dir: Path,
     sample_submission: Path,
     fraction: float,
     seed: int,
@@ -140,10 +140,10 @@ def build_data_view(
 
     Returns None (holdout disabled, callers fall back to the raw public dir)
     when there is no train.csv or target inference fails. Idempotent: an
-    existing complete data-view is reused so `resume` keeps node lineage.
+    existing complete data-view is reused so `resume` keeps candidate lineage.
     """
-    data_view = run_dir / DATA_VIEW_DIRNAME
-    answers_path = run_dir / ANSWERS_FILENAME
+    data_view = search_dir / DATA_VIEW_DIRNAME
+    answers_path = search_dir / ANSWERS_FILENAME
     train_path = public_dir / "train.csv"
     if not train_path.exists():
         logger.warning("holdout disabled: no train.csv in %s", public_dir)
@@ -172,9 +172,9 @@ def build_data_view(
         "drop_cols": drop_cols,
     }
 
-    meta_path = run_dir / META_FILENAME
+    meta_path = search_dir / META_FILENAME
     if answers_path.exists() and (data_view / "holdout.csv").exists():
-        # Never rebuild an existing view: earlier nodes were scored against the
+        # Never rebuild an existing view: earlier candidates were scored against the
         # old answers, so a rebuild mid-run would corrupt the lineage.
         if meta_path.exists():
             recorded = json.loads(meta_path.read_text())

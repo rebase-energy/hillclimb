@@ -16,6 +16,9 @@ class BudgetConfig(BaseModel):
 
 
 class SearchConfig(BaseModel):
+    """Policy knobs for one Search (the `search:` config block), not the
+    Search entity itself — that lives in run.py as SearchMeta."""
+
     num_drafts: int = 3
     max_debug_depth: int = 3
 

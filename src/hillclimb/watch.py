@@ -1,8 +1,8 @@
 """`hillclimb watch` — live TUI over the runs directory.
 
-Strictly a *viewer*: all state is read from disk (run.yaml, status.json,
-journal.jsonl, agent_stream.jsonl) and the only writes go through the
-control-command queue in hillclimb.control, same as the CLI. The pure
+Strictly a *viewer*: all state is read from disk (run.yaml, search.yaml,
+status.json, journal.jsonl, agent_stream.jsonl) and the only writes go through
+the control-command queue in hillclimb.control, same as the CLI. The pure
 data-assembly functions at the top carry the logic so they stay testable
 without driving Textual.
 """
@@ -13,18 +13,16 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-import yaml
-
+from hillclimb.candidate import Candidate
 from hillclimb.config import Config
 from hillclimb.control import request_prune, request_stop
-from hillclimb.experiment import (
-    LEGACY_EXPERIMENT_ID,
-    LEGACY_EXPERIMENT_NAME,
-    ExperimentMeta,
-    load_experiments,
-)
 from hillclimb.journal import Journal
-from hillclimb.node import Node
+from hillclimb.run import (
+    iter_run_dirs,
+    iter_search_dirs,
+    load_run_meta,
+    load_search_meta,
+)
 from hillclimb.status import effective_state, read_status
 
 STATE_STYLE = {
@@ -49,11 +47,11 @@ STATUS_STYLE = {
 
 
 @dataclass
-class ExperimentRow:
-    experiment_id: str
+class RunRow:
+    run_id: str
     name: str
     state: str
-    problem_runs: str
+    searches: str
     candidates: str
     selected: str
     budget_left: str
@@ -61,8 +59,8 @@ class ExperimentRow:
 
 
 @dataclass
-class ProblemRunRow:
-    run_id: str
+class SearchRow:
+    search_id: str
     problem: str
     model: str
     state: str
@@ -73,8 +71,8 @@ class ProblemRunRow:
 
 
 @dataclass
-class NodeRow:
-    node_id: str
+class CandidateRow:
+    candidate_id: str
     label: str  # indent + id
     operator: str
     status: str
@@ -87,19 +85,6 @@ class NodeRow:
 
 def _fmt(value: float | None) -> str:
     return f"{value:.5g}" if value is not None else "-"
-
-
-def _iter_run_dirs(runs_dir: Path) -> list[Path]:
-    if not runs_dir.exists():
-        return []
-    return sorted(
-        (d for d in runs_dir.iterdir() if (d / "run.yaml").exists()),
-        reverse=True,
-    )
-
-
-def _experiment_for_run(meta: dict) -> str:
-    return str(meta.get("experiment_id") or LEGACY_EXPERIMENT_ID)
 
 
 def _format_budget_left(seconds: float | None) -> str:
@@ -120,57 +105,50 @@ def _state_summary(states: list[str]) -> str:
     return states[0]
 
 
-def _problem_run_row(run_dir: Path) -> ProblemRunRow:
-    meta = _run_meta(run_dir)
-    status = read_status(run_dir)
-    journal = Journal(run_dir / "journal.jsonl")
-    n_ok = sum(1 for n in journal.nodes.values() if n.status == "ok")
+def _search_row(search_dir: Path) -> SearchRow:
+    meta = load_search_meta(search_dir)
+    status = read_status(search_dir)
+    journal = Journal(search_dir / "journal.jsonl")
+    n_ok = sum(1 for c in journal.candidates.values() if c.status == "ok")
     if status is not None:
         best_val = _fmt(status.best.val_score) if status.best else "-"
         selected = (
-            f"{status.selected.node_id} ({_fmt(status.selected.holdout_score or status.selected.val_score)})"
+            f"{status.selected.candidate_id} "
+            f"({_fmt(status.selected.holdout_score or status.selected.val_score)})"
             if status.selected
             else "-"
         )
         budget_left = _format_budget_left(status.budget.remaining_s)
     else:
         best_val, selected, budget_left = "-", "-", "-"
-    return ProblemRunRow(
-        run_id=run_dir.name,
-        problem=str(meta.get("problem_id") or meta.get("task") or meta.get("problem", "?")),
-        model=str(meta.get("model", "?")),
-        state=effective_state(run_dir),
-        candidates=f"{len(journal.nodes)} ({n_ok} ok)",
+    return SearchRow(
+        search_id=search_dir.name,
+        problem=meta.problem_id if meta else search_dir.name,
+        model=meta.model if meta else "?",
+        state=effective_state(search_dir),
+        candidates=f"{len(journal.candidates)} ({n_ok} ok)",
         best_val=best_val,
         selected=selected,
         budget_left=budget_left,
     )
 
 
-def scan_problem_runs(runs_dir: Path, experiment_id: str) -> list[ProblemRunRow]:
-    rows = []
-    for run_dir in _iter_run_dirs(runs_dir):
-        meta = _run_meta(run_dir)
-        if _experiment_for_run(meta) == experiment_id:
-            rows.append(_problem_run_row(run_dir))
-    return rows
+def scan_searches(run_dir: Path) -> list[SearchRow]:
+    return [_search_row(search_dir) for search_dir in iter_search_dirs(run_dir)]
 
 
-def _experiment_row(
-    experiment_id: str,
-    name: str,
-    started: str,
-    run_dirs: list[Path],
-) -> ExperimentRow:
-    states = [effective_state(run_dir) for run_dir in run_dirs]
+def _run_row(run_dir: Path) -> RunRow:
+    meta = load_run_meta(run_dir)
+    search_dirs = iter_search_dirs(run_dir)
+    states = [effective_state(search_dir) for search_dir in search_dirs]
     candidate_total = 0
     selected_count = 0
     remaining_s = 0.0
     has_budget = False
-    for run_dir in run_dirs:
-        journal = Journal(run_dir / "journal.jsonl")
-        candidate_total += len(journal.nodes)
-        status = read_status(run_dir)
+    for search_dir in search_dirs:
+        journal = Journal(search_dir / "journal.jsonl")
+        candidate_total += len(journal.candidates)
+        status = read_status(search_dir)
         if status is None:
             continue
         if status.selected is not None:
@@ -178,12 +156,13 @@ def _experiment_row(
         remaining_s += status.budget.remaining_s
         has_budget = True
     running = sum(1 for state in states if state == "running")
-    problem_runs = f"{len(run_dirs)}" + (f" ({running} running)" if running else "")
-    return ExperimentRow(
-        experiment_id=experiment_id,
-        name=name,
+    searches = f"{len(search_dirs)}" + (f" ({running} running)" if running else "")
+    started = meta.started_at if meta else ""
+    return RunRow(
+        run_id=run_dir.name,
+        name=meta.name if meta else run_dir.name,
         state=_state_summary(states),
-        problem_runs=problem_runs,
+        searches=searches,
         candidates=str(candidate_total),
         selected=f"{selected_count} selected" if selected_count else "-",
         budget_left=_format_budget_left(remaining_s if has_budget else None),
@@ -191,90 +170,56 @@ def _experiment_row(
     )
 
 
-def scan_experiments(runs_dir: Path) -> list[ExperimentRow]:
-    metas = load_experiments(runs_dir)
-    by_experiment: dict[str, list[Path]] = {experiment_id: [] for experiment_id in metas}
-    legacy_runs: list[Path] = []
-    for run_dir in _iter_run_dirs(runs_dir):
-        experiment_id = _experiment_for_run(_run_meta(run_dir))
-        if experiment_id == LEGACY_EXPERIMENT_ID:
-            legacy_runs.append(run_dir)
-        else:
-            by_experiment.setdefault(experiment_id, []).append(run_dir)
-
-    rows = []
-    for experiment_id, run_dirs in by_experiment.items():
-        meta = metas.get(experiment_id)
-        if meta is None:
-            meta = ExperimentMeta(
-                experiment_id=experiment_id,
-                name=experiment_id,
-                target="",
-            )
-        rows.append(
-            _experiment_row(
-                experiment_id,
-                meta.name,
-                meta.started_at,
-                run_dirs,
-            )
-        )
-    if legacy_runs:
-        rows.append(
-            _experiment_row(
-                LEGACY_EXPERIMENT_ID,
-                LEGACY_EXPERIMENT_NAME,
-                "",
-                legacy_runs,
-            )
-        )
+def scan_runs(runs_dir: Path) -> list[RunRow]:
+    rows = [_run_row(run_dir) for run_dir in iter_run_dirs(runs_dir)]
     return sorted(rows, key=lambda row: row.started if row.started != "-" else "", reverse=True)
 
 
-def _tree_order(journal: Journal) -> list[tuple[Node, int]]:
-    """Depth-first (node, depth) pairs so children render under parents."""
-    by_parent: dict[str | None, list[Node]] = {}
-    for node in journal.nodes.values():
-        by_parent.setdefault(node.parent_id, []).append(node)
+def _tree_order(journal: Journal) -> list[tuple[Candidate, int]]:
+    """Depth-first (candidate, depth) pairs so children render under parents."""
+    by_parent: dict[str | None, list[Candidate]] = {}
+    for candidate in journal.candidates.values():
+        by_parent.setdefault(candidate.parent_id, []).append(candidate)
     for children in by_parent.values():
-        children.sort(key=lambda n: n.node_id)
-    ordered: list[tuple[Node, int]] = []
+        children.sort(key=lambda c: c.candidate_id)
+    ordered: list[tuple[Candidate, int]] = []
 
     def visit(parent_id: str | None, depth: int) -> None:
-        for node in by_parent.get(parent_id, []):
-            ordered.append((node, depth))
-            visit(node.node_id, depth + 1)
+        for candidate in by_parent.get(parent_id, []):
+            ordered.append((candidate, depth))
+            visit(candidate.candidate_id, depth + 1)
 
     visit(None, 0)
     # orphans (parent vanished from the journal) still get shown
-    seen = {n.node_id for n, _ in ordered}
-    ordered.extend((n, 0) for n in journal.nodes.values() if n.node_id not in seen)
+    seen = {c.candidate_id for c, _ in ordered}
+    ordered.extend((c, 0) for c in journal.candidates.values() if c.candidate_id not in seen)
     return ordered
 
 
-def node_rows(journal: Journal) -> list[NodeRow]:
+def candidate_rows(journal: Journal) -> list[CandidateRow]:
     rows = []
-    for node, depth in _tree_order(journal):
+    for candidate, depth in _tree_order(journal):
         marks = []
-        if node.is_selected and not node.pruned:
+        if candidate.is_selected and not candidate.pruned:
             marks.append("SELECTED")
-        if node.is_best:
+        if candidate.is_best:
             marks.append("best-val")
-        if node.pruned:
+        if candidate.pruned:
             marks.append("PRUNED")
-        style = "dim strike" if node.pruned else STATUS_STYLE.get(node.status, "")
-        if node.is_selected and not node.pruned:
+        style = "dim strike" if candidate.pruned else STATUS_STYLE.get(candidate.status, "")
+        if candidate.is_selected and not candidate.pruned:
             style = "bold gold1"
         rows.append(
-            NodeRow(
-                node_id=node.node_id,
-                label="  " * depth + node.node_id,
-                operator=node.operator + (f"/{node.complexity}" if node.complexity else ""),
-                status=node.status,
-                val=_fmt(node.val_score),
-                hold=_fmt(node.holdout_score),
+            CandidateRow(
+                candidate_id=candidate.candidate_id,
+                label="  " * depth + candidate.candidate_id,
+                operator=candidate.operator
+                + (f"/{candidate.complexity}" if candidate.complexity else ""),
+                status=candidate.status,
+                val=_fmt(candidate.val_score),
+                hold=_fmt(candidate.holdout_score),
                 marks=" ".join(marks),
-                summary=(node.summary or "").strip()[:60],
+                summary=(candidate.summary or "").strip()[:60],
                 style=style,
             )
         )
@@ -329,73 +274,86 @@ def _tail_text(path: Path, max_chars: int = 4000) -> str:
     return text[-max_chars:].strip()
 
 
-def _node_workspace(run_dir: Path, node: Node) -> Path:
-    return Path(node.workspace) if node.workspace else run_dir / "nodes" / node.node_id
+def _candidate_workspace(search_dir: Path, candidate: Candidate) -> Path:
+    if candidate.workspace:
+        return Path(candidate.workspace)
+    return search_dir / "candidates" / candidate.candidate_id
 
 
-def _node_marks(node: Node) -> str:
+def _candidate_marks(candidate: Candidate) -> str:
     marks = []
-    if node.is_selected and not node.pruned:
+    if candidate.is_selected and not candidate.pruned:
         marks.append("selected")
-    if node.is_best:
+    if candidate.is_best:
         marks.append("best-val")
-    if node.pruned:
+    if candidate.pruned:
         marks.append("pruned")
     return ", ".join(marks) if marks else "-"
 
 
-def _ancestry(journal: Journal, node: Node) -> list[str]:
-    lineage = [node.node_id]
-    seen = {node.node_id}
-    parent_id = node.parent_id
-    while parent_id and parent_id not in seen and parent_id in journal.nodes:
+def _ancestry(journal: Journal, candidate: Candidate) -> list[str]:
+    lineage = [candidate.candidate_id]
+    seen = {candidate.candidate_id}
+    parent_id = candidate.parent_id
+    while parent_id and parent_id not in seen and parent_id in journal.candidates:
         lineage.insert(0, parent_id)
         seen.add(parent_id)
-        parent_id = journal.nodes[parent_id].parent_id
-    if parent_id and parent_id not in journal.nodes:
+        parent_id = journal.candidates[parent_id].parent_id
+    if parent_id and parent_id not in journal.candidates:
         lineage.insert(0, f"{parent_id} (missing)")
     return lineage
 
 
-def candidate_detail_lines(run_dir: Path, journal: Journal, node_id: str) -> list[str]:
-    node = journal.nodes.get(node_id)
-    if node is None:
-        return [f"Candidate {node_id} is no longer in the journal."]
-
-    meta = _run_meta(run_dir)
-    lower = bool(meta.get("lower_is_better", False))
-    metric = str(meta.get("metric", "score"))
+def _metric_context(search_dir: Path) -> tuple[str, str]:
+    meta = load_search_meta(search_dir)
+    lower = bool(meta.lower_is_better) if meta else False
+    metric = meta.metric if meta else "score"
     direction = "lower is better" if lower else "higher is better"
-    operator = node.operator + (f"/{node.complexity}" if node.complexity else "")
-    workspace = _node_workspace(run_dir, node)
-    children = journal.children(node.node_id, include_pruned=True)
-    parent = node.parent_id if node.parent_id else "root"
-    duration = f"{node.execution.duration_s:.5g}s" if node.execution.duration_s is not None else "-"
+    return metric, direction
+
+
+def candidate_detail_lines(search_dir: Path, journal: Journal, candidate_id: str) -> list[str]:
+    candidate = journal.candidates.get(candidate_id)
+    if candidate is None:
+        return [f"Candidate {candidate_id} is no longer in the journal."]
+
+    metric, direction = _metric_context(search_dir)
+    operator = candidate.operator + (f"/{candidate.complexity}" if candidate.complexity else "")
+    workspace = _candidate_workspace(search_dir, candidate)
+    children = journal.children(candidate.candidate_id, include_pruned=True)
+    parent = candidate.parent_id if candidate.parent_id else "root"
+    trial = candidate.last_trial
 
     lines = [
-        f"Candidate {node.node_id} | {operator} | {node.status}",
-        f"Score: val={_fmt(node.val_score)}  holdout={_fmt(node.holdout_score)}  metric={metric} ({direction})",
-        f"Marks: {_node_marks(node)}",
-        f"Parent: {parent}  Children: {len(children)}  Path: {' -> '.join(_ancestry(journal, node))}",
-        (
-            "Execution: "
-            f"returncode={node.execution.returncode if node.execution.returncode is not None else '-'}  "
-            f"duration={duration}  "
-            f"timed_out={node.execution.timed_out}  "
-            f"submission_ok={node.execution.submission_ok}"
-        ),
+        f"Candidate {candidate.candidate_id} | {operator} | {candidate.status}",
+        f"Score: val={_fmt(candidate.val_score)}  holdout={_fmt(candidate.holdout_score)}  "
+        f"metric={metric} ({direction})",
+        f"Marks: {_candidate_marks(candidate)}",
+        f"Parent: {parent}  Children: {len(children)}  "
+        f"Path: {' -> '.join(_ancestry(journal, candidate))}",
     ]
-    if node.execution.holdout_error:
-        lines.append(f"Holdout error: {node.execution.holdout_error}")
-    if node.backend.name or node.backend.session_id or node.backend.error_kind:
-        cost = f"${node.backend.cost_usd:.2f}" if node.backend.cost_usd is not None else "-"
+    if trial is not None:
+        duration = f"{trial.duration_s:.5g}s" if trial.duration_s is not None else "-"
+        lines.append(
+            "Trial: "
+            f"returncode={trial.returncode if trial.returncode is not None else '-'}  "
+            f"duration={duration}  "
+            f"timed_out={trial.timed_out}  "
+            f"submission_ok={trial.submission_ok}"
+        )
+        if trial.holdout_error:
+            lines.append(f"Holdout error: {trial.holdout_error}")
+    else:
+        lines.append("Trial: (not executed)")
+    if candidate.backend.name or candidate.backend.session_id or candidate.backend.error_kind:
+        cost = f"${candidate.backend.cost_usd:.2f}" if candidate.backend.cost_usd is not None else "-"
         lines.append(
             "Backend: "
-            f"{node.backend.name or '-'}  "
-            f"session={node.backend.session_id or '-'}  "
-            f"turns={node.backend.num_turns if node.backend.num_turns is not None else '-'}  "
+            f"{candidate.backend.name or '-'}  "
+            f"session={candidate.backend.session_id or '-'}  "
+            f"turns={candidate.backend.num_turns if candidate.backend.num_turns is not None else '-'}  "
             f"cost={cost}  "
-            f"error={node.backend.error_kind or '-'}"
+            f"error={candidate.backend.error_kind or '-'}"
         )
 
     if children:
@@ -403,13 +361,13 @@ def candidate_detail_lines(run_dir: Path, journal: Journal, node_id: str) -> lis
         for child in children[:12]:
             child_op = child.operator + (f"/{child.complexity}" if child.complexity else "")
             lines.append(
-                f"  {child.node_id}  {child_op}  {child.status}  val={_fmt(child.val_score)}"
+                f"  {child.candidate_id}  {child_op}  {child.status}  val={_fmt(child.val_score)}"
                 + ("  PRUNED" if child.pruned else "")
             )
         if len(children) > 12:
             lines.append(f"  ... {len(children) - 12} more")
 
-    notes = _tail_text(workspace / "notes.md", max_chars=3000) or node.summary.strip()
+    notes = _tail_text(workspace / "notes.md", max_chars=3000) or candidate.summary.strip()
     if notes:
         lines += ["", "Notes:", notes]
 
@@ -449,27 +407,24 @@ def _plain_text(value: str, style: str = ""):
     return Text(value, style=style)
 
 
-def candidate_detail_renderables(run_dir: Path, journal: Journal, node_id: str) -> list[object]:
+def candidate_detail_renderables(search_dir: Path, journal: Journal, candidate_id: str) -> list[object]:
     from rich.console import Group
     from rich.panel import Panel
     from rich.table import Table
     from rich.text import Text
 
-    node = journal.nodes.get(node_id)
-    if node is None:
-        return [Panel(Text(f"Candidate {node_id} is no longer in the journal.", style="red"))]
+    candidate = journal.candidates.get(candidate_id)
+    if candidate is None:
+        return [Panel(Text(f"Candidate {candidate_id} is no longer in the journal.", style="red"))]
 
-    meta = _run_meta(run_dir)
-    lower = bool(meta.get("lower_is_better", False))
-    metric = str(meta.get("metric", "score"))
-    direction = "lower is better" if lower else "higher is better"
-    operator = node.operator + (f"/{node.complexity}" if node.complexity else "")
-    workspace = _node_workspace(run_dir, node)
-    children = journal.children(node.node_id, include_pruned=True)
-    parent = node.parent_id if node.parent_id else "root"
-    duration = f"{node.execution.duration_s:.5g}s" if node.execution.duration_s is not None else "-"
-    title_style = "dim" if node.pruned else STATUS_STYLE.get(node.status, "")
-    border_style = "red" if node.status == "buggy" else "yellow" if node.pruned else "cyan"
+    metric, direction = _metric_context(search_dir)
+    operator = candidate.operator + (f"/{candidate.complexity}" if candidate.complexity else "")
+    workspace = _candidate_workspace(search_dir, candidate)
+    children = journal.children(candidate.candidate_id, include_pruned=True)
+    parent = candidate.parent_id if candidate.parent_id else "root"
+    trial = candidate.last_trial
+    title_style = "dim" if candidate.pruned else STATUS_STYLE.get(candidate.status, "")
+    border_style = "red" if candidate.status == "buggy" else "yellow" if candidate.pruned else "cyan"
 
     overview = Table.grid(expand=True)
     overview.add_column("label", style="dim", ratio=1)
@@ -478,49 +433,60 @@ def candidate_detail_renderables(run_dir: Path, journal: Journal, node_id: str) 
     overview.add_column("value", ratio=3)
     overview.add_row(
         "candidate",
-        Text(node.node_id, style=f"bold {title_style}".strip()),
+        Text(candidate.candidate_id, style=f"bold {title_style}".strip()),
         "operator",
         Text(operator, style="bold"),
     )
-    overview.add_row("status", _status_text(node.status), "marks", Text(_node_marks(node), style="gold1"))
+    overview.add_row(
+        "status", _status_text(candidate.status), "marks", Text(_candidate_marks(candidate), style="gold1")
+    )
     overview.add_row("metric", Text(f"{metric} ({direction})"), "parent", Text(parent, style="cyan"))
     overview.add_row(
         "val",
-        _score_text(node.val_score, selected=node.is_selected, best=node.is_best),
+        _score_text(candidate.val_score, selected=candidate.is_selected, best=candidate.is_best),
         "holdout",
-        _score_text(node.holdout_score, selected=node.is_selected),
+        _score_text(candidate.holdout_score, selected=candidate.is_selected),
     )
     overview.add_row(
         "children",
         Text(str(len(children)), style="cyan" if children else "dim"),
         "path",
-        Text(" -> ".join(_ancestry(journal, node)), style="cyan"),
+        Text(" -> ".join(_ancestry(journal, candidate)), style="cyan"),
     )
-    overview.add_row(
-        "returncode",
-        Text(str(node.execution.returncode) if node.execution.returncode is not None else "-", style="dim"),
-        "duration",
-        Text(duration, style="cyan" if node.execution.duration_s is not None else "dim"),
-    )
-    overview.add_row(
-        "timed out",
-        Text(str(node.execution.timed_out), style="red" if node.execution.timed_out else "dim"),
-        "submission",
-        Text("ok" if node.execution.submission_ok else "-", style="green" if node.execution.submission_ok else "dim"),
-    )
-    if node.execution.holdout_error:
-        overview.add_row("holdout error", Text(node.execution.holdout_error, style="yellow"), "", "")
-    if node.backend.name or node.backend.session_id or node.backend.error_kind:
-        cost = f"${node.backend.cost_usd:.2f}" if node.backend.cost_usd is not None else "-"
+    if trial is not None:
+        duration = f"{trial.duration_s:.5g}s" if trial.duration_s is not None else "-"
+        overview.add_row(
+            "returncode",
+            Text(str(trial.returncode) if trial.returncode is not None else "-", style="dim"),
+            "duration",
+            Text(duration, style="cyan" if trial.duration_s is not None else "dim"),
+        )
+        overview.add_row(
+            "timed out",
+            Text(str(trial.timed_out), style="red" if trial.timed_out else "dim"),
+            "submission",
+            Text("ok" if trial.submission_ok else "-", style="green" if trial.submission_ok else "dim"),
+        )
+        if trial.holdout_error:
+            overview.add_row("holdout error", Text(trial.holdout_error, style="yellow"), "", "")
+    else:
+        overview.add_row("trial", Text("(not executed)", style="dim"), "", "")
+    if candidate.backend.name or candidate.backend.session_id or candidate.backend.error_kind:
+        cost = f"${candidate.backend.cost_usd:.2f}" if candidate.backend.cost_usd is not None else "-"
         backend = (
-            f"{node.backend.name or '-'}  session={node.backend.session_id or '-'}  "
-            f"turns={node.backend.num_turns if node.backend.num_turns is not None else '-'}  "
-            f"cost={cost}  error={node.backend.error_kind or '-'}"
+            f"{candidate.backend.name or '-'}  session={candidate.backend.session_id or '-'}  "
+            f"turns={candidate.backend.num_turns if candidate.backend.num_turns is not None else '-'}  "
+            f"cost={cost}  error={candidate.backend.error_kind or '-'}"
         )
         overview.add_row("backend", Text(backend), "", "")
 
     renderables: list[object] = [
-        Panel(overview, title=f"Candidate {node.node_id}", title_align="left", border_style=border_style)
+        Panel(
+            overview,
+            title=f"Candidate {candidate.candidate_id}",
+            title_align="left",
+            border_style=border_style,
+        )
     ]
 
     if children:
@@ -533,18 +499,18 @@ def candidate_detail_renderables(run_dir: Path, journal: Journal, node_id: str) 
         for child in children[:12]:
             child_op = child.operator + (f"/{child.complexity}" if child.complexity else "")
             child_table.add_row(
-                child.node_id,
+                child.candidate_id,
                 child_op,
                 _status_text(child.status),
                 _score_text(child.val_score, selected=child.is_selected, best=child.is_best),
-                Text(_node_marks(child), style="gold1" if not child.pruned else "dim"),
+                Text(_candidate_marks(child), style="gold1" if not child.pruned else "dim"),
                 style="dim" if child.pruned else "",
             )
         if len(children) > 12:
             child_table.add_row(f"... {len(children) - 12} more", "", "", "", "", style="dim")
         renderables.append(child_table)
 
-    notes = _tail_text(workspace / "notes.md", max_chars=3000) or node.summary.strip()
+    notes = _tail_text(workspace / "notes.md", max_chars=3000) or candidate.summary.strip()
     if notes:
         renderables.append(
             Panel(Text(notes), title="Notes", title_align="left", border_style="green")
@@ -575,13 +541,13 @@ def candidate_detail_renderables(run_dir: Path, journal: Journal, node_id: str) 
     return renderables
 
 
-def _run_meta(run_dir: Path) -> dict:
-    path = run_dir / "run.yaml"
-    return (yaml.safe_load(path.read_text()) or {}) if path.exists() else {}
+def _lower_is_better(config: Config, search_dir: Path) -> bool:
+    meta = load_search_meta(search_dir)
+    return bool(meta.lower_is_better) if meta else False
 
 
-def _lower_is_better(config: Config, run_dir: Path) -> bool:
-    return bool(_run_meta(run_dir).get("lower_is_better", False))
+def _search_ref(search_dir: Path) -> str:
+    return f"{search_dir.parents[1].name}/{search_dir.name}"
 
 
 # --- Textual app ---
@@ -726,7 +692,7 @@ class DetailDivider(Static):
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
         screen = self.screen
-        if getattr(screen, "_detail_node_id", None) is None:
+        if getattr(screen, "_detail_candidate_id", None) is None:
             return
         screen._begin_detail_drag(_mouse_event_y(event))
         self.capture_mouse()
@@ -764,7 +730,7 @@ class CandidateHorizontalScrollBar(ScrollBar):
 
     async def _on_mouse_down(self, event: events.MouseDown) -> None:
         screen = self.screen
-        if getattr(screen, "_detail_node_id", None) is None:
+        if getattr(screen, "_detail_candidate_id", None) is None:
             await super()._on_mouse_down(event)
             return
         self._drag_active = True
@@ -779,7 +745,7 @@ class CandidateHorizontalScrollBar(ScrollBar):
         if not self._drag_active:
             await super()._on_mouse_move(event)
             return
-        if getattr(screen, "_detail_node_id", None) is None:
+        if getattr(screen, "_detail_candidate_id", None) is None:
             await super()._on_mouse_move(event)
             return
         x = _mouse_event_x(event)
@@ -833,15 +799,15 @@ class CandidateTable(DataTable):
 
 
 class CandidateScreen(Screen):
-    """One problem run: candidate tree plus optional selected-candidate details."""
+    """One search: candidate tree plus optional selected-candidate details."""
 
     BINDINGS = [
         Binding("escape", "close_detail_or_back", "back"),
         Binding("enter", "open_detail", "details", priority=True),
         Binding("+", "grow_detail", "larger detail"),
         Binding("-", "shrink_detail", "smaller detail"),
-        Binding("s", "stop_run", "stop run"),
-        Binding("x", "prune_node", "prune candidate"),
+        Binding("s", "stop_search", "stop search"),
+        Binding("x", "prune_candidate", "prune candidate"),
         Binding("q", "app.quit", "quit"),
     ]
 
@@ -857,14 +823,14 @@ class CandidateScreen(Screen):
         min-height: 6;
         padding: 0 1;
     }
-    CandidateScreen #runline { height: 1; padding: 0 1; background: $surface; }
+    CandidateScreen #searchline { height: 1; padding: 0 1; background: $surface; }
     """
 
-    def __init__(self, config: Config, run_dir: Path):
+    def __init__(self, config: Config, search_dir: Path):
         super().__init__()
         self.config = config
-        self.run_dir = run_dir
-        self._detail_node_id: str | None = None
+        self.search_dir = search_dir
+        self._detail_candidate_id: str | None = None
         self._detail_height = DETAIL_DEFAULT_HEIGHT
         self._dragging_detail = False
         self._drag_start_y = 0
@@ -872,7 +838,7 @@ class CandidateScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        yield Label(id="runline")
+        yield Label(id="searchline")
         yield CandidateTable(id="candidates", cursor_type="row")
         yield DetailDivider(" drag to resize details ", id="detail-divider")
         yield RichLog(id="candidate-detail", wrap=True, markup=False, auto_scroll=False)
@@ -907,63 +873,65 @@ class CandidateScreen(Screen):
     def refresh_data(self) -> None:
         from rich.text import Text
 
-        journal = Journal(self.run_dir / "journal.jsonl")
-        status = read_status(self.run_dir)
-        state = effective_state(self.run_dir)
-        line = f"{self.run_dir.name}  [{STATE_STYLE.get(state, '')}]{state}[/]"
+        journal = Journal(self.search_dir / "journal.jsonl")
+        status = read_status(self.search_dir)
+        state = effective_state(self.search_dir)
+        line = f"{_search_ref(self.search_dir)}  [{STATE_STYLE.get(state, '')}]{state}[/]"
         if status is not None:
             minutes = int(status.budget.remaining_s // 60)
             line += f"  budget left: {minutes}m"
             if status.current is not None:
                 line += (
-                    f"  current candidate: {status.current.node_id} "
+                    f"  current candidate: {status.current.candidate_id} "
                     f"({status.current.operator}/{status.current.phase})"
                 )
-        self.query_one("#runline", Label).update(line)
+        self.query_one("#searchline", Label).update(line)
 
         table = self.query_one("#candidates", DataTable)
         snapshot = _snapshot_table(table)
         table.clear()
-        for row in node_rows(journal):
+        for row in candidate_rows(journal):
             styled = [Text(v, style=row.style) for v in
                       (row.label, row.operator, row.status, row.val, row.hold, row.marks, row.summary)]
-            table.add_row(*styled, key=row.node_id)
+            table.add_row(*styled, key=row.candidate_id)
         _restore_table(table, snapshot)
 
-        if self._detail_node_id is not None:
-            if self._detail_node_id in journal.nodes:
+        if self._detail_candidate_id is not None:
+            if self._detail_candidate_id in journal.candidates:
                 self._render_detail(journal, preserve_scroll=True)
             else:
                 self._close_detail()
 
     def _render_detail(self, journal: Journal, preserve_scroll: bool = False) -> None:
-        if self._detail_node_id is None:
+        if self._detail_candidate_id is None:
             return
         detail = self.query_one("#candidate-detail", RichLog)
         snapshot = ScrollSnapshot(detail.scroll_x, detail.scroll_y)
         self._set_detail_visible(True)
         detail.clear()
-        for renderable in candidate_detail_renderables(self.run_dir, journal, self._detail_node_id):
+        for renderable in candidate_detail_renderables(
+            self.search_dir, journal, self._detail_candidate_id
+        ):
             detail.write(renderable, expand=True)
         if preserve_scroll:
             _restore_scroll(detail, snapshot)
         else:
             detail.scroll_home(animate=False)
 
-    def _open_detail(self, node_id: str | None = None) -> None:
-        node_id = node_id or self._selected_node_id()
-        if node_id is None:
+    def _open_detail(self, candidate_id: str | None = None) -> None:
+        candidate_id = candidate_id or self._selected_candidate_id()
+        if candidate_id is None:
             return
-        self._detail_node_id = node_id
-        self._render_detail(Journal(self.run_dir / "journal.jsonl"))
+        self._detail_candidate_id = candidate_id
+        self._render_detail(Journal(self.search_dir / "journal.jsonl"))
 
     def _close_detail(self) -> None:
-        self._detail_node_id = None
+        self._detail_candidate_id = None
         detail = self.query_one("#candidate-detail", RichLog)
         detail.clear()
         self._set_detail_visible(False)
 
-    def _selected_node_id(self) -> str | None:
+    def _selected_candidate_id(self) -> str | None:
         table = self.query_one("#candidates", DataTable)
         if not table.row_count:
             return None
@@ -976,26 +944,26 @@ class CandidateScreen(Screen):
             event.stop()
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        if event.data_table.id == "candidates" and self._detail_node_id is not None:
-            self._detail_node_id = event.row_key.value
-            self._render_detail(Journal(self.run_dir / "journal.jsonl"))
+        if event.data_table.id == "candidates" and self._detail_candidate_id is not None:
+            self._detail_candidate_id = event.row_key.value
+            self._render_detail(Journal(self.search_dir / "journal.jsonl"))
             event.stop()
 
     def action_open_detail(self) -> None:
         self._open_detail()
 
     def action_close_detail_or_back(self) -> None:
-        if self._detail_node_id is not None:
+        if self._detail_candidate_id is not None:
             self._close_detail()
         else:
             self.app.pop_screen()
 
     def action_grow_detail(self) -> None:
-        if self._detail_node_id is not None:
+        if self._detail_candidate_id is not None:
             self._set_detail_height(self._detail_height + DETAIL_STEP)
 
     def action_shrink_detail(self) -> None:
-        if self._detail_node_id is not None:
+        if self._detail_candidate_id is not None:
             self._set_detail_height(self._detail_height - DETAIL_STEP)
 
     def _begin_detail_drag(self, y: int) -> None:
@@ -1010,20 +978,25 @@ class CandidateScreen(Screen):
         self._dragging_detail = False
 
     def on_resize(self) -> None:
-        if self._detail_node_id is not None:
+        if self._detail_candidate_id is not None:
             self._set_detail_height(self._detail_height)
 
-    def action_stop_run(self) -> None:
+    def action_stop_search(self) -> None:
         def go(confirmed: bool | None) -> None:
             if confirmed:
-                outcome = request_stop(self.run_dir, source="tui")
+                outcome = request_stop(self.search_dir, source="tui")
                 self.notify(outcome or "engine is not running", severity="information")
 
-        self.app.push_screen(ConfirmScreen(f"Stop run {self.run_dir.name}? (parks after current operator)"), go)
+        self.app.push_screen(
+            ConfirmScreen(
+                f"Stop search {_search_ref(self.search_dir)}? (parks after current operator)"
+            ),
+            go,
+        )
 
-    def action_prune_node(self) -> None:
-        node_id = self._selected_node_id()
-        if node_id is None:
+    def action_prune_candidate(self) -> None:
+        candidate_id = self._selected_candidate_id()
+        if candidate_id is None:
             return
 
         def go(confirmed: bool | None) -> None:
@@ -1031,9 +1004,9 @@ class CandidateScreen(Screen):
                 return
             try:
                 outcome = request_prune(
-                    self.run_dir,
-                    node_id,
-                    lower_is_better=_lower_is_better(self.config, self.run_dir),
+                    self.search_dir,
+                    candidate_id,
+                    lower_is_better=_lower_is_better(self.config, self.search_dir),
                     selection_mode=self.config.holdout.selection,
                     source="tui",
                 )
@@ -1044,41 +1017,45 @@ class CandidateScreen(Screen):
             self.refresh_data()
 
         self.app.push_screen(
-            ConfirmScreen(f"Prune candidate {node_id} and its whole subtree from {self.run_dir.name}?"), go
+            ConfirmScreen(
+                f"Prune candidate {candidate_id} and its whole subtree from "
+                f"{_search_ref(self.search_dir)}?"
+            ),
+            go,
         )
 
 
-class ProblemRunsScreen(Screen):
-    """Problem runs inside one experiment."""
+class SearchesScreen(Screen):
+    """Searches inside one run."""
 
     BINDINGS = [
         Binding("escape", "app.pop_screen", "back"),
-        Binding("enter", "open_run", "open", priority=True),
-        Binding("s", "stop_run", "stop run"),
+        Binding("enter", "open_search", "open", priority=True),
+        Binding("s", "stop_search", "stop search"),
         Binding("q", "app.quit", "quit"),
     ]
 
     DEFAULT_CSS = """
-    ProblemRunsScreen #experimentline { height: 1; padding: 0 1; background: $surface; }
+    SearchesScreen #runline { height: 1; padding: 0 1; background: $surface; }
     """
 
-    def __init__(self, config: Config, experiment_id: str, experiment_name: str):
+    def __init__(self, config: Config, run_dir: Path, run_name: str):
         super().__init__()
         self.config = config
-        self.experiment_id = experiment_id
-        self.experiment_name = experiment_name
+        self.run_dir = run_dir
+        self.run_name = run_name
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        yield Label(id="experimentline")
-        yield DataTable(id="problem-runs", cursor_type="row")
+        yield Label(id="runline")
+        yield DataTable(id="searches", cursor_type="row")
         yield Footer()
 
     def on_mount(self) -> None:
-        table = self.query_one("#problem-runs", DataTable)
+        table = self.query_one("#searches", DataTable)
         table.add_columns(
             "problem",
-            "run",
+            "search",
             "model",
             "state",
             "candidates",
@@ -1092,50 +1069,51 @@ class ProblemRunsScreen(Screen):
     def refresh_data(self) -> None:
         from rich.text import Text
 
-        self.query_one("#experimentline", Label).update(
-            f"{self.experiment_name}  ({self.experiment_id})"
-        )
-        table = self.query_one("#problem-runs", DataTable)
+        self.query_one("#runline", Label).update(f"{self.run_name}  ({self.run_dir.name})")
+        table = self.query_one("#searches", DataTable)
         snapshot = _snapshot_table(table)
         table.clear()
-        for row in scan_problem_runs(self.config.paths.runs_dir, self.experiment_id):
+        for row in scan_searches(self.run_dir):
             state = Text(row.state, style=STATE_STYLE.get(row.state, ""))
             table.add_row(
-                row.problem, row.run_id, row.model, state, row.candidates,
-                row.best_val, row.selected, row.budget_left, key=row.run_id,
+                row.problem, row.search_id, row.model, state, row.candidates,
+                row.best_val, row.selected, row.budget_left, key=row.search_id,
             )
         _restore_table(table, snapshot)
 
-    def _selected_run_dir(self) -> Path | None:
-        table = self.query_one("#problem-runs", DataTable)
+    def _selected_search_dir(self) -> Path | None:
+        table = self.query_one("#searches", DataTable)
         if not table.row_count:
             return None
         row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
-        return self.config.paths.runs_dir / row_key.value
+        return self.run_dir / "searches" / row_key.value
 
-    def action_open_run(self) -> None:
-        run_dir = self._selected_run_dir()
-        if run_dir is not None:
-            self.app.push_screen(CandidateScreen(self.config, run_dir))
+    def action_open_search(self) -> None:
+        search_dir = self._selected_search_dir()
+        if search_dir is not None:
+            self.app.push_screen(CandidateScreen(self.config, search_dir))
 
-    def action_stop_run(self) -> None:
-        run_dir = self._selected_run_dir()
-        if run_dir is None:
+    def action_stop_search(self) -> None:
+        search_dir = self._selected_search_dir()
+        if search_dir is None:
             return
 
         def go(confirmed: bool | None) -> None:
             if confirmed:
-                outcome = request_stop(run_dir, source="tui")
+                outcome = request_stop(search_dir, source="tui")
                 self.notify(outcome or "engine is not running", severity="information")
 
-        self.app.push_screen(ConfirmScreen(f"Stop run {run_dir.name}? (parks after current operator)"), go)
+        self.app.push_screen(
+            ConfirmScreen(f"Stop search {_search_ref(search_dir)}? (parks after current operator)"),
+            go,
+        )
 
 
-class ExperimentsScreen(Screen):
-    """Top-level experiments."""
+class RunsScreen(Screen):
+    """Top-level runs."""
 
     BINDINGS = [
-        Binding("enter", "open_experiment", "open", priority=True),
+        Binding("enter", "open_run", "open", priority=True),
         Binding("q", "app.quit", "quit"),
     ]
 
@@ -1146,15 +1124,15 @@ class ExperimentsScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        yield DataTable(id="experiments", cursor_type="row")
+        yield DataTable(id="runs", cursor_type="row")
         yield Footer()
 
     def on_mount(self) -> None:
-        table = self.query_one("#experiments", DataTable)
+        table = self.query_one("#runs", DataTable)
         table.add_columns(
-            "experiment",
+            "run",
             "state",
-            "problem runs",
+            "searches",
             "candidates",
             "selected",
             "budget left",
@@ -1166,39 +1144,39 @@ class ExperimentsScreen(Screen):
     def refresh_data(self) -> None:
         from rich.text import Text
 
-        table = self.query_one("#experiments", DataTable)
+        table = self.query_one("#runs", DataTable)
         snapshot = _snapshot_table(table)
         self._names.clear()
         table.clear()
-        for row in scan_experiments(self.config.paths.runs_dir):
+        for row in scan_runs(self.config.paths.runs_dir):
             state = Text(row.state, style=STATE_STYLE.get(row.state, ""))
-            self._names[row.experiment_id] = row.name
+            self._names[row.run_id] = row.name
             table.add_row(
                 row.name,
                 state,
-                row.problem_runs,
+                row.searches,
                 row.candidates,
                 row.selected,
                 row.budget_left,
                 row.started,
-                key=row.experiment_id,
+                key=row.run_id,
             )
         _restore_table(table, snapshot)
 
-    def _selected_experiment(self) -> tuple[str, str] | None:
-        table = self.query_one("#experiments", DataTable)
+    def _selected_run(self) -> tuple[str, str] | None:
+        table = self.query_one("#runs", DataTable)
         if not table.row_count:
             return None
         row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
-        experiment_id = row_key.value
-        return experiment_id, self._names.get(experiment_id, experiment_id)
+        run_id = row_key.value
+        return run_id, self._names.get(run_id, run_id)
 
-    def action_open_experiment(self) -> None:
-        selected = self._selected_experiment()
+    def action_open_run(self) -> None:
+        selected = self._selected_run()
         if selected is None:
             return
-        experiment_id, name = selected
-        self.app.push_screen(ProblemRunsScreen(self.config, experiment_id, name))
+        run_id, name = selected
+        self.app.push_screen(SearchesScreen(self.config, self.config.paths.runs_dir / run_id, name))
 
 
 class WatchApp(App):
@@ -1212,4 +1190,4 @@ class WatchApp(App):
         self.config = config or Config.load()
 
     def on_mount(self) -> None:
-        self.push_screen(ExperimentsScreen(self.config))
+        self.push_screen(RunsScreen(self.config))

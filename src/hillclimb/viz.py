@@ -13,7 +13,7 @@ STATUS_FILL = {
     "parked": "#ffe0b2",    # orange: interrupted by rate limit
     "pending": "#ffffff",
 }
-BEST_FILL = "#fff59d"       # gold: the run's final best node
+BEST_FILL = "#fff59d"       # gold: the search's final best candidate
 PRUNED_FILL = "#eeeeee"     # light gray + dashed border: user cut this lineage
 EDGE_STYLE = {
     "debug": "dashed",
@@ -24,19 +24,19 @@ EDGE_STYLE = {
 }
 
 
-def _label(node, lower_is_better: bool) -> str:
-    parts = [f"{node.node_id}  [{node.operator}"]
-    if node.complexity:
-        parts[0] += f"/{node.complexity}"
+def _label(candidate, lower_is_better: bool) -> str:
+    parts = [f"{candidate.candidate_id}  [{candidate.operator}"]
+    if candidate.complexity:
+        parts[0] += f"/{candidate.complexity}"
     parts[0] += "]"
-    if node.val_score is not None:
-        line = f"val = {node.val_score:.5g}"
-        if node.holdout_score is not None:
-            line += f" / hold = {node.holdout_score:.5g}"
+    if candidate.val_score is not None:
+        line = f"val = {candidate.val_score:.5g}"
+        if candidate.holdout_score is not None:
+            line += f" / hold = {candidate.holdout_score:.5g}"
         parts.append(line)
-    elif node.status != "ok":
-        parts.append(node.status)
-    summary = (node.summary or "").strip()
+    elif candidate.status != "ok":
+        parts.append(candidate.status)
+    summary = (candidate.summary or "").strip()
     if summary:
         words = summary.split()
         lines, line = [], ""
@@ -61,7 +61,7 @@ def build_tree(journal: Journal, lower_is_better: bool, title: str = "") -> pydo
     Reading the graph: green = scored, red = failed attempt, gray = abandoned,
     gold = final best. A leaf that is neither best nor gold is a pruned line
     of exploration — greedy search moved elsewhere; dashed edges are debug
-    repairs, dotted-border nodes were never executed.
+    repairs, dotted-border candidates were never executed.
     """
     graph = pydot.Dot(
         graph_type="digraph",
@@ -71,35 +71,35 @@ def build_tree(journal: Journal, lower_is_better: bool, title: str = "") -> pydo
         fontsize=16,
         fontname="Helvetica",
     )
-    selected = journal.selected_node(lower_is_better)
-    best_id = selected.node_id if selected else None
+    selected = journal.selected_candidate(lower_is_better)
+    best_id = selected.candidate_id if selected else None
 
-    for node in journal.nodes.values():
-        fill = BEST_FILL if node.node_id == best_id else STATUS_FILL.get(node.status, "#ffffff")
+    for candidate in journal.candidates.values():
+        fill = BEST_FILL if candidate.candidate_id == best_id else STATUS_FILL.get(candidate.status, "#ffffff")
         style = "rounded,filled"
-        if node.pruned:
+        if candidate.pruned:
             fill = PRUNED_FILL
             style = "rounded,filled,dashed"
         graph.add_node(
             pydot.Node(
-                node.node_id,
-                label=_label(node, lower_is_better),
+                candidate.candidate_id,
+                label=_label(candidate, lower_is_better),
                 shape="box",
                 style=style,
                 fillcolor=fill,
                 fontname="Helvetica",
                 fontsize=10,
-                penwidth=2.5 if node.node_id == best_id else 1,
+                penwidth=2.5 if candidate.candidate_id == best_id else 1,
             )
         )
-        if node.parent_id and node.parent_id in journal.nodes:
+        if candidate.parent_id and candidate.parent_id in journal.candidates:
             graph.add_edge(
                 pydot.Edge(
-                    node.parent_id,
-                    node.node_id,
-                    style=EDGE_STYLE.get(node.operator, "solid"),
-                    color={"debug": "#c62828", "ensemble": "#6a1b9a"}.get(node.operator, "#455a64"),
-                    label=node.operator if node.operator in ("debug", "ensemble") else "",
+                    candidate.parent_id,
+                    candidate.candidate_id,
+                    style=EDGE_STYLE.get(candidate.operator, "solid"),
+                    color={"debug": "#c62828", "ensemble": "#6a1b9a"}.get(candidate.operator, "#455a64"),
+                    label=candidate.operator if candidate.operator in ("debug", "ensemble") else "",
                     fontsize=8,
                     fontname="Helvetica",
                 )

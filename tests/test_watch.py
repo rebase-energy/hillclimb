@@ -5,91 +5,94 @@ import os
 from pathlib import Path
 
 import pytest
-import yaml
 
+from hillclimb.candidate import Candidate, Trial
 from hillclimb.config import Config
 from hillclimb.control import read_commands
-from hillclimb.experiment import ExperimentMeta, LEGACY_EXPERIMENT_ID, write_experiment
 from hillclimb.journal import Journal
-from hillclimb.node import Node
-from hillclimb.status import RunStatus, write_status
+from hillclimb.run import RunMeta, SearchMeta, write_run_meta, write_search_meta
+from hillclimb.status import SearchStatus, write_status
 from hillclimb.watch import (
     DETAIL_MIN_HEIGHT,
     DETAIL_STEP,
     WatchApp,
     candidate_detail_lines,
     candidate_detail_renderables,
-    node_rows,
+    candidate_rows,
     render_stream_line,
-    scan_experiments,
-    scan_problem_runs,
+    scan_runs,
+    scan_searches,
     stream_tail,
 )
 
 DEAD_PID = 2**22
 
 
-def make_run(
+def make_candidate(candidate_id: str, **kwargs) -> Candidate:
+    val_score = kwargs.pop("val_score", None)
+    if val_score is not None:
+        kwargs["trials"] = [Trial(val_score=val_score)]
+    return Candidate(candidate_id=candidate_id, operator=kwargs.pop("operator", "draft"), **kwargs)
+
+
+def make_run_with_search(
     runs_dir: Path,
     run_id: str,
-    status: RunStatus | None = None,
-    experiment_id: str | None = "demo-exp",
-    experiment_name: str | None = "demo",
+    status: SearchStatus | None = None,
+    run_name: str = "Demo",
+    search_id: str = "circle-packing",
 ) -> Path:
+    """Create a v2 run with one search; returns the search dir."""
     run_dir = runs_dir / run_id
-    (run_dir / "nodes").mkdir(parents=True)
-    (run_dir / "best").mkdir()
-    (run_dir / "run.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "run_id": run_id,
-                "experiment_id": experiment_id,
-                "experiment_name": experiment_name,
-                "problem": "/tmp/problem",
-                "problem_id": "circle-packing",
-                "model": "sonnet",
-                "backend": "claude-code",
-                "budget_s": 3600,
-                "lower_is_better": False,
-            }
-        )
+    write_run_meta(
+        run_dir,
+        RunMeta(run_id=run_id, name=run_name, target="demo", problem_ids=[search_id]),
     )
-    journal = Journal(run_dir / "journal.jsonl")
-    journal.node_result(Node(node_id="n000", operator="baseline", status="ok"))
-    journal.node_result(Node(node_id="n001", operator="draft", status="ok", val_score=0.7))
-    journal.node_result(
-        Node(node_id="n002", operator="improve", parent_id="n001", status="buggy", pruned=True)
+    search_dir = run_dir / "searches" / search_id
+    (search_dir / "candidates").mkdir(parents=True)
+    (search_dir / "best").mkdir()
+    write_search_meta(
+        search_dir,
+        SearchMeta(
+            search_id=search_id,
+            run_id=run_id,
+            problem="/tmp/problem",
+            problem_id=search_id,
+            backend="claude-code",
+            model="sonnet",
+            metric="score",
+            lower_is_better=False,
+            budget_s=3600,
+        ),
+    )
+    journal = Journal(search_dir / "journal.jsonl")
+    journal.candidate_result(make_candidate("c000", operator="baseline", status="ok"))
+    journal.candidate_result(make_candidate("c001", operator="draft", status="ok", val_score=0.7))
+    journal.candidate_result(
+        make_candidate("c002", operator="improve", parent_id="c001", status="buggy", pruned=True)
     )
     if status is not None:
-        write_status(run_dir, status)
-    return run_dir
+        write_status(search_dir, status)
+    return search_dir
 
 
-def make_demo_run(
+def make_demo_search(
     tmp_path: Path,
     run_id: str,
-    status: RunStatus | None = None,
+    status: SearchStatus | None = None,
     *,
     wide: bool = False,
 ) -> tuple[Path, Config]:
     runs_dir = tmp_path / "runs"
-    write_experiment(
-        runs_dir,
-        ExperimentMeta(
-            experiment_id="demo-exp",
-            name="Demo",
-            target="demo",
-            problem_ids=["circle-packing"],
-        ),
+    search_dir = make_run_with_search(
+        runs_dir, run_id, status or SearchStatus(search_id="circle-packing", run_id=run_id, state="done")
     )
-    run_dir = make_run(runs_dir, run_id, status or RunStatus(run_id=run_id, state="done"))
     if wide:
-        journal = Journal(run_dir / "journal.jsonl")
+        journal = Journal(search_dir / "journal.jsonl")
         for i in range(3, 12):
-            journal.node_result(
-                Node(
-                    node_id=f"n{i:03d}",
-                    operator="draft",
+            journal.candidate_result(
+                make_candidate(
+                    f"c{i:03d}",
                     status="ok",
                     val_score=float(i),
                     summary="wide summary " * 20,
@@ -97,7 +100,7 @@ def make_demo_run(
             )
     config = Config()
     config.paths.runs_dir = runs_dir
-    return run_dir, config
+    return search_dir, config
 
 
 async def open_candidate_detail(pilot) -> None:
@@ -107,62 +110,60 @@ async def open_candidate_detail(pilot) -> None:
     await pilot.pause()
 
 
-def test_scan_experiments_with_status(tmp_path: Path):
+def test_scan_runs_and_searches_with_status(tmp_path: Path):
     runs_dir = tmp_path / "runs"
-    write_experiment(
+    make_run_with_search(
         runs_dir,
-        ExperimentMeta(
-            experiment_id="demo-exp",
-            name="Demo",
-            target="problems/demo-suite.yaml",
-            problem_ids=["circle-packing"],
-        ),
+        "20260701-run",
+        SearchStatus(search_id="circle-packing", run_id="20260701-run", state="done"),
     )
-    make_run(runs_dir, "20260701-run", RunStatus(run_id="20260701-run", state="done"))
-    rows = scan_experiments(runs_dir)
+    rows = scan_runs(runs_dir)
     assert len(rows) == 1
     assert rows[0].state == "done"
     assert rows[0].name == "Demo"
-    assert rows[0].problem_runs == "1"
+    assert rows[0].searches == "1"
     assert rows[0].candidates == "3"
 
-    run_rows = scan_problem_runs(runs_dir, "demo-exp")
-    assert len(run_rows) == 1
-    assert run_rows[0].problem == "circle-packing"
-    assert run_rows[0].candidates == "3 (2 ok)"
+    search_rows = scan_searches(runs_dir / "20260701-run")
+    assert len(search_rows) == 1
+    assert search_rows[0].problem == "circle-packing"
+    assert search_rows[0].candidates == "3 (2 ok)"
 
 
-def test_scan_runs_detects_crash(tmp_path: Path):
-    make_run(
+def test_scan_searches_detects_crash(tmp_path: Path):
+    make_run_with_search(
         tmp_path / "runs",
         "crashed-run",
-        RunStatus(run_id="crashed-run", state="running", pid=DEAD_PID),
+        SearchStatus(search_id="circle-packing", run_id="crashed-run", state="running", pid=DEAD_PID),
     )
-    assert scan_problem_runs(tmp_path / "runs", "demo-exp")[0].state == "crashed"
+    assert scan_searches(tmp_path / "runs" / "crashed-run")[0].state == "crashed"
 
 
-def test_scan_experiments_groups_legacy_runs(tmp_path: Path):
-    make_run(tmp_path / "runs", "old-run", experiment_id=None, experiment_name=None)
-    row = scan_experiments(tmp_path / "runs")[0]
-    assert row.experiment_id == LEGACY_EXPERIMENT_ID
-    assert row.name == "Legacy"
-    run_row = scan_problem_runs(tmp_path / "runs", LEGACY_EXPERIMENT_ID)[0]
-    assert row.state == "unknown"
-    assert run_row.best_val == "-"
+def test_scan_runs_skips_v1_layout(tmp_path: Path):
+    """Old flat-layout dirs (run.yaml without schema_version) are invisible
+    and must not crash the scanner."""
+    runs_dir = tmp_path / "runs"
+    old = runs_dir / "20260101-000000-legacy"
+    (old / "nodes").mkdir(parents=True)
+    (old / "run.yaml").write_text("run_id: legacy\nproblem_id: x\nbudget_s: 60\n")
+    make_run_with_search(runs_dir, "20260701-run")
+
+    rows = scan_runs(runs_dir)
+    assert [row.run_id for row in rows] == ["20260701-run"]
 
 
-def test_node_rows_tree_order_and_pruned(tmp_path: Path):
-    run_dir = make_run(tmp_path / "runs", "r")
-    rows = node_rows(Journal(run_dir / "journal.jsonl"))
-    assert [r.node_id for r in rows] == ["n000", "n001", "n002"]
-    assert rows[2].label == "  n002"  # child indented under n001
+def test_candidate_rows_tree_order_and_pruned(tmp_path: Path):
+    search_dir = make_run_with_search(tmp_path / "runs", "r")
+    rows = candidate_rows(Journal(search_dir / "journal.jsonl"))
+    assert [r.candidate_id for r in rows] == ["c000", "c001", "c002"]
+    assert rows[2].label == "  c002"  # child indented under c001
     assert "PRUNED" in rows[2].marks
     assert "strike" in rows[2].style
 
 
 def test_candidate_detail_lines_include_scores_lineage_and_notes(tmp_path: Path):
-    run_dir = make_run(tmp_path / "runs", "r")
-    workspace = run_dir / "nodes" / "n001"
+    search_dir = make_run_with_search(tmp_path / "runs", "r")
+    workspace = search_dir / "candidates" / "c001"
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "notes.md").write_text("tried nearest-neighbor seed\nkept deterministic order\n")
     (workspace / "exec_stdout.log").write_text("val_score: 0.7\n")
@@ -174,12 +175,15 @@ def test_candidate_detail_lines_include_scores_lineage_and_notes(tmp_path: Path)
         + "\n"
     )
 
-    detail = "\n".join(candidate_detail_lines(run_dir, Journal(run_dir / "journal.jsonl"), "n001"))
+    detail = "\n".join(
+        candidate_detail_lines(search_dir, Journal(search_dir / "journal.jsonl"), "c001")
+    )
 
-    assert "Candidate n001 | draft | ok" in detail
+    assert "Candidate c001 | draft | ok" in detail
     assert "Score: val=0.7  holdout=-  metric=score (higher is better)" in detail
-    assert "Parent: root  Children: 1  Path: n001" in detail
-    assert "n002  improve  buggy  val=-  PRUNED" in detail
+    assert "Parent: root  Children: 1  Path: c001" in detail
+    assert "c002  improve  buggy  val=-  PRUNED" in detail
+    assert "Trial: returncode=" in detail
     assert "Notes:" in detail
     assert "tried nearest-neighbor seed" in detail
     assert "Stderr:" in detail
@@ -190,20 +194,30 @@ def test_candidate_detail_lines_include_scores_lineage_and_notes(tmp_path: Path)
     assert "I will try a constructive heuristic." in detail
 
 
+def test_candidate_detail_lines_baseline_without_trial(tmp_path: Path):
+    """The baseline has no trials; the detail panel must not crash."""
+    search_dir = make_run_with_search(tmp_path / "runs", "r")
+    detail = "\n".join(
+        candidate_detail_lines(search_dir, Journal(search_dir / "journal.jsonl"), "c000")
+    )
+    assert "Candidate c000 | baseline | ok" in detail
+    assert "Trial: (not executed)" in detail
+
+
 def test_candidate_detail_renderables_are_sectioned(tmp_path: Path):
     from rich.console import Console
 
-    run_dir = make_run(tmp_path / "runs", "r")
-    workspace = run_dir / "nodes" / "n001"
+    search_dir = make_run_with_search(tmp_path / "runs", "r")
+    workspace = search_dir / "candidates" / "c001"
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "notes.md").write_text("tried nearest-neighbor seed\n")
     (workspace / "exec_stdout.log").write_text("val_score: 0.7\n")
     (workspace / "exec_stderr.log").write_text("warning: local search plateau\n")
 
     renderables = candidate_detail_renderables(
-        run_dir,
-        Journal(run_dir / "journal.jsonl"),
-        "n001",
+        search_dir,
+        Journal(search_dir / "journal.jsonl"),
+        "c001",
     )
     console = Console(record=True, width=100)
     for renderable in renderables:
@@ -211,11 +225,11 @@ def test_candidate_detail_renderables_are_sectioned(tmp_path: Path):
     rendered = console.export_text()
 
     assert len(renderables) >= 4
-    assert "Candidate n001" in rendered
+    assert "Candidate c001" in rendered
     assert "val" in rendered
     assert "0.7" in rendered
     assert "Children" in rendered
-    assert "n002" in rendered
+    assert "c002" in rendered
     assert "Notes" in rendered
     assert "tried nearest-neighbor seed" in rendered
     assert "Stderr" in rendered
@@ -255,59 +269,45 @@ def test_stream_tail(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_watch_app_lists_runs_and_stops(tmp_path: Path):
+async def test_watch_app_lists_searches_and_stops(tmp_path: Path):
     runs_dir = tmp_path / "runs"
-    write_experiment(
-        runs_dir,
-        ExperimentMeta(
-            experiment_id="demo-exp",
-            name="Demo",
-            target="demo",
-            problem_ids=["circle-packing"],
-        ),
-    )
-    run_dir = make_run(
+    search_dir = make_run_with_search(
         runs_dir,
         "live-run",
-        RunStatus(run_id="live-run", state="running", pid=os.getpid()),
+        SearchStatus(
+            search_id="circle-packing", run_id="live-run", state="running", pid=os.getpid()
+        ),
     )
     config = Config()
     config.paths.runs_dir = runs_dir
 
     app = WatchApp(config)
     async with app.run_test() as pilot:
-        table = app.screen.query_one("#experiments")
+        table = app.screen.query_one("#runs")
         assert table.row_count == 1
         await pilot.press("enter")
         await pilot.pause()
-        table = app.screen.query_one("#problem-runs")
+        table = app.screen.query_one("#searches")
         assert table.row_count == 1
-        await pilot.press("s")  # stop highlighted run…
+        await pilot.press("s")  # stop highlighted search…
         await pilot.press("y")  # …confirm
         await pilot.pause()
-    commands = read_commands(run_dir)
+    commands = read_commands(search_dir)
     assert len(commands) == 1
     assert commands[0][1].action == "stop"
     assert commands[0][1].source == "tui"
 
 
 @pytest.mark.asyncio
-async def test_runs_table_refresh_preserves_scroll_offsets(tmp_path: Path):
+async def test_searches_table_refresh_preserves_scroll_offsets(tmp_path: Path):
     runs_dir = tmp_path / "runs"
-    write_experiment(
-        runs_dir,
-        ExperimentMeta(
-            experiment_id="demo-exp",
-            name="Demo",
-            target="demo",
-            problem_ids=["circle-packing"],
-        ),
-    )
+    run_id = "20260704-many-searches"
     for i in range(30):
-        make_run(
+        make_run_with_search(
             runs_dir,
-            f"20260704-very-long-run-name-{i:02d}-with-wide-columns",
-            RunStatus(run_id=f"r-{i}", state="done"),
+            run_id,
+            SearchStatus(search_id=f"problem-{i:02d}", run_id=run_id, state="done"),
+            search_id=f"problem-{i:02d}-with-a-very-wide-name-for-columns",
         )
     config = Config()
     config.paths.runs_dir = runs_dir
@@ -316,7 +316,7 @@ async def test_runs_table_refresh_preserves_scroll_offsets(tmp_path: Path):
     async with app.run_test(size=(50, 10)) as pilot:
         await pilot.press("enter")
         await pilot.pause()
-        table = app.screen.query_one("#problem-runs")
+        table = app.screen.query_one("#searches")
         await pilot.pause()
         if table.max_scroll_x == 0 or table.max_scroll_y == 0:
             pytest.skip("headless table did not overflow in both axes")
@@ -332,35 +332,24 @@ async def test_runs_table_refresh_preserves_scroll_offsets(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_experiments_table_refresh_preserves_scroll_offsets(tmp_path: Path):
+async def test_runs_table_refresh_preserves_scroll_offsets(tmp_path: Path):
     runs_dir = tmp_path / "runs"
     for i in range(30):
-        experiment_id = f"experiment-{i:02d}-with-a-long-name"
-        write_experiment(
-            runs_dir,
-            ExperimentMeta(
-                experiment_id=experiment_id,
-                name=f"Long experiment name {i:02d}",
-                target="demo",
-                problem_ids=["circle-packing"],
-            ),
-        )
-        make_run(
+        make_run_with_search(
             runs_dir,
             f"20260704-run-{i:02d}",
-            RunStatus(run_id=f"r-{i}", state="done"),
-            experiment_id=experiment_id,
-            experiment_name=f"Long experiment name {i:02d}",
+            SearchStatus(search_id="circle-packing", run_id=f"20260704-run-{i:02d}", state="done"),
+            run_name=f"Long run name {i:02d} with wide columns",
         )
     config = Config()
     config.paths.runs_dir = runs_dir
 
     app = WatchApp(config)
     async with app.run_test(size=(50, 10)) as pilot:
-        table = app.screen.query_one("#experiments")
+        table = app.screen.query_one("#runs")
         await pilot.pause()
         if table.max_scroll_x == 0 or table.max_scroll_y == 0:
-            pytest.skip("headless experiments table did not overflow in both axes")
+            pytest.skip("headless runs table did not overflow in both axes")
 
         table.scroll_to(x=table.max_scroll_x, y=8, immediate=True, force=True)
         await pilot.pause()
@@ -373,28 +362,18 @@ async def test_experiments_table_refresh_preserves_scroll_offsets(tmp_path: Path
 
 
 @pytest.mark.asyncio
-async def test_node_table_refresh_preserves_scroll_offsets(tmp_path: Path):
+async def test_candidate_table_refresh_preserves_scroll_offsets(tmp_path: Path):
     runs_dir = tmp_path / "runs"
-    write_experiment(
+    search_dir = make_run_with_search(
         runs_dir,
-        ExperimentMeta(
-            experiment_id="demo-exp",
-            name="Demo",
-            target="demo",
-            problem_ids=["circle-packing"],
-        ),
+        "wide-candidate-run",
+        SearchStatus(search_id="circle-packing", run_id="wide-candidate-run", state="done"),
     )
-    run_dir = make_run(
-        runs_dir,
-        "wide-node-run",
-        RunStatus(run_id="wide-node-run", state="done"),
-    )
-    journal = Journal(run_dir / "journal.jsonl")
+    journal = Journal(search_dir / "journal.jsonl")
     for i in range(3, 40):
-        journal.node_result(
-            Node(
-                node_id=f"n{i:03d}",
-                operator="draft",
+        journal.candidate_result(
+            make_candidate(
+                f"c{i:03d}",
                 status="ok",
                 val_score=float(i),
                 summary="wide summary " * 20,
@@ -410,7 +389,7 @@ async def test_node_table_refresh_preserves_scroll_offsets(tmp_path: Path):
         await pilot.pause()
         table = app.screen.query_one("#candidates")
         if table.max_scroll_x == 0 or table.max_scroll_y == 0:
-            pytest.skip("headless node table did not overflow in both axes")
+            pytest.skip("headless candidate table did not overflow in both axes")
 
         table.scroll_to(x=table.max_scroll_x, y=8, immediate=True, force=True)
         await pilot.pause()
@@ -424,11 +403,11 @@ async def test_node_table_refresh_preserves_scroll_offsets(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_candidate_detail_panel_opens_updates_and_closes(tmp_path: Path):
-    run_dir, config = make_demo_run(tmp_path, "detail-run")
-    (run_dir / "nodes" / "n000").mkdir(parents=True, exist_ok=True)
-    (run_dir / "nodes" / "n001").mkdir(parents=True, exist_ok=True)
-    (run_dir / "nodes" / "n000" / "notes.md").write_text("baseline copy\n")
-    (run_dir / "nodes" / "n001" / "notes.md").write_text("draft heuristic\n")
+    search_dir, config = make_demo_search(tmp_path, "detail-run")
+    (search_dir / "candidates" / "c000").mkdir(parents=True, exist_ok=True)
+    (search_dir / "candidates" / "c001").mkdir(parents=True, exist_ok=True)
+    (search_dir / "candidates" / "c000" / "notes.md").write_text("baseline copy\n")
+    (search_dir / "candidates" / "c001" / "notes.md").write_text("draft heuristic\n")
 
     app = WatchApp(config)
     async with app.run_test(size=(80, 20)) as pilot:
@@ -442,17 +421,17 @@ async def test_candidate_detail_panel_opens_updates_and_closes(tmp_path: Path):
 
         await pilot.press("enter")
         await pilot.pause()
-        assert app.screen._detail_node_id == "n000"
+        assert app.screen._detail_candidate_id == "c000"
         assert str(detail.styles.display) != "none"
         assert str(divider.styles.display) != "none"
 
         await pilot.press("down")
         await pilot.pause()
-        assert app.screen._detail_node_id == "n001"
+        assert app.screen._detail_candidate_id == "c001"
 
         await pilot.press("escape")
         await pilot.pause()
-        assert app.screen._detail_node_id is None
+        assert app.screen._detail_candidate_id is None
         assert str(detail.styles.display) == "none"
         assert str(divider.styles.display) == "none"
         assert app.screen.__class__.__name__ == "CandidateScreen"
@@ -460,7 +439,7 @@ async def test_candidate_detail_panel_opens_updates_and_closes(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_candidate_detail_panel_resizes_and_clamps(tmp_path: Path):
-    _, config = make_demo_run(tmp_path, "resizable-run")
+    _, config = make_demo_search(tmp_path, "resizable-run")
 
     app = WatchApp(config)
     async with app.run_test(size=(80, 24)) as pilot:
@@ -485,7 +464,7 @@ async def test_candidate_detail_panel_resizes_and_clamps(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_candidate_detail_divider_drag_resizes(tmp_path: Path):
-    _, config = make_demo_run(tmp_path, "drag-run")
+    _, config = make_demo_search(tmp_path, "drag-run")
 
     app = WatchApp(config)
     async with app.run_test(size=(80, 24)) as pilot:
@@ -505,7 +484,7 @@ async def test_candidate_detail_divider_drag_resizes(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_candidate_table_scrollbar_row_drag_resizes(tmp_path: Path):
-    _, config = make_demo_run(tmp_path, "table-bottom-drag-run", wide=True)
+    _, config = make_demo_search(tmp_path, "table-bottom-drag-run", wide=True)
 
     app = WatchApp(config)
     async with app.run_test(size=(50, 24)) as pilot:
@@ -528,7 +507,7 @@ async def test_candidate_table_scrollbar_row_drag_resizes(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_candidate_table_scrollbar_horizontal_drag_scrolls(tmp_path: Path):
-    _, config = make_demo_run(tmp_path, "table-horizontal-scroll-run", wide=True)
+    _, config = make_demo_search(tmp_path, "table-horizontal-scroll-run", wide=True)
 
     app = WatchApp(config)
     async with app.run_test(size=(50, 24)) as pilot:
@@ -553,7 +532,7 @@ async def test_candidate_table_scrollbar_horizontal_drag_scrolls(tmp_path: Path)
 
 @pytest.mark.asyncio
 async def test_candidate_table_scrollbar_switches_scroll_then_resize_in_one_drag(tmp_path: Path):
-    _, config = make_demo_run(tmp_path, "scroll-then-resize-run", wide=True)
+    _, config = make_demo_search(tmp_path, "scroll-then-resize-run", wide=True)
 
     app = WatchApp(config)
     async with app.run_test(size=(50, 24)) as pilot:
@@ -581,7 +560,7 @@ async def test_candidate_table_scrollbar_switches_scroll_then_resize_in_one_drag
 
 @pytest.mark.asyncio
 async def test_candidate_table_scrollbar_switches_resize_then_scroll_in_one_drag(tmp_path: Path):
-    _, config = make_demo_run(tmp_path, "resize-then-scroll-run", wide=True)
+    _, config = make_demo_search(tmp_path, "resize-then-scroll-run", wide=True)
 
     app = WatchApp(config)
     async with app.run_test(size=(50, 24)) as pilot:

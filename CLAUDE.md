@@ -2,7 +2,11 @@
 
 Auto-hillclimbing for ML tasks: a greedy search engine that spawns headless
 Claude Code agents as operators (draft/debug/improve/ensemble), executes each
-candidate, and keeps the best submission per run.
+candidate, and keeps the best submission per search.
+
+Hierarchy: **Run** (one invocation, `runs/<run-id>/`) → **Search** (one engine
+process per problem, `searches/<search-id>/`) → **Candidate** (immutable code
+artifact) → **Trial** (one execution).
 
 - Tests: `uv run pytest`
 - CLI: `uv run hillclimb --help` (engine); `uv run hillclimb watch` (live TUI)
@@ -10,8 +14,9 @@ candidate, and keeps the best submission per run.
 
 ## Run-state rules
 
-The engine process is the **single writer** of run state (`runs/<id>/journal.jsonl`,
-`status.json`, `best/`). Never edit those files directly — control a run through
-`hillclimb stop|kill|prune|resume`, which route through the `runs/<id>/control/`
+The engine process is the **single writer** of search state
+(`runs/<run-id>/searches/<search-id>/journal.jsonl`, `status.json`, `best/`).
+Never edit those files directly — control a search through
+`hillclimb stop|kill|prune|resume`, which route through the search's `control/`
 command queue when the engine is live. `journal.jsonl` is append-only; replay
-keeps the last record per node.
+keeps the last record per candidate.

@@ -51,18 +51,20 @@ def test_all_complexity_cues_distinct():
 
 def test_build_tree_marks_best_and_edges(tmp_path):
     from hillclimb.journal import Journal
-    from hillclimb.node import Node
+    from hillclimb.candidate import Candidate, Trial
     from hillclimb.viz import build_tree
 
     journal = Journal(tmp_path / "j.jsonl")
-    journal.node_result(Node(node_id="n001", operator="draft", status="ok", val_score=0.6))
-    journal.node_result(Node(node_id="n002", operator="debug", parent_id="n001", status="buggy"))
-    journal.node_result(Node(node_id="n003", operator="improve", parent_id="n001",
-                             status="ok", val_score=0.8, summary="one change"))
+    journal.candidate_result(Candidate(candidate_id="c001", operator="draft", status="ok",
+                                       trials=[Trial(val_score=0.6)]))
+    journal.candidate_result(Candidate(candidate_id="c002", operator="debug", parent_id="c001", status="buggy"))
+    journal.candidate_result(Candidate(candidate_id="c003", operator="improve", parent_id="c001",
+                                       status="ok", trials=[Trial(val_score=0.8)],
+                                       summary="one change"))
     graph = build_tree(journal, lower_is_better=False)
     unq = lambda s: str(s).strip('"')
     nodes = {unq(n.get_name()): n for n in graph.get_nodes()}
-    assert unq(nodes["n003"].get("fillcolor")) == "#fff59d"  # best = gold
-    assert unq(nodes["n002"].get("fillcolor")) == "#ffcdd2"  # buggy = red
+    assert unq(nodes["c003"].get("fillcolor")) == "#fff59d"  # best = gold
+    assert unq(nodes["c002"].get("fillcolor")) == "#ffcdd2"  # buggy = red
     edges = {(unq(e.get_source()), unq(e.get_destination())): e for e in graph.get_edges()}
-    assert unq(edges[("n001", "n002")].get("style")) == "dashed"  # debug edge
+    assert unq(edges[("c001", "c002")].get("style")) == "dashed"  # debug edge

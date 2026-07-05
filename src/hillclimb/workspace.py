@@ -3,28 +3,36 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+from hillclimb.run import SEARCHES_DIRNAME
+
 
 def create_run_dir(runs_dir: Path, run_id: str) -> Path:
     run_dir = runs_dir / run_id
-    (run_dir / "nodes").mkdir(parents=True, exist_ok=True)
-    (run_dir / "best").mkdir(parents=True, exist_ok=True)
+    run_dir.mkdir(parents=True, exist_ok=True)
     return run_dir
 
 
-def create_node_workspace(
-    run_dir: Path,
-    node_id: str,
+def create_search_dir(run_dir: Path, search_id: str) -> Path:
+    search_dir = run_dir / SEARCHES_DIRNAME / search_id
+    (search_dir / "candidates").mkdir(parents=True, exist_ok=True)
+    (search_dir / "best").mkdir(parents=True, exist_ok=True)
+    return search_dir
+
+
+def create_candidate_workspace(
+    search_dir: Path,
+    candidate_id: str,
     data_dir: Path,
     problem_dir: Path,
     parent_solution: Path | None = None,
 ) -> Path:
-    """Per-node working directory.
+    """Per-candidate working directory.
 
     `problem` symlinks to the problem definition folder (verifier, sample, docs).
     `data` symlinks to the runtime data view. For simple verifier-only problems
     these may point at the same directory.
     """
-    workspace = run_dir / "nodes" / node_id
+    workspace = search_dir / "candidates" / candidate_id
     workspace.mkdir(parents=True, exist_ok=True)
     link = workspace / "data"
     if not link.exists():

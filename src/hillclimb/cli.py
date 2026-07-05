@@ -9,14 +9,12 @@ from datetime import datetime
 from pathlib import Path
 
 import typer
-import yaml
 
 from hillclimb.backends import get_backend
 from hillclimb.budget import BudgetManager
 from hillclimb.config import Config
 from hillclimb.control import clear_stale_stops, request_prune, request_stop
 from hillclimb.executor import LocalExecutor
-from hillclimb.experiment import ExperimentMeta, write_experiment
 from hillclimb.journal import Journal
 from hillclimb.problem import (
     ProblemSpec,
@@ -24,9 +22,20 @@ from hillclimb.problem import (
     resolve_target,
     suite_problem_targets,
 )
-from hillclimb.search import GreedySearcher, ParkedRun, StopRequested
-from hillclimb.status import RunStatus, StatusWriter, effective_state, read_status
-from hillclimb.workspace import create_run_dir
+from hillclimb.run import (
+    SEARCHES_DIRNAME,
+    RunMeta,
+    SearchMeta,
+    iter_search_dirs,
+    latest_search_dir,
+    load_run_meta,
+    load_search_meta,
+    write_run_meta,
+    write_search_meta,
+)
+from hillclimb.search import GreedySearcher, ParkedSearch, StopRequested
+from hillclimb.status import SearchStatus, StatusWriter, effective_state, read_status
+from hillclimb.workspace import create_run_dir, create_search_dir
 
 app = typer.Typer(help="rebase-hillclimb: auto-hillclimbing for verifier-defined problems")
 
@@ -41,10 +50,10 @@ def parse_budget(value: str) -> int:
 
 def _slug(value: str) -> str:
     slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip()).strip("-").lower()
-    return slug or "experiment"
+    return slug or "run"
 
 
-def _new_experiment_id(name: str) -> str:
+def _new_run_id(name: str) -> str:
     return f"{datetime.now():%Y%m%d-%H%M%S}-{_slug(name)}"
 
 
@@ -63,27 +72,50 @@ def ensure_runtime_venv(config: Config) -> Path:
     return python
 
 
-def resolve_run_dir(config: Config, run_id: str | None) -> Path:
+def search_ref(search_dir: Path) -> str:
+    """Human-facing `<run-id>/<search-id>` address of a search dir."""
+    return f"{search_dir.parents[1].name}/{search_dir.name}"
+
+
+def resolve_search_dir(config: Config, ref: str | None) -> Path:
+    """Resolve a search reference:
+
+    - `latest` (or empty) — the most recently active search across v2 runs
+    - `<run-id>/<search-id>` — exact address
+    - `<run-id>` — the run's only search; error listing choices if several
+    """
     runs_dir = config.paths.runs_dir
-    if run_id and run_id != "latest":
-        return runs_dir / run_id
-    candidates = sorted(
-        (d for d in runs_dir.iterdir() if (d / "run.yaml").exists()),
-        key=lambda d: d.stat().st_mtime,
-    )
-    if not candidates:
-        raise typer.BadParameter(f"No runs found in {runs_dir}")
-    return candidates[-1]
+    if not ref or ref == "latest":
+        latest = latest_search_dir(runs_dir)
+        if latest is None:
+            raise typer.BadParameter(f"No searches found in {runs_dir}")
+        return latest
+    if "/" in ref:
+        run_id, _, search_id = ref.partition("/")
+        search_dir = runs_dir / run_id / SEARCHES_DIRNAME / search_id
+        if load_search_meta(search_dir) is None:
+            raise typer.BadParameter(f"No search at {search_dir}")
+        return search_dir
+    run_dir = runs_dir / ref
+    if load_run_meta(run_dir) is None:
+        raise typer.BadParameter(f"No run named {ref!r} in {runs_dir}")
+    searches = iter_search_dirs(run_dir)
+    if not searches:
+        raise typer.BadParameter(f"Run {ref} has no searches")
+    if len(searches) > 1:
+        choices = "\n".join(f"  {ref}/{s.name}" for s in searches)
+        raise typer.BadParameter(f"Run {ref} has {len(searches)} searches; pick one:\n{choices}")
+    return searches[0]
 
 
-def _build_holdout(config: Config, problem: ProblemSpec, run_dir: Path):
+def _build_holdout(config: Config, problem: ProblemSpec, search_dir: Path):
     if not config.holdout.enabled:
         return None
     from hillclimb.holdout import build_data_view
 
     info = build_data_view(
         problem.data_dir,
-        run_dir,
+        search_dir,
         problem.sample_submission,
         config.holdout.fraction,
         config.holdout.seed,
@@ -103,12 +135,27 @@ def _raise_stop_requested(signum, frame):
     raise StopRequested(f"signal {signal.Signals(signum).name}")
 
 
-def _execute(config: Config, problem: ProblemSpec, run_dir: Path, budget: BudgetManager) -> None:
-    clear_stale_stops(run_dir)
-    journal = Journal(run_dir / "journal.jsonl")
+def spent_seconds(journal: Journal) -> float:
+    """Wall-clock already consumed by a search: agent authoring time plus
+    every trial's execution time."""
+    return sum(
+        (c.backend.agent_duration_s or 0) + sum(t.duration_s or 0 for t in c.trials)
+        for c in journal.candidates.values()
+    )
+
+
+def _execute(config: Config, problem: ProblemSpec, search_dir: Path, budget: BudgetManager) -> None:
+    ref = search_ref(search_dir)
+    clear_stale_stops(search_dir)
+    journal = Journal(search_dir / "journal.jsonl")
     status = StatusWriter(
-        run_dir,
-        RunStatus(run_id=run_dir.name, state="running", pid=os.getpid()),
+        search_dir,
+        SearchStatus(
+            search_id=search_dir.name,
+            run_id=search_dir.parents[1].name,
+            state="running",
+            pid=os.getpid(),
+        ),
         budget=budget,
     )
     status.start_heartbeat()
@@ -120,22 +167,22 @@ def _execute(config: Config, problem: ProblemSpec, run_dir: Path, budget: Budget
         backend=get_backend(config.backend),
         executor=LocalExecutor(ensure_runtime_venv(config)),
         budget=budget,
-        run_dir=run_dir,
+        search_dir=search_dir,
         log=typer.echo,
-        holdout=_build_holdout(config, problem, run_dir),
+        holdout=_build_holdout(config, problem, search_dir),
         status=status,
     )
     try:
         selected = searcher.run()
-    except ParkedRun as exc:
+    except ParkedSearch as exc:
         status.finalize("parked", last_error=str(exc)[:500])
         typer.echo(f"\nRate limited: {exc}")
-        typer.echo(f"Resume later with: hillclimb resume {run_dir.name}")
+        typer.echo(f"Resume later with: hillclimb resume {ref}")
         raise typer.Exit(2)
     except (StopRequested, KeyboardInterrupt) as exc:
         status.finalize("stopped", last_error=str(exc)[:500] or None)
         typer.echo("\nStopped.")
-        typer.echo(f"Resume with: hillclimb resume {run_dir.name}")
+        typer.echo(f"Resume with: hillclimb resume {ref}")
         raise typer.Exit(2)
     except Exception as exc:
         status.finalize("failed", last_error=f"{type(exc).__name__}: {exc}"[:500])
@@ -146,67 +193,77 @@ def _execute(config: Config, problem: ProblemSpec, run_dir: Path, budget: Budget
         if selected.holdout_score is not None:
             scores += f", holdout={selected.holdout_score:.5g}"
         typer.echo(
-            f"\nDone. Selected candidate {selected.node_id}: {scores} "
+            f"\nDone. Selected candidate {selected.candidate_id}: {scores} "
             f"({problem.metric_name}, {'lower' if problem.lower_is_better else 'higher'} is better)"
         )
     else:
         typer.echo("\nDone. No scored solution; best/ holds the baseline submission.")
-    typer.echo(f"Submission: {run_dir / 'best' / 'submission.csv'}")
-    typer.echo(f"Inspect with: hillclimb status {run_dir.name}")
+    typer.echo(f"Submission: {search_dir / 'best' / 'submission.csv'}")
+    typer.echo(f"Inspect with: hillclimb status {ref}")
+
+
+def _create_search(
+    config: Config,
+    problem: ProblemSpec,
+    run_dir: Path,
+    run_id: str,
+    total_s: int,
+) -> Path:
+    search_dir = create_search_dir(run_dir, problem.problem_id)
+    write_search_meta(
+        search_dir,
+        SearchMeta(
+            search_id=problem.problem_id,
+            run_id=run_id,
+            problem=str(problem.problem_dir),
+            problem_id=problem.problem_id,
+            backend=config.backend,
+            model=config.model,
+            metric=problem.metric_name,
+            lower_is_better=problem.lower_is_better,
+            budget_s=total_s,
+            holdout_enabled=config.holdout.enabled,
+            holdout_seed=config.holdout.seed,
+            holdout_fraction=config.holdout.fraction,
+            holdout_strategy=problem.holdout.strategy if problem.holdout else "random",
+        ),
+    )
+    return search_dir
 
 
 def _run_problem(
     target: str,
     config: Config,
     budget: str | None,
-    experiment_id: str | None = None,
-    experiment_name: str | None = None,
+    run_id: str | None = None,
+    run_name: str | None = None,
 ) -> None:
     problem = load_problem(target, config)
-    if experiment_id is None:
-        experiment_name = experiment_name or problem.problem_id
-        experiment_id = _new_experiment_id(experiment_name)
-        write_experiment(
-            config.paths.runs_dir,
-            ExperimentMeta(
-                experiment_id=experiment_id,
-                name=experiment_name,
+    if run_id is None:
+        run_name = run_name or problem.problem_id
+        run_id = _new_run_id(run_name)
+        run_dir = create_run_dir(config.paths.runs_dir, run_id)
+        write_run_meta(
+            run_dir,
+            RunMeta(
+                run_id=run_id,
+                name=run_name,
                 kind="problem",
                 target=target,
                 problem_ids=[problem.problem_id],
             ),
         )
     else:
-        experiment_name = experiment_name or experiment_id
+        # suite child: the parent already wrote run.yaml
+        run_name = run_name or run_id
+        run_dir = config.paths.runs_dir / run_id
     total_s = parse_budget(budget) if budget else problem.time_budget_s
-    run_id = f"{datetime.now():%Y%m%d-%H%M%S}-{problem.problem_id}"
-    run_dir = create_run_dir(config.paths.runs_dir, run_id)
-    (run_dir / "run.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "run_id": run_id,
-                "experiment_id": experiment_id,
-                "experiment_name": experiment_name,
-                "problem": str(problem.problem_dir),
-                "problem_id": problem.problem_id,
-                "backend": config.backend,
-                "model": config.model,
-                "metric": problem.metric_name,
-                "lower_is_better": problem.lower_is_better,
-                "budget_s": total_s,
-                "holdout_enabled": config.holdout.enabled,
-                "holdout_seed": config.holdout.seed,
-                "holdout_fraction": config.holdout.fraction,
-                "holdout_strategy": problem.holdout.strategy if problem.holdout else "random",
-                "started_at": datetime.now().isoformat(),
-            }
-        )
-    )
+    search_dir = _create_search(config, problem, run_dir, run_id, total_s)
     typer.echo(
-        f"Run {run_id} (experiment={experiment_name}, problem={problem.problem_id}, "
+        f"Search {search_ref(search_dir)} (run={run_name}, problem={problem.problem_id}, "
         f"backend={config.backend}, model={config.model}, budget={total_s}s)"
     )
-    _execute(config, problem, run_dir, BudgetManager(total_s, config.budget.stop_margin_s))
+    _execute(config, problem, search_dir, BudgetManager(total_s, config.budget.stop_margin_s))
 
 
 def _run_suite(
@@ -222,21 +279,28 @@ def _run_suite(
     if resolved.kind != "suite" or resolved.suite is None:
         raise typer.BadParameter(f"{target!r} is not a suite")
     suite = resolved.suite
-    experiment_name = name or suite.suite_id
-    experiment_id = _new_experiment_id(experiment_name)
+    run_name = name or suite.suite_id
+    run_id = _new_run_id(run_name)
     problem_targets = suite_problem_targets(suite, config)
     problem_ids = [load_problem(problem_target, config).problem_id for problem_target in problem_targets]
-    write_experiment(
-        config.paths.runs_dir,
-        ExperimentMeta(
-            experiment_id=experiment_id,
-            name=experiment_name,
+    duplicates = {p for p in problem_ids if problem_ids.count(p) > 1}
+    if duplicates:
+        # search ids are problem ids, unique within a run
+        raise typer.BadParameter(
+            f"Suite {target!r} lists duplicate problem ids: {', '.join(sorted(duplicates))}"
+        )
+    run_dir = create_run_dir(config.paths.runs_dir, run_id)
+    write_run_meta(
+        run_dir,
+        RunMeta(
+            run_id=run_id,
+            name=run_name,
             kind="suite",
             target=target,
             problem_ids=problem_ids,
         ),
     )
-    log_dir = config.paths.runs_dir / "suite-logs" / experiment_id
+    log_dir = run_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     launched = []
     for index, problem_target in enumerate(problem_targets, 1):
@@ -248,10 +312,10 @@ def _run_suite(
             "hillclimb.cli",
             "run",
             problem_target,
-            "--experiment-id",
-            experiment_id,
-            "--experiment-name",
-            experiment_name,
+            "--run-id",
+            run_id,
+            "--run-name",
+            run_name,
         ]
         if budget:
             cmd += ["--budget", budget]
@@ -271,7 +335,7 @@ def _run_suite(
         )
         out.close()
         launched.append((problem_target, proc.pid, log_path))
-    typer.echo(f"Experiment {experiment_id}: launched {len(launched)} problem runs")
+    typer.echo(f"Run {run_id}: launched {len(launched)} searches")
     for problem_target, pid, log_path in launched:
         typer.echo(f"  pid={pid} {problem_target}  log={log_path}")
 
@@ -283,9 +347,9 @@ def run(
     backend: str = typer.Option(None, help="Operator backend: claude-code | dummy"),
     model: str = typer.Option(None, help="Model for operator calls, e.g. sonnet / opus"),
     holdout: bool = typer.Option(True, "--holdout/--no-holdout", help="Hidden selection holdout"),
-    name: str = typer.Option(None, "--name", help="Experiment name shown in the TUI"),
-    experiment_id: str = typer.Option(None, "--experiment-id", hidden=True),
-    experiment_name: str = typer.Option(None, "--experiment-name", hidden=True),
+    name: str = typer.Option(None, "--name", help="Run name shown in the TUI"),
+    run_id: str = typer.Option(None, "--run-id", hidden=True),
+    run_name: str = typer.Option(None, "--run-name", hidden=True),
 ):
     """Start a hillclimb run on a problem folder/name or a suite YAML."""
     config = Config.load(backend=backend, model=model)
@@ -299,66 +363,71 @@ def run(
         target,
         config,
         budget,
-        experiment_id=experiment_id,
-        experiment_name=experiment_name or name,
+        run_id=run_id,
+        run_name=run_name or name,
     )
 
 
 @app.command()
-def resume(run_id: str = typer.Argument("latest")):
-    """Resume a parked or interrupted run."""
+def resume(search: str = typer.Argument("latest")):
+    """Resume a parked or interrupted search (`<run-id>/<search-id>`,
+    `<run-id>`, or `latest`)."""
     config = Config.load()
-    run_dir = resolve_run_dir(config, run_id)
-    meta = yaml.safe_load((run_dir / "run.yaml").read_text())
-    config = Config.load(backend=meta["backend"], model=meta["model"])
-    config.holdout.enabled = meta.get("holdout_enabled", False)  # legacy runs: off
-    config.holdout.seed = meta.get("holdout_seed", config.holdout.seed)
-    config.holdout.fraction = meta.get("holdout_fraction", config.holdout.fraction)
-    problem = load_problem(meta["problem"], config)
-    journal = Journal(run_dir / "journal.jsonl")
-    spent = sum(
-        (n.backend.agent_duration_s or 0) + (n.execution.duration_s or 0)
-        for n in journal.nodes.values()
+    search_dir = resolve_search_dir(config, search)
+    meta = load_search_meta(search_dir)
+    if meta is None:
+        raise typer.BadParameter(f"No valid search.yaml in {search_dir}")
+    config = Config.load(backend=meta.backend, model=meta.model)
+    config.holdout.enabled = meta.holdout_enabled
+    if meta.holdout_seed is not None:
+        config.holdout.seed = meta.holdout_seed
+    if meta.holdout_fraction is not None:
+        config.holdout.fraction = meta.holdout_fraction
+    problem = load_problem(meta.problem, config)
+    journal = Journal(search_dir / "journal.jsonl")
+    spent = spent_seconds(journal)
+    typer.echo(
+        f"Resuming {search_ref(search_dir)}: {len(journal.candidates)} candidates, ~{int(spent)}s spent"
     )
-    typer.echo(f"Resuming {run_dir.name}: {len(journal.nodes)} candidates, ~{int(spent)}s spent")
     _execute(
         config,
         problem,
-        run_dir,
-        BudgetManager(meta["budget_s"], config.budget.stop_margin_s, spent_s=spent),
+        search_dir,
+        BudgetManager(meta.budget_s, config.budget.stop_margin_s, spent_s=spent),
     )
 
 
 @app.command()
-def stop(run_id: str = typer.Argument("latest")):
+def stop(search: str = typer.Argument("latest")):
     """Gracefully stop a running engine: it finishes the current operator
     call, then parks. Resume later with `hillclimb resume`."""
     config = Config.load()
-    run_dir = resolve_run_dir(config, run_id)
-    outcome = request_stop(run_dir, source="cli")
+    search_dir = resolve_search_dir(config, search)
+    ref = search_ref(search_dir)
+    outcome = request_stop(search_dir, source="cli")
     if outcome is None:
-        typer.echo(f"Run {run_dir.name} is {effective_state(run_dir)}; nothing to stop.")
+        typer.echo(f"Search {ref} is {effective_state(search_dir)}; nothing to stop.")
         raise typer.Exit(1)
-    typer.echo(f"{outcome} (use `hillclimb kill {run_dir.name}` to interrupt now)")
+    typer.echo(f"{outcome} (use `hillclimb kill {ref}` to interrupt now)")
 
 
 @app.command()
 def prune(
-    run_id: str,
-    node_id: str,
+    search: str,
+    candidate_id: str,
     reason: str = typer.Option("", help="Why this branch is being cut (recorded in the journal)"),
 ):
-    """Prune a candidate and its whole subtree: the engine stops building on this
-    lineage and it is excluded from selection. Statuses and scores stay
+    """Prune a candidate and its whole subtree: the engine stops building on
+    this lineage and it is excluded from selection. Statuses and scores stay
     visible in status/tree output."""
     config = Config.load()
-    run_dir = resolve_run_dir(config, run_id)
-    meta = yaml.safe_load((run_dir / "run.yaml").read_text())
-    lower = bool(meta.get("lower_is_better", False))
+    search_dir = resolve_search_dir(config, search)
+    meta = load_search_meta(search_dir)
+    lower = bool(meta.lower_is_better) if meta else False
     try:
         outcome = request_prune(
-            run_dir,
-            node_id,
+            search_dir,
+            candidate_id,
             lower_is_better=lower,
             selection_mode=config.holdout.selection,
             reason=reason,
@@ -371,80 +440,93 @@ def prune(
 
 
 @app.command()
-def kill(run_id: str = typer.Argument("latest")):
+def kill(search: str = typer.Argument("latest")):
     """SIGTERM a running engine; it finalizes state and can be resumed.
     For a graceful stop that lets the current operator finish, use
     `hillclimb stop`."""
     config = Config.load()
-    run_dir = resolve_run_dir(config, run_id)
-    state = effective_state(run_dir)
+    search_dir = resolve_search_dir(config, search)
+    ref = search_ref(search_dir)
+    state = effective_state(search_dir)
     if state != "running":
-        typer.echo(f"Run {run_dir.name} is {state}; nothing to kill.")
+        typer.echo(f"Search {ref} is {state}; nothing to kill.")
         raise typer.Exit(1)
-    engine_pid = read_status(run_dir).pid
+    engine_pid = read_status(search_dir).pid
     os.kill(engine_pid, signal.SIGTERM)
-    typer.echo(f"Sent SIGTERM to engine pid {engine_pid} ({run_dir.name}).")
-    typer.echo(f"Resume with: hillclimb resume {run_dir.name}")
+    typer.echo(f"Sent SIGTERM to engine pid {engine_pid} ({ref}).")
+    typer.echo(f"Resume with: hillclimb resume {ref}")
 
 
 @app.command()
-def status(run_id: str = typer.Argument("latest")):
-    """Show the candidate tree of a problem run."""
+def status(search: str = typer.Argument("latest")):
+    """Show the candidate tree of a search."""
     config = Config.load()
-    run_dir = resolve_run_dir(config, run_id)
-    journal = Journal(run_dir / "journal.jsonl")
-    run_status = read_status(run_dir)
-    state = effective_state(run_dir)
-    if run_status is not None:
-        remaining = int(run_status.budget.remaining_s)
-        line = f"state={state}  budget: {int(run_status.budget.spent_s)}s spent / {remaining}s left"
-        if run_status.current is not None:
+    search_dir = resolve_search_dir(config, search)
+    journal = Journal(search_dir / "journal.jsonl")
+    search_status = read_status(search_dir)
+    state = effective_state(search_dir)
+    if search_status is not None:
+        remaining = int(search_status.budget.remaining_s)
+        line = f"state={state}  budget: {int(search_status.budget.spent_s)}s spent / {remaining}s left"
+        if search_status.current is not None:
             line += (
-                f"  current candidate: {run_status.current.node_id} "
-                f"({run_status.current.operator}/{run_status.current.phase})"
+                f"  current candidate: {search_status.current.candidate_id} "
+                f"({search_status.current.operator}/{search_status.current.phase})"
             )
         typer.echo(line)
-    typer.echo(f"Run {run_dir.name} — {len(journal.nodes)} candidates")
-    for node in journal.nodes.values():
-        score = f"{node.val_score:.5f}" if node.val_score is not None else "-"
-        hold = f" hold={node.holdout_score:.5f}" if node.holdout_score is not None else ""
-        marks = (" *SELECTED*" if node.is_selected else "") + (" *best-val*" if node.is_best else "")
-        if node.pruned:
-            marks += " *PRUNED*"
-        parent = f" <- {node.parent_id}" if node.parent_id else ""
-        typer.echo(
-            f"  {node.node_id} {node.operator:<9} {node.status:<9} val={score}{hold}{marks}{parent}  {node.summary[:70]}"
+    typer.echo(f"Search {search_ref(search_dir)} — {len(journal.candidates)} candidates")
+    for candidate in journal.candidates.values():
+        score = f"{candidate.val_score:.5f}" if candidate.val_score is not None else "-"
+        hold = f" hold={candidate.holdout_score:.5f}" if candidate.holdout_score is not None else ""
+        marks = (" *SELECTED*" if candidate.is_selected else "") + (
+            " *best-val*" if candidate.is_best else ""
         )
-    scored = [n for n in journal.nodes.values() if n.val_score is not None and n.holdout_score is not None]
+        if candidate.pruned:
+            marks += " *PRUNED*"
+        parent = f" <- {candidate.parent_id}" if candidate.parent_id else ""
+        typer.echo(
+            f"  {candidate.candidate_id} {candidate.operator:<9} {candidate.status:<9} "
+            f"val={score}{hold}{marks}{parent}  {candidate.summary[:70]}"
+        )
+    scored = [
+        c
+        for c in journal.candidates.values()
+        if c.val_score is not None and c.holdout_score is not None
+    ]
     if scored:
-        gaps = [abs(n.val_score - n.holdout_score) for n in scored]
-        typer.echo(f"val→holdout gap: mean {sum(gaps)/len(gaps):.5g}, max {max(gaps):.5g} over {len(scored)} candidates")
+        gaps = [abs(c.val_score - c.holdout_score) for c in scored]
+        typer.echo(
+            f"val→holdout gap: mean {sum(gaps)/len(gaps):.5g}, max {max(gaps):.5g} over {len(scored)} candidates"
+        )
 
 
 @app.command()
 def tree(
-    run_id: str = typer.Argument("latest"),
-    out: Path = typer.Option(None, help="Output image path (.png/.svg/.pdf); default <run>/tree.png"),
+    search: str = typer.Argument("latest"),
+    out: Path = typer.Option(None, help="Output image path (.png/.svg/.pdf); default <search>/tree.png"),
 ):
-    """Render the run's exploration tree (which candidates were created,
+    """Render the search's exploration tree (which candidates were created,
     built upon, or pruned) to an image."""
     from hillclimb.viz import render_tree
 
     config = Config.load()
-    run_dir = resolve_run_dir(config, run_id)
-    meta = yaml.safe_load((run_dir / "run.yaml").read_text())
-    lower = bool(meta.get("lower_is_better", False))
-    journal = Journal(run_dir / "journal.jsonl")
-    out_path = out or (run_dir / "tree.png")
-    title = f"{meta.get('problem_id', '?')}  ({meta.get('model', '?')}, budget {meta.get('budget_s', '?')}s)"
+    search_dir = resolve_search_dir(config, search)
+    meta = load_search_meta(search_dir)
+    lower = bool(meta.lower_is_better) if meta else False
+    journal = Journal(search_dir / "journal.jsonl")
+    out_path = out or (search_dir / "tree.png")
+    if meta is not None:
+        title = f"{meta.problem_id}  ({meta.model}, budget {meta.budget_s}s)"
+    else:
+        title = search_dir.name
     render_tree(journal, lower, out_path, title)
-    typer.echo(f"Wrote {out_path} ({len(journal.nodes)} candidates)")
+    typer.echo(f"Wrote {out_path} ({len(journal.candidates)} candidates)")
 
 
 @app.command()
 def watch():
-    """Live TUI: experiments, problem runs, candidates, and selected-candidate details.
-    Keys: enter=open/details, esc=close/back, +/-=resize details, s=stop run,
+    """Live TUI: runs, searches, candidates, and selected-candidate details.
+    Keys: enter=open/details, esc=close/back, +/-=resize details, s=stop search,
     x=prune candidate, q=quit."""
     from hillclimb.watch import WatchApp
 
@@ -464,22 +546,18 @@ def smoke(
     typer.echo(f"claude version: {version}")
     run_id = f"smoke-{datetime.now():%Y%m%d-%H%M%S}"
     run_dir = create_run_dir(config.paths.runs_dir, run_id)
-    (run_dir / "run.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "run_id": run_id,
-                "problem": str(problem.problem_dir),
-                "problem_id": problem.problem_id,
-                "backend": "claude-code",
-                "model": config.model,
-                "metric": problem.metric_name,
-                "lower_is_better": problem.lower_is_better,
-                "budget_s": 1800,
-                "started_at": datetime.now().isoformat(),
-            }
-        )
+    write_run_meta(
+        run_dir,
+        RunMeta(
+            run_id=run_id,
+            name=run_id,
+            kind="problem",
+            target=target,
+            problem_ids=[problem.problem_id],
+        ),
     )
-    journal = Journal(run_dir / "journal.jsonl")
+    search_dir = _create_search(config, problem, run_dir, run_id, total_s=1800)
+    journal = Journal(search_dir / "journal.jsonl")
     searcher = GreedySearcher(
         problem=problem,
         config=config,
@@ -487,20 +565,21 @@ def smoke(
         backend=get_backend("claude-code"),
         executor=LocalExecutor(ensure_runtime_venv(config)),
         budget=BudgetManager(1800, stop_margin_s=0),
-        run_dir=run_dir,
+        search_dir=search_dir,
         log=typer.echo,
-        holdout=_build_holdout(config, problem, run_dir),
+        holdout=_build_holdout(config, problem, search_dir),
     )
-    node = searcher.run_operator("draft", None)
-    typer.echo(f"\ncandidate:   {node.node_id} status={node.status}")
-    typer.echo(f"val_score:   {node.val_score}")
-    typer.echo(f"holdout:     {node.holdout_score} (error: {node.execution.holdout_error})")
-    typer.echo(f"session_id:  {node.backend.session_id}")
-    typer.echo(f"cost_usd:    {node.backend.cost_usd}")
-    typer.echo(f"num_turns:   {node.backend.num_turns}")
-    typer.echo(f"error_kind:  {node.backend.error_kind}")
-    typer.echo(f"raw output:  {Path(node.workspace) / 'agent_raw.json'}")
-    if node.backend.session_id is None and node.backend.error_kind is None:
+    candidate = searcher.run_operator("draft", None)
+    trial = candidate.last_trial
+    typer.echo(f"\ncandidate:   {candidate.candidate_id} status={candidate.status}")
+    typer.echo(f"val_score:   {candidate.val_score}")
+    typer.echo(f"holdout:     {candidate.holdout_score} (error: {trial.holdout_error if trial else '-'})")
+    typer.echo(f"session_id:  {candidate.backend.session_id}")
+    typer.echo(f"cost_usd:    {candidate.backend.cost_usd}")
+    typer.echo(f"num_turns:   {candidate.backend.num_turns}")
+    typer.echo(f"error_kind:  {candidate.backend.error_kind}")
+    typer.echo(f"raw output:  {Path(candidate.workspace) / 'agent_raw.json'}")
+    if candidate.backend.session_id is None and candidate.backend.error_kind is None:
         typer.echo("WARNING: session_id not parsed — check agent_raw.json for actual field names")
 
 
