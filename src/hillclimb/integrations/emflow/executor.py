@@ -81,6 +81,8 @@ def official_verify(
     honesty. Returns the holdout score, or None on failure."""
     import json
 
+    workspace = workspace.absolute()
+    out_dir = out_dir.absolute()
     solution = workspace / "solution.py"
     if not solution.exists():
         log("official verify skipped: solution.py missing")
@@ -127,10 +129,11 @@ class EmflowHoldoutScorer:
         self.timeout_s = timeout_s
 
     def score(self, workspace: Path) -> tuple[float | None, str | None]:
+        workspace = workspace.absolute()
         solution = workspace / "solution.py"
         if not solution.exists():
             return None, "solution.py missing at holdout time"
-        eval_dir = self.work_root / workspace.name
+        eval_dir = self.work_root.absolute() / workspace.name
         eval_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy(solution, eval_dir / "solution.py")
         # ensemble candidates import candidate_N modules from their workspace
