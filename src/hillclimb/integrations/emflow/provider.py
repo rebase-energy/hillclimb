@@ -80,7 +80,12 @@ def materialize_problem_dir(problem, name: str, cache_root: Path) -> Path:
 
 def load_emflow_problem(name: str, config: Config) -> ProblemSpec:
     problem = ef.load_problem(name)  # KeyError / ProblemNotIngestedError propagate
-    problem.load_dataset()  # pre-warm the HF cache so agent-time evals run offline
+    # Materialize public data to the local build cache so agent-time evals run
+    # offline and credential-free. Private holdout data deliberately stays on
+    # HF: the holdout scorer fetches it live with the orchestrator's token.
+    if hasattr(ef, "cache_problem_data"):
+        ef.cache_problem_data(name, include_private=False)
+    problem.load_dataset()  # validate loadability up front
     cache_root = config.paths.runs_dir.parent / "cache"
     problem_dir = materialize_problem_dir(problem, name, cache_root)
     quantiles = getattr(problem.env("validation"), "quantiles", None)
