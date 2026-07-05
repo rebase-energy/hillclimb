@@ -12,25 +12,34 @@ from hillclimb.holdout import HoldoutOverride
 
 
 class ProblemSpec(BaseModel):
-    """Portable verifier-first problem definition.
+    """Portable problem definition.
 
-    A problem is a directory with `problem.yaml`, `description.md`, a baseline
-    `sample_submission.csv`, and a verifier script. The generated solution
-    writes `submission.csv`; the orchestrator runs the verifier and uses the
-    final `val_score:` line as the validation score.
+    kind="csv" (default): a directory with `problem.yaml`, `description.md`,
+    a baseline `sample_submission.csv`, and a verifier script. The generated
+    solution writes `submission.csv`; the orchestrator runs the verifier and
+    uses the final `val_score:` line as the validation score.
+
+    kind="emflow": an emflow registry problem (`emflow://<name>`); the
+    generated solution is a Predictor module driven by the emflow evaluator,
+    and holdout scoring is a second evaluator invocation (`holdout_mode=
+    "evaluator"`) rather than a hillclimb-built data view.
     """
 
+    kind: Literal["csv", "emflow"] = "csv"
     problem_id: str
     problem_dir: Path
     data_dir: Path
     description: str
     metric_name: str
     lower_is_better: bool
-    sample_submission: Path
+    sample_submission: Path | None = None  # required for csv (loader enforces)
     verifier: Path | None = None
     time_budget_s: int
     holdout: HoldoutOverride | None = None
+    holdout_mode: Literal["data-view", "evaluator"] = "data-view"
     allow_network: bool = False
+    emflow_problem: str | None = None   # registry name, e.g. "gefcom2014:solar"
+    emflow_baseline: str | None = None  # module exposing get_model(), if any
 
 
 class SuiteSpec(BaseModel):
@@ -44,6 +53,30 @@ class ResolvedTarget:
     kind: Literal["problem", "suite"]
     problem: ProblemSpec | None = None
     suite: SuiteSpec | None = None
+
+
+# Target schemes served by optional problem providers (lazy imports so the
+# core has no hard dependency on them).
+PROVIDER_SCHEMES = ("emflow",)
+
+
+def _split_scheme(target: str | Path) -> tuple[str, str] | None:
+    """(scheme, rest) when the target uses a provider scheme, else None."""
+    scheme, sep, rest = str(target).partition("://")
+    if sep and scheme in PROVIDER_SCHEMES:
+        return scheme, rest
+    return None
+
+
+def _emflow_provider():
+    try:
+        from hillclimb.integrations.emflow import provider
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "emflow:// targets need the emflow extra: "
+            "pip install 'rebase-hillclimb[emflow]'"
+        ) from exc
+    return provider
 
 
 def _read_yaml(path: Path) -> dict:
@@ -80,6 +113,9 @@ def resolve_problem_yaml(target: str | Path, config: Config) -> Path:
 
 
 def load_problem(target: str | Path, config: Config) -> ProblemSpec:
+    scheme = _split_scheme(target)
+    if scheme is not None:
+        return _emflow_provider().load_emflow_problem(scheme[1], config)
     problem_yaml = resolve_problem_yaml(target, config)
     problem_dir = problem_yaml.parent
     meta = _read_yaml(problem_yaml)
@@ -148,6 +184,9 @@ def suite_problem_targets(suite: SuiteSpec, config: Config) -> list[str]:
     """Resolve suite entries relative to the suite file when possible."""
     targets = []
     for problem in suite.problems:
+        if _split_scheme(problem) is not None:
+            targets.append(problem)  # provider targets resolve by name, not path
+            continue
         raw = Path(problem)
         if raw.is_absolute() or raw.exists():
             targets.append(str(raw))
@@ -166,6 +205,9 @@ def suite_problem_targets(suite: SuiteSpec, config: Config) -> list[str]:
 
 def resolve_target(target: str | Path, config: Config) -> ResolvedTarget:
     """Resolve a `hillclimb run <target>` argument as a problem or suite."""
+    scheme = _split_scheme(target)
+    if scheme is not None:
+        return _emflow_provider().resolve_emflow_target(scheme[1], config)
     try:
         suite = load_suite(target, config)
     except FileNotFoundError:

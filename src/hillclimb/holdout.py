@@ -4,7 +4,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Protocol
 
 import numpy as np
 import pandas as pd
@@ -15,6 +15,14 @@ logger = logging.getLogger(__name__)
 ANSWERS_FILENAME = "holdout-answers.csv"
 DATA_VIEW_DIRNAME = "data-view"
 META_FILENAME = "data-view-meta.json"
+
+
+class HoldoutScorer(Protocol):
+    """Problem-provided holdout: the scorer owns the split and the metric;
+    the orchestrator just records (score, error). Used when
+    `ProblemSpec.holdout_mode == "evaluator"` instead of the data-view flow."""
+
+    def score(self, workspace: Path) -> tuple[float | None, str | None]: ...
 
 
 class HoldoutOverride(BaseModel):

@@ -13,7 +13,7 @@ from hillclimb.candidate import BackendInfo, Candidate, Trial, utcnow
 from hillclimb.config import Config
 from hillclimb.control import ControlCommand, apply_prune, read_commands, resync_best
 from hillclimb.executor import Executor
-from hillclimb.holdout import HoldoutInfo
+from hillclimb.holdout import HoldoutInfo, HoldoutScorer
 from hillclimb.journal import Journal
 from hillclimb.prompts.render import COMPLEXITY_CUES, render
 from hillclimb.scoring import ScoringError, score
@@ -60,6 +60,7 @@ class GreedySearcher:
         max_candidates: int = 50,
         log=print,
         holdout: HoldoutInfo | None = None,
+        holdout_scorer: HoldoutScorer | None = None,
         status: StatusWriter | None = None,
     ):
         self.problem = problem
@@ -72,6 +73,7 @@ class GreedySearcher:
         self.max_candidates = max_candidates
         self.log = log
         self.holdout = holdout
+        self.holdout_scorer = holdout_scorer
         self.status = status
         self._consecutive_failures = 0
         for stale in journal.pending_candidates():
@@ -94,8 +96,15 @@ class GreedySearcher:
 
     def run(self) -> Candidate | None:
         if not self.journal.candidates:
-            self.journal.candidate_result(write_baseline(self.problem, self.search_dir))
-            self.log("baseline submission written (sample_submission copy)")
+            baseline = write_baseline(
+                self.problem,
+                self.search_dir,
+                executor=self.executor,
+                holdout_scorer=self.holdout_scorer,
+                timeout_s=self.config.budget.exec_timeout_s,
+            )
+            self.journal.candidate_result(baseline)
+            self.log(f"baseline written: {baseline.summary}")
         while not self.budget.should_stop() and len(self.journal.candidates) < self.max_candidates:
             self._process_control()
             self._status(current=None)
@@ -425,6 +434,8 @@ class GreedySearcher:
     def _score_holdout(self, workspace: Path) -> tuple[float | None, str | None]:
         """Score holdout predictions; (score, None) on success, (None, reason)
         on contract violation, (None, None) when holdout is disabled."""
+        if self.holdout_scorer is not None:
+            return self.holdout_scorer.score(workspace)
         if self.holdout is None:
             return None, None
         pred_path = workspace / "holdout_predictions.csv"

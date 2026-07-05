@@ -128,9 +128,34 @@ def resolve_search_dir(config: Config, ref: str | None) -> Path:
     return searches[0]
 
 
-def _build_holdout(config: Config, problem: ProblemSpec, search_dir: Path):
-    if not config.holdout.enabled:
+def _build_executor(config: Config, problem: ProblemSpec):
+    if problem.kind == "emflow":
+        from hillclimb.integrations.emflow.executor import EmflowLocalExecutor
+
+        return EmflowLocalExecutor(
+            ensure_runtime_venv(config, kind="emflow"),
+            problem.emflow_problem,
+            allow_network=problem.allow_network,
+        )
+    return LocalExecutor(ensure_runtime_venv(config))
+
+
+def _build_holdout_scorer(config: Config, problem: ProblemSpec, search_dir: Path):
+    if not config.holdout.enabled or problem.holdout_mode != "evaluator":
         return None
+    from hillclimb.integrations.emflow.executor import EmflowHoldoutScorer
+
+    return EmflowHoldoutScorer(
+        ensure_runtime_venv(config, kind="emflow"),
+        problem.emflow_problem,
+        search_dir / "holdout-eval",
+        timeout_s=config.budget.exec_timeout_s,
+    )
+
+
+def _build_holdout(config: Config, problem: ProblemSpec, search_dir: Path):
+    if not config.holdout.enabled or problem.holdout_mode == "evaluator":
+        return None  # evaluator mode: the problem scores its own holdout
     from hillclimb.holdout import build_data_view
 
     info = build_data_view(
@@ -185,11 +210,12 @@ def _execute(config: Config, problem: ProblemSpec, search_dir: Path, budget: Bud
         config=config,
         journal=journal,
         backend=get_backend(config.backend),
-        executor=LocalExecutor(ensure_runtime_venv(config)),
+        executor=_build_executor(config, problem),
         budget=budget,
         search_dir=search_dir,
         log=typer.echo,
         holdout=_build_holdout(config, problem, search_dir),
+        holdout_scorer=_build_holdout_scorer(config, problem, search_dir),
         status=status,
     )
     try:
