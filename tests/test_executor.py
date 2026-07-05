@@ -95,6 +95,21 @@ def test_scrubbed_env_extra_overrides(monkeypatch):
     assert "PATH" in env
 
 
+def test_claude_oauth_token_scrubbed_but_kept_for_agent(monkeypatch):
+    """Hosted subscription auth: the claude agent process must see
+    CLAUDE_CODE_OAUTH_TOKEN, agent-authored code must not."""
+    from hillclimb.backends.claude_code import subscription_env
+
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-oauth")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant")
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in scrubbed_env()  # _TOKEN suffix
+    agent_env = subscription_env("subscription")
+    assert agent_env.get("CLAUDE_CODE_OAUTH_TOKEN") == "sk-oauth"
+    assert "ANTHROPIC_API_KEY" not in agent_env
+    api_env = subscription_env("api-key")
+    assert api_env.get("ANTHROPIC_API_KEY") == "sk-ant"
+
+
 def test_parse_val_score():
     assert parse_val_score("noise\nval_score: 0.5\n") == 0.5
     assert parse_val_score("val_score: 0.1\nval_score: 0.2\n") == 0.2  # last wins
