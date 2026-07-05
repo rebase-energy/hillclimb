@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb.executor import LocalExecutor, parse_val_score
+from hillclimb.executor import LocalExecutor, parse_val_score, scrubbed_env
 
 
 @pytest.fixture
@@ -63,6 +63,36 @@ def test_no_submission(executor, tmp_path):
     result = run_script(executor, tmp_path, 'print("val_score: 0.5")')
     assert not result.ok
     assert not result.submission_ok
+
+
+def test_solution_env_is_scrubbed(executor, tmp_path, monkeypatch):
+    """Agent-authored code must never see credentials from the orchestrator."""
+    monkeypatch.setenv("HF_TOKEN", "hf_secret")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
+    monkeypatch.setenv("MY_SERVICE_API_KEY", "suffix-matched-secret")
+    monkeypatch.setenv("HF_HOME", "/tmp/hf-cache")  # non-secret must survive
+    code = (
+        "import os\n"
+        'leaks = [k for k in ("HF_TOKEN", "ANTHROPIC_API_KEY", "MY_SERVICE_API_KEY")'
+        " if k in os.environ]\n"
+        'print("leaks:", leaks)\n'
+        'print("hf_home:", os.environ.get("HF_HOME"))\n'
+        'open("submission.csv", "w").write("id\\n")\n'
+        'print("val_score: 1.0")\n'
+    )
+    result = run_script(executor, tmp_path, code)
+    stdout = Path(result.stdout_path).read_text()
+    assert result.ok
+    assert "leaks: []" in stdout
+    assert "hf_home: /tmp/hf-cache" in stdout
+
+
+def test_scrubbed_env_extra_overrides(monkeypatch):
+    monkeypatch.setenv("SOME_PASSWORD", "x")
+    env = scrubbed_env(HF_HUB_OFFLINE="1")
+    assert "SOME_PASSWORD" not in env
+    assert env["HF_HUB_OFFLINE"] == "1"
+    assert "PATH" in env
 
 
 def test_parse_val_score():
