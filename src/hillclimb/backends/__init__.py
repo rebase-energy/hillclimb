@@ -3,11 +3,11 @@ from __future__ import annotations
 from hillclimb.backends.base import OperatorBackend, OperatorRequest, OperatorResult
 
 
-def get_backend(name: str) -> OperatorBackend:
+def get_backend(name: str, auth: str = "subscription") -> OperatorBackend:
     if name == "claude-code":
         from hillclimb.backends.claude_code import ClaudeCodeBackend
 
-        return ClaudeCodeBackend()
+        return ClaudeCodeBackend(auth=auth)
     if name == "dummy":
         from hillclimb.backends.dummy import DummyBackend
 

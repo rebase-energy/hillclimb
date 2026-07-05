@@ -11,12 +11,15 @@ from pathlib import Path
 from hillclimb.backends.base import OperatorRequest, OperatorResult
 
 
-def subscription_env() -> dict[str, str]:
-    """Child env for `claude`: drop ANTHROPIC_API_KEY so calls bill the Max
-    subscription (claude.ai login / CLAUDE_CODE_OAUTH_TOKEN) instead of the
-    API — an inherited API key silently takes precedence otherwise."""
+def subscription_env(auth: str = "subscription") -> dict[str, str]:
+    """Child env for `claude`. auth="subscription" (default) drops
+    ANTHROPIC_API_KEY so calls bill the Max subscription (claude.ai login /
+    CLAUDE_CODE_OAUTH_TOKEN) — an inherited API key silently takes precedence
+    otherwise. auth="api-key" keeps it (headless/hosted runs with no
+    subscription login)."""
     env = os.environ.copy()
-    env.pop("ANTHROPIC_API_KEY", None)
+    if auth != "api-key":
+        env.pop("ANTHROPIC_API_KEY", None)
     return env
 
 RATE_LIMIT_MARKERS = (
@@ -93,8 +96,9 @@ class ClaudeCodeBackend:
 
     name = "claude-code"
 
-    def __init__(self, claude_bin: str = "claude"):
+    def __init__(self, claude_bin: str = "claude", auth: str = "subscription"):
         self.claude_bin = claude_bin
+        self.auth = auth  # subscription | api-key (see subscription_env)
 
     def invoke(self, request: OperatorRequest) -> OperatorResult:
         cmd = [
@@ -128,7 +132,7 @@ class ClaudeCodeBackend:
                     stderr=stderr_sink,
                     text=True,
                     cwd=request.workspace,
-                    env=subscription_env(),
+                    env=subscription_env(self.auth),
                     start_new_session=True,  # own process group → killable as a unit
                 )
                 pid_path.write_text(str(proc.pid))

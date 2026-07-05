@@ -66,6 +66,55 @@ class EmflowLocalExecutor:
         )
 
 
+def official_verify(
+    python: Path,
+    problem_name: str,
+    workspace: Path,
+    out_dir: Path,
+    name: str,
+    n_trials: int,
+    timeout_s: int,
+    log=print,
+) -> float | None:
+    """One official Verifier run (scorecard + emflow leaderboard row) on a
+    candidate workspace's solution.py, with n_trials recorded for selection
+    honesty. Returns the holdout score, or None on failure."""
+    import json
+
+    solution = workspace / "solution.py"
+    if not solution.exists():
+        log("official verify skipped: solution.py missing")
+        return None
+    out_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy(solution, out_dir / "solution.py")
+    for extra in workspace.glob("candidate_*.py"):
+        shutil.copy(extra, out_dir / extra.name)
+    stdout_path = out_dir / "verify_stdout.log"
+    stderr_path = out_dir / "verify_stderr.log"
+    with stdout_path.open("w") as out, stderr_path.open("w") as err:
+        returncode, timed_out = run_logged(
+            [
+                str(python.absolute()), str(EVAL_RUNNER), str(out_dir / "solution.py"),
+                "--problem", problem_name,
+                "--split", "holdout",
+                "--verify",
+                "--name", name,
+                "--metadata-json", json.dumps({"n_trials": n_trials}),
+                "--result-json", str(out_dir / RESULT_JSON),
+            ],
+            out_dir, timeout_s, out, err, env=None,  # full env: token flows
+        )
+    if timed_out or returncode != 0:
+        tail = stderr_path.read_text(errors="replace")[-300:].strip()
+        log(f"official verify failed: {'timeout' if timed_out else tail}")
+        return None
+    stdout_text = stdout_path.read_text()
+    # surface the scorecard block in the orchestrator log
+    if "=" * 20 in stdout_text:
+        log(stdout_text[stdout_text.index("=" * 20):].strip())
+    return parse_val_score(stdout_text)
+
+
 class EmflowHoldoutScorer:
     """Hidden holdout scoring: re-evaluates the candidate's solution.py on the
     holdout split in a dir agents never see, with credentials intact (the

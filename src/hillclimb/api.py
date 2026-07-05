@@ -1,0 +1,328 @@
+"""Public programmatic API: run a hillclimb search in-process.
+
+Typer-free — the CLI is a thin shell over these functions, and downstream
+products embed them directly:
+
+    import hillclimb
+    outcome = hillclimb.run_search("emflow://gefcom2014:solar", budget_s=7200)
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import shlex
+import signal
+import subprocess
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Callable
+
+from hillclimb.backends import get_backend
+from hillclimb.budget import BudgetManager
+from hillclimb.candidate import Candidate
+from hillclimb.config import Config
+from hillclimb.control import clear_stale_stops
+from hillclimb.executor import LocalExecutor
+from hillclimb.journal import Journal
+from hillclimb.problem import ProblemSpec, load_problem
+from hillclimb.run import RunMeta, SearchMeta, write_run_meta, write_search_meta
+from hillclimb.search import GreedySearcher, ParkedSearch, StopRequested
+from hillclimb.status import SearchStatus, StatusWriter
+from hillclimb.workspace import create_run_dir, create_search_dir
+
+Log = Callable[[str], None]
+
+
+@dataclass
+class SearchOutcome:
+    run_dir: Path
+    search_dir: Path
+    selected: Candidate | None
+    state: str  # done | parked | stopped
+    error: str | None = None
+
+    @property
+    def ref(self) -> str:
+        return search_ref(self.search_dir)
+
+
+def slug(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip()).strip("-").lower()
+    return cleaned or "run"
+
+
+def new_run_id(name: str) -> str:
+    return f"{datetime.now():%Y%m%d-%H%M%S}-{slug(name)}"
+
+
+def search_ref(search_dir: Path) -> str:
+    """Human-facing `<run-id>/<search-id>` address of a search dir."""
+    return f"{search_dir.parents[1].name}/{search_dir.name}"
+
+
+def ensure_runtime_venv(config: Config, kind: str = "csv", log: Log = print) -> Path:
+    """Create the solution-script venv for the problem kind on first use."""
+    from importlib import resources
+
+    from hillclimb.runtime import requirements_resource
+
+    python_path = (
+        config.paths.emflow_runtime_python if kind == "emflow" else config.paths.runtime_python
+    )
+    python = python_path.absolute()
+    if python.exists():
+        return python
+    venv_dir = python.parents[1]
+    log(f"Creating {kind} runtime venv at {venv_dir} ...")
+    subprocess.run(["uv", "venv", "--python", "3.12", str(venv_dir)], check=True)
+    with resources.as_file(requirements_resource(kind)) as req:
+        subprocess.run(
+            ["uv", "pip", "install", "-r", str(req), "--python", str(python)],
+            check=True,
+        )
+    if kind == "emflow":
+        try:
+            subprocess.run(
+                ["uv", "pip", "install", *shlex.split(config.emflow.source), "--python", str(python)],
+                check=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(
+                f"Installing emflow from {config.emflow.source!r} failed — first use "
+                "needs network (or set `emflow.source` to a local checkout, e.g. '-e ../emflow')"
+            ) from exc
+    return python
+
+
+def build_executor(config: Config, problem: ProblemSpec, log: Log = print):
+    if problem.kind == "emflow":
+        from hillclimb.integrations.emflow.executor import EmflowLocalExecutor
+
+        return EmflowLocalExecutor(
+            ensure_runtime_venv(config, kind="emflow", log=log),
+            problem.emflow_problem,
+            allow_network=problem.allow_network,
+        )
+    return LocalExecutor(ensure_runtime_venv(config, log=log))
+
+
+def build_holdout_scorer(config: Config, problem: ProblemSpec, search_dir: Path, log: Log = print):
+    if not config.holdout.enabled or problem.holdout_mode != "evaluator":
+        return None
+    from hillclimb.integrations.emflow.executor import EmflowHoldoutScorer
+
+    return EmflowHoldoutScorer(
+        ensure_runtime_venv(config, kind="emflow", log=log),
+        problem.emflow_problem,
+        search_dir / "holdout-eval",
+        timeout_s=config.budget.exec_timeout_s,
+    )
+
+
+def build_holdout(config: Config, problem: ProblemSpec, search_dir: Path, log: Log = print):
+    if not config.holdout.enabled or problem.holdout_mode == "evaluator":
+        return None  # evaluator mode: the problem scores its own holdout
+    from hillclimb.holdout import build_data_view
+
+    info = build_data_view(
+        problem.data_dir,
+        search_dir,
+        problem.sample_submission,
+        config.holdout.fraction,
+        config.holdout.seed,
+        override=problem.holdout,
+    )
+    if info is None:
+        log("holdout: disabled for this problem (no train.csv or targets not inferable)")
+    else:
+        log(
+            f"holdout: {info.n_holdout} rows hidden "
+            f"({info.strategy}; targets: {', '.join(info.target_cols)})"
+        )
+    return info
+
+
+def spent_seconds(journal: Journal) -> float:
+    """Wall-clock already consumed by a search: agent authoring time plus
+    every trial's execution time."""
+    return sum(
+        (c.backend.agent_duration_s or 0) + sum(t.duration_s or 0 for t in c.trials)
+        for c in journal.candidates.values()
+    )
+
+
+def create_search(
+    config: Config,
+    problem: ProblemSpec,
+    run_dir: Path,
+    run_id: str,
+    total_s: int,
+) -> Path:
+    search_dir = create_search_dir(run_dir, problem.problem_id)
+    write_search_meta(
+        search_dir,
+        SearchMeta(
+            search_id=problem.problem_id,
+            run_id=run_id,
+            problem=(
+                f"emflow://{problem.emflow_problem}"
+                if problem.kind == "emflow"
+                else str(problem.problem_dir)
+            ),
+            problem_id=problem.problem_id,
+            backend=config.backend,
+            model=config.model,
+            metric=problem.metric_name,
+            lower_is_better=problem.lower_is_better,
+            budget_s=total_s,
+            holdout_enabled=config.holdout.enabled,
+            holdout_seed=config.holdout.seed,
+            holdout_fraction=config.holdout.fraction,
+            holdout_strategy=problem.holdout.strategy if problem.holdout else "random",
+        ),
+    )
+    return search_dir
+
+
+def _raise_stop_requested(signum, frame):
+    raise StopRequested(f"signal {signal.Signals(signum).name}")
+
+
+def execute_search(
+    config: Config,
+    problem: ProblemSpec,
+    search_dir: Path,
+    budget: BudgetManager,
+    log: Log = print,
+) -> SearchOutcome:
+    """Run the engine on an existing search dir. Returns the outcome for
+    parked/stopped/done; unexpected engine crashes finalize `failed` and
+    re-raise."""
+    run_dir = search_dir.parents[1]
+    clear_stale_stops(search_dir)
+    journal = Journal(search_dir / "journal.jsonl")
+    status = StatusWriter(
+        search_dir,
+        SearchStatus(
+            search_id=search_dir.name,
+            run_id=run_dir.name,
+            state="running",
+            pid=os.getpid(),
+        ),
+        budget=budget,
+    )
+    status.start_heartbeat()
+    try:  # signal handlers are main-thread-only; embedded callers skip them
+        signal.signal(signal.SIGTERM, _raise_stop_requested)
+    except ValueError:
+        pass
+    searcher = GreedySearcher(
+        problem=problem,
+        config=config,
+        journal=journal,
+        backend=get_backend(config.backend, auth=config.backend_auth),
+        executor=build_executor(config, problem, log),
+        budget=budget,
+        search_dir=search_dir,
+        log=log,
+        holdout=build_holdout(config, problem, search_dir, log),
+        holdout_scorer=build_holdout_scorer(config, problem, search_dir, log),
+        status=status,
+    )
+    try:
+        selected = searcher.run()
+    except ParkedSearch as exc:
+        status.finalize("parked", last_error=str(exc)[:500])
+        return SearchOutcome(run_dir, search_dir, None, "parked", error=str(exc))
+    except (StopRequested, KeyboardInterrupt) as exc:
+        status.finalize("stopped", last_error=str(exc)[:500] or None)
+        return SearchOutcome(run_dir, search_dir, None, "stopped", error=str(exc) or None)
+    except Exception as exc:
+        status.finalize("failed", last_error=f"{type(exc).__name__}: {exc}"[:500])
+        raise
+    status.finalize("done")
+    if problem.kind == "emflow" and selected is not None:
+        _official_verify(config, problem, search_dir, journal, selected, log)
+    return SearchOutcome(run_dir, search_dir, selected, "done")
+
+
+def _official_verify(
+    config: Config,
+    problem: ProblemSpec,
+    search_dir: Path,
+    journal: Journal,
+    selected: Candidate,
+    log: Log,
+) -> None:
+    """One official emflow Verifier run on the selected model (scorecard +
+    leaderboard row, with n_trials metadata for selection honesty). Best
+    effort: a verify failure never fails a finished search."""
+    from hillclimb.integrations.emflow.executor import official_verify
+
+    try:
+        python = ensure_runtime_venv(config, kind="emflow", log=log)
+        official_verify(
+            python,
+            problem.emflow_problem,
+            Path(selected.workspace),
+            search_dir / "holdout-eval" / "official",
+            name=search_ref(search_dir),
+            n_trials=len(journal.candidates),
+            timeout_s=config.budget.exec_timeout_s,
+            log=log,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log(f"official verification failed (search result unaffected): {exc}")
+
+
+def run_search(
+    target: str,
+    *,
+    budget_s: int | None = None,
+    name: str | None = None,
+    run_id: str | None = None,
+    run_name: str | None = None,
+    config: Config | None = None,
+    backend: str | None = None,
+    model: str | None = None,
+    holdout: bool = True,
+    log: Log = print,
+) -> SearchOutcome:
+    """Resolve a single-problem target, create the Run/Search dirs, and run
+    the engine to completion. Suites are a CLI concern (parallel processes);
+    this API runs exactly one search."""
+    config = config or Config.load(backend=backend, model=model)
+    if backend:
+        config.backend = backend
+    if model:
+        config.model = model
+    if not holdout:
+        config.holdout.enabled = False
+    problem = load_problem(target, config)
+    if run_id is None:
+        run_name = run_name or name or problem.problem_id
+        run_id = new_run_id(run_name)
+        run_dir = create_run_dir(config.paths.runs_dir, run_id)
+        write_run_meta(
+            run_dir,
+            RunMeta(
+                run_id=run_id,
+                name=run_name,
+                kind="problem",
+                target=target,
+                problem_ids=[problem.problem_id],
+            ),
+        )
+    else:
+        run_dir = config.paths.runs_dir / run_id  # suite child: parent wrote run.yaml
+    total_s = budget_s or problem.time_budget_s
+    search_dir = create_search(config, problem, run_dir, run_id, total_s)
+    log(
+        f"Search {search_ref(search_dir)} (problem={problem.problem_id}, "
+        f"backend={config.backend}, model={config.model}, budget={total_s}s)"
+    )
+    return execute_search(
+        config, problem, search_dir, BudgetManager(total_s, config.budget.stop_margin_s), log
+    )

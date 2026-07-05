@@ -5,15 +5,22 @@ import re
 import signal
 import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
 
 import typer
 
+from hillclimb.api import (
+    create_search,
+    ensure_runtime_venv,
+    execute_search,
+    new_run_id,
+    search_ref,
+    spent_seconds,
+)
 from hillclimb.backends import get_backend
 from hillclimb.budget import BudgetManager
 from hillclimb.config import Config
-from hillclimb.control import clear_stale_stops, request_prune, request_stop
+from hillclimb.control import request_prune, request_stop
 from hillclimb.executor import LocalExecutor
 from hillclimb.journal import Journal
 from hillclimb.problem import (
@@ -25,17 +32,15 @@ from hillclimb.problem import (
 from hillclimb.run import (
     SEARCHES_DIRNAME,
     RunMeta,
-    SearchMeta,
     iter_search_dirs,
     latest_search_dir,
     load_run_meta,
     load_search_meta,
     write_run_meta,
-    write_search_meta,
 )
-from hillclimb.search import GreedySearcher, ParkedSearch, StopRequested
-from hillclimb.status import SearchStatus, StatusWriter, effective_state, read_status
-from hillclimb.workspace import create_run_dir, create_search_dir
+from hillclimb.search import GreedySearcher
+from hillclimb.status import effective_state, read_status
+from hillclimb.workspace import create_run_dir
 
 app = typer.Typer(help="rebase-hillclimb: auto-hillclimbing for verifier-defined problems")
 
@@ -46,55 +51,6 @@ def parse_budget(value: str) -> int:
         raise typer.BadParameter(f"Cannot parse budget {value!r} (use e.g. 2h, 30m, 3600s)")
     amount, unit = int(match.group(1)), match.group(2)
     return amount * {"h": 3600, "m": 60, "s": 1, "": 1}[unit]
-
-
-def _slug(value: str) -> str:
-    slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip()).strip("-").lower()
-    return slug or "run"
-
-
-def _new_run_id(name: str) -> str:
-    return f"{datetime.now():%Y%m%d-%H%M%S}-{_slug(name)}"
-
-
-def ensure_runtime_venv(config: Config, kind: str = "csv") -> Path:
-    """Create the solution-script venv for the problem kind on first use."""
-    import shlex
-    from importlib import resources
-
-    from hillclimb.runtime import requirements_resource
-
-    python_path = (
-        config.paths.emflow_runtime_python if kind == "emflow" else config.paths.runtime_python
-    )
-    python = python_path.absolute()
-    if python.exists():
-        return python
-    venv_dir = python.parents[1]
-    typer.echo(f"Creating {kind} runtime venv at {venv_dir} ...")
-    subprocess.run(["uv", "venv", "--python", "3.12", str(venv_dir)], check=True)
-    with resources.as_file(requirements_resource(kind)) as req:
-        subprocess.run(
-            ["uv", "pip", "install", "-r", str(req), "--python", str(python)],
-            check=True,
-        )
-    if kind == "emflow":
-        try:
-            subprocess.run(
-                ["uv", "pip", "install", *shlex.split(config.emflow.source), "--python", str(python)],
-                check=True,
-            )
-        except subprocess.CalledProcessError as exc:
-            raise typer.BadParameter(
-                f"Installing emflow from {config.emflow.source!r} failed — first use "
-                "needs network (or set `emflow.source` to a local checkout, e.g. '-e ../emflow')"
-            ) from exc
-    return python
-
-
-def search_ref(search_dir: Path) -> str:
-    """Human-facing `<run-id>/<search-id>` address of a search dir."""
-    return f"{search_dir.parents[1].name}/{search_dir.name}"
 
 
 def resolve_search_dir(config: Config, ref: str | None) -> Path:
@@ -128,112 +84,19 @@ def resolve_search_dir(config: Config, ref: str | None) -> Path:
     return searches[0]
 
 
-def _build_executor(config: Config, problem: ProblemSpec):
-    if problem.kind == "emflow":
-        from hillclimb.integrations.emflow.executor import EmflowLocalExecutor
-
-        return EmflowLocalExecutor(
-            ensure_runtime_venv(config, kind="emflow"),
-            problem.emflow_problem,
-            allow_network=problem.allow_network,
-        )
-    return LocalExecutor(ensure_runtime_venv(config))
-
-
-def _build_holdout_scorer(config: Config, problem: ProblemSpec, search_dir: Path):
-    if not config.holdout.enabled or problem.holdout_mode != "evaluator":
-        return None
-    from hillclimb.integrations.emflow.executor import EmflowHoldoutScorer
-
-    return EmflowHoldoutScorer(
-        ensure_runtime_venv(config, kind="emflow"),
-        problem.emflow_problem,
-        search_dir / "holdout-eval",
-        timeout_s=config.budget.exec_timeout_s,
-    )
-
-
-def _build_holdout(config: Config, problem: ProblemSpec, search_dir: Path):
-    if not config.holdout.enabled or problem.holdout_mode == "evaluator":
-        return None  # evaluator mode: the problem scores its own holdout
-    from hillclimb.holdout import build_data_view
-
-    info = build_data_view(
-        problem.data_dir,
-        search_dir,
-        problem.sample_submission,
-        config.holdout.fraction,
-        config.holdout.seed,
-        override=problem.holdout,
-    )
-    if info is None:
-        typer.echo("holdout: disabled for this problem (no train.csv or targets not inferable)")
-    else:
-        typer.echo(
-            f"holdout: {info.n_holdout} rows hidden "
-            f"({info.strategy}; targets: {', '.join(info.target_cols)})"
-        )
-    return info
-
-
-def _raise_stop_requested(signum, frame):
-    raise StopRequested(f"signal {signal.Signals(signum).name}")
-
-
-def spent_seconds(journal: Journal) -> float:
-    """Wall-clock already consumed by a search: agent authoring time plus
-    every trial's execution time."""
-    return sum(
-        (c.backend.agent_duration_s or 0) + sum(t.duration_s or 0 for t in c.trials)
-        for c in journal.candidates.values()
-    )
-
-
 def _execute(config: Config, problem: ProblemSpec, search_dir: Path, budget: BudgetManager) -> None:
-    ref = search_ref(search_dir)
-    clear_stale_stops(search_dir)
-    journal = Journal(search_dir / "journal.jsonl")
-    status = StatusWriter(
-        search_dir,
-        SearchStatus(
-            search_id=search_dir.name,
-            run_id=search_dir.parents[1].name,
-            state="running",
-            pid=os.getpid(),
-        ),
-        budget=budget,
-    )
-    status.start_heartbeat()
-    signal.signal(signal.SIGTERM, _raise_stop_requested)
-    searcher = GreedySearcher(
-        problem=problem,
-        config=config,
-        journal=journal,
-        backend=get_backend(config.backend),
-        executor=_build_executor(config, problem),
-        budget=budget,
-        search_dir=search_dir,
-        log=typer.echo,
-        holdout=_build_holdout(config, problem, search_dir),
-        holdout_scorer=_build_holdout_scorer(config, problem, search_dir),
-        status=status,
-    )
-    try:
-        selected = searcher.run()
-    except ParkedSearch as exc:
-        status.finalize("parked", last_error=str(exc)[:500])
-        typer.echo(f"\nRate limited: {exc}")
+    """CLI shell over api.execute_search: messages + exit codes."""
+    outcome = execute_search(config, problem, search_dir, budget, log=typer.echo)
+    ref = outcome.ref
+    if outcome.state == "parked":
+        typer.echo(f"\nRate limited: {outcome.error}")
         typer.echo(f"Resume later with: hillclimb resume {ref}")
         raise typer.Exit(2)
-    except (StopRequested, KeyboardInterrupt) as exc:
-        status.finalize("stopped", last_error=str(exc)[:500] or None)
+    if outcome.state == "stopped":
         typer.echo("\nStopped.")
         typer.echo(f"Resume with: hillclimb resume {ref}")
         raise typer.Exit(2)
-    except Exception as exc:
-        status.finalize("failed", last_error=f"{type(exc).__name__}: {exc}"[:500])
-        raise
-    status.finalize("done")
+    selected = outcome.selected
     if selected is not None:
         scores = f"val_score={selected.val_score}"
         if selected.holdout_score is not None:
@@ -244,37 +107,9 @@ def _execute(config: Config, problem: ProblemSpec, search_dir: Path, budget: Bud
         )
     else:
         typer.echo("\nDone. No scored solution; best/ holds the baseline submission.")
-    typer.echo(f"Submission: {search_dir / 'best' / 'submission.csv'}")
+    artifact = "solution.py" if problem.kind == "emflow" else "submission.csv"
+    typer.echo(f"Best artifact: {search_dir / 'best' / artifact}")
     typer.echo(f"Inspect with: hillclimb status {ref}")
-
-
-def _create_search(
-    config: Config,
-    problem: ProblemSpec,
-    run_dir: Path,
-    run_id: str,
-    total_s: int,
-) -> Path:
-    search_dir = create_search_dir(run_dir, problem.problem_id)
-    write_search_meta(
-        search_dir,
-        SearchMeta(
-            search_id=problem.problem_id,
-            run_id=run_id,
-            problem=str(problem.problem_dir),
-            problem_id=problem.problem_id,
-            backend=config.backend,
-            model=config.model,
-            metric=problem.metric_name,
-            lower_is_better=problem.lower_is_better,
-            budget_s=total_s,
-            holdout_enabled=config.holdout.enabled,
-            holdout_seed=config.holdout.seed,
-            holdout_fraction=config.holdout.fraction,
-            holdout_strategy=problem.holdout.strategy if problem.holdout else "random",
-        ),
-    )
-    return search_dir
 
 
 def _run_problem(
@@ -287,7 +122,7 @@ def _run_problem(
     problem = load_problem(target, config)
     if run_id is None:
         run_name = run_name or problem.problem_id
-        run_id = _new_run_id(run_name)
+        run_id = new_run_id(run_name)
         run_dir = create_run_dir(config.paths.runs_dir, run_id)
         write_run_meta(
             run_dir,
@@ -304,7 +139,7 @@ def _run_problem(
         run_name = run_name or run_id
         run_dir = config.paths.runs_dir / run_id
     total_s = parse_budget(budget) if budget else problem.time_budget_s
-    search_dir = _create_search(config, problem, run_dir, run_id, total_s)
+    search_dir = create_search(config, problem, run_dir, run_id, total_s)
     typer.echo(
         f"Search {search_ref(search_dir)} (run={run_name}, problem={problem.problem_id}, "
         f"backend={config.backend}, model={config.model}, budget={total_s}s)"
@@ -326,7 +161,7 @@ def _run_suite(
         raise typer.BadParameter(f"{target!r} is not a suite")
     suite = resolved.suite
     run_name = name or suite.suite_id
-    run_id = _new_run_id(run_name)
+    run_id = new_run_id(run_name)
     problem_targets = suite_problem_targets(suite, config)
     problem_ids = [load_problem(problem_target, config).problem_id for problem_target in problem_targets]
     duplicates = {p for p in problem_ids if problem_ids.count(p) > 1}
@@ -612,7 +447,7 @@ def smoke(
             problem_ids=[problem.problem_id],
         ),
     )
-    search_dir = _create_search(config, problem, run_dir, run_id, total_s=1800)
+    search_dir = create_search(config, problem, run_dir, run_id, total_s=1800)
     journal = Journal(search_dir / "journal.jsonl")
     searcher = GreedySearcher(
         problem=problem,
