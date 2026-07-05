@@ -42,19 +42,30 @@ class PathsConfig(BaseModel):
     runs_dir: Path = Path("runs")
     problems_dir: Path = Path("problems")
     runtime_python: Path = Path(".runtime-venv/bin/python")
+    emflow_runtime_python: Path = Path(".runtime-venv-emflow/bin/python")
     mlebench_python: Path = Path("../mle-bench/.venv/bin/python")
     mlebench_data_dir: Path | None = None
     kaggle_bin: Path = Path("../mle-bench/.venv/bin/kaggle")
 
 
+class EmflowConfig(BaseModel):
+    """Optional emflow problem-provider settings (hillclimb[emflow] extra)."""
+
+    # pip requirement installed into the emflow runtime venv; supports a
+    # leading "-e " for editable local checkouts (e.g. "-e ../emflow")
+    source: str = "emflow @ git+https://github.com/rebase-energy/emflow.git"
+
+
 class Config(BaseModel):
     backend: str = "claude-code"
+    backend_auth: str = "subscription"  # subscription | api-key
     model: str = "sonnet"
     budget: BudgetConfig = BudgetConfig()
     search: SearchConfig = SearchConfig()
     holdout: HoldoutConfig = HoldoutConfig()
     ensemble: EnsembleConfig = EnsembleConfig()
     paths: PathsConfig = PathsConfig()
+    emflow: EmflowConfig = EmflowConfig()
 
     @classmethod
     def load(cls, path: Path | None = None, **overrides) -> Config:

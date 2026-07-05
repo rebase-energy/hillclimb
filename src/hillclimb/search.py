@@ -630,15 +630,10 @@ class GreedySearcher:
         return "\n".join(entries)
 
     def _runtime_pkgs(self) -> str:
-        req = Path(__file__).resolve().parents[2] / "runtime-requirements.txt"
-        if not req.exists():
-            return "pandas, numpy, scikit-learn"
-        pkgs = [
-            line.strip()
-            for line in req.read_text().splitlines()
-            if line.strip() and not line.startswith("#")
-        ]
-        return ", ".join(pkgs)
+        from hillclimb.runtime import runtime_packages
+
+        kind = getattr(self.problem, "kind", "csv")
+        return ", ".join(runtime_packages(kind))
 
 
 def _human_size(size: int) -> str:

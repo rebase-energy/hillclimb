@@ -1,0 +1,10 @@
+# Packages available to generated Predictor modules (the emflow runtime venv).
+# emflow itself is installed separately from config `emflow.source`.
+# Keep in sync with the "Available packages" line in prompts/contract_emflow.md.
+pandas
+numpy
+scipy
+scikit-learn
+statsmodels
+xgboost
+lightgbm

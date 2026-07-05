@@ -57,18 +57,38 @@ def _new_run_id(name: str) -> str:
     return f"{datetime.now():%Y%m%d-%H%M%S}-{_slug(name)}"
 
 
-def ensure_runtime_venv(config: Config) -> Path:
-    """Create the solution-script venv on first use."""
-    python = config.paths.runtime_python.absolute()
+def ensure_runtime_venv(config: Config, kind: str = "csv") -> Path:
+    """Create the solution-script venv for the problem kind on first use."""
+    import shlex
+    from importlib import resources
+
+    from hillclimb.runtime import requirements_resource
+
+    python_path = (
+        config.paths.emflow_runtime_python if kind == "emflow" else config.paths.runtime_python
+    )
+    python = python_path.absolute()
     if python.exists():
         return python
     venv_dir = python.parents[1]
-    typer.echo(f"Creating runtime venv at {venv_dir} ...")
+    typer.echo(f"Creating {kind} runtime venv at {venv_dir} ...")
     subprocess.run(["uv", "venv", "--python", "3.12", str(venv_dir)], check=True)
-    subprocess.run(
-        ["uv", "pip", "install", "-r", "runtime-requirements.txt", "--python", str(python)],
-        check=True,
-    )
+    with resources.as_file(requirements_resource(kind)) as req:
+        subprocess.run(
+            ["uv", "pip", "install", "-r", str(req), "--python", str(python)],
+            check=True,
+        )
+    if kind == "emflow":
+        try:
+            subprocess.run(
+                ["uv", "pip", "install", *shlex.split(config.emflow.source), "--python", str(python)],
+                check=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            raise typer.BadParameter(
+                f"Installing emflow from {config.emflow.source!r} failed — first use "
+                "needs network (or set `emflow.source` to a local checkout, e.g. '-e ../emflow')"
+            ) from exc
     return python
 
 
@@ -507,7 +527,12 @@ def tree(
 ):
     """Render the search's exploration tree (which candidates were created,
     built upon, or pruned) to an image."""
-    from hillclimb.viz import render_tree
+    try:
+        from hillclimb.viz import render_tree
+    except ModuleNotFoundError as exc:
+        raise typer.BadParameter(
+            "`hillclimb tree` needs the TUI extra: pip install 'rebase-hillclimb[tui]'"
+        ) from exc
 
     config = Config.load()
     search_dir = resolve_search_dir(config, search)
@@ -528,7 +553,12 @@ def watch():
     """Live TUI: runs, searches, candidates, and selected-candidate details.
     Keys: enter=open/details, esc=close/back, +/-=resize details, s=stop search,
     x=prune candidate, q=quit."""
-    from hillclimb.watch import WatchApp
+    try:
+        from hillclimb.watch import WatchApp
+    except ModuleNotFoundError as exc:
+        raise typer.BadParameter(
+            "`hillclimb watch` needs the TUI extra: pip install 'rebase-hillclimb[tui]'"
+        ) from exc
 
     WatchApp(Config.load()).run()
 
