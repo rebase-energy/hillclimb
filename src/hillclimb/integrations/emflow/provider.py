@@ -88,7 +88,7 @@ def load_emflow_problem(name: str, config: Config) -> ProblemSpec:
     problem.load_dataset()  # validate loadability up front
     from hillclimb.project import machine_cache_dir
 
-    cache_root = machine_cache_dir() / "emflow-problems"
+    cache_root = machine_cache_dir()  # materialize appends emflow-problems/
     problem_dir = materialize_problem_dir(problem, name, cache_root)
     quantiles = getattr(problem.env("validation"), "quantiles", None)
     return ProblemSpec(

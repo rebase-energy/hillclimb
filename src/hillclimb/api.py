@@ -101,23 +101,30 @@ def ensure_runtime_venv(config: Config, kind: str = "csv", log: Log = print) -> 
         if python.exists():
             return python
         log(f"Creating {kind} runtime venv at {venv_dir} ...")
-        subprocess.run(["uv", "venv", "--python", "3.12", str(venv_dir)], check=True)
-        with resources.as_file(requirements_resource(kind)) as req:
-            subprocess.run(
-                ["uv", "pip", "install", "-r", str(req), "--python", str(python)],
-                check=True,
-            )
-        if kind == "emflow":
-            try:
+        try:
+            subprocess.run(["uv", "venv", "--python", "3.12", str(venv_dir)], check=True)
+            with resources.as_file(requirements_resource(kind)) as req:
                 subprocess.run(
-                    ["uv", "pip", "install", *shlex.split(config.emflow.source), "--python", str(python)],
+                    ["uv", "pip", "install", "-r", str(req), "--python", str(python)],
                     check=True,
                 )
-            except subprocess.CalledProcessError as exc:
-                raise RuntimeError(
-                    f"Installing emflow from {config.emflow.source!r} failed — first use "
-                    "needs network (or set `emflow.source` to a local checkout, e.g. '-e ../emflow')"
-                ) from exc
+            if kind == "emflow":
+                try:
+                    subprocess.run(
+                        ["uv", "pip", "install", *shlex.split(config.emflow.source), "--python", str(python)],
+                        check=True,
+                    )
+                except subprocess.CalledProcessError as exc:
+                    raise RuntimeError(
+                        f"Installing emflow from {config.emflow.source!r} failed — first use "
+                        "needs network (or set `emflow.source` to a local checkout, e.g. '-e ../emflow')"
+                    ) from exc
+        except BaseException:
+            # a partial venv would pass the exists() check forever
+            import shutil
+
+            shutil.rmtree(venv_dir, ignore_errors=True)
+            raise
     return python
 
 
