@@ -17,7 +17,8 @@ The hierarchy: a **Run** (one invocation) contains **Searches** (one engine
 process per problem), each exploring a tree of **Candidates** (immutable code
 artifacts), each executed as a **Trial**.
 
-All commands: `uv run hillclimb <command>` from the repo root. Search-addressing
+All commands: `uv run hillclimb <command>` from anywhere inside a workspace
+(found by upward search for `hillclimb/config.yaml`). Search-addressing
 commands accept `<run-id>/<search-id>`, a bare `<run-id>` (when the run has one
 search), or `latest` (the default).
 

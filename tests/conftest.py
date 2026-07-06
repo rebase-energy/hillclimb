@@ -68,6 +68,7 @@ def task_larger(tmp_path: Path) -> ProblemSpec:
 def config(tmp_path: Path) -> Config:
     cfg = Config()
     cfg.paths.runs_dir = tmp_path / "runs"
+    cfg.paths.problems_dir = Path("problems")  # this repo keeps problems/ at the root
     cfg.paths.runtime_python = Path(sys.executable)
     cfg.budget.exec_timeout_s = 30
     return cfg

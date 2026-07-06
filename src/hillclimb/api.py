@@ -62,8 +62,27 @@ def search_ref(search_dir: Path) -> str:
     return f"{search_dir.parents[1].name}/{search_dir.name}"
 
 
+def default_venv_python(config: Config, kind: str) -> Path:
+    """Shared machine venv path, keyed by a hash of the requirement set (and
+    the emflow source, whose changes must also rebuild): built once per
+    machine, shared by every workspace, new key = automatic rebuild."""
+    import hashlib
+
+    from hillclimb.project import machine_cache_dir
+    from hillclimb.runtime import runtime_packages
+
+    text = "\n".join(runtime_packages(kind))
+    if kind == "emflow":
+        text += f"\n{config.emflow.source}"
+    digest = hashlib.sha256(text.encode()).hexdigest()[:12]
+    return machine_cache_dir() / "venvs" / f"{kind}-{digest}" / "bin" / "python"
+
+
 def ensure_runtime_venv(config: Config, kind: str = "csv", log: Log = print) -> Path:
-    """Create the solution-script venv for the problem kind on first use."""
+    """Create the solution-script venv for the problem kind on first use.
+    Explicitly configured paths are used as-is (hosted image, tests); the
+    default is a shared hash-keyed venv under the machine cache dir."""
+    import fcntl
     from importlib import resources
 
     from hillclimb.runtime import requirements_resource
@@ -71,28 +90,34 @@ def ensure_runtime_venv(config: Config, kind: str = "csv", log: Log = print) -> 
     python_path = (
         config.paths.emflow_runtime_python if kind == "emflow" else config.paths.runtime_python
     )
-    python = python_path.absolute()
+    python = python_path.absolute() if python_path else default_venv_python(config, kind)
     if python.exists():
         return python
     venv_dir = python.parents[1]
-    log(f"Creating {kind} runtime venv at {venv_dir} ...")
-    subprocess.run(["uv", "venv", "--python", "3.12", str(venv_dir)], check=True)
-    with resources.as_file(requirements_resource(kind)) as req:
-        subprocess.run(
-            ["uv", "pip", "install", "-r", str(req), "--python", str(python)],
-            check=True,
-        )
-    if kind == "emflow":
-        try:
+    venv_dir.parent.mkdir(parents=True, exist_ok=True)
+    # concurrent searches on a cold machine must not race the build
+    with open(f"{venv_dir}.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if python.exists():
+            return python
+        log(f"Creating {kind} runtime venv at {venv_dir} ...")
+        subprocess.run(["uv", "venv", "--python", "3.12", str(venv_dir)], check=True)
+        with resources.as_file(requirements_resource(kind)) as req:
             subprocess.run(
-                ["uv", "pip", "install", *shlex.split(config.emflow.source), "--python", str(python)],
+                ["uv", "pip", "install", "-r", str(req), "--python", str(python)],
                 check=True,
             )
-        except subprocess.CalledProcessError as exc:
-            raise RuntimeError(
-                f"Installing emflow from {config.emflow.source!r} failed — first use "
-                "needs network (or set `emflow.source` to a local checkout, e.g. '-e ../emflow')"
-            ) from exc
+        if kind == "emflow":
+            try:
+                subprocess.run(
+                    ["uv", "pip", "install", *shlex.split(config.emflow.source), "--python", str(python)],
+                    check=True,
+                )
+            except subprocess.CalledProcessError as exc:
+                raise RuntimeError(
+                    f"Installing emflow from {config.emflow.source!r} failed — first use "
+                    "needs network (or set `emflow.source` to a local checkout, e.g. '-e ../emflow')"
+                ) from exc
     return python
 
 
@@ -241,8 +266,10 @@ def execute_search(
     backend_obj = get_backend(config.backend, auth=config.backend_auth)
     if hasattr(backend_obj, "abort"):
         backend_obj.abort = abort
+    from hillclimb.project import machine_cache_dir
+
     slots = (
-        MachineSlots(config.paths.runs_dir, config.search.machine_max_agents)
+        MachineSlots(machine_cache_dir() / "agent-slots", config.search.machine_max_agents)
         if config.search.machine_max_agents > 0
         else None
     )

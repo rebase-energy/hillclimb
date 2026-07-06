@@ -21,6 +21,7 @@ class RunMeta(BaseModel):
     name: str
     kind: str = "problem"  # problem | suite
     target: str
+    spec: str | None = None  # workspace-relative run-spec file, when launched from one
     problem_ids: list[str] = Field(default_factory=list)
     started_at: str = Field(default_factory=utcnow)
 

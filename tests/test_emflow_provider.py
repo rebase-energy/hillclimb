@@ -44,7 +44,7 @@ def test_bare_package_resolves_to_virtual_suite(econfig):
     resolved = resolve_target("emflow://gefcom2014", econfig)
     assert resolved.kind == "suite"
     assert resolved.suite.suite_id == "gefcom2014"
-    assert resolved.suite.problems == [
+    assert [entry.target for entry in resolved.suite.problems] == [
         "emflow://gefcom2014:load",
         "emflow://gefcom2014:price",
         "emflow://gefcom2014:solar",

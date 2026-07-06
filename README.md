@@ -35,6 +35,59 @@ uv run hillclimb status                                 # or: plain-text status 
 
 Try the engine without spending agent calls: `--backend dummy`.
 
+## Workspaces
+
+All hillclimb data lives in one `hillclimb/` folder inside your project, so it
+never mingles with the rest of the repo. `hillclimb init` creates it:
+
+```
+my-project/
+└── hillclimb/
+    ├── config.yaml     # workspace defaults + the workspace marker
+    ├── problems/       # problem definitions
+    ├── specs/          # committed run specs (versioned run parameters)
+    └── runs/           # search artifacts (gitignored by init)
+```
+
+Commands work from any subdirectory — the workspace is found by upward search
+for `hillclimb/config.yaml` (like git). Without one, commands error and point
+you at `hillclimb init`; `HILLCLIMB_WORKSPACE` pins the root explicitly.
+
+Config precedence, highest first: CLI flags → workspace `hillclimb/config.yaml`
+→ user `~/.config/hillclimb/config.yaml` → built-in defaults.
+
+Machine-scoped state is shared across workspaces under `~/.cache/hillclimb/`
+(honors `XDG_CACHE_HOME`; `HILLCLIMB_CACHE_DIR` overrides): solution-runtime
+venvs keyed by a hash of their requirements (rebuilt automatically when
+requirements change), the emflow problem cache, and the cross-search agent
+semaphore. Pre-workspace checkouts left `.runtime-venv*/` and `cache/` in the
+project dir — safe to delete.
+
+### Run specs: versioned run parameters
+
+The canonical way to run is a committed spec file, so the repo fully describes
+its searches (`git log` explains every run). Entries carry per-search
+parameters; CLI flags override them for ad-hoc experiments:
+
+```yaml
+# hillclimb/specs/gefcom.yaml
+problems:
+  - target: emflow://gefcom2014:solar
+    model: opus
+    budget: 2h
+    parallel_agents: 3
+  - target: emflow://gefcom2014:wind
+    budget: 1h
+```
+
+```bash
+uv run hillclimb run hillclimb/specs/gefcom.yaml            # exactly as committed
+uv run hillclimb run hillclimb/specs/gefcom.yaml --model sonnet   # ad-hoc override
+```
+
+A spec with a single top-level `target:` (plus the same parameter keys) runs
+one search. `run.yaml` records which spec launched the run.
+
 ## Semantics
 
 The UI and on-disk metadata use this hierarchy, coarse to fine:

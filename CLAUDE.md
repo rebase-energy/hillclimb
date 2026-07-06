@@ -8,6 +8,11 @@ Hierarchy: **Run** (one invocation, `runs/<run-id>/`) → **Search** (one engine
 process per problem, `searches/<search-id>/`) → **Candidate** (immutable code
 artifact) → **Trial** (one execution).
 
+- Workspaces: all data lives in a `hillclimb/` folder (config.yaml marker,
+  problems/, specs/, runs/) found by upward search; this repo overrides
+  runs/problems to its legacy top-level dirs in `hillclimb/config.yaml`.
+  Machine-scoped state (shared venvs, emflow cache, agent slots) lives in
+  `~/.cache/hillclimb/`.
 - Tests: `uv run pytest`
 - CLI: `uv run hillclimb --help` (engine); `uv run hillclimb watch` (live TUI)
 - Driving runs from chat: use the `hillclimb` skill (`.claude/skills/hillclimb/SKILL.md`)

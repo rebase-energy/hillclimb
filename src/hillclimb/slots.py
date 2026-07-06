@@ -16,7 +16,6 @@ import time
 from pathlib import Path
 from typing import Callable
 
-SLOTS_DIRNAME = ".agent-slots"
 RETRY_INTERVAL_S = 2.0
 
 
@@ -37,11 +36,13 @@ class SlotHandle:
 
 
 class MachineSlots:
-    """Acquire one of `limit` machine-wide slots; limit=0 disables the cap."""
+    """Acquire one of `limit` machine-wide slots; limit=0 disables the cap.
+    `root` is the slot-file directory — pass the machine cache's agent-slots
+    dir so the cap spans every workspace on the machine."""
 
-    def __init__(self, runs_dir: Path, limit: int):
+    def __init__(self, root: Path, limit: int):
         self.limit = limit
-        self.root = runs_dir / SLOTS_DIRNAME
+        self.root = root
         if limit > 0:
             self.root.mkdir(parents=True, exist_ok=True)
 

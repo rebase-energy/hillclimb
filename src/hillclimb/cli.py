@@ -45,6 +45,90 @@ from hillclimb.workspace import create_run_dir
 app = typer.Typer(help="rebase-hillclimb: auto-hillclimbing for verifier-defined problems")
 
 
+def load_config(**overrides) -> Config:
+    """Config.load with the workspace-not-found hint rendered for the CLI."""
+    from hillclimb.project import WorkspaceNotFound
+
+    try:
+        return Config.load(**overrides)
+    except WorkspaceNotFound as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+
+INIT_CONFIG = """\
+# hillclimb workspace config — this file marks the workspace root; commands
+# work from any subdirectory. Precedence: CLI flags > this file >
+# ~/.config/hillclimb/config.yaml > built-in defaults.
+
+model: sonnet
+# backend: claude-code
+
+# budget:
+#   total_s: 7200
+
+# search:
+#   parallel_agents: 1   # >1 runs concurrent operators
+#   n_trials: 1          # validation evals per candidate
+
+# holdout:
+#   enabled: true
+#   top_k: 5             # holdout scored only for top-k-by-val candidates
+"""
+
+INIT_SPEC_EXAMPLE = """\
+# Example run spec — committed run parameters (`hillclimb run hillclimb/specs/example.yaml`).
+# Single search:
+#   target: emflow://gefcom2014:solar
+#   model: opus
+#   budget: 2h
+# Or several, with per-search parameters:
+# problems:
+#   - target: emflow://gefcom2014:solar
+#     model: opus
+#     budget: 2h
+#   - target: emflow://gefcom2014:wind
+#     budget: 1h
+"""
+
+
+@app.command()
+def init(
+    directory: Path = typer.Argument(Path("."), help="Workspace root to initialize"),
+    force: bool = typer.Option(False, "--force", help="Initialize even inside an existing workspace"),
+):
+    """Create a hillclimb workspace: a hillclimb/ folder holding config,
+    problems, run specs, and runs."""
+    from hillclimb.project import MARKER_DIR, MARKER_FILE, find_workspace_root
+
+    root = directory.resolve()
+    existing = find_workspace_root(root)
+    if existing is not None and not force:
+        typer.echo(
+            f"Already inside the workspace at {existing} "
+            f"({existing / MARKER_DIR / MARKER_FILE} exists). Use --force to nest anyway.",
+            err=True,
+        )
+        raise typer.Exit(1)
+    folder = root / MARKER_DIR
+    for sub in ("problems", "specs", "runs"):
+        (folder / sub).mkdir(parents=True, exist_ok=True)
+        (folder / sub / ".gitkeep").touch()
+    (folder / MARKER_FILE).write_text(INIT_CONFIG)
+    (folder / "specs" / "example.yaml").write_text(INIT_SPEC_EXAMPLE)
+    gitignore = root / ".gitignore"
+    ignore_line = f"{MARKER_DIR}/runs/"
+    existing_ignore = gitignore.read_text() if gitignore.exists() else ""
+    if ignore_line not in existing_ignore.splitlines():
+        gitignore.write_text(existing_ignore.rstrip("\n") + ("\n" if existing_ignore else "") + ignore_line + "\n")
+    typer.echo(f"Initialized hillclimb workspace at {root}")
+    typer.echo(f"  {MARKER_DIR}/{MARKER_FILE}   — workspace config (edit defaults here)")
+    typer.echo(f"  {MARKER_DIR}/problems/      — problem definitions")
+    typer.echo(f"  {MARKER_DIR}/specs/         — committed run specs")
+    typer.echo(f"  {MARKER_DIR}/runs/          — search artifacts (gitignored)")
+    typer.echo("Next: hillclimb run <problem-or-spec> --budget 30m")
+
+
 def parse_budget(value: str) -> int:
     match = re.fullmatch(r"(\d+)\s*([hms]?)", value.strip())
     if not match:
@@ -147,6 +231,17 @@ def _run_problem(
     _execute(config, problem, search_dir, BudgetManager(total_s, config.budget.stop_margin_s))
 
 
+def _spec_provenance(config: Config, suite_path: Path) -> str:
+    """Workspace-relative spec path recorded in run.yaml (absolute if the
+    spec lives outside the workspace)."""
+    if config.workspace_root is not None:
+        try:
+            return str(suite_path.relative_to(config.workspace_root))
+        except ValueError:
+            pass
+    return str(suite_path)
+
+
 def _run_suite(
     target: str,
     config: Config,
@@ -155,6 +250,8 @@ def _run_suite(
     model: str | None,
     holdout: bool,
     name: str | None,
+    parallel_agents: int | None = None,
+    n_trials: int | None = None,
 ) -> None:
     resolved = resolve_target(target, config)
     if resolved.kind != "suite" or resolved.suite is None:
@@ -178,13 +275,16 @@ def _run_suite(
             name=run_name,
             kind="suite",
             target=target,
+            spec=_spec_provenance(config, suite.suite_path),
             problem_ids=problem_ids,
         ),
     )
     log_dir = run_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
+    child_cwd = config.workspace_root or Path.cwd()
+    child_env = {**os.environ, "HILLCLIMB_WORKSPACE": str(child_cwd)}
     launched = []
-    for index, problem_target in enumerate(problem_targets, 1):
+    for index, (entry, problem_target) in enumerate(zip(suite.problems, problem_targets), 1):
         slug = Path(problem_target).name or f"problem-{index}"
         log_path = log_dir / f"{index:02d}-{slug}.log"
         cmd = [
@@ -198,18 +298,29 @@ def _run_suite(
             "--run-name",
             run_name,
         ]
-        if budget:
-            cmd += ["--budget", budget]
-        if backend:
-            cmd += ["--backend", backend]
-        if model:
-            cmd += ["--model", model]
+        # CLI flags override the spec entry's committed values
+        child_budget = budget or entry.budget
+        child_backend = backend or entry.backend
+        child_model = model or entry.model
+        child_parallel = parallel_agents if parallel_agents is not None else entry.parallel_agents
+        child_trials = n_trials if n_trials is not None else entry.n_trials
+        if child_budget:
+            cmd += ["--budget", child_budget]
+        if child_backend:
+            cmd += ["--backend", child_backend]
+        if child_model:
+            cmd += ["--model", child_model]
+        if child_parallel is not None:
+            cmd += ["--parallel-agents", str(child_parallel)]
+        if child_trials is not None:
+            cmd += ["--n-trials", str(child_trials)]
         if not holdout:
             cmd.append("--no-holdout")
         out = log_path.open("w")
         proc = subprocess.Popen(
             cmd,
-            cwd=Path.cwd(),
+            cwd=child_cwd,
+            env=child_env,
             stdout=out,
             stderr=subprocess.STDOUT,
             start_new_session=True,
@@ -229,16 +340,29 @@ def run(
     model: str = typer.Option(None, help="Model for operator calls, e.g. sonnet / opus"),
     holdout: bool = typer.Option(True, "--holdout/--no-holdout", help="Hidden selection holdout"),
     name: str = typer.Option(None, "--name", help="Run name shown in the TUI"),
+    parallel_agents: int = typer.Option(
+        None, "--parallel-agents", help="Concurrent operators (worker pool)"
+    ),
+    n_trials: int = typer.Option(
+        None, "--n-trials", help="Validation evals per candidate (mean climbs)"
+    ),
     run_id: str = typer.Option(None, "--run-id", hidden=True),
     run_name: str = typer.Option(None, "--run-name", hidden=True),
 ):
-    """Start a hillclimb run on a problem folder/name or a suite YAML."""
-    config = Config.load(backend=backend, model=model)
+    """Start a hillclimb run on a problem folder/name or a run-spec YAML."""
+    config = load_config(backend=backend, model=model)
     if not holdout:
         config.holdout.enabled = False
+    if parallel_agents is not None:
+        config.search.parallel_agents = parallel_agents
+    if n_trials is not None:
+        config.search.n_trials = n_trials
     resolved = resolve_target(target, config)
     if resolved.kind == "suite":
-        _run_suite(target, config, budget, backend, model, holdout, name)
+        _run_suite(
+            target, config, budget, backend, model, holdout, name,
+            parallel_agents=parallel_agents, n_trials=n_trials,
+        )
         return
     _run_problem(
         target,
@@ -253,12 +377,12 @@ def run(
 def resume(search: str = typer.Argument("latest")):
     """Resume a parked or interrupted search (`<run-id>/<search-id>`,
     `<run-id>`, or `latest`)."""
-    config = Config.load()
+    config = load_config()
     search_dir = resolve_search_dir(config, search)
     meta = load_search_meta(search_dir)
     if meta is None:
         raise typer.BadParameter(f"No valid search.yaml in {search_dir}")
-    config = Config.load(backend=meta.backend, model=meta.model)
+    config = load_config(backend=meta.backend, model=meta.model)
     config.holdout.enabled = meta.holdout_enabled
     if meta.holdout_seed is not None:
         config.holdout.seed = meta.holdout_seed
@@ -282,7 +406,7 @@ def resume(search: str = typer.Argument("latest")):
 def stop(search: str = typer.Argument("latest")):
     """Gracefully stop a running engine: it finishes the current operator
     call, then parks. Resume later with `hillclimb resume`."""
-    config = Config.load()
+    config = load_config()
     search_dir = resolve_search_dir(config, search)
     ref = search_ref(search_dir)
     outcome = request_stop(search_dir, source="cli")
@@ -301,7 +425,7 @@ def prune(
     """Prune a candidate and its whole subtree: the engine stops building on
     this lineage and it is excluded from selection. Statuses and scores stay
     visible in status/tree output."""
-    config = Config.load()
+    config = load_config()
     search_dir = resolve_search_dir(config, search)
     meta = load_search_meta(search_dir)
     lower = bool(meta.lower_is_better) if meta else False
@@ -325,7 +449,7 @@ def kill(search: str = typer.Argument("latest")):
     """SIGTERM a running engine; it finalizes state and can be resumed.
     For a graceful stop that lets the current operator finish, use
     `hillclimb stop`."""
-    config = Config.load()
+    config = load_config()
     search_dir = resolve_search_dir(config, search)
     ref = search_ref(search_dir)
     state = effective_state(search_dir)
@@ -341,7 +465,7 @@ def kill(search: str = typer.Argument("latest")):
 @app.command()
 def status(search: str = typer.Argument("latest")):
     """Show the candidate tree of a search."""
-    config = Config.load()
+    config = load_config()
     search_dir = resolve_search_dir(config, search)
     journal = Journal(search_dir / "journal.jsonl")
     search_status = read_status(search_dir)
@@ -397,7 +521,7 @@ def tree(
             "`hillclimb tree` needs the TUI extra: pip install 'rebase-hillclimb[tui]'"
         ) from exc
 
-    config = Config.load()
+    config = load_config()
     search_dir = resolve_search_dir(config, search)
     meta = load_search_meta(search_dir)
     lower = bool(meta.lower_is_better) if meta else False
@@ -423,7 +547,7 @@ def watch():
             "`hillclimb watch` needs the TUI extra: pip install 'rebase-hillclimb[tui]'"
         ) from exc
 
-    WatchApp(Config.load()).run()
+    WatchApp(load_config()).run()
 
 
 @app.command()
@@ -433,7 +557,7 @@ def smoke(
 ):
     """One real DRAFT call through the claude-code backend, then execute and
     report — verifies auth, JSON field names, and the filesystem contract."""
-    config = Config.load(backend="claude-code", model=model)
+    config = load_config(backend="claude-code", model=model)
     problem = load_problem(target, config)
     version = subprocess.run(["claude", "-v"], capture_output=True, text=True).stdout.strip()
     typer.echo(f"claude version: {version}")

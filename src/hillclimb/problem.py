@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from hillclimb.config import Config
 from hillclimb.holdout import HoldoutOverride
@@ -43,10 +43,32 @@ class ProblemSpec(BaseModel):
     emflow_quantiles: list[float] | None = None  # probabilistic problems only
 
 
+class SuiteEntry(BaseModel):
+    """One search in a run-spec file. Bare-string entries are shorthand for
+    `{target: <string>}`; dict entries carry per-search parameter overrides,
+    so a committed spec fully describes a run (git-versionable parameters).
+    CLI flags passed alongside the spec override these values."""
+
+    target: str
+    name: str | None = None
+    model: str | None = None
+    backend: str | None = None
+    budget: str | None = None  # "2h" / "30m" / seconds — parsed by the CLI
+    parallel_agents: int | None = None
+    n_trials: int | None = None
+
+
 class SuiteSpec(BaseModel):
     suite_id: str
     suite_path: Path
-    problems: list[str]
+    problems: list[SuiteEntry]
+
+    @field_validator("problems", mode="before")
+    @classmethod
+    def _coerce_entries(cls, value):
+        if isinstance(value, list):
+            return [{"target": v} if isinstance(v, str) else v for v in value]
+        return value
 
 
 @dataclass(frozen=True)
@@ -161,30 +183,51 @@ def resolve_suite_yaml(target: str | Path, config: Config) -> Path:
     for candidate in _candidate_paths(str(target), config):
         if candidate.is_file() and candidate.suffix in {".yaml", ".yml"}:
             meta = _read_yaml(candidate)
-            if "problems" in meta:
+            if "problems" in meta or "target" in meta:
                 return candidate.resolve()
     raise FileNotFoundError(f"No suite found for target {target!r}")
 
 
+def _parse_entry(raw, suite_yaml: Path) -> SuiteEntry:
+    if isinstance(raw, str) and raw.strip():
+        return SuiteEntry(target=raw)
+    if isinstance(raw, dict):
+        return SuiteEntry.model_validate(raw)
+    raise ValueError(
+        f"{suite_yaml} `problems` entries must be target strings or "
+        f"{{target: ..., model: ..., budget: ...}} mappings (got {raw!r})"
+    )
+
+
 def load_suite(target: str | Path, config: Config) -> SuiteSpec:
+    """Load a run spec: a `problems:` list (strings or per-entry parameter
+    dicts), or the single-search form with a top-level `target:` plus the
+    same parameter keys."""
     suite_yaml = resolve_suite_yaml(target, config)
     meta = _read_yaml(suite_yaml)
+    if "problems" not in meta:  # single-target spec
+        entry_keys = SuiteEntry.model_fields.keys()
+        entry = SuiteEntry.model_validate({k: v for k, v in meta.items() if k in entry_keys})
+        return SuiteSpec(
+            suite_id=meta.get("suite_id") or suite_yaml.stem,
+            suite_path=suite_yaml,
+            problems=[entry],
+        )
     problems = meta.get("problems")
     if not isinstance(problems, list) or not problems:
         raise ValueError(f"{suite_yaml} must define a non-empty `problems` list")
-    if not all(isinstance(problem, str) and problem.strip() for problem in problems):
-        raise ValueError(f"{suite_yaml} `problems` entries must be non-empty strings")
     return SuiteSpec(
         suite_id=meta.get("suite_id") or suite_yaml.stem,
         suite_path=suite_yaml,
-        problems=problems,
+        problems=[_parse_entry(raw, suite_yaml) for raw in problems],
     )
 
 
 def suite_problem_targets(suite: SuiteSpec, config: Config) -> list[str]:
     """Resolve suite entries relative to the suite file when possible."""
     targets = []
-    for problem in suite.problems:
+    for entry in suite.problems:
+        problem = entry.target
         if _split_scheme(problem) is not None:
             targets.append(problem)  # provider targets resolve by name, not path
             continue

@@ -374,9 +374,9 @@ class TestMachineSlots:
     def test_zero_limit_is_noop(self, tmp_path):
         from hillclimb.slots import MachineSlots
 
-        slots = MachineSlots(tmp_path, limit=0)
+        slots = MachineSlots(tmp_path / "slots", limit=0)
         assert slots.try_acquire() is not None
-        assert not (tmp_path / ".agent-slots").exists()
+        assert not (tmp_path / "slots").exists()  # no-op cap creates nothing
 
     def test_cross_process_exclusion(self, tmp_path):
         import subprocess

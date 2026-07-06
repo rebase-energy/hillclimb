@@ -86,7 +86,9 @@ def load_emflow_problem(name: str, config: Config) -> ProblemSpec:
     if hasattr(ef, "cache_problem_data"):
         ef.cache_problem_data(name, include_private=False)
     problem.load_dataset()  # validate loadability up front
-    cache_root = config.paths.runs_dir.parent / "cache"
+    from hillclimb.project import machine_cache_dir
+
+    cache_root = machine_cache_dir() / "emflow-problems"
     problem_dir = materialize_problem_dir(problem, name, cache_root)
     quantiles = getattr(problem.env("validation"), "quantiles", None)
     return ProblemSpec(
