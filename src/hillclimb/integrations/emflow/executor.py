@@ -35,6 +35,7 @@ class EmflowLocalExecutor:
         workspace: Path,
         timeout_s: int,
         verifier: Path | None = None,
+        seed: int | None = None,
     ) -> ExecResult:
         script = script.absolute()
         workspace = workspace.absolute()
@@ -42,6 +43,9 @@ class EmflowLocalExecutor:
         stderr_path = workspace / "exec_stderr.log"
         result_json = workspace / RESULT_JSON
         result_json.unlink(missing_ok=True)
+        env = dict(self.env)
+        if seed is not None:
+            env["HILLCLIMB_TRIAL_SEED"] = str(seed)
         start = time.monotonic()
         with stdout_path.open("w") as out, stderr_path.open("w") as err:
             returncode, timed_out = run_logged(
@@ -51,7 +55,7 @@ class EmflowLocalExecutor:
                     "--split", "validation",
                     "--result-json", str(result_json),
                 ],
-                workspace, timeout_s, out, err, self.env,
+                workspace, timeout_s, out, err, env,
             )
         duration = time.monotonic() - start
         return ExecResult(

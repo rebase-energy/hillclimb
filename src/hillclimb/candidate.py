@@ -74,16 +74,21 @@ class Candidate(BaseModel):
     def last_trial(self) -> Trial | None:
         return self.trials[-1] if self.trials else None
 
-    # Aggregate rule: the latest trial speaks for the candidate. With one
-    # trial per candidate this is exact; a future tuning loop changes the
-    # rule (best/mean over trials) here and nowhere else.
+    # Aggregate rule: mean val over scored trials is the climbing signal
+    # (noise-robust for stochastic candidates); with one trial this equals
+    # the trial's own score. Holdout is evaluated once per candidate, so the
+    # last non-None value is the candidate's holdout score.
     @property
     def val_score(self) -> float | None:
-        return self.trials[-1].val_score if self.trials else None
+        scores = [t.val_score for t in self.trials if t.val_score is not None]
+        return sum(scores) / len(scores) if scores else None
 
     @property
     def holdout_score(self) -> float | None:
-        return self.trials[-1].holdout_score if self.trials else None
+        for trial in reversed(self.trials):
+            if trial.holdout_score is not None:
+                return trial.holdout_score
+        return None
 
     @property
     def is_scored(self) -> bool:

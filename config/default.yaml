@@ -10,6 +10,9 @@ budget:
 search:
   num_drafts: 3
   max_debug_depth: 3
+  parallel_agents: 1      # >1 enables the worker pool (concurrent operators)
+  n_trials: 1             # validation evals per candidate; mean val is the climbing score
+  machine_max_agents: 0   # machine-wide concurrent-agent cap across searches; 0 = off
 
 holdout:
   enabled: true
@@ -17,6 +20,7 @@ holdout:
   seed: 42
   climb_on: val          # documented seam; only 'val' implemented
   selection: rank-blend  # rank-blend | holdout | val — how the shipped submission is picked
+  top_k: 5               # holdout scored only for top-k-by-val candidates (hygiene); 0 = all
 
 ensemble:
   enabled: true

@@ -62,6 +62,7 @@ class Executor(Protocol):
         workspace: Path,
         timeout_s: int,
         verifier: Path | None = None,
+        seed: int | None = None,
     ) -> ExecResult: ...
 
 
@@ -123,13 +124,14 @@ class LocalExecutor:
         workspace: Path,
         timeout_s: int,
         verifier: Path | None = None,
+        seed: int | None = None,
     ) -> ExecResult:
         script = script.absolute()
         workspace = workspace.absolute()
         verifier = verifier.absolute() if verifier is not None else None
         stdout_path = workspace / "exec_stdout.log"
         stderr_path = workspace / "exec_stderr.log"
-        env = scrubbed_env()
+        env = scrubbed_env(**({"HILLCLIMB_TRIAL_SEED": str(seed)} if seed is not None else {}))
         start = time.monotonic()
         with stdout_path.open("w") as out, stderr_path.open("w") as err:
             returncode, timed_out = run_logged(

@@ -19,6 +19,24 @@ def create_search_dir(run_dir: Path, search_id: str) -> Path:
     return search_dir
 
 
+def create_trial_dir(workspace: Path, index: int) -> Path:
+    """Per-trial working directory under a candidate workspace (n_trials > 1):
+    same data/problem symlinks, own copies of the solution and ensemble inputs
+    so parallel trials can't collide on artifacts."""
+    trial_dir = workspace / "trials" / f"t{index}"
+    trial_dir.mkdir(parents=True, exist_ok=True)
+    for link_name in ("data", "problem"):
+        source = workspace / link_name
+        link = trial_dir / link_name
+        if source.exists() and not link.exists():
+            link.symlink_to(source.resolve(), target_is_directory=True)
+    for script in ["solution.py", *(p.name for p in workspace.glob("candidate_*.py"))]:
+        source = workspace / script
+        if source.exists():
+            shutil.copy(source, trial_dir / script)
+    return trial_dir
+
+
 def create_candidate_workspace(
     search_dir: Path,
     candidate_id: str,

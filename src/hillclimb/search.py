@@ -373,46 +373,109 @@ class GreedySearcher:
                 candidate_id=candidate_id, operator=operator, phase="exec", workspace=str(workspace)
             )
         )
-        trial_started = utcnow()
-        exec_result = self.executor.execute(
-            solution,
-            workspace,
-            exec_timeout,
-            verifier=self.problem.verifier,
-        )
-        trial = Trial(
-            returncode=exec_result.returncode,
-            duration_s=exec_result.duration_s,
-            timed_out=exec_result.timed_out,
-            stdout_tail=tail(Path(exec_result.stdout_path)) if exec_result.stdout_path else "",
-            submission_ok=exec_result.submission_ok,
-            started_at=trial_started,
-        )
-        candidate.trials.append(trial)
+        all_ok = self._run_trials(candidate, solution, workspace, exec_timeout)
 
-        if exec_result.ok:
-            holdout_score, holdout_error = self._score_holdout(workspace)
+        if all_ok:
             # score recorded even when the candidate ends buggy from a holdout
             # contract violation — status/TUI display depend on it
-            trial.val_score = exec_result.val_score
-            if holdout_error is not None:
-                candidate.status = "buggy"
-                trial.holdout_error = holdout_error
+            last = candidate.trials[-1]
+            if self._holdout_gate(candidate.val_score):
+                holdout_score, holdout_error = self._score_holdout(workspace)
+                if holdout_error is not None:
+                    candidate.status = "buggy"
+                    last.holdout_error = holdout_error
+                else:
+                    candidate.status = "ok"
+                    last.holdout_score = holdout_score
             else:
+                candidate.status = "ok"  # climbs on val; not selectable via holdout
+            if candidate.status == "ok":
                 previous_best = self.journal.best_candidate(self.problem.lower_is_better)
-                candidate.status = "ok"
-                trial.holdout_score = holdout_score
-                if previous_best is None or self._improves(exec_result.val_score, previous_best.val_score):
+                if previous_best is None or self._improves(candidate.val_score, previous_best.val_score):
                     candidate.is_best = True
         else:
             candidate.status = "buggy"
-        trial.finished_at = utcnow()
         candidate.finished_at = utcnow()
         self.journal.candidate_result(candidate)
         if candidate.status == "ok":
             self._sync_selection()
         self._status(current=None)
         return candidate
+
+    def _run_trials(
+        self, candidate: Candidate, solution: Path, workspace: Path, exec_timeout: int
+    ) -> bool:
+        """Run n_trials validation evaluations (parallel when >1, each in its
+        own trial dir with a distinct seed) and append the Trials in index
+        order. Returns True only if every trial passed — a seed-flaky
+        candidate is buggy."""
+        n = max(1, self.config.search.n_trials)
+        if n == 1:
+            trial, ok = self._execute_one_trial(solution, workspace, exec_timeout, seed=None)
+            candidate.trials.append(trial)
+            return ok
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        from hillclimb.workspace import create_trial_dir
+
+        def run(index: int) -> tuple[Trial, bool]:
+            trial_dir = create_trial_dir(workspace, index)
+            return self._execute_one_trial(
+                trial_dir / solution.name, trial_dir, exec_timeout, seed=index
+            )
+
+        with ThreadPoolExecutor(max_workers=n, thread_name_prefix="trial") as pool:
+            results = list(pool.map(run, range(n)))
+        candidate.trials.extend(trial for trial, _ in results)
+        # trial-0 artifacts surface at the workspace root so best/-sync,
+        # ensemble copies, and CSV holdout scoring stay untouched
+        t0 = workspace / "trials" / "t0"
+        for name in ("submission.csv", "holdout_predictions.csv", "eval_result.json"):
+            if (t0 / name).exists():
+                shutil.copy(t0 / name, workspace / name)
+        return all(ok for _, ok in results)
+
+    def _execute_one_trial(
+        self, solution: Path, cwd: Path, exec_timeout: int, seed: int | None
+    ) -> tuple[Trial, bool]:
+        trial_started = utcnow()
+        exec_result = self.executor.execute(
+            solution,
+            cwd,
+            exec_timeout,
+            verifier=self.problem.verifier,
+            seed=seed,
+        )
+        trial = Trial(
+            seed=seed,
+            returncode=exec_result.returncode,
+            duration_s=exec_result.duration_s,
+            timed_out=exec_result.timed_out,
+            stdout_tail=tail(Path(exec_result.stdout_path)) if exec_result.stdout_path else "",
+            submission_ok=exec_result.submission_ok,
+            val_score=exec_result.val_score if exec_result.ok else None,
+            started_at=trial_started,
+            finished_at=utcnow(),
+        )
+        return trial, exec_result.ok
+
+    def _holdout_gate(self, val_score: float | None) -> bool:
+        """Holdout hygiene: evaluate holdout only when the candidate's val
+        score ranks within the configured top-k of scored candidates
+        (0 = no gate). Weak candidates keep climbing on val but stay
+        unselectable by the holdout signal."""
+        top_k = self.config.holdout.top_k
+        if top_k <= 0 or val_score is None:
+            return True
+        scored = sorted(
+            (c.val_score for c in self.journal.scored_candidates() if c.val_score is not None),
+            reverse=not self.problem.lower_is_better,
+        )
+        if len(scored) < top_k:
+            return True
+        kth = scored[top_k - 1]
+        return self._improves(val_score, kth) or val_score == kth
 
     def _sync_selection(self) -> None:
         """Keep best/ pointing at the currently selected candidate. Selection

@@ -21,6 +21,9 @@ class SearchConfig(BaseModel):
 
     num_drafts: int = 3
     max_debug_depth: int = 3
+    parallel_agents: int = 1  # >1 enables the worker pool; 1 = serial (default)
+    n_trials: int = 1  # validation evals per candidate (mean val is the climbing score)
+    machine_max_agents: int = 0  # machine-wide concurrent-agent cap across searches; 0 = off
 
 
 class HoldoutConfig(BaseModel):
@@ -29,6 +32,10 @@ class HoldoutConfig(BaseModel):
     seed: int = 42
     climb_on: str = "val"  # seam only; 'holdout' climbing is a future experiment
     selection: str = "rank-blend"  # rank-blend | holdout | val
+    # holdout hygiene: only candidates whose val score ranks top-k get a
+    # holdout evaluation (0 = score every ok candidate). Non-top-k candidates
+    # climb on val but cannot win rank-blend selection.
+    top_k: int = 5
 
 
 class EnsembleConfig(BaseModel):
