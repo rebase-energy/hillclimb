@@ -4,6 +4,7 @@ import os
 import re
 import signal
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import IO, Protocol
@@ -78,6 +79,14 @@ def parse_val_score(stdout_text: str) -> float | None:
     return None
 
 
+def _kill_group(proc: subprocess.Popen) -> None:
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    proc.wait()
+
+
 def run_logged(
     cmd: list[str],
     workspace: Path,
@@ -85,10 +94,11 @@ def run_logged(
     out: IO,
     err: IO,
     env: dict[str, str] | None = None,
+    abort: "threading.Event | None" = None,
 ) -> tuple[int | None, bool]:
     """Run cmd in its own process group with logs redirected; kill the whole
-    group on timeout so stray workers don't linger. Returns (returncode,
-    timed_out)."""
+    group on timeout or abort so stray workers don't linger. Returns
+    (returncode, timed_out) — an abort reports as timed_out."""
     proc = subprocess.Popen(
         cmd,
         cwd=workspace,
@@ -97,16 +107,18 @@ def run_logged(
         env=env,
         start_new_session=True,
     )
-    try:
-        proc.wait(timeout=timeout_s)
-    except subprocess.TimeoutExpired:
+    deadline = time.monotonic() + timeout_s
+    while True:
         try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        proc.wait()
-        return proc.returncode, True
-    return proc.returncode, False
+            proc.wait(timeout=1.0)
+            return proc.returncode, False
+        except subprocess.TimeoutExpired:
+            if abort is not None and abort.is_set():
+                _kill_group(proc)
+                return proc.returncode, True
+            if time.monotonic() >= deadline:
+                _kill_group(proc)
+                return proc.returncode, True
 
 
 class LocalExecutor:

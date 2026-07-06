@@ -65,7 +65,7 @@ class SearchStatus(BaseModel):
     heartbeat_interval_s: int = HEARTBEAT_INTERVAL_S
     budget: BudgetStatus = Field(default_factory=BudgetStatus)
     candidates: CandidateCounts = Field(default_factory=CandidateCounts)
-    current: CurrentCandidate | None = None
+    current: list[CurrentCandidate] = Field(default_factory=list)  # in-flight operators
     best: ScoreRef | None = None
     selected: ScoreRef | None = None
     last_error: str | None = None
@@ -175,15 +175,37 @@ class StatusWriter:
                 self._write()
 
     def _refresh_agent_pid(self) -> None:
-        """Pick up the operator backend's child pid by filesystem convention."""
-        current = self.status.current
-        if current is None:
-            return
-        pid_file = Path(current.workspace) / "agent.pid"
-        try:
-            current.agent_pid = int(pid_file.read_text().strip()) if pid_file.exists() else None
-        except (ValueError, OSError):
-            current.agent_pid = None
+        """Pick up the operator backends' child pids by filesystem convention."""
+        for current in self.status.current:
+            pid_file = Path(current.workspace) / "agent.pid"
+            try:
+                current.agent_pid = int(pid_file.read_text().strip()) if pid_file.exists() else None
+            except (ValueError, OSError):
+                current.agent_pid = None
+
+    # --- in-flight registry (thread-safe: called by scheduler and workers) ---
+
+    def add_current(self, entry: CurrentCandidate) -> None:
+        with self._lock:
+            self.status.current = [
+                c for c in self.status.current if c.candidate_id != entry.candidate_id
+            ] + [entry]
+            self._write()
+
+    def update_current(self, candidate_id: str, **fields) -> None:
+        with self._lock:
+            for entry in self.status.current:
+                if entry.candidate_id == candidate_id:
+                    for key, value in fields.items():
+                        setattr(entry, key, value)
+            self._write()
+
+    def remove_current(self, candidate_id: str) -> None:
+        with self._lock:
+            self.status.current = [
+                c for c in self.status.current if c.candidate_id != candidate_id
+            ]
+            self._write()
 
     def finalize(self, state: str, last_error: str | None = None) -> None:
         self._stop.set()
@@ -191,7 +213,7 @@ class StatusWriter:
             self._thread.join(timeout=2)
         with self._lock:
             self.status.state = state
-            self.status.current = None
+            self.status.current = []
             if last_error is not None:
                 self.status.last_error = last_error
             self._write()

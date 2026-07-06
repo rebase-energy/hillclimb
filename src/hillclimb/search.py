@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import queue
 import shutil
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
 
-from hillclimb.backends.base import OperatorBackend, OperatorRequest
+from hillclimb.backends.base import OperatorBackend, OperatorRequest, OperatorResult
 from hillclimb.baseline import write_baseline
 from hillclimb.budget import BudgetManager
 from hillclimb.candidate import BackendInfo, Candidate, Trial, utcnow
@@ -17,11 +21,38 @@ from hillclimb.holdout import HoldoutInfo, HoldoutScorer
 from hillclimb.journal import Journal
 from hillclimb.prompts.render import COMPLEXITY_CUES, render
 from hillclimb.scoring import ScoringError, score
+from hillclimb.slots import MachineSlots
 from hillclimb.status import CandidateCounts, CurrentCandidate, ScoreRef, StatusWriter
 from hillclimb.problem import ProblemSpec
 from hillclimb.workspace import create_candidate_workspace
 
 TAIL_CHARS = 2000
+
+
+@dataclass
+class Job:
+    """One operator submission: everything a worker needs, nothing it must
+    share. Created scheduler-side in _prepare; the candidate object is owned
+    by the worker until _commit (the journal holds its own deep copy)."""
+
+    candidate: Candidate
+    request: OperatorRequest
+    workspace: Path
+    ensemble_inputs: "list[Candidate] | None" = None
+    holdout_threshold: float | None = None  # k-th best val at prepare time; None = no gate
+
+
+@dataclass
+class OutcomeMsg:
+    """Terminal report from a worker; consumed by _commit on the scheduler."""
+
+    job: Job
+    kind: str  # parked | aborted | agent_failed | no_solution | executed
+    result: OperatorResult | None = None
+    all_ok: bool = False
+    holdout_score: float | None = None
+    holdout_error: str | None = None
+    holdout_gated: bool = False
 
 
 class ParkedSearch(Exception):
@@ -62,6 +93,8 @@ class GreedySearcher:
         holdout: HoldoutInfo | None = None,
         holdout_scorer: HoldoutScorer | None = None,
         status: StatusWriter | None = None,
+        slots: MachineSlots | None = None,
+        abort: threading.Event | None = None,
     ):
         self.problem = problem
         self.config = config
@@ -75,7 +108,16 @@ class GreedySearcher:
         self.holdout = holdout
         self.holdout_scorer = holdout_scorer
         self.status = status
+        self.slots = slots  # machine-wide agent-concurrency cap (optional)
+        self.abort = abort or threading.Event()
         self._consecutive_failures = 0
+        # Concurrency contract: the Journal and everything below is touched
+        # only by the scheduler (the thread running run()/run_operator),
+        # belt-and-braces guarded by _state_lock; workers report through
+        # _done_q and never see the journal.
+        self._state_lock = threading.Lock()
+        self._inflight: dict[str, Job] = {}
+        self._done_q: "queue.Queue[OutcomeMsg]" = queue.Queue()
         for stale in journal.pending_candidates():
             # a pending candidate at construction time means a previous
             # orchestrator process died mid-operator (crash/kill); its work is
@@ -105,9 +147,13 @@ class GreedySearcher:
             )
             self.journal.candidate_result(baseline)
             self.log(f"baseline written: {baseline.summary}")
+        if max(1, self.config.search.parallel_agents) > 1:
+            return self._run_pool(self.config.search.parallel_agents)
+        # serial loop kept verbatim: zero behavior change at parallel_agents=1;
+        # the golden-equivalence test holds the pool path to the same sequence
         while not self.budget.should_stop() and len(self.journal.candidates) < self.max_candidates:
             self._process_control()
-            self._status(current=None)
+            self._status()
             operator, target = self.decide()
             self.log(
                 f"[{self.budget.remaining_str()} left] {operator}"
@@ -117,6 +163,151 @@ class GreedySearcher:
         return self.journal.selected_candidate(
             self.problem.lower_is_better, self.config.holdout.selection
         )
+
+    def _run_pool(self, n: int) -> Candidate | None:
+        """Worker-pool scheduler: keep up to n operators in flight; commit
+        results in completion order. Park/stop drain gracefully (in-flight
+        operators finish and are committed); SIGTERM aborts them."""
+        pool = ThreadPoolExecutor(max_workers=n, thread_name_prefix="operator")
+        drain: Exception | None = None
+        try:
+            while True:
+                if drain is None:
+                    try:
+                        self._process_control()
+                    except StopRequested as exc:
+                        if self._inflight:
+                            self.log("  stop queued: draining in-flight operators")
+                            drain = exc
+                        else:
+                            raise
+                    while (
+                        drain is None
+                        and len(self._inflight) < n
+                        and not self.budget.should_stop()
+                        and len(self.journal.candidates) < self.max_candidates
+                    ):
+                        job = self.decide_next()
+                        if job is None:
+                            break
+                        self._submit(pool, job)
+                if not self._inflight:
+                    if drain is not None:
+                        raise drain
+                    if (
+                        self.budget.should_stop()
+                        or len(self.journal.candidates) >= self.max_candidates
+                    ):
+                        break
+                try:
+                    msg = self._done_q.get(timeout=1.0)
+                except queue.Empty:
+                    continue
+                try:
+                    self._commit(msg)
+                except ParkedSearch as exc:
+                    if self._inflight:
+                        self.log("  parked: draining in-flight operators")
+                        drain = exc
+                    else:
+                        raise
+        except (StopRequested, KeyboardInterrupt):
+            self.abort.set()
+            self._drain_aborted()
+            raise
+        finally:
+            pool.shutdown(wait=True)
+        return self.journal.selected_candidate(
+            self.problem.lower_is_better, self.config.holdout.selection
+        )
+
+    def _submit(self, pool: ThreadPoolExecutor, job: Job) -> None:
+        self.log(
+            f"[{self.budget.remaining_str()} left] {job.candidate.operator}"
+            + (f" -> {job.candidate.parent_id}" if job.candidate.parent_id else "")
+            + f" ({job.candidate.candidate_id})"
+        )
+        self._inflight[job.candidate.candidate_id] = job
+        pool.submit(lambda: self._done_q.put(self._execute_job(job)))
+
+    def _drain_aborted(self) -> None:
+        """After abort: collect whatever workers return (they die within ~1s
+        poll intervals) and journal the candidates as abandoned."""
+        while self._inflight:
+            try:
+                msg = self._done_q.get(timeout=30.0)
+            except queue.Empty:
+                break  # workers wedged; stale-pending recovery handles them on resume
+            candidate = msg.job.candidate
+            candidate.status = "abandoned"
+            candidate.summary = candidate.summary or "stopped mid-operator (abort)"
+            candidate.finished_at = utcnow()
+            self.journal.candidate_result(candidate)
+            self._inflight.pop(candidate.candidate_id, None)
+            if self.status is not None:
+                self.status.remove_current(candidate.candidate_id)
+
+    def decide_next(self) -> Job | None:
+        """Pool policy: generalizes decide() to in-flight state. Priority:
+        debug buggy tips (one per chain) > ensemble solo in the final window
+        (drain first) > drafts until num_drafts branches are scored-or-pending
+        > improves on distinct top targets. None = hold (keep slots empty)."""
+        with self._state_lock:
+            tip = self._debuggable_tip()
+            if tip is not None:
+                return self._prepare("debug", tip)
+            if self._should_ensemble() and not any(
+                j.candidate.operator == "ensemble" for j in self._inflight.values()
+            ):
+                if self._inflight:
+                    return None  # drain: ensemble inputs snapshot at launch
+                return self._prepare("ensemble", self._ensemble_candidates()[0])
+            if self._prospective_branches() < self.config.search.num_drafts:
+                return self._prepare("draft", None)
+            busy_targets = {
+                j.candidate.parent_id
+                for j in self._inflight.values()
+                if j.candidate.operator == "improve"
+            }
+            direction = 1 if self.problem.lower_is_better else -1
+            ranked = sorted(
+                self.journal.scored_candidates(), key=lambda c: direction * c.val_score
+            )
+            if not ranked:
+                return self._prepare("draft", None)
+            for candidate in ranked:
+                if candidate.candidate_id not in busy_targets:
+                    return self._prepare("improve", candidate)
+            return self._prepare("improve", ranked[0])
+
+    def _debuggable_tip(self) -> Candidate | None:
+        """Newest buggy candidate with no active child and chain depth under
+        the cap. In serial history this is exactly decide()'s debug rule."""
+        for candidate in reversed(list(self.journal.candidates.values())):
+            if candidate.status != "buggy" or candidate.pruned:
+                continue
+            children = self.journal.children(candidate.candidate_id, include_pruned=True)
+            if any(c.status in ("pending", "ok", "buggy") for c in children):
+                continue
+            chain = self.journal.debug_chain(candidate.candidate_id)
+            depth = sum(1 for c in chain if c.operator == "debug")
+            if depth < self.config.search.max_debug_depth:
+                return candidate
+        return None
+
+    def _prospective_branches(self) -> int:
+        """Draft branches whose subtree holds a scored OR pending candidate —
+        in-flight work counts toward the num_drafts target."""
+        count = 0
+        for draft in self.journal.drafts():
+            frontier = [draft]
+            while frontier:
+                candidate = frontier.pop()
+                if candidate.is_scored or candidate.status == "pending":
+                    count += 1
+                    break
+                frontier.extend(self.journal.children(candidate.candidate_id))
+        return count
 
     # --- status reporting ---
 
@@ -262,9 +453,15 @@ class GreedySearcher:
                 frontier.extend(self.journal.children(candidate.candidate_id))
         return count
 
-    # --- candidate lifecycle ---
+    # --- candidate lifecycle: _prepare (scheduler) → _execute_job (worker)
+    # --- → _commit (scheduler); run_operator is the synchronous composition
 
     def run_operator(self, operator: str, target: Candidate | None) -> Candidate:
+        job = self._prepare(operator, target)
+        return self._commit(self._execute_job(job))
+
+    def _prepare(self, operator: str, target: Candidate | None) -> Job:
+        """Scheduler-side setup: id, workspace, prompt, journal `created`."""
         candidate_id = self.journal.next_candidate_id()
         parent_solution = (
             Path(target.workspace) / "solution.py"
@@ -314,12 +511,44 @@ class GreedySearcher:
             ),
             model=self.config.model,
         )
-        self._status(
-            current=CurrentCandidate(
-                candidate_id=candidate_id, operator=operator, phase="agent", workspace=str(workspace)
+        if self.status is not None:
+            self.status.add_current(
+                CurrentCandidate(
+                    candidate_id=candidate_id,
+                    operator=operator,
+                    phase="agent",
+                    workspace=str(workspace),
+                )
             )
+            self._status()
+        return Job(
+            candidate=candidate,
+            request=request,
+            workspace=workspace,
+            ensemble_inputs=ensemble_inputs,
+            holdout_threshold=self._holdout_threshold(),
         )
-        result = self.backend.invoke(request)
+
+    def _execute_job(self, job: Job) -> OutcomeMsg:
+        """Worker-side: agent call + trials + holdout. Lock-free — touches
+        only the job's own candidate/workspace, never the journal."""
+        candidate = job.candidate
+
+        slot = None
+        if self.slots is not None:
+            slot = self.slots.acquire(
+                abort=self.abort,
+                should_stop=self.budget.should_stop,
+                on_wait=lambda: self._set_phase(candidate.candidate_id, "waiting-slot"),
+            )
+            if slot is None and self.slots.limit > 0:
+                return OutcomeMsg(job=job, kind="aborted")
+            self._set_phase(candidate.candidate_id, "agent")
+        try:
+            result = self.backend.invoke(job.request)
+        finally:
+            if slot is not None:
+                slot.release()
         candidate.backend = BackendInfo(
             name=self.backend.name,
             session_id=result.session_id,
@@ -330,77 +559,124 @@ class GreedySearcher:
         )
 
         if result.error_kind == "rate_limited":
-            candidate.status = "parked"
-            candidate.summary = f"parked: {result.error_message}"
-            candidate.finished_at = utcnow()
-            self.journal.candidate_result(candidate)
-            raise ParkedSearch(result.error_message)
-
+            return OutcomeMsg(job=job, kind="parked", result=result)
+        if result.error_kind == "aborted":
+            return OutcomeMsg(job=job, kind="aborted", result=result)
         if not result.ok:
             # e.g. network down: solution.py may still exist as the parent's
             # copy — executing it would silently re-score the parent
-            candidate.status = "abandoned"
-            candidate.summary = f"agent call failed ({result.error_kind}): {result.error_message[:150]}"
-            candidate.finished_at = utcnow()
-            self.journal.candidate_result(candidate)
-            self._consecutive_failures += 1
-            self.log(f"  agent call failed ({self._consecutive_failures} in a row)")
-            if self._consecutive_failures >= 3:
-                raise ParkedSearch(
-                    f"3 consecutive agent failures; last: {result.error_message[:200]}"
-                )
-            return candidate
-        self._consecutive_failures = 0
+            return OutcomeMsg(job=job, kind="agent_failed", result=result)
 
-        solution = workspace / "solution.py"
-        notes = workspace / "notes.md"
+        notes = job.workspace / "notes.md"
         if notes.exists():
             lines = notes.read_text().strip().splitlines()
             candidate.summary = lines[0] if lines else ""
 
+        solution = job.workspace / "solution.py"
         if not solution.exists():
-            candidate.status = "abandoned"
-            candidate.summary = candidate.summary or f"agent produced no solution.py ({result.error_kind})"
-            candidate.finished_at = utcnow()
-            self.journal.candidate_result(candidate)
-            return candidate
+            return OutcomeMsg(job=job, kind="no_solution", result=result)
 
         exec_timeout = min(
             self.config.budget.exec_timeout_s, max(60, int(self.budget.remaining() - 30))
         )
-        self._status(
-            current=CurrentCandidate(
-                candidate_id=candidate_id, operator=operator, phase="exec", workspace=str(workspace)
-            )
-        )
-        all_ok = self._run_trials(candidate, solution, workspace, exec_timeout)
+        self._set_phase(candidate.candidate_id, "exec")
+        all_ok = self._run_trials(candidate, solution, job.workspace, exec_timeout)
 
+        holdout_score = holdout_error = None
+        gated = False
         if all_ok:
-            # score recorded even when the candidate ends buggy from a holdout
-            # contract violation — status/TUI display depend on it
-            last = candidate.trials[-1]
-            if self._holdout_gate(candidate.val_score):
-                holdout_score, holdout_error = self._score_holdout(workspace)
-                if holdout_error is not None:
-                    candidate.status = "buggy"
-                    last.holdout_error = holdout_error
-                else:
-                    candidate.status = "ok"
-                    last.holdout_score = holdout_score
+            if self._gate_passes(candidate.val_score, job.holdout_threshold):
+                self._set_phase(candidate.candidate_id, "holdout")
+                holdout_score, holdout_error = self._score_holdout(job.workspace)
             else:
-                candidate.status = "ok"  # climbs on val; not selectable via holdout
-            if candidate.status == "ok":
-                previous_best = self.journal.best_candidate(self.problem.lower_is_better)
-                if previous_best is None or self._improves(candidate.val_score, previous_best.val_score):
-                    candidate.is_best = True
-        else:
-            candidate.status = "buggy"
-        candidate.finished_at = utcnow()
-        self.journal.candidate_result(candidate)
-        if candidate.status == "ok":
-            self._sync_selection()
-        self._status(current=None)
-        return candidate
+                gated = True  # climbs on val; not selectable via holdout
+        return OutcomeMsg(
+            job=job,
+            kind="executed",
+            result=result,
+            all_ok=all_ok,
+            holdout_score=holdout_score,
+            holdout_error=holdout_error,
+            holdout_gated=gated,
+        )
+
+    def _commit(self, msg: OutcomeMsg) -> Candidate:
+        """Scheduler-side: journal the outcome, update best/selection and the
+        failure counter. Raises ParkedSearch on rate limit / third failure."""
+        with self._state_lock:
+            candidate, result = msg.job.candidate, msg.result
+            self._inflight.pop(candidate.candidate_id, None)
+            try:
+                if msg.kind == "parked":
+                    candidate.status = "parked"
+                    candidate.summary = f"parked: {result.error_message}"
+                    candidate.finished_at = utcnow()
+                    self.journal.candidate_result(candidate)
+                    raise ParkedSearch(result.error_message)
+
+                if msg.kind == "aborted":
+                    candidate.status = "abandoned"
+                    candidate.summary = "stopped mid-operator (abort)"
+                    candidate.finished_at = utcnow()
+                    self.journal.candidate_result(candidate)
+                    return candidate
+
+                if msg.kind == "agent_failed":
+                    candidate.status = "abandoned"
+                    candidate.summary = (
+                        f"agent call failed ({result.error_kind}): {result.error_message[:150]}"
+                    )
+                    candidate.finished_at = utcnow()
+                    self.journal.candidate_result(candidate)
+                    self._consecutive_failures += 1
+                    self.log(f"  agent call failed ({self._consecutive_failures} in a row)")
+                    if self._consecutive_failures >= 3:
+                        raise ParkedSearch(
+                            f"3 consecutive agent failures; last: {result.error_message[:200]}"
+                        )
+                    return candidate
+                self._consecutive_failures = 0
+
+                if msg.kind == "no_solution":
+                    candidate.status = "abandoned"
+                    candidate.summary = (
+                        candidate.summary or f"agent produced no solution.py ({result.error_kind})"
+                    )
+                    candidate.finished_at = utcnow()
+                    self.journal.candidate_result(candidate)
+                    return candidate
+
+                # kind == "executed"
+                if msg.all_ok:
+                    last = candidate.trials[-1]
+                    if msg.holdout_error is not None:
+                        candidate.status = "buggy"
+                        last.holdout_error = msg.holdout_error
+                    else:
+                        candidate.status = "ok"
+                        if not msg.holdout_gated:
+                            last.holdout_score = msg.holdout_score
+                    if candidate.status == "ok":
+                        previous_best = self.journal.best_candidate(self.problem.lower_is_better)
+                        if previous_best is None or self._improves(
+                            candidate.val_score, previous_best.val_score
+                        ):
+                            candidate.is_best = True
+                else:
+                    candidate.status = "buggy"
+                candidate.finished_at = utcnow()
+                self.journal.candidate_result(candidate)
+                if candidate.status == "ok":
+                    self._sync_selection()
+                return candidate
+            finally:
+                if self.status is not None:
+                    self.status.remove_current(candidate.candidate_id)
+                    self._status()
+
+    def _set_phase(self, candidate_id: str, phase: str) -> None:
+        if self.status is not None:
+            self.status.update_current(candidate_id, phase=phase)
 
     def _run_trials(
         self, candidate: Candidate, solution: Path, workspace: Path, exec_timeout: int
@@ -460,22 +736,27 @@ class GreedySearcher:
         )
         return trial, exec_result.ok
 
-    def _holdout_gate(self, val_score: float | None) -> bool:
-        """Holdout hygiene: evaluate holdout only when the candidate's val
-        score ranks within the configured top-k of scored candidates
-        (0 = no gate). Weak candidates keep climbing on val but stay
-        unselectable by the holdout signal."""
+    def _holdout_threshold(self) -> float | None:
+        """Holdout hygiene: the k-th best val score at prepare time; a
+        candidate must beat (or tie) it to earn a holdout evaluation.
+        None = no gate (top_k disabled or fewer than k scored candidates).
+        Snapshot semantics: slightly stale under parallelism, exact in
+        serial — an acceptable heuristic for a hygiene gate."""
         top_k = self.config.holdout.top_k
-        if top_k <= 0 or val_score is None:
-            return True
+        if top_k <= 0:
+            return None
         scored = sorted(
             (c.val_score for c in self.journal.scored_candidates() if c.val_score is not None),
             reverse=not self.problem.lower_is_better,
         )
         if len(scored) < top_k:
+            return None
+        return scored[top_k - 1]
+
+    def _gate_passes(self, val_score: float | None, threshold: float | None) -> bool:
+        if threshold is None or val_score is None:
             return True
-        kth = scored[top_k - 1]
-        return self._improves(val_score, kth) or val_score == kth
+        return self._improves(val_score, threshold) or val_score == threshold
 
     def _sync_selection(self) -> None:
         """Keep best/ pointing at the currently selected candidate. Selection

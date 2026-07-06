@@ -15,7 +15,7 @@ from hillclimb.api import (
     execute_search,
     new_run_id,
     search_ref,
-    spent_seconds,
+    resume_spent_seconds,
 )
 from hillclimb.backends import get_backend
 from hillclimb.budget import BudgetManager
@@ -266,7 +266,7 @@ def resume(search: str = typer.Argument("latest")):
         config.holdout.fraction = meta.holdout_fraction
     problem = load_problem(meta.problem, config)
     journal = Journal(search_dir / "journal.jsonl")
-    spent = spent_seconds(journal)
+    spent = resume_spent_seconds(search_dir, journal)
     typer.echo(
         f"Resuming {search_ref(search_dir)}: {len(journal.candidates)} candidates, ~{int(spent)}s spent"
     )
@@ -349,11 +349,13 @@ def status(search: str = typer.Argument("latest")):
     if search_status is not None:
         remaining = int(search_status.budget.remaining_s)
         line = f"state={state}  budget: {int(search_status.budget.spent_s)}s spent / {remaining}s left"
-        if search_status.current is not None:
-            line += (
-                f"  current candidate: {search_status.current.candidate_id} "
-                f"({search_status.current.operator}/{search_status.current.phase})"
+        if search_status.current:
+            active = " · ".join(
+                f"{c.candidate_id}({c.operator}/{c.phase})" for c in search_status.current[:3]
             )
+            if len(search_status.current) > 3:
+                active += f" +{len(search_status.current) - 3}"
+            line += f"  active: {active}"
         typer.echo(line)
     typer.echo(f"Search {search_ref(search_dir)} — {len(journal.candidates)} candidates")
     for candidate in journal.candidates.values():

@@ -145,12 +145,27 @@ def build_holdout(config: Config, problem: ProblemSpec, search_dir: Path, log: L
 
 
 def spent_seconds(journal: Journal) -> float:
-    """Wall-clock already consumed by a search: agent authoring time plus
-    every trial's execution time."""
+    """Legacy resume accounting: sum of agent + trial work durations. Only a
+    fallback — under parallel workers this overcounts wall-clock; prefer
+    resume_spent_seconds."""
     return sum(
         (c.backend.agent_duration_s or 0) + sum(t.duration_s or 0 for t in c.trials)
         for c in journal.candidates.values()
     )
+
+
+def resume_spent_seconds(search_dir: Path, journal: Journal) -> float:
+    """Wall-clock already consumed by a search, for budget seeding on resume.
+    status.json persists budget.spent_s on every heartbeat (15 s) and on
+    finalize, so this is exact for parked/stopped searches and loses at most
+    one heartbeat on crashes. Falls back to the work-duration sum for
+    pre-upgrade searches without a persisted budget."""
+    from hillclimb.status import read_status
+
+    status = read_status(search_dir)
+    if status is not None and status.budget.total_s > 0:
+        return status.budget.spent_s
+    return spent_seconds(journal)
 
 
 def create_search(
@@ -218,11 +233,24 @@ def execute_search(
         signal.signal(signal.SIGTERM, _raise_stop_requested)
     except ValueError:
         pass
+    import threading
+
+    from hillclimb.slots import MachineSlots
+
+    abort = threading.Event()
+    backend_obj = get_backend(config.backend, auth=config.backend_auth)
+    if hasattr(backend_obj, "abort"):
+        backend_obj.abort = abort
+    slots = (
+        MachineSlots(config.paths.runs_dir, config.search.machine_max_agents)
+        if config.search.machine_max_agents > 0
+        else None
+    )
     searcher = GreedySearcher(
         problem=problem,
         config=config,
         journal=journal,
-        backend=get_backend(config.backend, auth=config.backend_auth),
+        backend=backend_obj,
         executor=build_executor(config, problem, log),
         budget=budget,
         search_dir=search_dir,
@@ -230,6 +258,8 @@ def execute_search(
         holdout=build_holdout(config, problem, search_dir, log),
         holdout_scorer=build_holdout_scorer(config, problem, search_dir, log),
         status=status,
+        slots=slots,
+        abort=abort,
     )
     try:
         selected = searcher.run()

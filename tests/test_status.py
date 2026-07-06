@@ -91,7 +91,7 @@ def test_status_writer_update_and_finalize(tmp_path: Path):
     writer.finalize("done")
     loaded = read_status(tmp_path)
     assert loaded.state == "done"
-    assert loaded.current is None
+    assert loaded.current == []
 
 
 def make_searcher_with_status(task, config, backend, budget_s=3600):

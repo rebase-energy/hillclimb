@@ -880,11 +880,13 @@ class CandidateScreen(Screen):
         if status is not None:
             minutes = int(status.budget.remaining_s // 60)
             line += f"  budget left: {minutes}m"
-            if status.current is not None:
-                line += (
-                    f"  current candidate: {status.current.candidate_id} "
-                    f"({status.current.operator}/{status.current.phase})"
+            if status.current:
+                active = " · ".join(
+                    f"{c.candidate_id}({c.operator}/{c.phase})" for c in status.current[:3]
                 )
+                if len(status.current) > 3:
+                    active += f" +{len(status.current) - 3}"
+                line += f"  active: {active}"
         self.query_one("#searchline", Label).update(line)
 
         table = self.query_one("#candidates", DataTable)

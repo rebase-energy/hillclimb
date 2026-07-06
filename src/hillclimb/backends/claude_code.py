@@ -96,9 +96,15 @@ class ClaudeCodeBackend:
 
     name = "claude-code"
 
-    def __init__(self, claude_bin: str = "claude", auth: str = "subscription"):
+    def __init__(
+        self,
+        claude_bin: str = "claude",
+        auth: str = "subscription",
+        abort: "threading.Event | None" = None,
+    ):
         self.claude_bin = claude_bin
         self.auth = auth  # subscription | api-key (see subscription_env)
+        self.abort = abort  # set → kill the agent and report error_kind="aborted"
 
     def invoke(self, request: OperatorRequest) -> OperatorResult:
         cmd = [
@@ -121,6 +127,7 @@ class ClaudeCodeBackend:
         stderr_path = workspace / "agent_stderr.log"
         start = time.monotonic()
         timed_out = False
+        aborted = False
         reader: _StreamReader | None = None
         proc: subprocess.Popen | None = None
         try:
@@ -143,11 +150,19 @@ class ClaudeCodeBackend:
                     proc.stdin.close()
                 except BrokenPipeError:
                     pass  # process died instantly; returncode tells the story
-                try:
-                    proc.wait(timeout=request.timeout_s)
-                except subprocess.TimeoutExpired:
-                    timed_out = True
-                    _kill_group(proc)
+                deadline = time.monotonic() + request.timeout_s
+                while proc.poll() is None:
+                    try:
+                        proc.wait(timeout=1.0)
+                    except subprocess.TimeoutExpired:
+                        if self.abort is not None and self.abort.is_set():
+                            aborted = True
+                            _kill_group(proc)
+                            break
+                        if time.monotonic() >= deadline:
+                            timed_out = True
+                            _kill_group(proc)
+                            break
         finally:
             pid_path.unlink(missing_ok=True)
             if proc is not None and proc.poll() is None:
@@ -172,6 +187,14 @@ class ClaudeCodeBackend:
             )
         )
 
+        if aborted:
+            return OperatorResult(
+                ok=False,
+                duration_s=duration,
+                raw_output_path=str(raw_path),
+                error_kind="aborted",
+                error_message="agent call aborted (stop requested)",
+            )
         if timed_out:
             return OperatorResult(
                 ok=False,

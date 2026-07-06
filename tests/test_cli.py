@@ -187,7 +187,7 @@ def test_resolve_search_dir_skips_v1_layout(config, tmp_path):
 
 def test_spent_seconds_sums_agent_and_trial_time(tmp_path):
     from hillclimb.candidate import BackendInfo, Candidate, Trial
-    from hillclimb.cli import spent_seconds
+    from hillclimb.api import spent_seconds
     from hillclimb.journal import Journal
 
     journal = Journal(tmp_path / "j.jsonl")
