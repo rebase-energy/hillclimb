@@ -148,6 +148,13 @@ def build_executor(config: Config, problem: ProblemSpec, log: Log = print):
 def build_holdout_scorer(config: Config, problem: ProblemSpec, search_dir: Path, log: Log = print):
     if not config.holdout.enabled or problem.holdout_mode != "evaluator":
         return None
+    if not (os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")):
+        # fail fast: without credentials every holdout eval nans out and the
+        # search burns debug cycles diagnosing the environment (seen live)
+        raise RuntimeError(
+            "holdout scoring for this problem needs private data credentials: "
+            "export HF_TOKEN (or HUGGINGFACE_TOKEN), or run with --no-holdout"
+        )
     from hillclimb.integrations.emflow.executor import EmflowHoldoutScorer
 
     return EmflowHoldoutScorer(
