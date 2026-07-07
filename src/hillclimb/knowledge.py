@@ -1,0 +1,287 @@
+"""Cross-search learning: knowledge cards distilled from finished searches.
+
+Every completed search writes a compact, human-readable card — what won, what
+failed, what it cost — into the workspace's `hillclimb/knowledge/` folder
+(git-versionable: the repo accumulates learning). New searches on the same
+problem or problem family retrieve recent cards and inject a "prior
+experience" section into draft prompts, so agents start from what already
+worked instead of rediscovering it.
+
+Extraction is purely mechanical (journal + notes.md + import scanning) — no
+model calls. The agents themselves wrote the summaries; this module just
+routes them forward in time.
+"""
+
+from __future__ import annotations
+
+import ast
+import re
+from collections import Counter
+from pathlib import Path
+
+import yaml
+from pydantic import BaseModel, Field
+
+from hillclimb.candidate import utcnow
+
+SCHEMA_VERSION = 1
+CARD_FILENAME = "knowledge_card.yaml"
+
+# stdlib-ish / harness modules that say nothing about the approach
+_UNINFORMATIVE_IMPORTS = {
+    "os", "sys", "re", "json", "math", "time", "pathlib", "typing", "shutil",
+    "warnings", "datetime", "collections", "itertools", "functools", "io",
+    "random", "dataclasses", "abc", "copy", "pickle", "subprocess", "argparse",
+    "__future__",
+    "emflow", "pandas", "numpy",  # present in ~every solution; carry no signal
+}
+
+
+class ApproachNote(BaseModel):
+    candidate_id: str
+    operator: str
+    val_score: float | None = None
+    holdout_score: float | None = None
+    complexity: str | None = None
+    summary: str = ""
+    libraries: list[str] = Field(default_factory=list)
+
+
+class OperatorStat(BaseModel):
+    attempts: int = 0
+    ok: int = 0
+    best_val: float | None = None
+
+
+class KnowledgeCard(BaseModel):
+    schema_version: int = SCHEMA_VERSION
+    problem_id: str
+    family: str
+    target: str = ""
+    metric: str = ""
+    lower_is_better: bool = False
+    run_ref: str = ""
+    finished_at: str = Field(default_factory=utcnow)
+    budget_s: int = 0
+    cost_usd: float = 0.0
+    n_candidates: int = 0
+    n_ok: int = 0
+    n_buggy: int = 0
+    selected_val: float | None = None
+    selected_holdout: float | None = None
+    selected_operator: str | None = None
+    operator_stats: dict[str, OperatorStat] = Field(default_factory=dict)
+    top_approaches: list[ApproachNote] = Field(default_factory=list)
+    failure_modes: list[str] = Field(default_factory=list)
+
+
+def problem_family(problem_id: str, target: str = "") -> str:
+    """Grouping key for retrieval: emflow suite package (gefcom2014 from
+    emflow://gefcom2014:solar), else the problem id itself."""
+    if target.startswith("emflow://"):
+        rest = target.removeprefix("emflow://")
+        return rest.split(":", 1)[0]
+    if "-" in problem_id and problem_id.rsplit("-", 1)[-1] in {
+        "solar", "wind", "load", "price", "demand",
+    }:
+        return problem_id.rsplit("-", 1)[0]
+    return problem_id
+
+
+def extract_libraries(solution: Path) -> list[str]:
+    """Top-level imported modules of a solution — a factual approach
+    fingerprint (lightgbm vs torch says more than any adjective)."""
+    if not solution.exists():
+        return []
+    try:
+        tree = ast.parse(solution.read_text())
+    except SyntaxError:
+        return []
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            modules.add(node.module.split(".")[0])
+    return sorted(modules - _UNINFORMATIVE_IMPORTS)
+
+
+def _failure_phrase(candidate) -> str | None:
+    trial = candidate.last_trial
+    if trial is None:
+        return None
+    if trial.timed_out:
+        return "execution timed out"
+    if trial.holdout_error:
+        flat = " ".join(trial.holdout_error.split())
+        return f"holdout contract violation: {flat[:80]}"
+    tail = (trial.stdout_tail or "").strip()
+    match = re.findall(r"([A-Za-z_]*(?:Error|Exception)[^\n]{0,80})", tail)
+    if match:
+        return match[-1].strip()
+    if trial.returncode not in (0, None):
+        return f"exited {trial.returncode}"
+    return None
+
+
+def distill_card(
+    journal,
+    *,
+    problem,
+    run_ref: str,
+    target: str = "",
+    budget_s: int = 0,
+    cost_usd: float = 0.0,
+    selection: str = "rank-blend",
+    top_n: int = 3,
+) -> KnowledgeCard:
+    candidates = [c for c in journal.candidates.values() if c.operator != "baseline"]
+    stats: dict[str, OperatorStat] = {}
+    direction = 1 if problem.lower_is_better else -1
+    for c in candidates:
+        stat = stats.setdefault(c.operator, OperatorStat())
+        stat.attempts += 1
+        if c.status == "ok":
+            stat.ok += 1
+            if c.val_score is not None and (
+                stat.best_val is None or direction * c.val_score < direction * stat.best_val
+            ):
+                stat.best_val = c.val_score
+
+    scored = sorted(
+        (c for c in candidates if c.status == "ok" and c.val_score is not None),
+        key=lambda c: direction * c.val_score,
+    )
+    seen_summaries: set[str] = set()
+    top: list[ApproachNote] = []
+    for c in scored:
+        key = (c.summary or c.candidate_id).strip().lower()
+        if key in seen_summaries:
+            continue
+        seen_summaries.add(key)
+        top.append(
+            ApproachNote(
+                candidate_id=c.candidate_id,
+                operator=c.operator,
+                val_score=c.val_score,
+                holdout_score=c.holdout_score,
+                complexity=c.complexity,
+                summary=(c.summary or "").strip()[:240],
+                libraries=extract_libraries(Path(c.workspace) / "solution.py"),
+            )
+        )
+        if len(top) >= top_n:
+            break
+
+    failures = Counter(
+        phrase for c in candidates if c.status == "buggy" and (phrase := _failure_phrase(c))
+    )
+    selected = journal.selected_candidate(problem.lower_is_better, selection)
+    return KnowledgeCard(
+        problem_id=problem.problem_id,
+        family=problem_family(problem.problem_id, target),
+        target=target,
+        metric=problem.metric_name,
+        lower_is_better=problem.lower_is_better,
+        run_ref=run_ref,
+        budget_s=budget_s,
+        cost_usd=round(cost_usd, 4),
+        n_candidates=len(candidates),
+        n_ok=sum(1 for c in candidates if c.status == "ok"),
+        n_buggy=sum(1 for c in candidates if c.status == "buggy"),
+        selected_val=selected.val_score if selected else None,
+        selected_holdout=selected.holdout_score if selected else None,
+        selected_operator=selected.operator if selected else None,
+        operator_stats=stats,
+        top_approaches=top,
+        failure_modes=[f"{phrase} (x{count})" for phrase, count in failures.most_common(3)],
+    )
+
+
+def write_card(knowledge_dir: Path, card: KnowledgeCard) -> Path:
+    """knowledge/<family>/<problem_id>--<run-ref>.yaml — one card per search."""
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", card.run_ref).strip("-") or "run"
+    path = knowledge_dir / card.family / f"{card.problem_id}--{slug}.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(card.model_dump(exclude_none=True), sort_keys=False))
+    return path
+
+
+def load_cards(
+    knowledge_dir: Path,
+    *,
+    problem_id: str,
+    family: str,
+    limit: int = 10,
+) -> list[KnowledgeCard]:
+    """Cards for this problem (preferred) and its family, newest first."""
+    if not knowledge_dir.exists():
+        return []
+    cards: list[KnowledgeCard] = []
+    for path in (knowledge_dir / family).glob("*.yaml") if (knowledge_dir / family).exists() else []:
+        try:
+            data = yaml.safe_load(path.read_text()) or {}
+            if data.get("schema_version") != SCHEMA_VERSION:
+                continue
+            cards.append(KnowledgeCard.model_validate(data))
+        except Exception:  # noqa: BLE001 — a corrupt card must never block a search
+            continue
+    # quality-aware order: same problem first, then searches that actually
+    # produced a non-baseline winner with real approaches, then recency —
+    # a broken run must never outrank a podium run just by being newer
+    cards.sort(
+        key=lambda c: (
+            c.problem_id == problem_id,
+            c.selected_operator not in (None, "baseline") and bool(c.top_approaches),
+            c.n_ok,
+            c.finished_at,
+        ),
+        reverse=True,
+    )
+    return cards[:limit]
+
+
+def render_prior_experience(cards: list[KnowledgeCard], *, max_cards: int = 3) -> str:
+    """The prompt section: what worked, what to avoid, in the agents' own
+    words. Compact by construction — a few hundred tokens, not a memoir."""
+    if not cards:
+        return ""
+    lines: list[str] = []
+    for card in cards[:max_cards]:
+        header = f"- Past search on {card.problem_id} ({card.n_candidates} candidates"
+        if card.selected_val is not None:
+            header += (
+                f", best {card.metric} {card.selected_val:.5g}, "
+                f"winner: {card.selected_operator or '?'}"
+            )
+        header += "):"
+        lines.append(header)
+        for approach in card.top_approaches[:2]:
+            libs = f" [{', '.join(approach.libraries[:4])}]" if approach.libraries else ""
+            score = f" ({approach.val_score:.5g})" if approach.val_score is not None else ""
+            lines.append(f"    - {approach.summary or approach.candidate_id}{libs}{score}")
+        if card.failure_modes:
+            lines.append(f"    - failure modes seen: {'; '.join(card.failure_modes[:2])}")
+    body = "\n".join(lines)
+    return (
+        "Summaries of what worked in PREVIOUS searches on this problem/family "
+        "(scores use the same metric and split conventions):\n" + body + "\n\n"
+        "Use these as a head start — prefer refining a proven approach over "
+        "rediscovering it, but do not copy an approach that is already listed "
+        "under drafts below."
+    )
+
+
+def complexity_offset(cards: list[KnowledgeCard]) -> int:
+    """Opt-in policy bias: if past winners were never 'minimal', start the
+    draft complexity schedule one step up. Conservative by design — the
+    offset is 0 or 1, never more."""
+    winner_complexities = [
+        a.complexity
+        for card in cards
+        for a in card.top_approaches[:1]
+        if a.complexity
+    ]
+    if winner_complexities and all(c != "minimal" for c in winner_complexities):
+        return 1
+    return 0

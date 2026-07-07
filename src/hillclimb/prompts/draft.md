@@ -19,6 +19,10 @@ You may inspect the data (EDA) before writing the script.
 
 {{complexity_cue}}
 
+# Prior experience on this problem
+
+{{prior_experience}}
+
 # Approaches already drafted
 
 {{prior_drafts}}

@@ -1,0 +1,26 @@
+schema_version: 1
+problem_id: gefcom2014-solar
+family: gefcom2014
+target: emflow://gefcom2014:solar
+metric: PinballLoss
+lower_is_better: true
+run_ref: 20260705-170021-gefcom2014-v1/gefcom2014-solar
+finished_at: '2026-07-07T14:29:28.920625+00:00'
+budget_s: 7200
+cost_usd: 0.0
+n_candidates: 3
+n_ok: 0
+n_buggy: 2
+selected_val: 0.025914295532555243
+selected_operator: baseline
+operator_stats:
+  draft:
+    attempts: 1
+    ok: 0
+  debug:
+    attempts: 2
+    ok: 0
+top_approaches: []
+failure_modes:
+- 'holdout contract violation: holdout evaluation failed: line 1190, in get_data FileNotFoundError:
+  [Errno 2] N (x2)'

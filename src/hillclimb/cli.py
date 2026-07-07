@@ -6,6 +6,7 @@ import signal
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import typer
 
@@ -31,6 +32,7 @@ from hillclimb.problem import (
 )
 from hillclimb.run import (
     SEARCHES_DIRNAME,
+    iter_run_dirs,
     RunMeta,
     iter_search_dirs,
     latest_search_dir,
@@ -74,6 +76,11 @@ model: sonnet
 # holdout:
 #   enabled: true
 #   top_k: 5             # holdout scored only for top-k-by-val candidates
+
+# learning:
+#   enabled: true        # knowledge cards in hillclimb/knowledge/ inform new searches
+#   max_cards: 3
+#   complexity_prior: false
 """
 
 INIT_SPEC_EXAMPLE = """\
@@ -127,6 +134,75 @@ def init(
     typer.echo(f"  {MARKER_DIR}/specs/         — committed run specs")
     typer.echo(f"  {MARKER_DIR}/runs/          — search artifacts (gitignored)")
     typer.echo("Next: hillclimb run <problem-or-spec> --budget 30m")
+
+
+knowledge_app = typer.Typer(help="Cross-search learning: knowledge cards distilled from finished searches")
+app.add_typer(knowledge_app, name="knowledge")
+
+
+@knowledge_app.command("backfill")
+def knowledge_backfill():
+    """Distill knowledge cards from every finished search under runs/ that
+    doesn't have one yet — bootstraps learning from pre-existing history."""
+    from hillclimb.api import resolve_knowledge_dir
+    from hillclimb.knowledge import distill_card, write_card
+    from hillclimb.run import iter_run_dirs, iter_search_dirs, load_search_meta
+
+    config = load_config()
+    knowledge_dir = resolve_knowledge_dir(config)
+    if knowledge_dir is None:
+        typer.echo("learning is disabled or no workspace/knowledge dir resolvable", err=True)
+        raise typer.Exit(1)
+    written = 0
+    for run_dir in iter_run_dirs(config.paths.runs_dir):
+        for search_dir in iter_search_dirs(run_dir):
+            meta = load_search_meta(search_dir)
+            state = effective_state(search_dir)
+            # any finished search teaches something — parked and stopped
+            # searches included; "unknown" covers pre-upgrade status files
+            if meta is None or state == "running":
+                continue
+            journal = Journal(search_dir / "journal.jsonl")
+            if not journal.scored_candidates():
+                continue
+            problem = SimpleNamespace(
+                problem_id=meta.problem_id,
+                metric_name=meta.metric,
+                lower_is_better=meta.lower_is_better,
+            )
+            target = meta.problem if meta.problem.startswith("emflow://") else ""
+            card = distill_card(
+                journal, problem=problem, run_ref=search_ref(search_dir),
+                target=target, budget_s=meta.budget_s,
+                selection=config.holdout.selection,
+            )
+            path = write_card(knowledge_dir, card)
+            written += 1
+            typer.echo(f"  {search_ref(search_dir)} -> {path.relative_to(knowledge_dir)}")
+    typer.echo(f"{written} knowledge card(s) written to {knowledge_dir}")
+
+
+@knowledge_app.command("show")
+def knowledge_show(target: str = typer.Argument(..., help="Problem target, e.g. emflow://gefcom2014:solar")):
+    """Render the prior-experience section a new search on this target
+    would receive."""
+    from hillclimb.api import resolve_knowledge_dir
+    from hillclimb.knowledge import load_cards, problem_family, render_prior_experience
+
+    config = load_config()
+    knowledge_dir = resolve_knowledge_dir(config)
+    if knowledge_dir is None:
+        typer.echo("learning is disabled or no workspace/knowledge dir resolvable", err=True)
+        raise typer.Exit(1)
+    problem = load_problem(target, config)
+    cards = load_cards(
+        knowledge_dir, problem_id=problem.problem_id,
+        family=problem_family(problem.problem_id, str(target)),
+    )
+    if not cards:
+        typer.echo(f"no knowledge cards for {problem.problem_id} in {knowledge_dir}")
+        raise typer.Exit(0)
+    typer.echo(render_prior_experience(cards, max_cards=config.learning.max_cards))
 
 
 def parse_budget(value: str) -> int:

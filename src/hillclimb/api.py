@@ -240,6 +240,81 @@ def create_search(
     return search_dir
 
 
+def resolve_knowledge_dir(config: Config) -> Path | None:
+    if not config.learning.enabled:
+        return None
+    if config.learning.dir is not None:
+        return Path(config.learning.dir).absolute()
+    if config.workspace_root is not None:
+        return config.workspace_root / "hillclimb" / "knowledge"
+    return None
+
+
+def build_knowledge_context(
+    config: Config, problem: ProblemSpec, target: str, log: Log
+) -> tuple[str | None, int]:
+    """(prior-experience prompt section, draft-complexity offset) from the
+    workspace knowledge cards."""
+    from hillclimb.knowledge import (
+        complexity_offset,
+        load_cards,
+        problem_family,
+        render_prior_experience,
+    )
+
+    knowledge_dir = resolve_knowledge_dir(config)
+    if knowledge_dir is None:
+        return None, 0
+    cards = load_cards(
+        knowledge_dir,
+        problem_id=problem.problem_id,
+        family=problem_family(problem.problem_id, target),
+    )
+    if not cards:
+        return None, 0
+    log(f"learning: {len(cards)} prior search card(s) inform this search")
+    offset = complexity_offset(cards) if config.learning.complexity_prior else 0
+    return render_prior_experience(cards, max_cards=config.learning.max_cards), offset
+
+
+def _distill_knowledge(
+    config: Config,
+    problem: ProblemSpec,
+    search_dir: Path,
+    journal: Journal,
+    *,
+    target: str,
+    budget_s: int,
+    cost_usd: float,
+    log: Log,
+) -> None:
+    """Best effort — learning must never fail a finished search."""
+    from hillclimb.knowledge import CARD_FILENAME, distill_card, write_card
+
+    try:
+        card = distill_card(
+            journal,
+            problem=problem,
+            run_ref=search_ref(search_dir),
+            target=target,
+            budget_s=budget_s,
+            cost_usd=cost_usd,
+            selection=config.holdout.selection,
+        )
+        # always keep a copy with the search artifacts (synced for hosted runs)
+        import yaml as _yaml
+
+        (search_dir / CARD_FILENAME).write_text(
+            _yaml.safe_dump(card.model_dump(exclude_none=True), sort_keys=False)
+        )
+        knowledge_dir = resolve_knowledge_dir(config)
+        if knowledge_dir is not None:
+            path = write_card(knowledge_dir, card)
+            log(f"learning: knowledge card written to {path}")
+    except Exception as exc:  # noqa: BLE001
+        log(f"learning: card distillation failed (search result unaffected): {exc}")
+
+
 def _raise_stop_requested(signum, frame):
     raise StopRequested(f"signal {signal.Signals(signum).name}")
 
@@ -251,6 +326,8 @@ def execute_search(
     budget: BudgetManager,
     log: Log = print,
     seed_from: Path | None = None,
+    knowledge_context: str | None = None,
+    target: str = "",
 ) -> SearchOutcome:
     """Run the engine on an existing search dir. Returns the outcome for
     parked/stopped/done; unexpected engine crashes finalize `failed` and
@@ -278,6 +355,9 @@ def execute_search(
     from hillclimb.slots import MachineSlots
 
     abort = threading.Event()
+    _kc, _offset = (None, 0)
+    if knowledge_context is None:
+        _kc, _offset = build_knowledge_context(config, problem, target, log)
     backend_obj = get_backend(config.backend, auth=config.backend_auth)
     if hasattr(backend_obj, "abort"):
         backend_obj.abort = abort
@@ -303,6 +383,8 @@ def execute_search(
         slots=slots,
         abort=abort,
         seed_solution=seed_from,
+        knowledge_context=knowledge_context if knowledge_context is not None else _kc,
+        complexity_start=_offset,
     )
     try:
         selected = searcher.run()
@@ -318,6 +400,11 @@ def execute_search(
     status.finalize("done")
     if problem.kind == "emflow" and selected is not None:
         _official_verify(config, problem, search_dir, journal, selected, log)
+    _distill_knowledge(
+        config, problem, search_dir, journal,
+        target=target, budget_s=budget.total_s,
+        cost_usd=searcher.total_cost_usd(), log=log,
+    )
     return SearchOutcome(run_dir, search_dir, selected, "done")
 
 
@@ -362,6 +449,7 @@ def run_search(
     model: str | None = None,
     holdout: bool = True,
     seed_from: Path | str | None = None,
+    knowledge_context: str | None = None,
     log: Log = print,
 ) -> SearchOutcome:
     """Resolve a single-problem target, create the Run/Search dirs, and run
@@ -406,4 +494,6 @@ def run_search(
         BudgetManager(total_s, config.budget.stop_margin_s),
         log,
         seed_from=seed_path,
+        knowledge_context=knowledge_context,
+        target=target,
     )

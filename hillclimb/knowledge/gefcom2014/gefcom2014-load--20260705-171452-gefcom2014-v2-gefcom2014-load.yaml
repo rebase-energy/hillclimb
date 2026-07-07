@@ -1,0 +1,59 @@
+schema_version: 1
+problem_id: gefcom2014-load
+family: gefcom2014
+target: emflow://gefcom2014:load
+metric: PinballLoss
+lower_is_better: true
+run_ref: 20260705-171452-gefcom2014-v2/gefcom2014-load
+finished_at: '2026-07-07T14:29:28.896968+00:00'
+budget_s: 7200
+cost_usd: 0.0
+n_candidates: 27
+n_ok: 26
+n_buggy: 0
+selected_val: 9.710328999311464
+selected_holdout: 7.954841345301503
+selected_operator: improve
+operator_stats:
+  draft:
+    attempts: 3
+    ok: 3
+    best_val: 10.779533297527756
+  improve:
+    attempts: 23
+    ok: 22
+    best_val: 9.710328999311464
+  ensemble:
+    attempts: 1
+    ok: 1
+    best_val: 10.771625017053738
+top_approaches:
+- candidate_id: c026
+  operator: improve
+  val_score: 9.710328999311464
+  holdout_score: 7.954841345301503
+  summary: "Adding a second intraday harmonic (sin_hour2/cos_hour2, period 12h) should\
+    \ let the quantile forest capture the double daily load peak (morning ramp + evening\
+    \ peak) that a single 24h sin/cos pair cannot represent without extra splits \u2014\
+    \ mirro"
+  libraries:
+  - sklearn
+- candidate_id: c027
+  operator: improve
+  val_score: 9.797414288414783
+  holdout_score: 8.02391803422895
+  summary: Raising `min_samples_leaf` from 6 to 15 in the ExtraTreesRegressor should
+    reduce pinball loss by stabilizing the per-leaf empirical quantile estimates the
+    model reads its distribution from.
+  libraries:
+  - sklearn
+- candidate_id: c021
+  operator: improve
+  val_score: 9.926785160207583
+  holdout_score: 8.261560757424114
+  summary: Swapping the quantile-regression-forest's base learner from `RandomForestRegressor`
+    to `ExtraTreesRegressor` (identical hyperparameters, identical leaf-quantile aggregation)
+    should improve pinball loss because extremely randomized trees pic
+  libraries:
+  - sklearn
+failure_modes: []

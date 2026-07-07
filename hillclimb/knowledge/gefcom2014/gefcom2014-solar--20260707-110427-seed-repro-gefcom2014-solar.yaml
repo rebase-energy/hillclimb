@@ -1,0 +1,22 @@
+schema_version: 1
+problem_id: gefcom2014-solar
+family: gefcom2014
+target: emflow://gefcom2014:solar
+metric: PinballLoss
+lower_is_better: true
+run_ref: 20260707-110427-seed-repro/gefcom2014-solar
+finished_at: '2026-07-07T14:29:28.880016+00:00'
+budget_s: 60
+cost_usd: 0.0
+n_candidates: 1
+n_ok: 0
+n_buggy: 1
+selected_val: 0.025914295532555243
+selected_operator: baseline
+operator_stats:
+  seed:
+    attempts: 1
+    ok: 0
+top_approaches: []
+failure_modes:
+- 'holdout contract violation: holdout evaluation produced no score (x1)'

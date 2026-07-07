@@ -1,0 +1,60 @@
+schema_version: 1
+problem_id: gefcom2014-price
+family: gefcom2014
+target: emflow://gefcom2014:price
+metric: PinballLoss
+lower_is_better: true
+run_ref: 20260705-171452-gefcom2014-v2/gefcom2014-price
+finished_at: '2026-07-07T14:29:28.902038+00:00'
+budget_s: 7200
+cost_usd: 0.0
+n_candidates: 23
+n_ok: 20
+n_buggy: 0
+selected_val: 1.0639452332807404
+selected_holdout: 4.8383238083406095
+selected_operator: draft
+operator_stats:
+  draft:
+    attempts: 6
+    ok: 3
+    best_val: 1.0639452332807404
+  improve:
+    attempts: 16
+    ok: 16
+    best_val: 1.046473693954528
+  ensemble:
+    attempts: 1
+    ok: 1
+    best_val: 1.0646621014950743
+top_approaches:
+- candidate_id: c017
+  operator: improve
+  val_score: 1.046473693954528
+  holdout_score: 4.929242022362546
+  summary: 'Lowering the learning rate on both GBMs (0.05 -> 0.02) while proportionally
+    increasing `n_estimators` (mean: 400 -> 1000, scale: 200 -> 500) to keep total
+    shrinkage roughly constant should improve pinball loss.'
+  libraries:
+  - lightgbm
+- candidate_id: c020
+  operator: improve
+  val_score: 1.0505158827017975
+  holdout_score: 4.92520519373419
+  summary: Conditioning the empirical standardized-residual quantile "shape" on (hour-of-day
+    x weekend/weekday) instead of hour-of-day alone should improve pinball loss because
+    zonal electricity price distributions typically differ systematically betw
+  libraries:
+  - lightgbm
+- candidate_id: c006
+  operator: draft
+  val_score: 1.0639452332807404
+  holdout_score: 4.8383238083406095
+  complexity: advanced
+  summary: "Heteroscedastic location-scale GBM: one LightGBM regressor predicts conditional\
+    \ mean price, a second predicts conditional residual scale, and the 99 quantiles\
+    \ come from mean + scale \xD7 (empirical hour-of-day quantile of standardized\
+    \ training"
+  libraries:
+  - lightgbm
+failure_modes: []

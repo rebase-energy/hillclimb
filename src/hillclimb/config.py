@@ -68,6 +68,20 @@ class PathsConfig(BaseModel):
     kaggle_bin: Path = Path("../mle-bench/.venv/bin/kaggle")
 
 
+class LearningConfig(BaseModel):
+    """Cross-search learning: distill a knowledge card from every finished
+    search and inject prior experience into draft prompts."""
+
+    enabled: bool = True
+    # default: <workspace>/hillclimb/knowledge (git-versionable); explicit
+    # path overrides; None + no workspace = learning off
+    dir: Path | None = None
+    max_cards: int = 3  # cards rendered into the prompt
+    # opt-in policy bias: start the draft complexity schedule one step up
+    # when past winners were never 'minimal'
+    complexity_prior: bool = False
+
+
 class EmflowConfig(BaseModel):
     """Optional emflow problem-provider settings (hillclimb[emflow] extra)."""
 
@@ -102,6 +116,7 @@ class Config(BaseModel):
     ensemble: EnsembleConfig = EnsembleConfig()
     paths: PathsConfig = PathsConfig()
     emflow: EmflowConfig = EmflowConfig()
+    learning: LearningConfig = LearningConfig()
     # Resolved at load time; None for embedders that construct Config()
     # directly and set absolute paths themselves (e.g. the hosted container).
     workspace_root: Path | None = Field(default=None, exclude=True)

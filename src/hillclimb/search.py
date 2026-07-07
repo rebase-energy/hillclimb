@@ -96,6 +96,8 @@ class GreedySearcher:
         slots: MachineSlots | None = None,
         abort: threading.Event | None = None,
         seed_solution: Path | None = None,
+        knowledge_context: str | None = None,
+        complexity_start: int = 0,
     ):
         self.problem = problem
         self.config = config
@@ -112,6 +114,8 @@ class GreedySearcher:
         self.slots = slots  # machine-wide agent-concurrency cap (optional)
         self.abort = abort or threading.Event()
         self.seed_solution = seed_solution  # incumbent model: scored as a floor candidate
+        self.knowledge_context = knowledge_context  # prior-experience prompt section
+        self.complexity_start = complexity_start  # learned draft-complexity offset
         self._consecutive_failures = 0
         # Concurrency contract: the Journal and everything below is touched
         # only by the scheduler (the thread running run()/run_operator),
@@ -873,7 +877,7 @@ class GreedySearcher:
         return score < best if self.problem.lower_is_better else score > best
 
     def _draft_complexity(self) -> str:
-        index = len(self.journal.drafts())
+        index = len(self.journal.drafts()) + self.complexity_start
         return "minimal" if index == 0 else "moderate" if index == 1 else "advanced"
 
     # --- prompt assembly ---
@@ -952,6 +956,7 @@ class GreedySearcher:
                 direction=direction,
                 data_listing=self._data_listing(),
                 complexity_cue=COMPLEXITY_CUES[complexity or "minimal"],
+                prior_experience=self.knowledge_context or "(no prior searches recorded)",
                 prior_drafts=self._candidate_summaries(self.journal.drafts()) or "(none yet)",
                 contract=contract,
             )
