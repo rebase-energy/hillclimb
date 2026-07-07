@@ -18,6 +18,9 @@ class BudgetConfig(BaseModel):
     agent_timeout_s: int = 1800
     exec_timeout_s: int = 1800
     stop_margin_s: int = 300
+    # hard agent-spend ceiling; the search parks (resumable) when cumulative
+    # backend cost reaches it. 0 = no ceiling.
+    max_cost_usd: float = 0.0
 
 
 class SearchConfig(BaseModel):

@@ -153,6 +153,7 @@ class GreedySearcher:
         # the golden-equivalence test holds the pool path to the same sequence
         while not self.budget.should_stop() and len(self.journal.candidates) < self.max_candidates:
             self._process_control()
+            self._check_cost_ceiling()
             self._status()
             operator, target = self.decide()
             self.log(
@@ -175,9 +176,10 @@ class GreedySearcher:
                 if drain is None:
                     try:
                         self._process_control()
-                    except StopRequested as exc:
+                        self._check_cost_ceiling()
+                    except (StopRequested, ParkedSearch) as exc:
                         if self._inflight:
-                            self.log("  stop queued: draining in-flight operators")
+                            self.log(f"  {exc}: draining in-flight operators")
                             drain = exc
                         else:
                             raise
@@ -309,12 +311,31 @@ class GreedySearcher:
                 frontier.extend(self.journal.children(candidate.candidate_id))
         return count
 
+    # --- cost accounting ---
+
+    def total_cost_usd(self) -> float:
+        return sum(
+            c.backend.cost_usd or 0.0
+            for c in self.journal.candidates.values()
+            if c.backend is not None
+        )
+
+    def _check_cost_ceiling(self) -> None:
+        """Park (resumable) when cumulative agent spend reaches the ceiling —
+        the engine-side guarantee behind hosted credit reservations."""
+        ceiling = self.config.budget.max_cost_usd
+        if ceiling > 0 and self.total_cost_usd() >= ceiling:
+            raise ParkedSearch(
+                f"cost ceiling reached (${self.total_cost_usd():.2f} >= ${ceiling:.2f})"
+            )
+
     # --- status reporting ---
 
     def _status(self, **fields) -> None:
         if self.status is None:
             return
         candidates = self.journal.candidates.values()
+        fields.setdefault("cost_usd", round(self.total_cost_usd(), 6))
         fields.setdefault(
             "candidates",
             CandidateCounts(

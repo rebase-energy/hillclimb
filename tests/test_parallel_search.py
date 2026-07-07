@@ -429,3 +429,36 @@ class TestResumeAccounting:
             )
         )
         assert resume_spent_seconds(tmp_path, journal) == 150.0
+
+
+class TestCostCeiling:
+    def test_parks_when_ceiling_reached(self, task, config):
+        config.budget.max_cost_usd = 0.05
+        backend = FakeBackend()
+        backend.queue(script=ok_script(0.6), notes="d\n", result={"cost_usd": 0.06})
+        searcher, journal, _ = make_searcher(task, config, backend)
+
+        searcher.run_operator("draft", None)  # spends past the ceiling
+        with pytest.raises(ParkedSearch, match="cost ceiling"):
+            searcher._check_cost_ceiling()
+        assert searcher.total_cost_usd() == pytest.approx(0.06)
+
+    def test_no_ceiling_by_default(self, task, config):
+        backend = FakeBackend()
+        backend.queue(script=ok_script(0.6), notes="d\n", result={"cost_usd": 999.0})
+        searcher, _, _ = make_searcher(task, config, backend)
+        searcher.run_operator("draft", None)
+        searcher._check_cost_ceiling()  # no raise
+
+    def test_cost_in_status(self, task, config, tmp_path):
+        from hillclimb.budget import BudgetManager as BM
+        from hillclimb.status import SearchStatus, StatusWriter, read_status
+
+        backend = FakeBackend()
+        backend.queue(script=ok_script(0.6), notes="d\n", result={"cost_usd": 1.25})
+        searcher, _, search_dir = make_searcher(task, config, backend)
+        searcher.status = StatusWriter(
+            search_dir, SearchStatus(search_id="s"), budget=BM(100, stop_margin_s=0)
+        )
+        searcher.run_operator("draft", None)
+        assert read_status(search_dir).cost_usd == pytest.approx(1.25)
