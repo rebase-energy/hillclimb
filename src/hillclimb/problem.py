@@ -56,6 +56,7 @@ class SuiteEntry(BaseModel):
     budget: str | None = None  # "2h" / "30m" / seconds — parsed by the CLI
     parallel_agents: int | None = None
     n_trials: int | None = None
+    seed_from: str | None = None  # incumbent solution.py, relative to the spec file
 
 
 class SuiteSpec(BaseModel):

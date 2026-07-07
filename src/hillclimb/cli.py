@@ -168,9 +168,15 @@ def resolve_search_dir(config: Config, ref: str | None) -> Path:
     return searches[0]
 
 
-def _execute(config: Config, problem: ProblemSpec, search_dir: Path, budget: BudgetManager) -> None:
+def _execute(
+    config: Config,
+    problem: ProblemSpec,
+    search_dir: Path,
+    budget: BudgetManager,
+    seed_from: Path | None = None,
+) -> None:
     """CLI shell over api.execute_search: messages + exit codes."""
-    outcome = execute_search(config, problem, search_dir, budget, log=typer.echo)
+    outcome = execute_search(config, problem, search_dir, budget, log=typer.echo, seed_from=seed_from)
     ref = outcome.ref
     if outcome.state == "parked":
         typer.echo(f"\nRate limited: {outcome.error}")
@@ -202,6 +208,7 @@ def _run_problem(
     budget: str | None,
     run_id: str | None = None,
     run_name: str | None = None,
+    seed_from: Path | None = None,
 ) -> None:
     problem = load_problem(target, config)
     if run_id is None:
@@ -228,7 +235,11 @@ def _run_problem(
         f"Search {search_ref(search_dir)} (run={run_name}, problem={problem.problem_id}, "
         f"backend={config.backend}, model={config.model}, budget={total_s}s)"
     )
-    _execute(config, problem, search_dir, BudgetManager(total_s, config.budget.stop_margin_s))
+    _execute(
+        config, problem, search_dir,
+        BudgetManager(total_s, config.budget.stop_margin_s),
+        seed_from=seed_from,
+    )
 
 
 def _spec_provenance(config: Config, suite_path: Path) -> str:
@@ -252,6 +263,7 @@ def _run_suite(
     name: str | None,
     parallel_agents: int | None = None,
     n_trials: int | None = None,
+    seed_from: Path | None = None,
 ) -> None:
     resolved = resolve_target(target, config)
     if resolved.kind != "suite" or resolved.suite is None:
@@ -304,6 +316,7 @@ def _run_suite(
         child_model = model or entry.model
         child_parallel = parallel_agents if parallel_agents is not None else entry.parallel_agents
         child_trials = n_trials if n_trials is not None else entry.n_trials
+        child_seed = seed_from or entry.seed_from
         if child_budget:
             cmd += ["--budget", child_budget]
         if child_backend:
@@ -314,6 +327,12 @@ def _run_suite(
             cmd += ["--parallel-agents", str(child_parallel)]
         if child_trials is not None:
             cmd += ["--n-trials", str(child_trials)]
+        if child_seed:
+            # spec-relative paths resolve against the spec's own directory
+            seed_path = Path(child_seed)
+            if not seed_path.is_absolute():
+                seed_path = (suite.suite_path.parent / seed_path).resolve()
+            cmd += ["--seed-from", str(seed_path)]
         if not holdout:
             cmd.append("--no-holdout")
         out = log_path.open("w")
@@ -346,6 +365,9 @@ def run(
     n_trials: int = typer.Option(
         None, "--n-trials", help="Validation evals per candidate (mean climbs)"
     ),
+    seed_from: Path = typer.Option(
+        None, "--seed-from", help="Incumbent solution.py scored as the floor candidate"
+    ),
     run_id: str = typer.Option(None, "--run-id", hidden=True),
     run_name: str = typer.Option(None, "--run-name", hidden=True),
 ):
@@ -361,7 +383,7 @@ def run(
     if resolved.kind == "suite":
         _run_suite(
             target, config, budget, backend, model, holdout, name,
-            parallel_agents=parallel_agents, n_trials=n_trials,
+            parallel_agents=parallel_agents, n_trials=n_trials, seed_from=seed_from,
         )
         return
     _run_problem(
@@ -370,6 +392,7 @@ def run(
         budget,
         run_id=run_id,
         run_name=run_name or name,
+        seed_from=seed_from,
     )
 
 

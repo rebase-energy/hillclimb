@@ -41,7 +41,7 @@ def test_run_problem_creates_run_and_search_metadata(config, tmp_path, monkeypat
     config.paths.runs_dir = tmp_path / "runs"
     executed = []
 
-    def fake_execute(config_arg, problem_arg, search_dir, budget):
+    def fake_execute(config_arg, problem_arg, search_dir, budget, seed_from=None):
         executed.append((problem_arg.problem_id, search_dir))
 
     monkeypatch.setattr("hillclimb.cli._execute", fake_execute)

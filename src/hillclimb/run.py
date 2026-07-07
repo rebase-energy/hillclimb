@@ -44,6 +44,7 @@ class SearchMeta(BaseModel):
     holdout_seed: int | None = None
     holdout_fraction: float | None = None
     holdout_strategy: str = "random"
+    seed_from: str | None = None  # incumbent solution the search was seeded with
     started_at: str = Field(default_factory=utcnow)
 
 

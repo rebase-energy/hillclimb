@@ -211,6 +211,7 @@ def create_search(
     run_dir: Path,
     run_id: str,
     total_s: int,
+    seed_from: Path | None = None,
 ) -> Path:
     search_dir = create_search_dir(run_dir, problem.problem_id)
     write_search_meta(
@@ -233,6 +234,7 @@ def create_search(
             holdout_seed=config.holdout.seed,
             holdout_fraction=config.holdout.fraction,
             holdout_strategy=problem.holdout.strategy if problem.holdout else "random",
+            seed_from=str(seed_from) if seed_from else None,
         ),
     )
     return search_dir
@@ -248,6 +250,7 @@ def execute_search(
     search_dir: Path,
     budget: BudgetManager,
     log: Log = print,
+    seed_from: Path | None = None,
 ) -> SearchOutcome:
     """Run the engine on an existing search dir. Returns the outcome for
     parked/stopped/done; unexpected engine crashes finalize `failed` and
@@ -299,6 +302,7 @@ def execute_search(
         status=status,
         slots=slots,
         abort=abort,
+        seed_solution=seed_from,
     )
     try:
         selected = searcher.run()
@@ -357,11 +361,13 @@ def run_search(
     backend: str | None = None,
     model: str | None = None,
     holdout: bool = True,
+    seed_from: Path | str | None = None,
     log: Log = print,
 ) -> SearchOutcome:
     """Resolve a single-problem target, create the Run/Search dirs, and run
     the engine to completion. Suites are a CLI concern (parallel processes);
-    this API runs exactly one search."""
+    this API runs exactly one search. `seed_from` scores an incumbent
+    solution as the floor candidate a re-search must beat."""
     config = config or Config.load(backend=backend, model=model)
     if backend:
         config.backend = backend
@@ -387,11 +393,17 @@ def run_search(
     else:
         run_dir = config.paths.runs_dir / run_id  # suite child: parent wrote run.yaml
     total_s = budget_s or problem.time_budget_s
-    search_dir = create_search(config, problem, run_dir, run_id, total_s)
+    seed_path = Path(seed_from) if seed_from else None
+    search_dir = create_search(config, problem, run_dir, run_id, total_s, seed_from=seed_path)
     log(
         f"Search {search_ref(search_dir)} (problem={problem.problem_id}, "
         f"backend={config.backend}, model={config.model}, budget={total_s}s)"
     )
     return execute_search(
-        config, problem, search_dir, BudgetManager(total_s, config.budget.stop_margin_s), log
+        config,
+        problem,
+        search_dir,
+        BudgetManager(total_s, config.budget.stop_margin_s),
+        log,
+        seed_from=seed_path,
     )

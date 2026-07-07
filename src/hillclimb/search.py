@@ -36,7 +36,7 @@ class Job:
     by the worker until _commit (the journal holds its own deep copy)."""
 
     candidate: Candidate
-    request: OperatorRequest
+    request: OperatorRequest | None  # None for the agent-less seed candidate
     workspace: Path
     ensemble_inputs: "list[Candidate] | None" = None
     holdout_threshold: float | None = None  # k-th best val at prepare time; None = no gate
@@ -95,6 +95,7 @@ class GreedySearcher:
         status: StatusWriter | None = None,
         slots: MachineSlots | None = None,
         abort: threading.Event | None = None,
+        seed_solution: Path | None = None,
     ):
         self.problem = problem
         self.config = config
@@ -110,6 +111,7 @@ class GreedySearcher:
         self.status = status
         self.slots = slots  # machine-wide agent-concurrency cap (optional)
         self.abort = abort or threading.Event()
+        self.seed_solution = seed_solution  # incumbent model: scored as a floor candidate
         self._consecutive_failures = 0
         # Concurrency contract: the Journal and everything below is touched
         # only by the scheduler (the thread running run()/run_operator),
@@ -147,6 +149,10 @@ class GreedySearcher:
             )
             self.journal.candidate_result(baseline)
             self.log(f"baseline written: {baseline.summary}")
+        if self.seed_solution is not None and not any(
+            c.operator == "seed" for c in self.journal.candidates.values()
+        ):
+            self._run_seed()  # resume-idempotent: at most one seed per search
         if max(1, self.config.search.parallel_agents) > 1:
             return self._run_pool(self.config.search.parallel_agents)
         # serial loop kept verbatim: zero behavior change at parallel_agents=1;
@@ -473,6 +479,46 @@ class GreedySearcher:
                     break
                 frontier.extend(self.journal.children(candidate.candidate_id))
         return count
+
+    def _run_seed(self) -> Candidate:
+        """Score the incumbent solution as a real candidate: the floor a
+        re-search must beat. No agent call; holdout always evaluated (it is
+        the selection floor, so the top-k gate does not apply)."""
+        seed = self.seed_solution.absolute()
+        if not seed.exists():
+            raise FileNotFoundError(f"seed solution not found: {seed}")
+        candidate_id = self.journal.next_candidate_id()
+        workspace = create_candidate_workspace(
+            self.search_dir,
+            candidate_id,
+            self.data_dir,
+            self.problem.problem_dir,
+            parent_solution=seed,
+        )
+        candidate = Candidate(
+            candidate_id=candidate_id,
+            operator="seed",
+            workspace=str(workspace),
+            summary=f"incumbent model seeded from {seed.name}",
+        )
+        self.journal.candidate_created(candidate)
+        self.log(f"seeding incumbent {seed.name} as {candidate_id}")
+        exec_timeout = self.config.budget.exec_timeout_s
+        all_ok = self._run_trials(candidate, workspace / "solution.py", workspace, exec_timeout)
+        holdout_score = holdout_error = None
+        if all_ok:
+            holdout_score, holdout_error = self._score_holdout(workspace)
+        msg = OutcomeMsg(
+            job=Job(candidate=candidate, request=None, workspace=workspace),
+            kind="executed",
+            all_ok=all_ok,
+            holdout_score=holdout_score,
+            holdout_error=holdout_error,
+        )
+        committed = self._commit(msg)
+        score = f"val={committed.val_score}" if committed.val_score is not None else "buggy"
+        self.log(f"  seed scored: {score}")
+        return committed
 
     # --- candidate lifecycle: _prepare (scheduler) → _execute_job (worker)
     # --- → _commit (scheduler); run_operator is the synchronous composition

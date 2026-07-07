@@ -462,3 +462,61 @@ class TestCostCeiling:
         )
         searcher.run_operator("draft", None)
         assert read_status(search_dir).cost_usd == pytest.approx(1.25)
+
+
+class TestIncumbentSeeding:
+    def test_seed_scored_as_floor_candidate(self, task, config, tmp_path):
+        seed = tmp_path / "incumbent.py"
+        seed.write_text(ok_script(0.8))
+        backend = FakeBackend()
+        backend.queue(script=ok_script(0.6), notes="worse draft\n")
+        searcher, journal, _ = make_searcher(task, config, backend, seed_solution=seed)
+        searcher.max_candidates = 3  # baseline + seed + one draft
+
+        searcher.run()
+
+        seeds = [c for c in journal.candidates.values() if c.operator == "seed"]
+        assert len(seeds) == 1
+        assert seeds[0].status == "ok"
+        assert seeds[0].val_score == 0.8
+        # the weaker draft cannot displace the incumbent floor
+        best = journal.best_candidate(task.lower_is_better)
+        assert best.candidate_id == seeds[0].candidate_id
+
+    def test_improve_targets_the_seed(self, task, config, tmp_path):
+        seed = tmp_path / "incumbent.py"
+        seed.write_text(ok_script(0.9))
+        backend = FakeBackend()
+        for _ in range(3):  # drafts all weaker than the incumbent
+            backend.queue(script=ok_script(0.5), notes="d\n")
+        backend.queue(script=ok_script(0.95), notes="improved incumbent\n")
+        config.search.num_drafts = 3
+        searcher, journal, _ = make_searcher(task, config, backend, seed_solution=seed)
+        searcher.max_candidates = 6  # baseline + seed + 3 drafts + 1 improve
+
+        searcher.run()
+
+        improves = [c for c in journal.candidates.values() if c.operator == "improve"]
+        assert improves, "expected an improve after drafting completed"
+        seed_id = next(c.candidate_id for c in journal.candidates.values() if c.operator == "seed")
+        assert improves[0].parent_id == seed_id
+
+    def test_resume_does_not_reseed(self, task, config, tmp_path):
+        seed = tmp_path / "incumbent.py"
+        seed.write_text(ok_script(0.8))
+        backend = FakeBackend()
+        searcher, journal, search_dir = make_searcher(task, config, backend, seed_solution=seed)
+        searcher.max_candidates = 2  # baseline + seed, then stop
+        searcher.run()
+
+        from hillclimb.budget import BudgetManager as BM
+
+        resumed = GreedySearcher(
+            problem=task, config=config, journal=Journal(search_dir / "journal.jsonl"),
+            backend=backend, executor=LocalExecutor(Path(sys.executable)),
+            budget=BM(3600, stop_margin_s=1), search_dir=search_dir,
+            log=lambda *_: None, seed_solution=seed, max_candidates=2,
+        )
+        resumed.run()
+        seeds = [c for c in resumed.journal.candidates.values() if c.operator == "seed"]
+        assert len(seeds) == 1
