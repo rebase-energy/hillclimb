@@ -790,12 +790,19 @@ class GreedySearcher:
             verifier=self.problem.verifier,
             seed=seed,
         )
+        stdout_tail = tail(Path(exec_result.stdout_path)) if exec_result.stdout_path else ""
+        if not exec_result.ok and not stdout_tail.strip():
+            # a silent crash is undebuggable from the journal (the only state
+            # synced off remote machines) — surface stderr instead
+            stderr = tail(Path(exec_result.stdout_path).with_name("exec_stderr.log"), 800)
+            if stderr.strip():
+                stdout_tail = f"[stderr] {stderr}"
         trial = Trial(
             seed=seed,
             returncode=exec_result.returncode,
             duration_s=exec_result.duration_s,
             timed_out=exec_result.timed_out,
-            stdout_tail=tail(Path(exec_result.stdout_path)) if exec_result.stdout_path else "",
+            stdout_tail=stdout_tail,
             submission_ok=exec_result.submission_ok,
             val_score=exec_result.val_score if exec_result.ok else None,
             started_at=trial_started,
