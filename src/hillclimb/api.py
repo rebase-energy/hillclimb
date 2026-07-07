@@ -109,9 +109,14 @@ def ensure_runtime_venv(config: Config, kind: str = "csv", log: Log = print) -> 
                     check=True,
                 )
             if kind == "emflow":
+                # flag forms ("-e ../emflow") split into args; requirement
+                # specs ("emflow @ git+…", "/src/emflow") are ONE argument —
+                # shlex would shred the PEP 508 " @ " form
+                source = config.emflow.source.strip()
+                source_args = shlex.split(source) if source.startswith("-") else [source]
                 try:
                     subprocess.run(
-                        ["uv", "pip", "install", *shlex.split(config.emflow.source), "--python", str(python)],
+                        ["uv", "pip", "install", *source_args, "--python", str(python)],
                         check=True,
                     )
                 except subprocess.CalledProcessError as exc:
