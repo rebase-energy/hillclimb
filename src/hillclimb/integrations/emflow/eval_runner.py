@@ -58,6 +58,13 @@ def main() -> None:
         "model": result.model,
     }
     Path(args.result_json).write_text(json.dumps(payload, indent=2))
+    if result.score != result.score:  # nan: scoring silently found no actuals
+        print(
+            "error: evaluation scored nan — no actuals matched the predictions "
+            "(missing HF credentials for private holdout data?)",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     print(f"val_score: {result.score}")
 
 
