@@ -10,6 +10,12 @@ worked instead of rediscovering it.
 Extraction is purely mechanical (journal + notes.md + import scanning) — no
 model calls. The agents themselves wrote the summaries; this module just
 routes them forward in time.
+
+Live sharing (CORAL-style) routes them sideways as well: a running search
+republishes its card into the run-scoped `runs/<run-id>/knowledge/` dir after
+every executed candidate, and concurrent sibling searches in the same run
+poll those cards when building operator prompts — the solar search's feature
+trick reaches the wind search's next operator mid-run, not next run.
 """
 
 from __future__ import annotations
@@ -269,6 +275,83 @@ def render_prior_experience(cards: list[KnowledgeCard], *, max_cards: int = 3) -
         "Use these as a head start — prefer refining a proven approach over "
         "rediscovering it, but do not copy an approach that is already listed "
         "under drafts below."
+    )
+
+
+LIVE_DIRNAME = "knowledge"
+
+
+def live_card_path(run_dir: Path, search_id: str) -> Path:
+    return run_dir / LIVE_DIRNAME / f"live--{search_id}.yaml"
+
+
+def write_live_card(run_dir: Path, card: KnowledgeCard, search_id: str) -> Path:
+    """Run-scoped live card: a snapshot of what a still-running search has
+    learned so far, republished after every executed candidate so concurrent
+    sibling searches in the same run can read it mid-flight. One file per
+    search (the engine stays the single writer of its own card); the write is
+    atomic because siblings may read at any moment."""
+    path = live_card_path(run_dir, search_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(yaml.safe_dump(card.model_dump(exclude_none=True), sort_keys=False))
+    tmp.replace(path)
+    return path
+
+
+def load_live_cards(
+    run_dir: Path,
+    *,
+    exclude_search_id: str = "",
+    family: str = "",
+) -> list[KnowledgeCard]:
+    """Live cards published by the run's other searches, most useful first:
+    same problem family, then cards with real approaches, then progress."""
+    directory = run_dir / LIVE_DIRNAME
+    if not directory.exists():
+        return []
+    cards: list[KnowledgeCard] = []
+    for path in sorted(directory.glob("live--*.yaml")):
+        if exclude_search_id and path.name == f"live--{exclude_search_id}.yaml":
+            continue
+        try:
+            data = yaml.safe_load(path.read_text()) or {}
+            if data.get("schema_version") != SCHEMA_VERSION:
+                continue
+            cards.append(KnowledgeCard.model_validate(data))
+        except Exception:  # noqa: BLE001 — a corrupt card must never block an operator
+            continue
+    cards.sort(
+        key=lambda c: (c.family == family, bool(c.top_approaches), c.n_ok, c.finished_at),
+        reverse=True,
+    )
+    return cards
+
+
+def render_live_experience(cards: list[KnowledgeCard], *, max_cards: int = 3) -> str:
+    """Prompt section for discoveries from sibling searches running
+    CONCURRENTLY in this run. Their scores come from other problems (own
+    metric and splits), so approaches transfer — numbers do not; approach
+    lines therefore carry libraries and summaries, not scores."""
+    if not cards:
+        return ""
+    lines: list[str] = []
+    for card in cards[:max_cards]:
+        header = f"- Concurrent search on {card.problem_id} ({card.n_ok} scored candidates so far"
+        if card.selected_val is not None:
+            header += f", best {card.metric or 'score'} {card.selected_val:.5g}"
+        header += "):"
+        lines.append(header)
+        for approach in card.top_approaches[:2]:
+            libs = f" [{', '.join(approach.libraries[:4])}]" if approach.libraries else ""
+            lines.append(f"    - {approach.summary or approach.candidate_id}{libs}")
+        if card.failure_modes:
+            lines.append(f"    - failure modes seen: {'; '.join(card.failure_modes[:2])}")
+    body = "\n".join(lines)
+    return (
+        "Discoveries from sibling searches running CONCURRENTLY on related "
+        "problems (their scores use different data and metrics — borrow the "
+        "approaches, not the numbers):\n" + body
     )
 
 

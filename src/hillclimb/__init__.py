@@ -1,4 +1,4 @@
-"""rebase-hillclimb: greedy search over agent-drafted solutions.
+"""hillclimb: greedy search over agent-drafted solutions.
 
 Public API (lazy — `import hillclimb` stays dependency-light):
 

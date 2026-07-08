@@ -151,3 +151,25 @@ def test_next_candidate_id_never_collides_with_gaps(tmp_path: Path):
     journal = Journal(tmp_path / "j.jsonl")
     journal.candidate_result(make_candidate("c005"))  # gap: only c005 exists
     assert journal.next_candidate_id() == "c006"  # count-based would say c001
+
+
+def test_trial_report_roundtrip_and_prefeature_replay(tmp_path: Path):
+    """New journals carry Trial.report; pre-feature lines (no report key on
+    the trial) must replay unchanged under extra="forbid"."""
+    path = tmp_path / "j.jsonl"
+    journal = Journal(path)
+    report = {"version": 1, "overall": {"score": 0.5}}
+    candidate = make_candidate("c001", status="ok")
+    candidate.trials.append(Trial(val_score=0.5, report=report))
+    journal.candidate_result(candidate)
+
+    record = json.loads(path.read_text().splitlines()[0])
+    record["candidate_id"] = "c000"
+    for trial in record["trials"]:
+        trial.pop("report")  # what a pre-feature engine wrote
+    with path.open("a") as fh:
+        fh.write(json.dumps(record) + "\n")
+
+    reloaded = Journal(path)
+    assert reloaded.get("c001").trials[-1].report == report
+    assert reloaded.get("c000").trials[-1].report is None

@@ -37,6 +37,11 @@ class SearchMeta(BaseModel):
     problem_id: str
     backend: str
     model: str
+    # additive with defaults on purpose: bumping SCHEMA_VERSION would hide
+    # every existing run dir from the scanners (exact-match gate below)
+    policy: str = "greedy"
+    policy_params: dict = Field(default_factory=dict)
+    routing: dict = Field(default_factory=dict)  # RouteConfig dumps by operator
     metric: str
     lower_is_better: bool = False
     budget_s: int = 0

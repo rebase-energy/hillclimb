@@ -5,12 +5,14 @@ import re
 import signal
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
 import typer
 
 from hillclimb.api import (
+    build_holdout,
     create_search,
     ensure_runtime_venv,
     execute_search,
@@ -20,7 +22,7 @@ from hillclimb.api import (
 )
 from hillclimb.backends import get_backend
 from hillclimb.budget import BudgetManager
-from hillclimb.config import Config
+from hillclimb.config import Config, RouteConfig
 from hillclimb.control import request_prune, request_stop
 from hillclimb.executor import LocalExecutor
 from hillclimb.journal import Journal
@@ -44,7 +46,7 @@ from hillclimb.search import GreedySearcher
 from hillclimb.status import effective_state, read_status
 from hillclimb.workspace import create_run_dir
 
-app = typer.Typer(help="rebase-hillclimb: auto-hillclimbing for verifier-defined problems")
+app = typer.Typer(help="hillclimb: auto-hillclimbing for verifier-defined problems")
 
 
 def load_config(**overrides) -> Config:
@@ -81,6 +83,10 @@ model: sonnet
 #   enabled: true        # knowledge cards in hillclimb/knowledge/ inform new searches
 #   max_cards: 3
 #   complexity_prior: false
+#   live: true           # concurrent searches in one run share discoveries mid-flight
+
+# report:
+#   enabled: true        # inject eval breakdowns (per-zone/horizon/quantile) into improve prompts
 """
 
 INIT_SPEC_EXAMPLE = """\
@@ -182,6 +188,39 @@ def knowledge_backfill():
     typer.echo(f"{written} knowledge card(s) written to {knowledge_dir}")
 
 
+@knowledge_app.command("live")
+def knowledge_live(run: str = typer.Argument("latest", help="Run id, or `latest`")):
+    """Show the live cards concurrent searches in a run are sharing — the
+    discoveries a sibling's next operator would receive."""
+    from hillclimb.knowledge import load_live_cards, render_live_experience
+
+    config = load_config()
+    runs_dir = config.paths.runs_dir
+    if run == "latest":
+        latest = latest_search_dir(runs_dir)
+        if latest is None:
+            typer.echo(f"No searches found in {runs_dir}", err=True)
+            raise typer.Exit(1)
+        run_dir = latest.parents[1]
+    else:
+        run_dir = runs_dir / run
+        if load_run_meta(run_dir) is None:
+            raise typer.BadParameter(f"No run named {run!r} in {runs_dir}")
+    cards = load_live_cards(run_dir)
+    if not cards:
+        typer.echo(f"no live cards under {run_dir / 'knowledge'}")
+        raise typer.Exit(0)
+    typer.echo(f"Run {run_dir.name} — {len(cards)} live card(s)")
+    for card in cards:
+        val = f"{card.selected_val:.5g}" if card.selected_val is not None else "-"
+        typer.echo(
+            f"  {card.run_ref}: {card.n_ok} ok / {card.n_buggy} buggy of "
+            f"{card.n_candidates}, best {card.metric or 'score'} {val}"
+        )
+    typer.echo("")
+    typer.echo(render_live_experience(cards, max_cards=len(cards)))
+
+
 @knowledge_app.command("show")
 def knowledge_show(target: str = typer.Argument(..., help="Problem target, e.g. emflow://gefcom2014:solar")):
     """Render the prior-experience section a new search on this target
@@ -273,7 +312,7 @@ def _execute(
         )
     else:
         typer.echo("\nDone. No scored solution; best/ holds the baseline submission.")
-    artifact = "solution.py" if problem.kind == "emflow" else "submission.csv"
+    artifact = "solution.py" if problem.kind in ("emflow", "evaluator") else "submission.csv"
     typer.echo(f"Best artifact: {search_dir / 'best' / artifact}")
     typer.echo(f"Inspect with: hillclimb status {ref}")
 
@@ -337,6 +376,7 @@ def _run_suite(
     model: str | None,
     holdout: bool,
     name: str | None,
+    policy: str | None = None,
     parallel_agents: int | None = None,
     n_trials: int | None = None,
     seed_from: Path | None = None,
@@ -399,6 +439,8 @@ def _run_suite(
             cmd += ["--backend", child_backend]
         if child_model:
             cmd += ["--model", child_model]
+        if policy:
+            cmd += ["--policy", policy]
         if child_parallel is not None:
             cmd += ["--parallel-agents", str(child_parallel)]
         if child_trials is not None:
@@ -433,6 +475,9 @@ def run(
     budget: str = typer.Option(None, help="Wall-clock budget, e.g. 2h / 30m"),
     backend: str = typer.Option(None, help="Operator backend: claude-code | dummy"),
     model: str = typer.Option(None, help="Model for operator calls, e.g. sonnet / opus"),
+    policy: str = typer.Option(
+        None, "--policy", help="Search policy (default: greedy); params via config search.policy_params"
+    ),
     holdout: bool = typer.Option(True, "--holdout/--no-holdout", help="Hidden selection holdout"),
     name: str = typer.Option(None, "--name", help="Run name shown in the TUI"),
     parallel_agents: int = typer.Option(
@@ -451,6 +496,8 @@ def run(
     config = load_config(backend=backend, model=model)
     if not holdout:
         config.holdout.enabled = False
+    if policy is not None:
+        config.search.policy = policy
     if parallel_agents is not None:
         config.search.parallel_agents = parallel_agents
     if n_trials is not None:
@@ -459,7 +506,8 @@ def run(
     if resolved.kind == "suite":
         _run_suite(
             target, config, budget, backend, model, holdout, name,
-            parallel_agents=parallel_agents, n_trials=n_trials, seed_from=seed_from,
+            policy=policy, parallel_agents=parallel_agents, n_trials=n_trials,
+            seed_from=seed_from,
         )
         return
     _run_problem(
@@ -487,6 +535,11 @@ def resume(search: str = typer.Argument("latest")):
         config.holdout.seed = meta.holdout_seed
     if meta.holdout_fraction is not None:
         config.holdout.fraction = meta.holdout_fraction
+    # the search resumes under the policy/routing it started with, not
+    # whatever the live config currently says
+    config.search.policy = meta.policy
+    config.search.policy_params = meta.policy_params
+    config.routing = {op: RouteConfig(**route) for op, route in meta.routing.items()}
     problem = load_problem(meta.problem, config)
     journal = Journal(search_dir / "journal.jsonl")
     spent = resume_spent_seconds(search_dir, journal)
@@ -607,6 +660,113 @@ def status(search: str = typer.Argument("latest")):
 
 
 @app.command()
+def show(
+    search: str = typer.Argument("latest", help="latest, <run-id>, or <run-id>/<search-id>"),
+    candidate_id: str = typer.Argument(..., metavar="CANDIDATE", help="Candidate id, e.g. c007"),
+):
+    """Everything known about one candidate: metadata, scores, the evaluation
+    breakdown (the same report the improve operator receives), the code diff
+    vs its parent, notes, and execution output."""
+    import difflib
+
+    from hillclimb.report import candidate_report, render_delta, render_report
+    from hillclimb.search import tail
+
+    config = load_config()
+    search_dir = resolve_search_dir(config, search)
+    journal = Journal(search_dir / "journal.jsonl")
+    cand = journal.candidates.get(candidate_id)
+    if cand is None:
+        known = ", ".join(journal.candidates) or "(none)"
+        raise typer.BadParameter(
+            f"No candidate {candidate_id!r} in {search_ref(search_dir)}; known: {known}"
+        )
+    meta = load_search_meta(search_dir)
+    metric = meta.metric if meta else "score"
+    lower = bool(meta.lower_is_better) if meta else False
+    parent = journal.candidates.get(cand.parent_id) if cand.parent_id else None
+
+    marks = [
+        name
+        for name, on in (
+            ("SELECTED", cand.is_selected), ("best-val", cand.is_best), ("PRUNED", cand.pruned),
+        )
+        if on
+    ]
+    header = f"{cand.candidate_id}  {cand.operator}"
+    if cand.complexity:
+        header += f"[{cand.complexity}]"
+    header += f"  status={cand.status}"
+    if cand.parent_id:
+        header += f"  <- {cand.parent_id}"
+    if marks:
+        header += f"  [{', '.join(marks)}]"
+    typer.echo(header)
+    if cand.summary:
+        typer.echo(f"summary: {cand.summary}")
+    backend = cand.backend
+    if backend.name:
+        agent_line = f"agent: {backend.name}"
+        if backend.cost_usd is not None:
+            agent_line += f", ${backend.cost_usd:.2f}"
+        if backend.num_turns is not None:
+            agent_line += f", {backend.num_turns} turns"
+        typer.echo(agent_line)
+    for index, trial in enumerate(cand.trials):
+        parts = [f"val={trial.val_score if trial.val_score is not None else '-'}"]
+        if trial.seed is not None:
+            parts.append(f"seed={trial.seed}")
+        if trial.duration_s is not None:
+            parts.append(f"{trial.duration_s:.0f}s")
+        if trial.returncode not in (0, None):
+            parts.append(f"rc={trial.returncode}")
+        if trial.timed_out:
+            parts.append("TIMEOUT")
+        if trial.holdout_error:
+            parts.append(f"holdout_error={trial.holdout_error[:60]}")
+        typer.echo(f"trial {index}: {'  '.join(parts)}")
+    scores = f"val_score={cand.val_score}"
+    if cand.holdout_score is not None:
+        scores += f"  holdout={cand.holdout_score:.5g}"
+    typer.echo(f"{scores}  ({metric}, {'lower' if lower else 'higher'} is better)")
+
+    report = candidate_report(cand)
+    typer.echo("\n# Evaluation breakdown (validation split)\n")
+    typer.echo(
+        render_report(report, metric)
+        or "(no evaluation report — pre-feature candidate or non-emflow problem)"
+    )
+    delta = render_delta(candidate_report(parent), report, lower)
+    if delta:
+        typer.echo(f"\n# Where it moved vs parent {parent.candidate_id}\n")
+        typer.echo(delta)
+
+    workspace = Path(cand.workspace) if cand.workspace else None
+    solution = workspace / "solution.py" if workspace else None
+    if parent is not None:
+        typer.echo(f"\n# solution.py diff vs {parent.candidate_id}\n")
+        parent_solution = Path(parent.workspace) / "solution.py" if parent.workspace else None
+        if solution is None or not solution.exists() or parent_solution is None or not parent_solution.exists():
+            typer.echo("(workspace not available on this machine)")
+        else:
+            diff = "".join(
+                difflib.unified_diff(
+                    parent_solution.read_text().splitlines(keepends=True),
+                    solution.read_text().splitlines(keepends=True),
+                    fromfile=f"{parent.candidate_id}/solution.py",
+                    tofile=f"{cand.candidate_id}/solution.py",
+                )
+            )
+            typer.echo(diff.rstrip() or "(identical)")
+    if workspace is not None and (workspace / "notes.md").exists():
+        typer.echo("\n# notes.md\n")
+        typer.echo((workspace / "notes.md").read_text().rstrip())
+    if workspace is not None and (workspace / "exec_stdout.log").exists():
+        typer.echo("\n# stdout (tail)\n")
+        typer.echo(tail(workspace / "exec_stdout.log").rstrip())
+
+
+@app.command()
 def tree(
     search: str = typer.Argument("latest"),
     out: Path = typer.Option(None, help="Output image path (.png/.svg/.pdf); default <search>/tree.png"),
@@ -617,7 +777,7 @@ def tree(
         from hillclimb.viz import render_tree
     except ModuleNotFoundError as exc:
         raise typer.BadParameter(
-            "`hillclimb tree` needs the TUI extra: pip install 'rebase-hillclimb[tui]'"
+            "`hillclimb tree` needs the TUI extra: pip install 'hillclimb[tui]'"
         ) from exc
 
     config = load_config()
@@ -643,7 +803,7 @@ def watch():
         from hillclimb.watch import WatchApp
     except ModuleNotFoundError as exc:
         raise typer.BadParameter(
-            "`hillclimb watch` needs the TUI extra: pip install 'rebase-hillclimb[tui]'"
+            "`hillclimb watch` needs the TUI extra: pip install 'hillclimb[tui]'"
         ) from exc
 
     WatchApp(load_config()).run()
@@ -683,7 +843,7 @@ def smoke(
         budget=BudgetManager(1800, stop_margin_s=0),
         search_dir=search_dir,
         log=typer.echo,
-        holdout=_build_holdout(config, problem, search_dir),
+        holdout=build_holdout(config, problem, search_dir),
     )
     candidate = searcher.run_operator("draft", None)
     trial = candidate.last_trial

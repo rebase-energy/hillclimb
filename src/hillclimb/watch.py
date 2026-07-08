@@ -516,6 +516,19 @@ def candidate_detail_renderables(search_dir: Path, journal: Journal, candidate_i
             Panel(Text(notes), title="Notes", title_align="left", border_style="green")
         )
 
+    from hillclimb.report import candidate_report, render_report
+
+    report_text = render_report(candidate_report(candidate), metric)
+    if report_text:
+        renderables.append(
+            Panel(
+                Text(report_text),
+                title="Evaluation breakdown",
+                title_align="left",
+                border_style="cyan",
+            )
+        )
+
     stderr = _tail_text(workspace / "exec_stderr.log", max_chars=3000)
     stdout = _tail_text(workspace / "exec_stdout.log", max_chars=3000)
     if stderr:

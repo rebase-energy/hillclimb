@@ -1,4 +1,4 @@
-# rebase-hillclimb
+# hillclimb
 
 Auto-hillclimbing for ML tasks: a greedy search engine that spawns headless
 Claude Code agents as operators (draft/debug/improve/ensemble), executes each

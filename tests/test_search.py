@@ -525,3 +525,328 @@ def test_stale_pending_node_recovered_on_resume(task, config):
     assert journal.get("c001").status == "abandoned"
     best = searcher.run()  # loop proceeds normally
     assert best is not None
+
+
+# --- trial evaluation reports ---
+
+
+def report_script(score, split="validation", zones=None, body="json-report"):
+    """Solution script that mimics an emflow eval: writes eval_result.json
+    (with a report block) alongside the usual submission + val_score line."""
+    payload = {
+        "problem": "p", "split": split, "objective": "accuracy", "score": score,
+        "n_origins": 2, "n_scored": 4, "model": "m",
+        "report": {
+            "version": 1, "split": split, "objective": "accuracy",
+            "lower_is_better": False,
+            "overall": {"score": score, "n_origins": 2, "n_scored": 4},
+            "zones": zones or [
+                {"zone": "z1", "score": 0.4, "n_origins": 1, "n_scored": 2},
+                {"zone": "z2", "score": 0.8, "n_origins": 1, "n_scored": 2},
+            ],
+            "report_error": None,
+        },
+    }
+    if body == "malformed":
+        write = 'open("eval_result.json", "w").write("{not json")\n'
+    else:
+        write = f"import json\njson.dump({payload!r}, open('eval_result.json', 'w'))\n"
+    return (
+        "import shutil\n"
+        'shutil.copy("data/sample_submission.csv", "submission.csv")\n'
+        + write
+        + f'print("val_score: {score}")\n'
+    )
+
+
+def test_trial_report_pickup_and_improve_injection(task, config):
+    config.search.num_drafts = 1
+    backend = FakeBackend()
+    backend.queue(script=report_script(0.6), notes="draft\n")
+    backend.queue(script=ok_script(0.7), notes="improve\n")
+    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=3)
+    searcher.run()
+
+    draft = journal.get("c001")
+    assert draft.trials[0].report is not None
+    assert draft.trials[0].report["version"] == 1
+    assert draft.trials[0].report["overall"]["score"] == 0.6
+    assert backend.requests[1].operator == "improve"
+    prompt = backend.requests[1].prompt
+    assert "# Evaluation breakdown (validation split)" in prompt
+    assert "z2" in prompt  # worst zone surfaced to the operator
+    assert "{{evaluation_report}}" not in prompt
+
+
+def test_holdout_split_report_never_lands_on_trial(task, config):
+    """Leakage guard: a holdout-split eval_result.json must not reach the
+    journal (and therefore can never reach a prompt)."""
+    config.search.num_drafts = 1
+    backend = FakeBackend()
+    backend.queue(script=report_script(0.6, split="holdout"), notes="draft\n")
+    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=2)
+    searcher.run()
+    draft = journal.get("c001")
+    assert draft.status == "ok"
+    assert draft.trials[0].report is None
+
+
+def test_malformed_eval_result_ignored(task, config):
+    config.search.num_drafts = 1
+    backend = FakeBackend()
+    backend.queue(script=report_script(0.6, body="malformed"), notes="draft\n")
+    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=2)
+    searcher.run()
+    draft = journal.get("c001")
+    assert draft.status == "ok"
+    assert draft.trials[0].report is None
+
+
+def test_report_injection_gated_by_config(task, config):
+    """report.enabled=false stops injection but not recording — both A/B
+    arms journal identical data."""
+    config.search.num_drafts = 1
+    config.report.enabled = False
+    backend = FakeBackend()
+    backend.queue(script=report_script(0.6), notes="draft\n")
+    backend.queue(script=ok_script(0.7), notes="improve\n")
+    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=3)
+    searcher.run()
+    assert journal.get("c001").trials[0].report is not None  # still recorded
+    assert "Evaluation breakdown" not in backend.requests[1].prompt
+
+
+def test_improve_prompt_carries_delta_vs_parent(task, config):
+    """Second-generation improve: the target and its parent both have
+    reports, so the prompt shows where the score moved."""
+    config.search.num_drafts = 1
+    backend = FakeBackend()
+    backend.queue(script=report_script(0.6), notes="draft\n")
+    backend.queue(
+        script=report_script(0.7, zones=[
+            {"zone": "z1", "score": 0.6, "n_origins": 1, "n_scored": 2},
+            {"zone": "z2", "score": 0.7, "n_origins": 1, "n_scored": 2},
+        ]),
+        notes="improve one\n",
+    )
+    backend.queue(script=ok_script(0.8), notes="improve two\n")
+    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=4)
+    searcher.run()
+
+    assert [r.operator for r in backend.requests] == ["draft", "improve", "improve"]
+    prompt = backend.requests[2].prompt  # targets c002 (best), parent c001
+    assert "Where this solution moved vs its parent (c001)" in prompt
+    # accuracy is higher-is-better: z1 0.4->0.6 improved, z2 0.8->0.7 regressed
+    assert "improved z1" in prompt
+    assert "regressed z2" in prompt
+
+
+VERIFIER_WITH_REPORT = """\
+import json
+report = {"version": 1, "split": "validation", "objective": "accuracy",
+          "lower_is_better": False, "segment_label": "class",
+          "overall": {"score": 0.66, "n_origins": 2, "n_scored": 4},
+          "zones": [{"zone": "cat", "score": 0.4, "n_scored": 2},
+                    {"zone": "dog", "score": 0.9, "n_scored": 2}]}
+json.dump({"split": "validation", "report": report}, open("eval_result.json", "w"))
+print("val_score: 0.66")
+"""
+
+AGENT_FAKED_REPORT = (
+    "import json, shutil\n"
+    'shutil.copy("data/sample_submission.csv", "submission.csv")\n'
+    "json.dump({'split': 'validation', 'report': {'version': 1, 'objective': 'accuracy',"
+    " 'lower_is_better': False, 'overall': {'score': 0.99, 'n_origins': 1, 'n_scored': 1}}},"
+    " open('eval_result.json', 'w'))\n"
+    'print("val_score: 0.99")\n'
+)
+
+
+def add_verifier(task, script=VERIFIER_WITH_REPORT):
+    verifier = task.problem_dir / "verify.py"
+    verifier.write_text(script)
+    task.verifier = verifier
+    return task
+
+
+def test_verifier_report_is_trusted_and_overrides_agent_file(task, config):
+    """Tier 1: on verifier problems the verifier's eval_result.json is the
+    report (evaluator trust) — anything the solution wrote is discarded,
+    exactly like its val_score line."""
+    add_verifier(task)
+    config.search.num_drafts = 1
+    backend = FakeBackend()
+    backend.queue(script=AGENT_FAKED_REPORT, notes="draft\n")
+    backend.queue(script=ok_script(0.7), notes="improve\n")
+    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=3)
+    searcher.run()
+
+    draft = journal.get("c001")
+    assert draft.val_score == 0.66  # verifier's line wins over the agent's
+    report = draft.trials[0].report
+    assert report["source"] == "evaluator"
+    assert report["overall"]["score"] == 0.66  # not the agent's faked 0.99
+    prompt = backend.requests[1].prompt
+    assert "Per class" in prompt  # segment_label flows through
+    assert "cat" in prompt
+    assert "Self-reported" not in prompt
+
+
+def test_verifier_without_report_discards_agent_file(task, config):
+    """The trust boundary also holds when the verifier writes no report:
+    the agent's file must not survive as a fake evaluator report."""
+    add_verifier(task, script='print("val_score: 0.66")\n')
+    config.search.num_drafts = 1
+    backend = FakeBackend()
+    backend.queue(script=AGENT_FAKED_REPORT, notes="draft\n")
+    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=2)
+    searcher.run()
+    assert journal.get("c001").trials[0].report is None
+
+
+def test_agent_report_labelled_self_reported(task, config):
+    """Tier 2: verifier-less problems store the agent's own report, stamped
+    source=agent and rendered with the self-reported caveat."""
+    config.search.num_drafts = 1
+    backend = FakeBackend()
+    backend.queue(script=report_script(0.6), notes="draft\n")
+    backend.queue(script=ok_script(0.7), notes="improve\n")
+    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=3)
+    searcher.run()
+    assert journal.get("c001").trials[0].report["source"] == "agent"
+    assert "Self-reported" in backend.requests[1].prompt
+
+
+def test_report_clause_only_on_verifier_less_problems(task, config):
+    backend = FakeBackend()
+    searcher, _, _ = make_searcher(task, config, backend)
+    clause_prompt = searcher.build_prompt("draft", None, "minimal")
+    assert "eval_result.json" in clause_prompt  # Tier-2 invitation present
+    assert "{{report_clause}}" not in clause_prompt
+
+    add_verifier(task)
+    verifier_prompt = searcher.build_prompt("draft", None, "minimal")
+    assert "eval_result.json" not in verifier_prompt  # would be discarded anyway
+    assert "{{report_clause}}" not in verifier_prompt
+
+
+# --- evaluator-kind problems (kind: evaluator) ---
+
+EVALUATOR_EVALUATE = """\
+import json, os, sys
+sys.path.insert(0, os.getcwd())
+import solution
+
+score = float(solution.answer())
+if os.environ.get("HILLCLIMB_TRIAL_SEED"):
+    score += 0.001 * int(os.environ["HILLCLIMB_TRIAL_SEED"])
+report = {"version": 1, "split": "validation", "objective": "score",
+          "lower_is_better": False,
+          "overall": {"score": score, "n_origins": 2, "n_scored": 2},
+          "zones": [{"zone": "easy", "score": score + 0.1, "n_scored": 1},
+                    {"zone": "hard", "score": score - 0.1, "n_scored": 1}]}
+json.dump({"split": "validation", "score": score, "report": report},
+          open("eval_result.json", "w"))
+print(f"val_score: {score}")
+"""
+
+
+def make_evaluator_searcher(config, tmp_path, backend, evaluate_py=EVALUATOR_EVALUATE, **searcher_kwargs):
+    from hillclimb.command_executor import CommandExecutor
+    from hillclimb.problem import ProblemSpec
+
+    problem_dir = tmp_path / "eval-problem"
+    problem_dir.mkdir(exist_ok=True)
+    (problem_dir / "evaluate.py").write_text(evaluate_py)
+    problem = ProblemSpec(
+        kind="evaluator",
+        problem_id="eval-problem",
+        problem_dir=problem_dir,
+        data_dir=problem_dir,
+        description="Maximize answer().",
+        metric_name="score",
+        lower_is_better=False,
+        time_budget_s=3600,
+        holdout_mode="evaluator",
+        eval_command="{python} problem/evaluate.py",
+        contract="solution.py must define `answer() -> float`.",
+    )
+    search_dir = create_search_dir(config.paths.runs_dir, "eval-run")
+    journal = Journal(search_dir / "journal.jsonl")
+    searcher = GreedySearcher(
+        problem=problem,
+        config=config,
+        journal=journal,
+        backend=backend,
+        executor=CommandExecutor(Path(sys.executable), problem.eval_command),
+        budget=BudgetManager(3600, stop_margin_s=1),
+        search_dir=search_dir,
+        log=lambda *_: None,
+        **searcher_kwargs,
+    )
+    return searcher, journal, search_dir
+
+
+def test_evaluator_kind_full_loop(config, tmp_path):
+    config.search.num_drafts = 1
+    backend = FakeBackend()
+    backend.queue(script="def answer():\n    return 0.6\n", notes="first answer\n")
+    backend.queue(script="def answer():\n    return 0.7\n", notes="better answer\n")
+    searcher, journal, search_dir = make_evaluator_searcher(
+        config, tmp_path, backend, max_candidates=3
+    )
+    best = searcher.run()
+
+    assert journal.get("c000").operator == "baseline"
+    assert "unscored placeholder" in journal.get("c000").summary
+    draft = journal.get("c001")
+    assert draft.val_score == 0.6
+    assert draft.trials[0].report["source"] == "evaluator"  # trusted by kind
+    assert best.val_score == 0.7
+
+    draft_prompt = backend.requests[0].prompt
+    assert "python problem/evaluate.py" in draft_prompt  # display form, not {python}
+    assert "`answer() -> float`" in draft_prompt  # problem-supplied contract
+    assert "submission.csv" not in draft_prompt
+    assert "{{" not in draft_prompt
+    improve_prompt = backend.requests[1].prompt
+    assert "# Evaluation breakdown (validation split)" in improve_prompt
+    assert "hard" in improve_prompt  # worst zone surfaced
+    assert "Self-reported" not in improve_prompt  # evaluator trust
+
+
+def test_evaluator_missing_result_json_wording(config, tmp_path):
+    """An evaluator that scores but writes no eval_result.json is a contract
+    violation — the debug prompt must name the missing artifact, not
+    submission.csv."""
+    config.search.num_drafts = 1
+    backend = FakeBackend()
+    backend.queue(script="def answer():\n    return 0.5\n", notes="draft\n")
+    backend.queue(script="def answer():\n    return 0.5\n", notes="fix attempt\n")
+    searcher, journal, _ = make_evaluator_searcher(
+        config, tmp_path, backend,
+        evaluate_py='import sys, os\nsys.path.insert(0, os.getcwd())\n'
+                    'import solution\nprint(f"val_score: {solution.answer()}")\n',
+        max_candidates=3,
+    )
+    searcher.run()
+    assert journal.get("c001").status == "buggy"
+    assert backend.requests[1].operator == "debug"
+    debug_prompt = backend.requests[1].prompt
+    assert "produced no `eval_result.json`" in debug_prompt
+    assert "submission.csv" not in debug_prompt
+
+
+def test_evaluator_multi_trial_seeds(config, tmp_path):
+    config.search.num_drafts = 1
+    config.search.n_trials = 2
+    backend = FakeBackend()
+    backend.queue(script="def answer():\n    return 0.6\n", notes="draft\n")
+    searcher, journal, _ = make_evaluator_searcher(config, tmp_path, backend, max_candidates=2)
+    searcher.run()
+    draft = journal.get("c001")
+    assert [t.seed for t in draft.trials] == [0, 1]
+    assert draft.trials[0].val_score == 0.6
+    assert draft.trials[1].val_score == 0.601  # HILLCLIMB_TRIAL_SEED reached the evaluator
+    assert draft.val_score == pytest.approx(0.6005)  # mean climbs
+    assert draft.trials[0].report is not None  # per-trial reports survive trial dirs

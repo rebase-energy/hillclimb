@@ -15,9 +15,12 @@ from hillclimb.knowledge import (
     distill_card,
     extract_libraries,
     load_cards,
+    load_live_cards,
     problem_family,
+    render_live_experience,
     render_prior_experience,
     write_card,
+    write_live_card,
 )
 from tests.conftest import ok_script
 
@@ -125,6 +128,104 @@ class TestHelpers:
         card.top_approaches[0].complexity = "minimal"
         assert complexity_offset([card]) == 0
         assert render_prior_experience([]) == ""
+
+
+class TestLiveSharing:
+    def test_roundtrip_excludes_own_search(self, tmp_path):
+        run_dir = tmp_path / "run"
+        solar = KnowledgeCard(
+            problem_id="gefcom2014-solar", family="gefcom2014", run_ref="r/solar", n_ok=2
+        )
+        wind = KnowledgeCard(
+            problem_id="gefcom2014-wind", family="gefcom2014", run_ref="r/wind"
+        )
+        write_live_card(run_dir, solar, "gefcom2014-solar")
+        write_live_card(run_dir, wind, "gefcom2014-wind")
+        loaded = load_live_cards(
+            run_dir, exclude_search_id="gefcom2014-wind", family="gefcom2014"
+        )
+        assert [c.problem_id for c in loaded] == ["gefcom2014-solar"]
+        assert len(load_live_cards(run_dir)) == 2
+
+    def test_republish_overwrites_same_search(self, tmp_path):
+        run_dir = tmp_path / "run"
+        write_live_card(run_dir, KnowledgeCard(problem_id="p", family="p", n_ok=1), "s")
+        write_live_card(run_dir, KnowledgeCard(problem_id="p", family="p", n_ok=2), "s")
+        loaded = load_live_cards(run_dir)
+        assert len(loaded) == 1 and loaded[0].n_ok == 2
+
+    def test_corrupt_live_card_skipped(self, tmp_path):
+        knowledge = tmp_path / "run" / "knowledge"
+        knowledge.mkdir(parents=True)
+        (knowledge / "live--x.yaml").write_text("{{{{not yaml")
+        assert load_live_cards(tmp_path / "run") == []
+
+    def test_render_live_experience(self):
+        card = KnowledgeCard(
+            problem_id="gefcom2014-solar", family="gefcom2014", metric="PinballLoss",
+            n_ok=3, selected_val=0.013,
+            top_approaches=[dict(candidate_id="c004", operator="improve",
+                                 val_score=0.013, summary="clearsky ratio feature",
+                                 libraries=["lightgbm"])],
+            failure_modes=["execution timed out (x2)"],
+        )
+        text = render_live_experience([card])
+        assert "CONCURRENTLY" in text
+        assert "clearsky ratio feature" in text
+        assert "lightgbm" in text
+        assert "gefcom2014-solar" in text
+        assert render_live_experience([]) == ""
+
+    def test_sibling_searches_in_one_run_share_discoveries(
+        self, task, task_larger, config, tmp_path, monkeypatch
+    ):
+        from hillclimb.api import create_search, execute_search
+        from hillclimb.budget import BudgetManager
+        from hillclimb.search import GreedySearcher
+        from hillclimb.workspace import create_run_dir
+        import sys
+
+        config.learning.dir = tmp_path / "knowledge"
+        config.paths.runtime_python = Path(sys.executable)
+        config.budget.stop_margin_s = 1
+        config.holdout.enabled = False
+        config.search.num_drafts = 1
+        backend = FakeBackend()
+        monkeypatch.setattr("hillclimb.api.get_backend", lambda *a, **k: backend)
+        monkeypatch.setattr(  # baseline + draft + improve, then stop
+            "hillclimb.api.GreedySearcher",
+            lambda **kw: GreedySearcher(**{**kw, "max_candidates": 3}),
+        )
+        run_dir = create_run_dir(config.paths.runs_dir, "suite-run")
+
+        def run_search(problem, notes):
+            for note, val in zip(notes, (0.7, 0.75)):
+                backend.queue(script=ok_script(val), notes=note + "\n")
+            search_dir = create_search(config, problem, run_dir, "suite-run", 3600)
+            outcome = execute_search(
+                config, problem, search_dir, BudgetManager(3600, stop_margin_s=1),
+                log=lambda *_: None,
+            )
+            assert outcome.state == "done"
+            return search_dir
+
+        search_a = run_search(task, ["clearsky ratio feature wins", "added lag features"])
+        live = list((run_dir / "knowledge").glob("live--*.yaml"))
+        assert [p.name for p in live] == ["live--synthetic.yaml"]
+        # a search must never be fed its own live card back
+        a_prompts = [p.read_text() for p in search_a.glob("candidates/*/prompt.md")]
+        assert a_prompts and all("CONCURRENTLY" not in p for p in a_prompts)
+
+        # sibling search in the SAME run: draft and improve prompts both
+        # carry search A's discoveries via the live channel
+        search_b = run_search(task_larger, ["baseline try", "tweak"])
+        b_prompts = [p.read_text() for p in search_b.glob("candidates/*/prompt.md")]
+        draft = next(p for p in b_prompts if "drafting a new candidate" in p)
+        improve = next(p for p in b_prompts if "improving the current best" in p)
+        assert "clearsky ratio feature wins" in draft and "CONCURRENTLY" in draft
+        assert "clearsky ratio feature wins" in improve
+        assert "# Discoveries from concurrent searches" in improve
+        assert "{{live_experience}}" not in improve
 
 
 class TestEndToEnd:

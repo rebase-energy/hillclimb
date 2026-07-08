@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -23,9 +24,15 @@ class ProblemSpec(BaseModel):
     generated solution is a Predictor module driven by the emflow evaluator,
     and holdout scoring is a second evaluator invocation (`holdout_mode=
     "evaluator"`) rather than a hillclimb-built data view.
+
+    kind="evaluator": a directory whose problem.yaml supplies its own eval
+    command (`eval:`) — the only process that runs; it drives solution.py
+    itself, prints the final `val_score:` line, and writes `eval_result.json`
+    (the completion proof and report carrier). Optional `holdout_eval:` runs
+    the same way in a hidden dir with the full environment.
     """
 
-    kind: Literal["csv", "emflow"] = "csv"
+    kind: Literal["csv", "emflow", "evaluator"] = "csv"
     problem_id: str
     problem_dir: Path
     data_dir: Path
@@ -41,6 +48,13 @@ class ProblemSpec(BaseModel):
     emflow_problem: str | None = None   # registry name, e.g. "gefcom2014:solar"
     emflow_baseline: str | None = None  # module exposing get_model(), if any
     emflow_quantiles: list[float] | None = None  # probabilistic problems only
+    # evaluator kind: raw command strings (shlex-split at execution;
+    # `{python}`/`{solution}` placeholders substituted per token)
+    eval_command: str | None = None
+    holdout_command: str | None = None
+    contract: str | None = None  # problem-authored solution-contract prompt section
+    requirements_file: Path | None = None  # per-problem venv requirements
+    baseline_solution: Path | None = None  # floor solution scored as c000
 
 
 class SuiteEntry(BaseModel):
@@ -98,7 +112,7 @@ def _emflow_provider():
     except ModuleNotFoundError as exc:
         raise ModuleNotFoundError(
             "emflow:// targets need the emflow extra: "
-            "pip install 'rebase-hillclimb[emflow]'"
+            "pip install 'hillclimb[emflow]'"
         ) from exc
     return provider
 
@@ -136,6 +150,47 @@ def resolve_problem_yaml(target: str | Path, config: Config) -> Path:
     raise FileNotFoundError(f"No problem found for target {target!r}")
 
 
+def _optional_file(problem_dir: Path, meta: dict, key: str, default: str | None = None) -> Path | None:
+    """Resolve an optional problem-relative file. An explicitly named file
+    must exist; a missing default candidate is simply absent."""
+    value = meta.get(key, default)
+    if not value:
+        return None
+    path = (problem_dir / value).resolve()
+    if not path.exists():
+        if key not in meta:
+            return None
+        raise FileNotFoundError(f"{key} file not found: {path}")
+    return path
+
+
+def _load_evaluator_problem(meta: dict, problem_yaml: Path, problem_dir: Path, common: dict) -> ProblemSpec:
+    """kind: evaluator — the problem supplies its own eval (and optional
+    holdout) command; no sample_submission, no verifier, no data-view holdout."""
+    if meta.get("holdout"):
+        raise ValueError(
+            f"{problem_yaml}: `holdout:` (data-view override) does not apply to "
+            "kind: evaluator — supply a `holdout_eval:` command instead"
+        )
+    eval_command = str(meta.get("eval") or "").strip()
+    if not eval_command or not shlex.split(eval_command):
+        raise ValueError(f"{problem_yaml}: kind: evaluator requires a non-empty `eval:` command")
+    holdout_command = str(meta.get("holdout_eval") or "").strip() or None
+    if holdout_command:
+        shlex.split(holdout_command)  # a malformed command fails at load, not mid-search
+    contract_path = _optional_file(problem_dir, meta, "contract", default="contract.md")
+    return ProblemSpec(
+        kind="evaluator",
+        **common,
+        eval_command=eval_command,
+        holdout_command=holdout_command,
+        contract=contract_path.read_text() if contract_path else None,
+        requirements_file=_optional_file(problem_dir, meta, "requirements"),
+        baseline_solution=_optional_file(problem_dir, meta, "baseline"),
+        holdout_mode="evaluator",
+    )
+
+
 def load_problem(target: str | Path, config: Config) -> ProblemSpec:
     scheme = _split_scheme(target)
     if scheme is not None:
@@ -144,17 +199,11 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
     problem_dir = problem_yaml.parent
     meta = _read_yaml(problem_yaml)
 
+    kind = meta.get("kind", "csv")
     problem_id = meta.get("problem_id") or problem_dir.name
     description_path = problem_dir / meta.get("description", "description.md")
-    sample_path = problem_dir / meta.get("sample_submission", "sample_submission.csv")
-    verifier_value = meta.get("verifier", "verify.py")
-    verifier_path = (problem_dir / verifier_value).resolve() if verifier_value else None
-    if verifier_path is not None and not verifier_path.exists():
-        raise FileNotFoundError(f"Verifier not found: {verifier_path}")
     if not description_path.exists():
         raise FileNotFoundError(f"Description not found: {description_path}")
-    if not sample_path.exists():
-        raise FileNotFoundError(f"Sample submission not found: {sample_path}")
 
     if meta.get("data_dir"):
         data_dir = (problem_dir / meta["data_dir"]).resolve()
@@ -165,18 +214,34 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
     if not data_dir.exists():
         raise FileNotFoundError(f"Problem data directory not found: {data_dir}")
 
-    return ProblemSpec(
+    common = dict(
         problem_id=problem_id,
         problem_dir=problem_dir.resolve(),
         data_dir=data_dir,
         description=description_path.read_text(),
         metric_name=meta["metric"],
         lower_is_better=bool(meta["lower_is_better"]),
+        time_budget_s=meta.get("time_budget_s", config.budget.total_s),
+        allow_network=bool(meta.get("allow_network", False)),
+    )
+    if kind == "evaluator":
+        return _load_evaluator_problem(meta, problem_yaml, problem_dir, common)
+    if kind != "csv":
+        raise ValueError(f"{problem_yaml}: unknown problem kind {kind!r}")
+
+    sample_path = problem_dir / meta.get("sample_submission", "sample_submission.csv")
+    verifier_value = meta.get("verifier", "verify.py")
+    verifier_path = (problem_dir / verifier_value).resolve() if verifier_value else None
+    if verifier_path is not None and not verifier_path.exists():
+        raise FileNotFoundError(f"Verifier not found: {verifier_path}")
+    if not sample_path.exists():
+        raise FileNotFoundError(f"Sample submission not found: {sample_path}")
+
+    return ProblemSpec(
+        **common,
         sample_submission=sample_path.resolve(),
         verifier=verifier_path,
-        time_budget_s=meta.get("time_budget_s", config.budget.total_s),
         holdout=HoldoutOverride.model_validate(meta["holdout"]) if meta.get("holdout") else None,
-        allow_network=bool(meta.get("allow_network", False)),
     )
 
 

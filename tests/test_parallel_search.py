@@ -38,13 +38,13 @@ print("val_score: 0.5")
 def make_searcher(task, config, backend, **kwargs):
     search_dir = create_search_dir(config.paths.runs_dir, "test-search")
     journal = Journal(search_dir / "journal.jsonl")
+    kwargs.setdefault("budget", BudgetManager(3600, stop_margin_s=1))
     searcher = GreedySearcher(
         problem=task,
         config=config,
         journal=journal,
         backend=backend,
         executor=LocalExecutor(Path(sys.executable)),
-        budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir,
         log=lambda *_: None,
         **kwargs,
@@ -191,6 +191,141 @@ def pool_searcher(task, config, backend, n, max_candidates=10, **kwargs):
     return make_searcher(task, config, backend, max_candidates=max_candidates, **kwargs)
 
 
+CRASH = 'raise RuntimeError("boom")\n'
+
+
+class GoldenScenario:
+    """One scripted history for the golden-equivalence check. `budget_spent`
+    pre-spends the budget so the ensemble window opens immediately."""
+
+    def __init__(self, queue_fn, max_candidates, budget_spent=0.0):
+        self._queue_fn = queue_fn
+        self.max_candidates = max_candidates
+        self.budget_spent = budget_spent
+
+    def queue(self, backend):
+        self._queue_fn(backend)
+
+    def searcher_kwargs(self):
+        if not self.budget_spent:
+            return {}
+        return {"budget": BudgetManager(3600, stop_margin_s=1, spent_s=self.budget_spent)}
+
+
+def _drafts_then_improve(backend):
+    backend.queue(script=ok_script(0.6), notes="a\n")
+    backend.queue(script=ok_script(0.7), notes="b\n")
+    backend.queue(script=ok_script(0.5), notes="c\n")
+    backend.queue(script=ok_script(0.8), notes="improve\n")
+
+
+def _debug_chain(backend):
+    backend.queue(script=CRASH, notes="buggy draft\n")
+    backend.queue(script=CRASH, notes="failed fix\n")
+    backend.queue(script=ok_script(0.6), notes="fixed\n")
+    backend.queue(script=ok_script(0.7), notes="draft two\n")
+    backend.queue(script=ok_script(0.5), notes="draft three\n")
+
+
+def _ensemble_window(backend):
+    backend.queue(script=ok_script(0.6), notes="a\n")
+    backend.queue(script=ok_script(0.7), notes="b\n")
+    backend.queue(script=ok_script(0.9), notes="ensemble\n")
+    backend.queue(script=ok_script(0.5), notes="post-ensemble draft\n")
+
+
+def _improve_tie(backend):
+    backend.queue(script=ok_script(0.7), notes="a\n")
+    backend.queue(script="print('val_score: 0.7')\nimport shutil\nshutil.copy('data/sample_submission.csv', 'submission.csv')\n", notes="b same score\n")
+    backend.queue(script=ok_script(0.5), notes="c\n")
+    backend.queue(script=ok_script(0.8), notes="improve\n")
+
+
+GOLDEN_SCENARIOS = {
+    "drafts-then-improve": GoldenScenario(_drafts_then_improve, max_candidates=5),
+    "debug-chain": GoldenScenario(_debug_chain, max_candidates=6),
+    # 3600*0.2 reserve + 1s margin: remaining 600s opens the window at once
+    "ensemble-window": GoldenScenario(_ensemble_window, max_candidates=5, budget_spent=3000),
+    "improve-tie": GoldenScenario(_improve_tie, max_candidates=5),
+}
+
+# Journal event sequences recorded from the historical serial loop (before it
+# was deleted in favor of the unified pool loop). The unified loop must
+# reproduce them exactly; a diff here means the greedy schedule changed.
+# Repeated candidate_result lines are the selection resync flipping is_selected.
+GOLDEN_SEQUENCES = {
+    "drafts-then-improve": [
+        ("candidate_result", "c000", "baseline", "ok", None),
+        ("candidate_created", "c001", "draft", "pending", None),
+        ("candidate_result", "c001", "draft", "ok", None),
+        ("candidate_result", "c001", "draft", "ok", None),
+        ("candidate_created", "c002", "draft", "pending", None),
+        ("candidate_result", "c002", "draft", "ok", None),
+        ("candidate_result", "c002", "draft", "ok", None),
+        ("candidate_created", "c003", "draft", "pending", None),
+        ("candidate_result", "c003", "draft", "ok", None),
+        ("candidate_created", "c004", "improve", "pending", "c002"),
+        ("candidate_result", "c004", "improve", "ok", "c002"),
+        ("candidate_result", "c004", "improve", "ok", "c002"),
+    ],
+    "debug-chain": [
+        ("candidate_result", "c000", "baseline", "ok", None),
+        ("candidate_created", "c001", "draft", "pending", None),
+        ("candidate_result", "c001", "draft", "buggy", None),
+        ("candidate_created", "c002", "debug", "pending", "c001"),
+        ("candidate_result", "c002", "debug", "buggy", "c001"),
+        ("candidate_created", "c003", "debug", "pending", "c002"),
+        ("candidate_result", "c003", "debug", "ok", "c002"),
+        ("candidate_result", "c003", "debug", "ok", "c002"),
+        ("candidate_created", "c004", "draft", "pending", None),
+        ("candidate_result", "c004", "draft", "ok", None),
+        ("candidate_result", "c004", "draft", "ok", None),
+        ("candidate_created", "c005", "draft", "pending", None),
+        ("candidate_result", "c005", "draft", "ok", None),
+    ],
+    "ensemble-window": [
+        ("candidate_result", "c000", "baseline", "ok", None),
+        ("candidate_created", "c001", "draft", "pending", None),
+        ("candidate_result", "c001", "draft", "ok", None),
+        ("candidate_result", "c001", "draft", "ok", None),
+        ("candidate_created", "c002", "draft", "pending", None),
+        ("candidate_result", "c002", "draft", "ok", None),
+        ("candidate_result", "c002", "draft", "ok", None),
+        ("candidate_created", "c003", "ensemble", "pending", "c002"),
+        ("candidate_result", "c003", "ensemble", "ok", "c002"),
+        ("candidate_result", "c003", "ensemble", "ok", "c002"),
+        ("candidate_created", "c004", "draft", "pending", None),
+        ("candidate_result", "c004", "draft", "ok", None),
+    ],
+    "improve-tie": [
+        ("candidate_result", "c000", "baseline", "ok", None),
+        ("candidate_created", "c001", "draft", "pending", None),
+        ("candidate_result", "c001", "draft", "ok", None),
+        ("candidate_result", "c001", "draft", "ok", None),
+        ("candidate_created", "c002", "draft", "pending", None),
+        ("candidate_result", "c002", "draft", "ok", None),
+        ("candidate_created", "c003", "draft", "pending", None),
+        ("candidate_result", "c003", "draft", "ok", None),
+        ("candidate_created", "c004", "improve", "pending", "c001"),
+        ("candidate_result", "c004", "improve", "ok", "c001"),
+        ("candidate_result", "c004", "improve", "ok", "c001"),
+    ],
+}
+
+
+def journal_sequence(journal_path):
+    import json
+
+    events = []
+    for line in journal_path.read_text().splitlines():
+        r = json.loads(line)
+        if r.get("event") in ("candidate_created", "candidate_result"):
+            events.append(
+                (r["event"], r["candidate_id"], r["operator"], r["status"], r["parent_id"])
+            )
+    return events
+
+
 class TestWorkerPool:
     def test_three_drafts_in_flight_concurrently(self, task, config):
         backend = GateBackend()
@@ -211,42 +346,25 @@ class TestWorkerPool:
         assert not runner.is_alive()
         assert len(journal.scored_candidates()) == 3
 
-    def test_pool_at_one_matches_serial_sequence(self, task, config):
-        """Golden equivalence: the pool path at n=1 produces the same journal
-        event sequence as the serial loop."""
+    @pytest.mark.parametrize("scenario_name", sorted(GOLDEN_SCENARIOS))
+    def test_unified_loop_matches_recorded_serial_sequence(self, task, config, scenario_name):
+        """Golden succession: the unified loop (pool at n=1) reproduces the
+        journal event sequences recorded from the historical serial loop,
+        across draft/improve, debug-chain, ensemble-window, and improve-tie
+        histories."""
+        scenario = GOLDEN_SCENARIOS[scenario_name]
+        backend = FakeBackend()
+        scenario.queue(backend)
+        searcher, journal, search_dir = make_searcher(
+            task, config, backend,
+            max_candidates=scenario.max_candidates, **scenario.searcher_kwargs(),
+        )
+        searcher.run()
 
-        def scenario(backend):
-            backend.queue(script=ok_script(0.6), notes="a\n")
-            backend.queue(script=ok_script(0.7), notes="b\n")
-            backend.queue(script=ok_script(0.5), notes="c\n")
-            backend.queue(script=ok_script(0.8), notes="improve\n")
-
-        def sequence(journal_path):
-            import json
-
-            events = []
-            for line in journal_path.read_text().splitlines():
-                r = json.loads(line)
-                if r.get("event") in ("candidate_created", "candidate_result"):
-                    events.append((r["event"], r["candidate_id"], r["operator"], r["status"]))
-            return events
-
-        serial_backend = FakeBackend()
-        scenario(serial_backend)
-        serial, s_journal, s_dir = make_searcher(task, config, serial_backend, max_candidates=5)
-        serial.run()
-
-        config.paths.runs_dir = config.paths.runs_dir / "pool"
-        pool_backend = FakeBackend()
-        scenario(pool_backend)
-        pooled, p_journal, p_dir = make_searcher(task, config, pool_backend, max_candidates=5)
-        # _run_pool is invoked below run(), so write the baseline like run() does
-        from hillclimb.baseline import write_baseline
-
-        p_journal.candidate_result(write_baseline(task, p_dir))
-        pooled._run_pool(1)
-
-        assert sequence(p_dir / "journal.jsonl") == sequence(s_dir / "journal.jsonl")
+        assert (
+            journal_sequence(search_dir / "journal.jsonl")
+            == GOLDEN_SEQUENCES[scenario_name]
+        )
 
     def test_rate_limit_drains_in_flight_then_parks(self, task, config):
         # GateBackend pops responses at RELEASE time (FIFO), so the release

@@ -79,6 +79,16 @@ class DummyBackend:
 
     def invoke(self, request: OperatorRequest) -> OperatorResult:
         self.calls += 1
+        if not (request.workspace / "problem" / "sample_submission.csv").exists():
+            # evaluator-kind problems have no sample_submission to mimic
+            return OperatorResult(
+                ok=False,
+                error_kind="unsupported",
+                error_message=(
+                    "the dummy backend only supports csv problems "
+                    "(no sample_submission.csv found to fabricate from)"
+                ),
+            )
         if not (request.workspace / "data" / "train.csv").exists():
             script = VERIFIER_PROBLEM_TEMPLATE
             note = "baseline copy for verifier-defined problem"

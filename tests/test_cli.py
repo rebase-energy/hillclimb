@@ -141,6 +141,83 @@ def make_search(runs_dir, run_id, search_id, run_kind="problem"):
     return search_dir
 
 
+def test_search_meta_defaults_for_pre_policy_files(tmp_path):
+    """search.yaml written before the policy fields existed loads with greedy
+    defaults — no SCHEMA_VERSION bump, no invisible runs."""
+    import yaml
+
+    search_dir = tmp_path / "s"
+    search_dir.mkdir()
+    (search_dir / "search.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 2, "search_id": "a", "run_id": "r",
+                "problem": "p", "problem_id": "a", "backend": "dummy",
+                "model": "m", "metric": "score",
+            }
+        )
+    )
+    meta = load_search_meta(search_dir)
+    assert meta.policy == "greedy"
+    assert meta.policy_params == {}
+    assert meta.routing == {}
+
+
+def test_create_search_persists_policy_and_routing(task, config, tmp_path):
+    from hillclimb.api import create_search
+    from hillclimb.config import RouteConfig
+
+    config.search.policy = "greedy"
+    config.search.policy_params = {"beam": 3}
+    config.routing = {"draft": RouteConfig(model="opus-4.8")}
+    search_dir = create_search(config, task, tmp_path / "runs" / "r1", "r1", total_s=600)
+    meta = load_search_meta(search_dir)
+    assert meta.policy == "greedy"
+    assert meta.policy_params == {"beam": 3}
+    assert meta.routing == {"draft": {"model": "opus-4.8"}}
+
+
+def test_resume_restores_policy_and_routing(config, tmp_path, monkeypatch):
+    """A search resumes under the policy/routing it started with, regardless
+    of what the live workspace config says."""
+    from hillclimb.cli import resume
+
+    config.paths.runs_dir = tmp_path / "runs"
+    run_dir = config.paths.runs_dir / "run-1"
+    write_run_meta(
+        run_dir,
+        RunMeta(run_id="run-1", name="run-1", kind="problem", target="x", problem_ids=["a"]),
+    )
+    search_dir = run_dir / "searches" / "a"
+    write_search_meta(
+        search_dir,
+        SearchMeta(
+            search_id="a", run_id="run-1", problem="p", problem_id="a",
+            backend="dummy", model="m", metric="score", budget_s=600,
+            policy="scripted", policy_params={"depth": 2},
+            routing={"draft": {"model": "opus-4.8"}},
+        ),
+    )
+    (search_dir / "journal.jsonl").write_text("")
+    captured = {}
+    monkeypatch.setattr(
+        "hillclimb.cli.load_config", lambda **kw: config.model_copy(deep=True)
+    )
+    monkeypatch.setattr("hillclimb.cli.load_problem", lambda *a, **k: object())
+    monkeypatch.setattr(
+        "hillclimb.cli._execute",
+        lambda config_arg, *a, **k: captured.setdefault("config", config_arg),
+    )
+
+    resume("run-1/a")
+
+    restored = captured["config"]
+    assert restored.search.policy == "scripted"
+    assert restored.search.policy_params == {"depth": 2}
+    assert restored.routing["draft"].model == "opus-4.8"
+    assert restored.routing["draft"].backend is None
+
+
 def test_resolve_search_dir_exact_and_bare_run(config, tmp_path):
     config.paths.runs_dir = tmp_path / "runs"
     s1 = make_search(config.paths.runs_dir, "run-1", "a")
@@ -213,3 +290,88 @@ def test_resolve_search_dir_unknown_refs(config, tmp_path):
         resolve_search_dir(config, "run-1/nope")
     with pytest.raises(typer.BadParameter, match="No run named"):
         resolve_search_dir(config, "nope")
+
+
+def test_knowledge_live_renders_run_cards(config, tmp_path, monkeypatch, capsys):
+    from hillclimb.cli import knowledge_live
+    from hillclimb.knowledge import KnowledgeCard, write_live_card
+    from hillclimb.workspace import create_run_dir
+
+    config.paths.runs_dir = tmp_path / "runs"
+    run_dir = create_run_dir(config.paths.runs_dir, "r1")
+    write_run_meta(
+        run_dir,
+        RunMeta(run_id="r1", name="r1", kind="suite", target="t", problem_ids=["solar"]),
+    )
+    write_live_card(
+        run_dir,
+        KnowledgeCard(
+            problem_id="gefcom2014-solar", family="gefcom2014", run_ref="r1/solar",
+            metric="PinballLoss", n_candidates=3, n_ok=2, selected_val=0.014,
+            top_approaches=[dict(candidate_id="c002", operator="draft",
+                                 summary="clearsky trick")],
+        ),
+        "gefcom2014-solar",
+    )
+    monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
+
+    knowledge_live("r1")
+    out = capsys.readouterr().out
+    assert "r1/solar" in out and "clearsky trick" in out and "CONCURRENTLY" in out
+
+    with pytest.raises(typer.BadParameter, match="No run named"):
+        knowledge_live("nope")
+
+
+def test_show_renders_report_diff_and_notes(config, tmp_path, monkeypatch, capsys):
+    from hillclimb.candidate import Candidate, Trial
+    from hillclimb.cli import show
+    from hillclimb.journal import Journal
+
+    config.paths.runs_dir = tmp_path / "runs"
+    search_dir = make_search(config.paths.runs_dir, "run-1", "a")
+    parent_ws = tmp_path / "ws" / "c001"
+    child_ws = tmp_path / "ws" / "c002"
+    for ws in (parent_ws, child_ws):
+        ws.mkdir(parents=True)
+    (parent_ws / "solution.py").write_text("model = 'gbm'\n")
+    (child_ws / "solution.py").write_text("model = 'gbm with lags'\n")
+    (child_ws / "notes.md").write_text("added lag features\n")
+    (child_ws / "exec_stdout.log").write_text("val_score: 0.7\n")
+
+    report = {
+        "version": 1, "split": "validation", "objective": "score",
+        "lower_is_better": False,
+        "overall": {"score": 0.7, "n_origins": 3, "n_scored": 30},
+        "zones": [
+            {"zone": "z1", "score": 0.6, "n_origins": 1, "n_scored": 10},
+            {"zone": "z2", "score": 0.9, "n_origins": 2, "n_scored": 20},
+        ],
+    }
+    journal = Journal(search_dir / "journal.jsonl")
+    journal.candidate_result(
+        Candidate(candidate_id="c001", operator="draft", status="ok",
+                  workspace=str(parent_ws), trials=[Trial(val_score=0.6)])
+    )
+    journal.candidate_result(
+        Candidate(candidate_id="c002", operator="improve", parent_id="c001", status="ok",
+                  workspace=str(child_ws), summary="added lag features",
+                  trials=[Trial(val_score=0.7, report=report)])
+    )
+    monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
+
+    show("run-1/a", "c002")
+    out = capsys.readouterr().out
+    assert "c002  improve" in out and "<- c001" in out
+    assert "# Evaluation breakdown (validation split)" in out
+    assert "z1" in out
+    assert "+++ c002/solution.py" in out and "gbm with lags" in out
+    assert "added lag features" in out
+    assert "val_score: 0.7" in out
+
+    # report-less candidate degrades gracefully
+    show("run-1/a", "c001")
+    assert "(no evaluation report" in capsys.readouterr().out
+
+    with pytest.raises(typer.BadParameter, match="No candidate"):
+        show("run-1/a", "c999")

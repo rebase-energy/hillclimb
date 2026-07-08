@@ -264,6 +264,58 @@ wheels = [
 ]
 
 [[package]]
+name = "hillclimb"
+version = "0.2.0"
+source = { editable = "." }
+dependencies = [
+    { name = "pandas" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+    { name = "scikit-learn" },
+    { name = "typer" },
+]
+
+[package.optional-dependencies]
+emflow = [
+    { name = "emflow" },
+]
+tui = [
+    { name = "pydot" },
+    { name = "textual" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "emflow" },
+    { name = "pydot" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "textual" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "emflow", marker = "extra == 'emflow'", editable = "../emflow" },
+    { name = "pandas", specifier = ">=3.0.3" },
+    { name = "pydantic", specifier = ">=2.7" },
+    { name = "pydot", marker = "extra == 'tui'", specifier = ">=4.0.1" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "scikit-learn", specifier = ">=1.9.0" },
+    { name = "textual", marker = "extra == 'tui'", specifier = ">=1.0" },
+    { name = "typer", specifier = ">=0.12" },
+]
+provides-extras = ["tui", "emflow"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "emflow", editable = "../emflow" },
+    { name = "pydot", specifier = ">=4.0.1" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-asyncio", specifier = ">=1.4.0" },
+    { name = "textual", specifier = ">=1.0" },
+]
+
+[[package]]
 name = "httpcore"
 version = "1.0.9"
 source = { registry = "https://pypi.org/simple" }
@@ -704,58 +756,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/74/93/7baea19427dcfbe1e5a372d81473250b379f04b1bd3c4c5ff825e2327202/pyyaml-6.0.3-cp312-cp312-win32.whl", hash = "sha256:96b533f0e99f6579b3d4d4995707cf36df9100d67e0c8303a0c55b27b5f99bc5", size = 137658, upload-time = "2025-09-25T21:32:20.209Z" },
     { url = "https://files.pythonhosted.org/packages/86/bf/899e81e4cce32febab4fb42bb97dcdf66bc135272882d1987881a4b519e9/pyyaml-6.0.3-cp312-cp312-win_amd64.whl", hash = "sha256:5fcd34e47f6e0b794d17de1b4ff496c00986e1c83f7ab2fb8fcfe9616ff7477b", size = 154003, upload-time = "2025-09-25T21:32:21.167Z" },
     { url = "https://files.pythonhosted.org/packages/1a/08/67bd04656199bbb51dbed1439b7f27601dfb576fb864099c7ef0c3e55531/pyyaml-6.0.3-cp312-cp312-win_arm64.whl", hash = "sha256:64386e5e707d03a7e172c0701abfb7e10f0fb753ee1d773128192742712a98fd", size = 140344, upload-time = "2025-09-25T21:32:22.617Z" },
-]
-
-[[package]]
-name = "rebase-hillclimb"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "pandas" },
-    { name = "pydantic" },
-    { name = "pyyaml" },
-    { name = "scikit-learn" },
-    { name = "typer" },
-]
-
-[package.optional-dependencies]
-emflow = [
-    { name = "emflow" },
-]
-tui = [
-    { name = "pydot" },
-    { name = "textual" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "emflow" },
-    { name = "pydot" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "textual" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "emflow", marker = "extra == 'emflow'", editable = "../emflow" },
-    { name = "pandas", specifier = ">=3.0.3" },
-    { name = "pydantic", specifier = ">=2.7" },
-    { name = "pydot", marker = "extra == 'tui'", specifier = ">=4.0.1" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "scikit-learn", specifier = ">=1.9.0" },
-    { name = "textual", marker = "extra == 'tui'", specifier = ">=1.0" },
-    { name = "typer", specifier = ">=0.12" },
-]
-provides-extras = ["tui", "emflow"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "emflow", editable = "../emflow" },
-    { name = "pydot", specifier = ">=4.0.1" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-asyncio", specifier = ">=1.4.0" },
-    { name = "textual", specifier = ">=1.0" },
 ]
 
 [[package]]

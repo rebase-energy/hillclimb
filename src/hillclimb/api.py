@@ -62,15 +62,22 @@ def search_ref(search_dir: Path) -> str:
     return f"{search_dir.parents[1].name}/{search_dir.name}"
 
 
-def default_venv_python(config: Config, kind: str) -> Path:
+def default_venv_python(config: Config, kind: str, requirements: Path | None = None) -> Path:
     """Shared machine venv path, keyed by a hash of the requirement set (and
     the emflow source, whose changes must also rebuild): built once per
-    machine, shared by every workspace, new key = automatic rebuild."""
+    machine, shared by every workspace, new key = automatic rebuild.
+
+    A problem-supplied `requirements` file keys on its CONTENT instead —
+    editing the file rebuilds automatically, and problems with identical
+    requirement sets share one venv."""
     import hashlib
 
     from hillclimb.project import machine_cache_dir
     from hillclimb.runtime import runtime_packages
 
+    if requirements is not None:
+        digest = hashlib.sha256(requirements.read_bytes()).hexdigest()[:12]
+        return machine_cache_dir() / "venvs" / f"problem-{digest}" / "bin" / "python"
     text = "\n".join(runtime_packages(kind))
     if kind == "emflow":
         text += f"\n{config.emflow.source}"
@@ -78,19 +85,26 @@ def default_venv_python(config: Config, kind: str) -> Path:
     return machine_cache_dir() / "venvs" / f"{kind}-{digest}" / "bin" / "python"
 
 
-def ensure_runtime_venv(config: Config, kind: str = "csv", log: Log = print) -> Path:
+def ensure_runtime_venv(
+    config: Config, kind: str = "csv", log: Log = print, requirements: Path | None = None
+) -> Path:
     """Create the solution-script venv for the problem kind on first use.
     Explicitly configured paths are used as-is (hosted image, tests); the
-    default is a shared hash-keyed venv under the machine cache dir."""
+    default is a shared hash-keyed venv under the machine cache dir. A
+    problem-supplied `requirements` file gets its own content-keyed venv
+    (the config path overrides stay kind-scoped and do not apply)."""
     import fcntl
     from importlib import resources
 
     from hillclimb.runtime import requirements_resource
 
-    python_path = (
-        config.paths.emflow_runtime_python if kind == "emflow" else config.paths.runtime_python
-    )
-    python = python_path.absolute() if python_path else default_venv_python(config, kind)
+    if requirements is not None:
+        python = default_venv_python(config, kind, requirements)
+    else:
+        python_path = (
+            config.paths.emflow_runtime_python if kind == "emflow" else config.paths.runtime_python
+        )
+        python = python_path.absolute() if python_path else default_venv_python(config, kind)
     if python.exists():
         return python
     venv_dir = python.parents[1]
@@ -103,12 +117,18 @@ def ensure_runtime_venv(config: Config, kind: str = "csv", log: Log = print) -> 
         log(f"Creating {kind} runtime venv at {venv_dir} ...")
         try:
             subprocess.run(["uv", "venv", "--python", "3.12", str(venv_dir)], check=True)
-            with resources.as_file(requirements_resource(kind)) as req:
+            if requirements is not None:
                 subprocess.run(
-                    ["uv", "pip", "install", "-r", str(req), "--python", str(python)],
+                    ["uv", "pip", "install", "-r", str(requirements), "--python", str(python)],
                     check=True,
                 )
-            if kind == "emflow":
+            else:
+                with resources.as_file(requirements_resource(kind)) as req:
+                    subprocess.run(
+                        ["uv", "pip", "install", "-r", str(req), "--python", str(python)],
+                        check=True,
+                    )
+            if requirements is None and kind == "emflow":
                 # flag forms ("-e ../emflow") split into args; requirement
                 # specs ("emflow @ git+…", "/src/emflow") are ONE argument —
                 # shlex would shred the PEP 508 " @ " form
@@ -142,15 +162,35 @@ def build_executor(config: Config, problem: ProblemSpec, log: Log = print):
             problem.emflow_problem,
             allow_network=problem.allow_network,
         )
+    if problem.kind == "evaluator":
+        from hillclimb.command_executor import CommandExecutor
+
+        # no requirements file -> the shared csv runtime venv; with one, a
+        # content-keyed per-problem venv
+        python = ensure_runtime_venv(config, log=log, requirements=problem.requirements_file)
+        return CommandExecutor(python, problem.eval_command)
     return LocalExecutor(ensure_runtime_venv(config, log=log))
 
 
 def build_holdout_scorer(config: Config, problem: ProblemSpec, search_dir: Path, log: Log = print):
     if not config.holdout.enabled or problem.holdout_mode != "evaluator":
         return None
+    if problem.kind == "evaluator":
+        if problem.holdout_command is None:
+            return None  # no holdout for this problem: selection climbs on val alone
+        from hillclimb.command_executor import CommandHoldoutScorer
+
+        return CommandHoldoutScorer(
+            ensure_runtime_venv(config, log=log, requirements=problem.requirements_file),
+            problem.holdout_command,
+            problem_dir=problem.problem_dir,
+            data_dir=problem.data_dir,
+            work_root=search_dir / "holdout-eval",
+            timeout_s=config.budget.exec_timeout_s,
+        )
     if not (os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")):
-        # fail fast: without credentials every holdout eval nans out and the
-        # search burns debug cycles diagnosing the environment (seen live)
+        # emflow only — fail fast: without credentials every holdout eval nans
+        # out and the search burns debug cycles diagnosing the environment
         raise RuntimeError(
             "holdout scoring for this problem needs private data credentials: "
             "export HF_TOKEN (or HUGGINGFACE_TOKEN), or run with --no-holdout"
@@ -234,6 +274,12 @@ def create_search(
             problem_id=problem.problem_id,
             backend=config.backend,
             model=config.model,
+            policy=config.search.policy,
+            policy_params=config.search.policy_params,
+            routing={
+                op: route.model_dump(exclude_none=True)
+                for op, route in config.routing.items()
+            },
             metric=problem.metric_name,
             lower_is_better=problem.lower_is_better,
             budget_s=total_s,
@@ -296,7 +342,8 @@ def _distill_knowledge(
     log: Log,
 ) -> None:
     """Best effort — learning must never fail a finished search."""
-    from hillclimb.knowledge import CARD_FILENAME, distill_card, write_card
+    from hillclimb.knowledge import CARD_FILENAME, distill_card, write_card, write_live_card
+    from hillclimb.run import SEARCHES_DIRNAME
 
     try:
         card = distill_card(
@@ -318,6 +365,15 @@ def _distill_knowledge(
         if knowledge_dir is not None:
             path = write_card(knowledge_dir, card)
             log(f"learning: knowledge card written to {path}")
+        if (
+            config.learning.enabled
+            and config.learning.live
+            and search_dir.parent.name == SEARCHES_DIRNAME
+        ):
+            # final refresh of the run-scoped live card: siblings still
+            # running loaded their static prior cards before this search
+            # finished, so the live channel is how its result reaches them
+            write_live_card(search_dir.parents[1], card, search_dir.name)
     except Exception as exc:  # noqa: BLE001
         log(f"learning: card distillation failed (search result unaffected): {exc}")
 
@@ -368,6 +424,10 @@ def execute_search(
     backend_obj = get_backend(config.backend, auth=config.backend_auth)
     if hasattr(backend_obj, "abort"):
         backend_obj.abort = abort
+    from hillclimb.routing import BackendPool, Router
+
+    backends = BackendPool(abort=abort)
+    backends.seed(config.backend, config.backend_auth, backend_obj)
     from hillclimb.project import machine_cache_dir
 
     slots = (
@@ -375,6 +435,8 @@ def execute_search(
         if config.search.machine_max_agents > 0
         else None
     )
+    from hillclimb.policies import get_policy
+
     searcher = GreedySearcher(
         problem=problem,
         config=config,
@@ -392,6 +454,11 @@ def execute_search(
         seed_solution=seed_from,
         knowledge_context=knowledge_context if knowledge_context is not None else _kc,
         complexity_start=_offset,
+        policy=get_policy(
+            config.search.policy, config.search.policy_params, complexity_start=_offset
+        ),
+        router=Router(config),
+        backends=backends,
     )
     try:
         selected = searcher.run()

@@ -9,6 +9,7 @@ Work only inside the current working directory. Before you finish, these two fil
    - writes `./submission.csv` matching `./problem/sample_submission.csv` exactly: same columns, same id values, same value dtypes
 2. `notes.md` — first line: one sentence summarizing the approach (or the change you made); a short explanation may follow.
 {{holdout_clause}}
+{{report_clause}}
 
 Rules:
 - Do NOT run long training yourself. Quick sanity checks (imports, loading a few rows, a 1-minute dry run) are fine; the orchestrator executes `solution.py` for real after you finish.

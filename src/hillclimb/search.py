@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import hashlib
+import json
 import queue
 import shutil
 import threading
@@ -19,7 +19,11 @@ from hillclimb.control import ControlCommand, apply_prune, read_commands, resync
 from hillclimb.executor import Executor
 from hillclimb.holdout import HoldoutInfo, HoldoutScorer
 from hillclimb.journal import Journal
+from hillclimb.policies.greedy import GreedyPolicy
+from hillclimb.policy import Action, BudgetView, InflightRef, SearchPolicy, SearchView
 from hillclimb.prompts.render import COMPLEXITY_CUES, render
+from hillclimb.routing import BackendPool, ResolvedRoute, Router
+from hillclimb.run import SEARCHES_DIRNAME
 from hillclimb.scoring import ScoringError, score
 from hillclimb.slots import MachineSlots
 from hillclimb.status import CandidateCounts, CurrentCandidate, ScoreRef, StatusWriter
@@ -40,6 +44,7 @@ class Job:
     workspace: Path
     ensemble_inputs: "list[Candidate] | None" = None
     holdout_threshold: float | None = None  # k-th best val at prepare time; None = no gate
+    backend: OperatorBackend | None = None  # routed instance; None = harness default
 
 
 @dataclass
@@ -71,12 +76,13 @@ def tail(path: Path, chars: int = TAIL_CHARS) -> str:
 
 
 class GreedySearcher:
-    """Deterministic greedy policy over the candidate tree.
-
-    Policy: (1) baseline at t=0; (2) DEBUG the newest buggy candidate while
-    its chain is shallow; (3) DRAFT until `num_drafts` branches have a scored
-    solution (complexity cue escalates per draft); (4) otherwise IMPROVE the
-    best candidate. Stops on budget margin or max_candidates.
+    """The search harness: executes whatever `SearchPolicy` proposes while
+    owning every state invariant (journal single-writer, control queue,
+    budgets, holdout, best/-selection). Defaults to `GreedyPolicy`:
+    (1) baseline at t=0; (2) DEBUG the newest buggy candidate while its chain
+    is shallow; (3) DRAFT until `num_drafts` branches have a scored solution
+    (complexity cue escalates per draft); (4) otherwise IMPROVE the best
+    candidate. Stops on budget margin or max_candidates.
     """
 
     def __init__(
@@ -98,6 +104,9 @@ class GreedySearcher:
         seed_solution: Path | None = None,
         knowledge_context: str | None = None,
         complexity_start: int = 0,
+        policy: SearchPolicy | None = None,
+        router: Router | None = None,
+        backends: BackendPool | None = None,
     ):
         self.problem = problem
         self.config = config
@@ -116,6 +125,9 @@ class GreedySearcher:
         self.seed_solution = seed_solution  # incumbent model: scored as a floor candidate
         self.knowledge_context = knowledge_context  # prior-experience prompt section
         self.complexity_start = complexity_start  # learned draft-complexity offset
+        self.policy = policy or GreedyPolicy(complexity_start=complexity_start)
+        self.router = router  # None: everything routes to `backend` + config.model
+        self.backends = backends
         self._consecutive_failures = 0
         # Concurrency contract: the Journal and everything below is touched
         # only by the scheduler (the thread running run()/run_operator),
@@ -135,10 +147,37 @@ class GreedySearcher:
             log(f"  recovered stale pending candidate {stale.candidate_id} -> abandoned")
         existing = journal.selected_candidate(problem.lower_is_better, config.holdout.selection)
         self._selection_id = existing.candidate_id if existing else None  # resume-safe
+        # resume contract: stateful policies rebuild their caches from the
+        # replayed journal (in journal order, after stale-pending recovery)
+        replay_view = self._view()
+        for candidate in journal.candidates.values():
+            self.policy.observe(replay_view, candidate)
 
     @property
     def data_dir(self) -> Path:
         return self.holdout.data_view if self.holdout else self.problem.data_dir
+
+    def _view(self) -> SearchView:
+        """Snapshot of search state for a policy call. Scheduler-thread only —
+        same discipline as every other journal touch."""
+        return SearchView(
+            journal=self.journal,
+            inflight=tuple(
+                InflightRef(
+                    candidate_id=candidate_id,
+                    operator=job.candidate.operator,
+                    parent_id=job.candidate.parent_id,
+                )
+                for candidate_id, job in self._inflight.items()
+            ),
+            budget=BudgetView(
+                remaining_s=self.budget.remaining(),
+                total_s=self.budget.total_s,
+                stop_margin_s=self.budget.stop_margin_s,
+            ),
+            config=self.config,
+            lower_is_better=self.problem.lower_is_better,
+        )
 
     # --- main loop ---
 
@@ -151,29 +190,15 @@ class GreedySearcher:
                 holdout_scorer=self.holdout_scorer,
                 timeout_s=self.config.budget.exec_timeout_s,
             )
-            self.journal.candidate_result(baseline)
+            self._record_result(baseline)
             self.log(f"baseline written: {baseline.summary}")
         if self.seed_solution is not None and not any(
             c.operator == "seed" for c in self.journal.candidates.values()
         ):
             self._run_seed()  # resume-idempotent: at most one seed per search
-        if max(1, self.config.search.parallel_agents) > 1:
-            return self._run_pool(self.config.search.parallel_agents)
-        # serial loop kept verbatim: zero behavior change at parallel_agents=1;
-        # the golden-equivalence test holds the pool path to the same sequence
-        while not self.budget.should_stop() and len(self.journal.candidates) < self.max_candidates:
-            self._process_control()
-            self._check_cost_ceiling()
-            self._status()
-            operator, target = self.decide()
-            self.log(
-                f"[{self.budget.remaining_str()} left] {operator}"
-                + (f" -> {target.candidate_id}" if target else "")
-            )
-            self.run_operator(operator, target)
-        return self.journal.selected_candidate(
-            self.problem.lower_is_better, self.config.holdout.selection
-        )
+        # one loop for every parallelism level: n=1 is a pool with one slot.
+        # Recorded golden sequences pin it to the historical serial behavior.
+        return self._run_pool(max(1, self.config.search.parallel_agents))
 
     def _run_pool(self, n: int) -> Candidate | None:
         """Worker-pool scheduler: keep up to n operators in flight; commit
@@ -254,72 +279,26 @@ class GreedySearcher:
             candidate.status = "abandoned"
             candidate.summary = candidate.summary or "stopped mid-operator (abort)"
             candidate.finished_at = utcnow()
-            self.journal.candidate_result(candidate)
+            self._record_result(candidate)
             self._inflight.pop(candidate.candidate_id, None)
             if self.status is not None:
                 self.status.remove_current(candidate.candidate_id)
 
     def decide_next(self) -> Job | None:
-        """Pool policy: generalizes decide() to in-flight state. Priority:
-        debug buggy tips (one per chain) > ensemble solo in the final window
-        (drain first) > drafts until num_drafts branches are scored-or-pending
-        > improves on distinct top targets. None = hold (keep slots empty)."""
+        """Ask the policy for the next action and materialize it into a Job;
+        None = hold (keep slots empty). Lock spans propose + prepare so the
+        decision and the journal `created` event are atomic."""
         with self._state_lock:
-            tip = self._debuggable_tip()
-            if tip is not None:
-                return self._prepare("debug", tip)
-            if self._should_ensemble() and not any(
-                j.candidate.operator == "ensemble" for j in self._inflight.values()
-            ):
-                if self._inflight:
-                    return None  # drain: ensemble inputs snapshot at launch
-                return self._prepare("ensemble", self._ensemble_candidates()[0])
-            if self._prospective_branches() < self.config.search.num_drafts:
-                return self._prepare("draft", None)
-            busy_targets = {
-                j.candidate.parent_id
-                for j in self._inflight.values()
-                if j.candidate.operator == "improve"
-            }
-            direction = 1 if self.problem.lower_is_better else -1
-            ranked = sorted(
-                self.journal.scored_candidates(), key=lambda c: direction * c.val_score
-            )
-            if not ranked:
-                return self._prepare("draft", None)
-            for candidate in ranked:
-                if candidate.candidate_id not in busy_targets:
-                    return self._prepare("improve", candidate)
-            return self._prepare("improve", ranked[0])
+            action = self.policy.propose(self._view())
+            if action is None:
+                return None
+            return self._prepare(action)
 
     def _debuggable_tip(self) -> Candidate | None:
-        """Newest buggy candidate with no active child and chain depth under
-        the cap. In serial history this is exactly decide()'s debug rule."""
-        for candidate in reversed(list(self.journal.candidates.values())):
-            if candidate.status != "buggy" or candidate.pruned:
-                continue
-            children = self.journal.children(candidate.candidate_id, include_pruned=True)
-            if any(c.status in ("pending", "ok", "buggy") for c in children):
-                continue
-            chain = self.journal.debug_chain(candidate.candidate_id)
-            depth = sum(1 for c in chain if c.operator == "debug")
-            if depth < self.config.search.max_debug_depth:
-                return candidate
-        return None
+        return self.policy.debuggable_tip(self._view())
 
     def _prospective_branches(self) -> int:
-        """Draft branches whose subtree holds a scored OR pending candidate —
-        in-flight work counts toward the num_drafts target."""
-        count = 0
-        for draft in self.journal.drafts():
-            frontier = [draft]
-            while frontier:
-                candidate = frontier.pop()
-                if candidate.is_scored or candidate.status == "pending":
-                    count += 1
-                    break
-                frontier.extend(self.journal.children(candidate.candidate_id))
-        return count
+        return self.policy.prospective_branches(self._view())
 
     # --- cost accounting ---
 
@@ -338,6 +317,67 @@ class GreedySearcher:
             raise ParkedSearch(
                 f"cost ceiling reached (${self.total_cost_usd():.2f} >= ${ceiling:.2f})"
             )
+
+    # --- live cross-search sharing ---
+
+    def _live_run_dir(self) -> Path | None:
+        """The run dir hosting the shared live-card folder; None when live
+        sharing is off or the search dir is not in the runs/<run-id>/searches/
+        layout (embedded and unit-test constructions)."""
+        if not (self.config.learning.enabled and self.config.learning.live):
+            return None
+        if self.search_dir.parent.name != SEARCHES_DIRNAME:
+            return None
+        return self.search_dir.parents[1]
+
+    def _target(self) -> str:
+        """Problem target string for family grouping (same convention as the
+        knowledge backfill: empty for non-emflow problems)."""
+        if getattr(self.problem, "kind", "csv") == "emflow":
+            return f"emflow://{self.problem.emflow_problem}"
+        return ""
+
+    def _publish_live_card(self) -> None:
+        """Republish this search's knowledge card into the run-scoped live dir
+        so concurrent sibling searches see discoveries mid-run. Best effort —
+        sharing must never fail a search."""
+        run_dir = self._live_run_dir()
+        if run_dir is None:
+            return
+        from hillclimb.knowledge import distill_card, write_live_card
+
+        try:
+            card = distill_card(
+                self.journal,
+                problem=self.problem,
+                run_ref=f"{run_dir.name}/{self.search_dir.name}",
+                target=self._target(),
+                budget_s=self.budget.total_s,
+                cost_usd=self.total_cost_usd(),
+                selection=self.config.holdout.selection,
+            )
+            write_live_card(run_dir, card, self.search_dir.name)
+        except Exception as exc:  # noqa: BLE001
+            self.log(f"  live card publish failed (search unaffected): {exc}")
+
+    def _live_experience(self) -> str:
+        """Prompt section from sibling searches' live cards; "" when there are
+        none. Polled fresh on every prompt build so late discoveries land in
+        the very next operator."""
+        run_dir = self._live_run_dir()
+        if run_dir is None:
+            return ""
+        from hillclimb.knowledge import load_live_cards, problem_family, render_live_experience
+
+        try:
+            cards = load_live_cards(
+                run_dir,
+                exclude_search_id=self.search_dir.name,
+                family=problem_family(self.problem.problem_id, self._target()),
+            )
+            return render_live_experience(cards, max_cards=self.config.learning.max_cards)
+        except Exception:  # noqa: BLE001
+            return ""
 
     # --- status reporting ---
 
@@ -404,85 +444,28 @@ class GreedySearcher:
             raise StopRequested(f"stop requested by {stop.source}")
 
     def decide(self) -> tuple[str, Candidate | None]:
-        candidates = list(self.journal.candidates.values())
-        last = next(
-            (c for c in reversed(candidates) if c.status in ("ok", "buggy") and not c.pruned), None
-        )
-        if last is not None and last.status == "buggy":
-            chain = self.journal.debug_chain(last.candidate_id)
-            depth = sum(1 for c in chain if c.operator == "debug")
-            if depth < self.config.search.max_debug_depth:
-                return "debug", last
-        if self._should_ensemble():
-            return "ensemble", self._ensemble_candidates()[0]
-        if self._scored_branches() < self.config.search.num_drafts:
-            return "draft", None
-        best = self.journal.best_candidate(self.problem.lower_is_better)
-        if best is None:
-            return "draft", None
-        return "improve", best
+        """The next decision as an (operator, target) pair — the historical
+        introspection surface over policy.propose(); the run loop itself
+        carries the full Action."""
+        action = self.policy.propose(self._view())
+        if action is None:
+            return "hold", None
+        target = self.journal.candidates.get(action.target_id) if action.target_id else None
+        return action.operator, target
 
-    # --- ensemble stage ---
+    # --- ensemble stage (delegated; kept as the stable internal surface) ---
 
     def _in_ensemble_window(self) -> bool:
-        # window sits ABOVE the stop margin, else margin swallows it: with a
-        # 45m budget, reserve(540s) - margin(300s) left a 240s slot that one
-        # improve cycle stepped over entirely
-        reserve = self.budget.total_s * self.config.ensemble.reserve_fraction
-        return self.budget.remaining() <= reserve + self.budget.stop_margin_s
+        return self.policy.in_ensemble_window(self._view())
 
     def _should_ensemble(self) -> bool:
-        cfg = self.config.ensemble
-        if not cfg.enabled or not self._in_ensemble_window():
-            return False
-        attempts = sum(1 for c in self.journal.candidates.values() if c.operator == "ensemble")
-        if attempts >= cfg.max_attempts or self._ensemble_succeeded():
-            return False
-        return len(self._ensemble_candidates()) >= 2
+        return self.policy.should_ensemble(self._view())
 
     def _ensemble_succeeded(self) -> bool:
-        for candidate in self.journal.candidates.values():
-            if candidate.status != "ok":
-                continue
-            root = self.journal.debug_chain(candidate.candidate_id)[0]
-            if root.operator == "ensemble":
-                return True
-        return False
+        return self.policy.ensemble_succeeded(self._view())
 
     def _ensemble_candidates(self) -> list[Candidate]:
-        """Top-k scored non-ensemble candidates by the selection rule, deduped
-        by script content so near-identical improves don't fill the slots."""
-        ranked = self.journal.ranked_candidates(
-            self.problem.lower_is_better, self.config.holdout.selection
-        )
-        picked, seen_hashes = [], set()
-        for candidate in ranked:
-            if candidate.operator == "ensemble":
-                continue
-            solution = Path(candidate.workspace) / "solution.py"
-            if not solution.exists():
-                continue
-            digest = hashlib.md5(solution.read_bytes()).hexdigest()
-            if digest in seen_hashes:
-                continue
-            seen_hashes.add(digest)
-            picked.append(candidate)
-            if len(picked) >= self.config.ensemble.top_k:
-                break
-        return picked
-
-    def _scored_branches(self) -> int:
-        """Draft branches whose subtree contains at least one scored candidate."""
-        count = 0
-        for draft in self.journal.drafts():
-            frontier = [draft]
-            while frontier:
-                candidate = frontier.pop()
-                if candidate.is_scored:
-                    count += 1
-                    break
-                frontier.extend(self.journal.children(candidate.candidate_id))
-        return count
+        return self.policy.ensemble_candidates(self._view())
 
     def _run_seed(self) -> Candidate:
         """Score the incumbent solution as a real candidate: the floor a
@@ -528,11 +511,24 @@ class GreedySearcher:
     # --- → _commit (scheduler); run_operator is the synchronous composition
 
     def run_operator(self, operator: str, target: Candidate | None) -> Candidate:
-        job = self._prepare(operator, target)
+        job = self._prepare(self._action_for(operator, target))
         return self._commit(self._execute_job(job))
 
-    def _prepare(self, operator: str, target: Candidate | None) -> Job:
+    def _action_for(self, operator: str, target: Candidate | None) -> Action:
+        """Action for an explicitly named operator (serial loop, tests,
+        smoke). Policies that distinguish decision-time details (draft
+        complexity, ensemble inputs) fill them via action_for; others get the
+        bare action."""
+        target_id = target.candidate_id if target else None
+        maker = getattr(self.policy, "action_for", None)
+        if maker is not None:
+            return maker(self._view(), operator, target_id)
+        return Action(operator=operator, target_id=target_id)
+
+    def _prepare(self, action: Action) -> Job:
         """Scheduler-side setup: id, workspace, prompt, journal `created`."""
+        operator = action.operator
+        target = self.journal.candidates.get(action.target_id) if action.target_id else None
         candidate_id = self.journal.next_candidate_id()
         parent_solution = (
             Path(target.workspace) / "solution.py"
@@ -547,12 +543,17 @@ class GreedySearcher:
             parent_solution,
         )
         ensemble_inputs = None
-        if operator == "ensemble":
-            ensemble_inputs = self._ensemble_candidates()
+        if action.inspiration_ids:
+            ensemble_inputs = [self.journal.candidates[i] for i in action.inspiration_ids]
             for i, cand in enumerate(ensemble_inputs, 1):
                 shutil.copy(Path(cand.workspace) / "solution.py", workspace / f"candidate_{i}.py")
-        complexity = self._draft_complexity() if operator == "draft" else None
+        complexity = action.complexity
         prompt = self.build_prompt(operator, target, complexity, ensemble_inputs)
+        if action.extra_prompt_context:
+            prompt += (
+                "\n\n# Additional context from the search strategy\n\n"
+                f"{action.extra_prompt_context}\n"
+            )
         (workspace / "prompt.md").write_text(prompt)
 
         # NOTE: no session resume across candidates — Claude Code scopes
@@ -570,9 +571,11 @@ class GreedySearcher:
                 else 0
             ),
             workspace=str(workspace),
+            policy_meta=dict(action.policy_meta),
         )
         self.journal.candidate_created(candidate)
 
+        route = self._resolve_route(action)
         request = OperatorRequest(
             operator=operator,
             prompt=prompt,
@@ -580,7 +583,7 @@ class GreedySearcher:
             timeout_s=min(
                 self.config.budget.agent_timeout_s, max(60, int(self.budget.remaining()))
             ),
-            model=self.config.model,
+            model=route.model,
         )
         if self.status is not None:
             self.status.add_current(
@@ -598,12 +601,27 @@ class GreedySearcher:
             workspace=workspace,
             ensemble_inputs=ensemble_inputs,
             holdout_threshold=self._holdout_threshold(),
+            backend=(
+                self.backends.get(route.backend, route.backend_auth)
+                if self.backends is not None
+                else None
+            ),
+        )
+
+    def _resolve_route(self, action: Action) -> ResolvedRoute:
+        if self.router is not None:
+            return self.router.resolve(action.operator, action.route)
+        return ResolvedRoute(
+            backend=self.config.backend,
+            model=self.config.model,
+            backend_auth=self.config.backend_auth,
         )
 
     def _execute_job(self, job: Job) -> OutcomeMsg:
         """Worker-side: agent call + trials + holdout. Lock-free — touches
         only the job's own candidate/workspace, never the journal."""
         candidate = job.candidate
+        backend = job.backend if job.backend is not None else self.backend
 
         slot = None
         if self.slots is not None:
@@ -616,12 +634,12 @@ class GreedySearcher:
                 return OutcomeMsg(job=job, kind="aborted")
             self._set_phase(candidate.candidate_id, "agent")
         try:
-            result = self.backend.invoke(job.request)
+            result = backend.invoke(job.request)
         finally:
             if slot is not None:
                 slot.release()
         candidate.backend = BackendInfo(
-            name=self.backend.name,
+            name=backend.name,
             session_id=result.session_id,
             cost_usd=result.cost_usd,
             num_turns=result.num_turns,
@@ -682,14 +700,14 @@ class GreedySearcher:
                     candidate.status = "parked"
                     candidate.summary = f"parked: {result.error_message}"
                     candidate.finished_at = utcnow()
-                    self.journal.candidate_result(candidate)
+                    self._record_result(candidate)
                     raise ParkedSearch(result.error_message)
 
                 if msg.kind == "aborted":
                     candidate.status = "abandoned"
                     candidate.summary = "stopped mid-operator (abort)"
                     candidate.finished_at = utcnow()
-                    self.journal.candidate_result(candidate)
+                    self._record_result(candidate)
                     return candidate
 
                 if msg.kind == "agent_failed":
@@ -698,7 +716,7 @@ class GreedySearcher:
                         f"agent call failed ({result.error_kind}): {result.error_message[:150]}"
                     )
                     candidate.finished_at = utcnow()
-                    self.journal.candidate_result(candidate)
+                    self._record_result(candidate)
                     self._consecutive_failures += 1
                     self.log(f"  agent call failed ({self._consecutive_failures} in a row)")
                     if self._consecutive_failures >= 3:
@@ -714,7 +732,7 @@ class GreedySearcher:
                         candidate.summary or f"agent produced no solution.py ({result.error_kind})"
                     )
                     candidate.finished_at = utcnow()
-                    self.journal.candidate_result(candidate)
+                    self._record_result(candidate)
                     return candidate
 
                 # kind == "executed"
@@ -736,14 +754,21 @@ class GreedySearcher:
                 else:
                     candidate.status = "buggy"
                 candidate.finished_at = utcnow()
-                self.journal.candidate_result(candidate)
+                self._record_result(candidate)
                 if candidate.status == "ok":
                     self._sync_selection()
+                self._publish_live_card()
                 return candidate
             finally:
                 if self.status is not None:
                     self.status.remove_current(candidate.candidate_id)
                     self._status()
+
+    def _record_result(self, candidate: Candidate) -> None:
+        """Journal a terminal result and let the policy see it (the runtime
+        half of the observe contract; construction replays history)."""
+        self.journal.candidate_result(candidate)
+        self.policy.observe(self._view(), candidate)
 
     def _set_phase(self, candidate_id: str, phase: str) -> None:
         if self.status is not None:
@@ -809,10 +834,40 @@ class GreedySearcher:
             stdout_tail=stdout_tail,
             submission_ok=exec_result.submission_ok,
             val_score=exec_result.val_score if exec_result.ok else None,
+            report=self._read_trial_report(cwd) if exec_result.ok else None,
             started_at=trial_started,
             finished_at=utcnow(),
         )
         return trial, exec_result.ok
+
+    def _read_trial_report(self, cwd: Path) -> dict | None:
+        """Compact validation breakdown from the eval's eval_result.json —
+        hillclimb's evaluator report contract. Producers: the emflow eval
+        runner, a problem's verifier script (the executor discards anything
+        else on verifier problems), or the agent's own solution when the
+        problem has no verifier. The split check is the orchestrator half of
+        the leakage contract: holdout and verify results must never reach
+        prompts."""
+        try:
+            payload = json.loads((cwd / "eval_result.json").read_text())
+        except (OSError, ValueError):
+            return None
+        if payload.get("split") != "validation" or not isinstance(payload.get("report"), dict):
+            return None
+        from hillclimb.report import compact_report
+
+        try:
+            compact = compact_report(payload["report"])
+        except Exception:  # noqa: BLE001 — a malformed report must never fail a trial
+            return None
+        # provenance is stamped from problem configuration, not file contents:
+        # an agent-authored file cannot claim evaluator trust
+        trusted = (
+            getattr(self.problem, "kind", "csv") in ("emflow", "evaluator")
+            or self.problem.verifier is not None
+        )
+        compact["source"] = "evaluator" if trusted else "agent"
+        return compact
 
     def _holdout_threshold(self) -> float | None:
         """Holdout hygiene: the k-th best val score at prepare time; a
@@ -877,8 +932,7 @@ class GreedySearcher:
         return score < best if self.problem.lower_is_better else score > best
 
     def _draft_complexity(self) -> str:
-        index = len(self.journal.drafts()) + self.complexity_start
-        return "minimal" if index == 0 else "moderate" if index == 1 else "advanced"
+        return self.policy.draft_complexity(self._view())
 
     # --- prompt assembly ---
 
@@ -934,7 +988,10 @@ class GreedySearcher:
             if self.problem.allow_network
             else "Assume no internet access at execution time."
         )
-        contract_template = "contract_emflow" if self.problem.kind == "emflow" else "contract"
+        contract_template = {
+            "emflow": "contract_emflow",
+            "evaluator": "contract_evaluator",
+        }.get(self.problem.kind, "contract")
         contract = render(
             contract_template,
             metric_name=self.problem.metric_name,
@@ -942,13 +999,19 @@ class GreedySearcher:
             runtime_pkgs=self._runtime_pkgs(),
             time_remaining=self.budget.remaining_str(),
             holdout_clause=holdout_clause,
+            report_clause=self._report_clause(),
             network_note=network_note,
             verifier_clause=self._verifier_clause(),
             emflow_problem=self.problem.emflow_problem or "",
             quantile_note=self._quantile_note(),
+            eval_command_display=self._eval_command_display(),
+            problem_contract=self.problem.contract or "(see the problem description above)",
         )
         direction = "lower is better" if self.problem.lower_is_better else "higher is better"
         if operator == "draft":
+            live = self._live_experience()
+            prior = self.knowledge_context or ""
+            prior = "\n\n".join(part for part in (prior, live) if part)
             return render(
                 "draft",
                 description=self.problem.description,
@@ -956,7 +1019,7 @@ class GreedySearcher:
                 direction=direction,
                 data_listing=self._data_listing(),
                 complexity_cue=COMPLEXITY_CUES[complexity or "minimal"],
-                prior_experience=self.knowledge_context or "(no prior searches recorded)",
+                prior_experience=prior or "(no prior searches recorded)",
                 prior_drafts=self._candidate_summaries(self.journal.drafts()) or "(none yet)",
                 contract=contract,
             )
@@ -992,6 +1055,7 @@ class GreedySearcher:
         if operator == "improve":
             assert target is not None
             last_trial = target.last_trial
+            live = self._live_experience()
             return render(
                 "improve",
                 description=self.problem.description,
@@ -1001,6 +1065,10 @@ class GreedySearcher:
                 stdout_tail=last_trial.stdout_tail if last_trial else "",
                 sibling_summaries=self._candidate_summaries(self.journal.children(target.candidate_id))
                 or "(nothing tried from this solution yet)",
+                evaluation_report=self._report_section(target),
+                live_experience=(
+                    f"# Discoveries from concurrent searches\n\n{live}\n" if live else ""
+                ),
                 contract=contract,
             )
         raise ValueError(f"Unknown operator: {operator}")
@@ -1014,15 +1082,42 @@ class GreedySearcher:
         if trial.returncode not in (0, None):
             return f"The script crashed (exit code {trial.returncode})."
         problems = []
+        evaluator_scored = getattr(self.problem, "kind", "csv") in ("emflow", "evaluator")
         if not trial.submission_ok:
-            problems.append("`submission.csv` was not written")
+            problems.append(
+                "the evaluation produced no `eval_result.json` result artifact"
+                if evaluator_scored
+                else "`submission.csv` was not written"
+            )
         if trial.val_score is None:
-            problems.append("no final `val_score: <float>` line was printed")
+            problems.append(
+                "the evaluator printed no final `val_score: <float>` line"
+                if evaluator_scored
+                else "no final `val_score: <float>` line was printed"
+            )
         if trial.holdout_error:
             problems.append(trial.holdout_error)
         if problems:
             return "The script ran to completion but violated the contract: " + "; ".join(problems) + "."
         return "The script failed."
+
+    def _report_clause(self) -> str:
+        """Tier-2 agent-report instructions, only where the agent's own script
+        computes val_score (no verifier, non-emflow/evaluator). On verifier
+        problems the executor discards agent-written eval_result.json, so
+        asking for one would be a contradiction."""
+        if (
+            getattr(self.problem, "kind", "csv") in ("emflow", "evaluator")
+            or self.problem.verifier is not None
+        ):
+            return ""
+        return render("report_clause").rstrip()
+
+    def _eval_command_display(self) -> str:
+        """Prompt-facing form of the evaluator command: placeholders read as
+        what they mean, not as machine paths (the venv path is noise)."""
+        command = getattr(self.problem, "eval_command", None) or ""
+        return command.replace("{python}", "python").replace("{solution}", "solution.py")
 
     def _quantile_note(self) -> str:
         """Class-attribute stanza for the emflow contract's Predictor stub."""
@@ -1056,6 +1151,30 @@ class GreedySearcher:
             "Do not print your own `val_score:` line."
         )
 
+    def _report_section(self, target: Candidate) -> str:
+        """Improve-prompt section: the target's validation breakdown plus,
+        when its parent also has one, where the score moved. Gated by
+        config.report.enabled — injection only; the data is always recorded."""
+        if not self.config.report.enabled:
+            return ""
+        from hillclimb.report import candidate_report, render_delta, render_report
+
+        target_report = candidate_report(target)
+        body = render_report(target_report, self.problem.metric_name)
+        if not body:
+            return ""
+        section = f"# Evaluation breakdown (validation split)\n\n{body}\n"
+        parent = self.journal.candidates.get(target.parent_id) if target.parent_id else None
+        delta = render_delta(
+            candidate_report(parent), target_report, self.problem.lower_is_better
+        )
+        if delta:
+            section += (
+                f"\n## Where this solution moved vs its parent ({parent.candidate_id})\n\n"
+                f"{delta}\n"
+            )
+        return section
+
     def _candidate_summaries(self, candidates: list[Candidate]) -> str:
         lines = []
         for candidate in candidates:
@@ -1085,7 +1204,8 @@ class GreedySearcher:
         from hillclimb.runtime import runtime_packages
 
         kind = getattr(self.problem, "kind", "csv")
-        return ", ".join(runtime_packages(kind))
+        requirements = getattr(self.problem, "requirements_file", None)
+        return ", ".join(runtime_packages(kind, requirements_file=requirements))
 
 
 def _human_size(size: int) -> str:

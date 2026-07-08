@@ -1,0 +1,52 @@
+schema_version: 1
+problem_id: bin-packing
+family: bin-packing
+target: ''
+metric: mean-bins
+lower_is_better: true
+run_ref: 20260708-012913-evaluator-dogfood/bin-packing
+finished_at: '2026-07-07T23:34:31.419900+00:00'
+budget_s: 600
+cost_usd: 1.6016
+n_candidates: 4
+n_ok: 4
+n_buggy: 0
+selected_val: 46.28
+selected_holdout: 46.12
+selected_operator: baseline
+operator_stats:
+  draft:
+    attempts: 3
+    ok: 3
+    best_val: 46.28
+  ensemble:
+    attempts: 1
+    ok: 1
+    best_val: 46.28
+top_approaches:
+- candidate_id: c001
+  operator: draft
+  val_score: 46.28
+  holdout_score: 46.12
+  complexity: minimal
+  summary: Best-fit decreasing packing followed by a local-search pass that repeatedly
+    tries to eliminate the least-full bin (or directly merge two bins) by redistributing
+    items into the rest.
+  libraries: []
+- candidate_id: c002
+  operator: draft
+  val_score: 46.28
+  holdout_score: 46.12
+  complexity: moderate
+  summary: One-bin-at-a-time greedy filling with randomized multi-start, instead of
+    best-fit-decreasing across all open bins.
+  libraries: []
+- candidate_id: c003
+  operator: ensemble
+  val_score: 46.28
+  holdout_score: 46.12
+  summary: Per-instance ensemble of candidate_2 (best-fit-decreasing + bin-elimination/pair-merge
+    local search) and candidate_3 (randomized multi-start one-bin-at-a-time greedy),
+    keeping whichever packing uses fewer bins on each instance.
+  libraries: []
+failure_modes: []

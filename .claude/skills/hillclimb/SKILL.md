@@ -1,6 +1,6 @@
 ---
 name: hillclimb
-description: Drive rebase-hillclimb searches — start, monitor, stop, prune, and resume auto-hillclimbing runs that spawn headless coding agents as operators.
+description: Drive hillclimb searches — start, monitor, stop, prune, and resume auto-hillclimbing runs that spawn headless coding agents as operators.
 ---
 
 # Driving hillclimb runs

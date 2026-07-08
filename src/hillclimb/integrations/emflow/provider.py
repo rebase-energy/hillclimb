@@ -12,7 +12,7 @@ from pathlib import Path
 
 import emflow as ef
 
-from hillclimb.candidate import Candidate, Trial, utcnow
+from hillclimb.candidate import Candidate
 from hillclimb.config import Config
 from hillclimb.problem import ProblemSpec, ResolvedTarget, SuiteSpec
 
@@ -136,51 +136,15 @@ def write_emflow_baseline(
     """c000 = the benchmark's reference model, evaluated for real — a genuine
     scored floor that agent drafts must beat. Degrades to an unscored
     placeholder when the problem ships no baseline or the eval fails."""
-    import shutil
-
-    workspace = search_dir / "candidates" / "c000"
-    workspace.mkdir(parents=True, exist_ok=True)
-    candidate = Candidate(
-        candidate_id="c000",
-        operator="baseline",
-        status="ok",
-        workspace=str(workspace),
-    )
+    from hillclimb.baseline import run_scored_baseline, unscored_placeholder
 
     if problem.emflow_baseline is None or executor is None:
-        candidate.summary = "baseline: none shipped with this problem (unscored placeholder)"
-        candidate.finished_at = utcnow()
-        return candidate
-
-    solution = workspace / "solution.py"
-    solution.write_text(
-        f'"""Reference baseline for {problem.emflow_problem}."""\n'
-        f"from {problem.emflow_baseline} import get_model  # noqa: F401\n"
+        return unscored_placeholder(search_dir)
+    return run_scored_baseline(
+        problem, search_dir, executor, holdout_scorer, timeout_s,
+        solution_text=(
+            f'"""Reference baseline for {problem.emflow_problem}."""\n'
+            f"from {problem.emflow_baseline} import get_model  # noqa: F401\n"
+        ),
+        summary=f"baseline: {problem.emflow_baseline}.get_model()",
     )
-    (workspace / "notes.md").write_text(
-        f"baseline: {problem.emflow_baseline}.get_model()\n"
-    )
-    candidate.summary = f"baseline: {problem.emflow_baseline}.get_model()"
-
-    exec_result = executor.execute(solution, workspace, timeout_s)
-    trial = Trial(
-        returncode=exec_result.returncode,
-        duration_s=exec_result.duration_s,
-        timed_out=exec_result.timed_out,
-        submission_ok=exec_result.submission_ok,
-        val_score=exec_result.val_score,
-    )
-    if exec_result.ok:
-        if holdout_scorer is not None:
-            holdout_score, holdout_error = holdout_scorer.score(workspace)
-            trial.holdout_score = holdout_score
-            trial.holdout_error = holdout_error
-        trial.finished_at = utcnow()
-        candidate.trials.append(trial)
-        candidate.is_best = True
-        shutil.copy(solution, search_dir / "best" / "solution.py")
-    else:
-        # keep the search alive: fall back to the unscored-placeholder semantics
-        candidate.summary += " (baseline eval failed; unscored)"
-    candidate.finished_at = utcnow()
-    return candidate

@@ -143,6 +143,9 @@ class LocalExecutor:
         verifier = verifier.absolute() if verifier is not None else None
         stdout_path = workspace / "exec_stdout.log"
         stderr_path = workspace / "exec_stderr.log"
+        # stale-result guard, mirroring the emflow executor: a leftover
+        # eval_result.json must never masquerade as this execution's report
+        (workspace / "eval_result.json").unlink(missing_ok=True)
         env = scrubbed_env(**({"HILLCLIMB_TRIAL_SEED": str(seed)} if seed is not None else {}))
         start = time.monotonic()
         with stdout_path.open("w") as out, stderr_path.open("w") as err:
@@ -150,6 +153,11 @@ class LocalExecutor:
                 [str(self.python), str(script)], workspace, timeout_s, out, err, env
             )
             if not timed_out and returncode == 0 and verifier is not None:
+                # trust boundary: on verifier problems only the verifier may
+                # produce eval_result.json — discard anything the (agent-
+                # authored) solution wrote, exactly as its val_score line is
+                # overridden by the verifier's
+                (workspace / "eval_result.json").unlink(missing_ok=True)
                 remaining = max(1, int(timeout_s - (time.monotonic() - start)))
                 returncode, timed_out = run_logged(
                     [str(self.python), str(verifier)], workspace, remaining, out, err, env

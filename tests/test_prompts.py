@@ -9,6 +9,7 @@ def test_render_replaces_tokens():
         runtime_pkgs="pandas, numpy",
         time_remaining="1h 30m",
         holdout_clause="",
+        report_clause="",
         verifier_clause="- prints exactly one line `val_score: <float>` for accuracy",
         network_note="Assume no internet access at execution time.",
     )
@@ -23,6 +24,7 @@ def test_render_replaces_tokens():
         time_remaining="1h 30m",
         network_note="Assume no internet access at execution time.",
         verifier_clause="- prints exactly one line `val_score: <float>` for accuracy",
+        report_clause=render("report_clause").rstrip(),
         holdout_clause=render(
             "holdout_clause",
             holdout_id_col="id",
@@ -32,6 +34,7 @@ def test_render_replaces_tokens():
     )
     assert "holdout_predictions.csv" in with_holdout
     assert "`id`" in with_holdout
+    assert "eval_result.json" in with_holdout
     assert "{{" not in with_holdout
 
 

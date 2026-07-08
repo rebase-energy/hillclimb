@@ -32,6 +32,17 @@ class SearchConfig(BaseModel):
     parallel_agents: int = 1  # >1 enables the worker pool; 1 = serial (default)
     n_trials: int = 1  # validation evals per candidate (mean val is the climbing score)
     machine_max_agents: int = 0  # machine-wide concurrent-agent cap across searches; 0 = off
+    policy: str = "greedy"  # search policy (policies registry)
+    policy_params: dict = Field(default_factory=dict)  # opaque; validated by the policy factory
+
+
+class RouteConfig(BaseModel):
+    """Per-operator backend/model override (the `routing:` config block).
+    None fields inherit the global `backend`/`model`/`backend_auth` scalars."""
+
+    backend: str | None = None
+    model: str | None = None
+    backend_auth: str | None = None
 
 
 class HoldoutConfig(BaseModel):
@@ -77,9 +88,23 @@ class LearningConfig(BaseModel):
     # path overrides; None + no workspace = learning off
     dir: Path | None = None
     max_cards: int = 3  # cards rendered into the prompt
+    # live sharing: republish this search's card after every executed
+    # candidate and read siblings' cards (runs/<run-id>/knowledge/), so
+    # concurrent searches in one run learn from each other mid-flight
+    live: bool = True
     # opt-in policy bias: start the draft complexity schedule one step up
     # when past winners were never 'minimal'
     complexity_prior: bool = False
+
+
+class ReportConfig(BaseModel):
+    """Trial evaluation reports: per-zone/horizon/quantile breakdowns from
+    emflow validation evals."""
+
+    # gates ONLY prompt injection — computation and journal storage always
+    # run, so A/B arms record identical data and differ only in what the
+    # improve operator sees
+    enabled: bool = True
 
 
 class EmflowConfig(BaseModel):
@@ -110,6 +135,9 @@ class Config(BaseModel):
     backend: str = "claude-code"
     backend_auth: str = "subscription"  # subscription | api-key
     model: str = "sonnet"
+    # per-operator routing; keys: draft | debug | improve | ensemble | default.
+    # Missing keys (or an absent block) fall back to the scalars above.
+    routing: dict[str, RouteConfig] = Field(default_factory=dict)
     budget: BudgetConfig = BudgetConfig()
     search: SearchConfig = SearchConfig()
     holdout: HoldoutConfig = HoldoutConfig()
@@ -117,6 +145,7 @@ class Config(BaseModel):
     paths: PathsConfig = PathsConfig()
     emflow: EmflowConfig = EmflowConfig()
     learning: LearningConfig = LearningConfig()
+    report: ReportConfig = ReportConfig()
     # Resolved at load time; None for embedders that construct Config()
     # directly and set absolute paths themselves (e.g. the hosted container).
     workspace_root: Path | None = Field(default=None, exclude=True)

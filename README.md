@@ -1,4 +1,4 @@
-# rebase-hillclimb
+# hillclimb
 
 Auto-hillclimbing for verifier-defined problems. A greedy search engine spawns headless coding
 agents (Claude Code) as operators — **draft** new solutions, **debug** failures,
@@ -115,7 +115,7 @@ Run
 
 ## emflow problems (optional extra)
 
-With the `emflow` extra installed (`pip install 'rebase-hillclimb[emflow]'`),
+With the `emflow` extra installed (`pip install 'hillclimb[emflow]'`),
 targets of the form `emflow://<name>` run problems from
 [emflow](https://github.com/rebase-energy/emflow)'s registry — agents author
 `Predictor` classes (`solution.py` exposing `get_model()`), a generic
@@ -161,6 +161,74 @@ time_budget_s: 900
 
 Generated `solution.py` writes `submission.csv`. The orchestrator then runs the
 problem verifier and parses its final `val_score: <number>` line.
+
+### Evaluator problems (`kind: evaluator`)
+
+When "write a submission CSV and grade it" doesn't fit — the solution is a
+module the evaluator drives, a program to benchmark, a policy to simulate —
+the problem can own its whole evaluation:
+
+```yaml
+problem_id: bin-packing
+kind: evaluator
+metric: mean-bins
+lower_is_better: true
+description: description.md
+contract: contract.md            # what solution.py must be/do (prompt section)
+eval: "{python} problem/evaluate.py"                # the ONLY validation process
+holdout_eval: "{python} problem/evaluate.py --holdout"  # optional; hidden dir, full env
+requirements: requirements.txt   # optional; per-problem venv (default: shared csv venv)
+baseline: baseline.py            # optional; scored at t=0 as the floor candidate
+time_budget_s: 900
+```
+
+The eval command runs with cwd = the candidate workspace (`solution.py`,
+`./problem/` and `./data/` symlinks present), must print `val_score: <float>`
+as its final stdout line, and must write `eval_result.json`
+(`{"split": "validation", "score": ..., "report": {...}}`) — the completion
+proof, and the carrier for the trial report above (evaluator-trusted).
+Placeholders: `{python}` → the managed runtime venv's interpreter (always use
+it — bare `python` resolves via PATH), `{solution}` → the solution path.
+Validation runs get a credential-scrubbed environment and
+`HILLCLIMB_TRIAL_SEED`; `holdout_eval` runs in a directory agents never see
+with the full environment. `problems/bin-packing/` is the reference example.
+
+### Trial reports (optional)
+
+`eval_result.json` is hillclimb's evaluator report contract: any evaluation
+that writes it into the working directory gets its breakdown stored on the
+trial, rendered into improve prompts ("attack the largest contributors"),
+and shown by `hillclimb show` and the watch TUI:
+
+```json
+{"split": "validation",
+ "report": {
+   "version": 1,
+   "overall": {"score": 12.3, "n_origins": 100, "n_scored": 2400},
+   "segment_label": "store",
+   "zones": [{"zone": "store-7", "score": 19.9, "n_scored": 240}, ...],
+   "horizons": [{"bucket": "13-24h", "score": 14.1, "n": 1200}, ...],
+   "quantiles": [{"q": 0.9, "pinball": 4.1, "coverage": 0.95}, ...],
+   "worst_origins": [{"asof": "...", "zone": "store-7", "score": 44.0}, ...],
+   "residual_bias": {"mean_error": -1.2, "mean_abs_error": 8.8, "mean_actual": 41.0},
+   "report_error": null
+ }}
+```
+
+All sections are optional; order `zones` (any segmentation — the label is
+yours via `segment_label`) worst-first. Producers, by trust:
+
+- **emflow problems** — the evaluator computes the full breakdown (per-zone,
+  per-horizon, per-quantile calibration, persistence skill) automatically.
+- **problems with a `verifier:`** — the verifier may write the file (see
+  `problems/circle-packing/verify.py`); anything the solution itself wrote is
+  discarded before the verifier runs, so the report carries evaluator trust.
+- **verifier-less problems** — the agent's own script may write it (the
+  contract invites this); it is stored and rendered labelled *self-reported*.
+
+Only `"split": "validation"` reports are ever fed back to operators — holdout
+evaluations never produce one, by construction. `report.enabled: false` in
+config disables prompt injection (data is still recorded).
 
 ## Local optimization demo suite
 
