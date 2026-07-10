@@ -8,3 +8,5 @@ __pycache__/
 tasks/data/**/*.csv
 tasks/data/**/*.zip
 .gstack/
+hillclimb/knowledge/graph.json
+hillclimb/knowledge/.distill/

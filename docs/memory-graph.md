@@ -1,8 +1,28 @@
 # Memory graph: design
 
-Status: draft (2026-07-10). Branch: `memory-graph`.
+Status: **implemented** (2026-07-10, branch `memory-graph`). This document is
+the design rationale; the shipped surface is:
 
-The next big push: turn the knowledge hillclimb accumulates across searches
+- `claims.py` — Claim/Entity/Concept schemas, the post-search distill pass
+  (`prompts/distill.md`, routing key `distill`, default haiku), registries
+  `knowledge/entities.yaml` + `knowledge/concepts.yaml`, `render_claims`.
+- `graph.py` — `build_graph` (deterministic fold), `graph_at(t)`,
+  supersession rules, pinned networkx layout, `load_or_build_graph`,
+  `retrieve_claims` (graph-walk retrieval).
+- `graphview.py` — the interactive TUI screen (`g` in watch,
+  `hillclimb knowledge graph`): braille canvas with zoom/pan/click, node
+  detail panel, time scrubber over search-finish events, concept sidebar
+  (filter + color-by), semantic zoom into concept supernodes. Screenshot:
+  `graph-tui.png`.
+- Config: `learning.claims`, `learning.claims_timeout_s`,
+  `learning.graph_retrieval`; CLI: `knowledge distill|rebuild|graph`.
+
+One deliberate deviation from the sketch below: claim supersession is
+computed at graph-build time (two temporal rules in
+`graph.compute_supersessions`) instead of writing `superseded_by` into old
+cards — cards stay immutable once written.
+
+The push: turn the knowledge hillclimb accumulates across searches
 into a temporal knowledge graph — semantically distilled, queryable for
 retrieval, and explorable as an interactive (zoom/pan/click) graph inside the
 watch TUI.

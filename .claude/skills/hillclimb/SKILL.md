@@ -94,6 +94,20 @@ CLI decides queue-vs-direct itself.
 uv run hillclimb tree <search>     # render the exploration tree to <search>/tree.png
 ```
 
+## Cross-search memory
+
+Finished searches feed a file-based memory under `hillclimb/knowledge/`:
+statistical cards plus LLM-distilled claims (entities classified into a
+concept ontology), all folded into a derived temporal graph index.
+
+```bash
+uv run hillclimb knowledge graph --stats        # text summary of the graph
+uv run hillclimb knowledge graph                # interactive TUI (zoom/pan/click/scrub) — don't run headless
+uv run hillclimb knowledge rebuild              # regenerate the derived graph.json
+uv run hillclimb knowledge distill [search]     # claims pass for one search (--backfill: all cards)
+uv run hillclimb knowledge show <target>        # prior-experience block a new search would get
+```
+
 ## Rules
 
 - **Never edit `journal.jsonl`, `status.json`, or `control/` by hand.**

@@ -279,6 +279,43 @@ routing:
   debug: {model: haiku}                   # scalar routes stay scalars
 ```
 
+## Cross-search memory: the knowledge graph
+
+hillclimb learns across searches, and the memory is file-based and
+git-versionable — it lives in your workspace's `hillclimb/knowledge/`:
+
+- **Cards** (`knowledge/<family>/*.yaml`) — every finished search distills a
+  statistical card (operator stats, top approaches, failure modes; no model
+  calls) that future searches on the family receive as a "prior experience"
+  prompt section. Concurrent searches in one run also share **live cards**
+  mid-flight.
+- **Claims** (`learning.claims`, default on) — after distilling the card, one
+  cheap agent pass (routing key `distill`, default model haiku) turns the
+  search into typed claims: `histgradientboosting helps` on this family,
+  with confidence and candidate-id evidence. Claim subjects are canonical
+  **entities** (`knowledge/entities.yaml`, alias-deduped) classified
+  closed-set into a small curated **concept ontology**
+  (`knowledge/concepts.yaml` — tabular / time-series / decision-trees /
+  neural-networks / …; the agent may only *propose* additions, which you
+  promote by flipping `proposed: false`).
+- **Graph** (`knowledge/graph.json`) — a derived index rebuilt
+  deterministically from the YAML (never hand-edit; `hillclimb knowledge
+  rebuild` regenerates it, and it is gitignored). Every node/edge carries
+  `first_seen`, claims gain `superseded_at` when a newer belief displaces
+  them, so any historical view is a pure filter.
+- **Retrieval** (`learning.graph_retrieval`, default on) — new searches also
+  get the top graph-ranked claims: same-family first, then cross-family
+  claims that share a concept with the problem.
+
+Explore it interactively with `hillclimb knowledge graph` (or `g` inside
+`hillclimb watch`): a zoom/pan/click canvas with a node detail panel, a time
+scrubber that replays how the graph grew search by search, and a concept
+sidebar for filtering and coloring.
+
+![knowledge graph TUI](docs/graph-tui.png)
+
+Design notes and rationale: `docs/memory-graph.md`.
+
 ## Local optimization demo suite
 
 These problems are small, local, and require no download, so they are good for
@@ -314,6 +351,10 @@ the run has a single search), or `latest` (the default).
 | `prune <search> <candidate-id>` | cut a candidate and its subtree from the search |
 | `tree [search]` | render the exploration tree to `<search>/tree.png` |
 | `smoke [problem]` | one real agent call end-to-end (auth / contract check) |
+| `knowledge graph [--stats]` | interactive knowledge-graph TUI (or a text summary) |
+| `knowledge rebuild` | force-rebuild the derived `knowledge/graph.json` index |
+| `knowledge distill [search] [--backfill]` | run the LLM claims pass on a search / all cards |
+| `knowledge show <target>` | the prior-experience section a new search would get |
 
 Exit code `2` from `run`/`resume` means the search parked or was stopped — resume it.
 

@@ -25,3 +25,9 @@ Never edit those files directly — control a search through
 `hillclimb stop|kill|prune|resume`, which route through the search's `control/`
 command queue when the engine is live. `journal.jsonl` is append-only; replay
 keeps the last record per candidate.
+
+`hillclimb/knowledge/graph.json` is a **derived index** (gitignored) rebuilt
+deterministically from the knowledge YAML (cards, entities.yaml,
+concepts.yaml) — never hand-edit it; `hillclimb knowledge rebuild`
+regenerates it. The YAML files are the source of truth and are
+git-versioned.
