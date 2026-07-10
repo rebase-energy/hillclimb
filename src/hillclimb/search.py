@@ -1030,6 +1030,14 @@ class GreedySearcher:
             "emflow": "contract_emflow",
             "evaluator": "contract_evaluator",
         }.get(self.problem.kind, "contract")
+        tools_clause = ""
+        if self.config.operators.knowledge_tool and self.config.learning.enabled:
+            import sys as _sys
+
+            # the engine's own interpreter — the agent's PATH may lack uv
+            tools_clause = render(
+                "tools_cue", knowledge_cli=f"{_sys.executable} -m hillclimb.cli"
+            ).rstrip()
         contract = render(
             contract_template,
             metric_name=self.problem.metric_name,
@@ -1044,6 +1052,7 @@ class GreedySearcher:
             quantile_note=self._quantile_note(),
             eval_command_display=self._eval_command_display(),
             problem_contract=self.problem.contract or "(see the problem description above)",
+            tools_clause=tools_clause,
         )
         direction = "lower is better" if self.problem.lower_is_better else "higher is better"
         if operator == "draft":

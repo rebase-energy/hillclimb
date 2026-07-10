@@ -323,6 +323,32 @@ def knowledge_distill(
     typer.echo(f"{len(card.claims)} claim(s) -> {path}")
 
 
+@knowledge_app.command("query")
+def knowledge_query(
+    terms: str = typer.Argument(..., help="Keywords, e.g. 'gradient boosting' or a technique slug"),
+    family: str = typer.Option("", "--family", help="Restrict claims to one problem family"),
+    limit: int = typer.Option(5, "--limit"),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
+):
+    """Read-only memory lookup (no model calls) — also advertised to
+    operator agents so they can consult accumulated knowledge mid-search."""
+    import json as _json
+
+    from hillclimb.api import resolve_knowledge_dir
+    from hillclimb.graph import load_or_build_graph, query_graph, render_query_hits
+
+    config = load_config()
+    knowledge_dir = resolve_knowledge_dir(config)
+    if knowledge_dir is None:
+        typer.echo("learning is disabled or no workspace/knowledge dir resolvable", err=True)
+        raise typer.Exit(1)
+    hits = query_graph(load_or_build_graph(knowledge_dir), terms, family=family, limit=limit)
+    if as_json:
+        typer.echo(_json.dumps(hits, indent=1))
+    else:
+        typer.echo(render_query_hits(hits))
+
+
 @knowledge_app.command("consolidate")
 def knowledge_consolidate(
     dry_run: bool = typer.Option(

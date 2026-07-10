@@ -47,6 +47,9 @@ class OperatorsConfig(BaseModel):
     # improve: instruct the agent to run a component ablation of the parent
     # solution and target only the highest-impact component
     improve_ablation: bool = True
+    # all operators: contract clause advertising the read-only
+    # `hillclimb knowledge query` memory lookup (needs learning enabled)
+    knowledge_tool: bool = True
 
 
 class RouteConfig(BaseModel):

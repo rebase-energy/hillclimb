@@ -503,6 +503,125 @@ def node_to_claim(node: GraphNode) -> Claim:
     )
 
 
+def fuzzy_match(nodes: list[GraphNode], query: str, limit: int = 20) -> list[GraphNode]:
+    """Subsequence scorer: all query chars must appear in order; contiguity
+    and prefix matches score higher."""
+    query = query.strip().lower()
+    if not query:
+        return []
+    scored: list[tuple[float, str, GraphNode]] = []
+    for node in nodes:
+        haystack = f"{node.label} {node.id}".lower()
+        score = _subsequence_score(haystack, query)
+        if score > 0:
+            scored.append((score, node.id, node))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [node for _, _, node in scored[:limit]]
+
+
+def _subsequence_score(haystack: str, query: str) -> float:
+    index = 0
+    score = 0.0
+    streak = 0
+    for char in query:
+        found = haystack.find(char, index)
+        if found < 0:
+            return 0.0
+        streak = streak + 1 if found == index else 1
+        score += streak
+        if found == 0:
+            score += 2  # prefix bonus
+        index = found + 1
+    return score / (1 + len(haystack) / 40)
+
+
+def query_graph(
+    graph: KnowledgeGraph, terms: str, *, family: str = "", limit: int = 5
+) -> list[dict]:
+    """The read-only lookup behind `hillclimb knowledge query` — built for
+    operator agents consulting memory mid-search, so it answers in facts:
+    matching nodes, the live claims about them (with measured track records
+    and retirement status), and the searches that used them."""
+    node_map = graph.node_map()
+    matches = fuzzy_match(graph.nodes, terms, limit=limit)
+    # entities lead (they aggregate their claims), claims follow, plumbing
+    # nodes (searches/operators) last — stable within a tier by fuzzy score
+    tier = {"technique": 0, "library": 0, "model_family": 0, "feature": 0,
+            "practice": 0, "problem": 1, "family": 1, "concept": 2, "claim": 3}
+    matches.sort(key=lambda n: tier.get(n.type, 4))
+    hits: list[dict] = []
+    for node in matches:
+        entry: dict = {
+            "id": node.id,
+            "type": node.type,
+            "label": node.label,
+            "concepts": list(node.concepts),
+        }
+        if node.superseded_at is not None:
+            entry["superseded_at"] = node.superseded_at
+        if node.type == "claim":
+            entry["claim"] = _claim_summary(node)
+        claims = []
+        for edge in graph.edges:
+            if edge.type == "about" and edge.dst == node.id and edge.src in node_map:
+                claim_node = node_map[edge.src]
+                scope = claim_node.data.get("scope") or {}
+                if family and scope.get("family") not in ("", None, family) and "concept" not in scope:
+                    continue
+                claims.append(_claim_summary(claim_node))
+        if claims:
+            entry["claims"] = claims
+        searches = sorted({
+            node_map[e.src].label
+            for e in graph.edges
+            if e.type == "used" and e.dst == node.id and e.src in node_map
+        })
+        if searches:
+            entry["used_by_searches"] = searches[:5]
+        hits.append(entry)
+    return hits
+
+
+def _claim_summary(node: GraphNode) -> dict:
+    summary = {
+        "statement": node.label,
+        "confidence": node.data.get("confidence"),
+        "scope": node.data.get("scope") or {},
+    }
+    if node.data.get("track"):
+        summary["track"] = node.data["track"]
+    if node.superseded_at is not None:
+        summary["superseded"] = True
+        if node.data.get("retired"):
+            summary["retired_by"] = node.data["retired"]
+    return summary
+
+
+def render_query_hits(hits: list[dict]) -> str:
+    if not hits:
+        return "no matches in the knowledge graph"
+    lines: list[str] = []
+    for hit in hits:
+        concepts = f"  [{', '.join(hit['concepts'])}]" if hit.get("concepts") else ""
+        dead = "  (superseded)" if hit.get("superseded_at") else ""
+        lines.append(f"{hit['label']} ({hit['type']}){concepts}{dead}")
+        for claim in [hit["claim"]] if "claim" in hit else hit.get("claims", []):
+            track = claim.get("track")
+            record = (
+                f", measured {track['adjusted_confidence']} over {track['injections']} search(es)"
+                if track else ""
+            )
+            status = " [RETIRED]" if claim.get("superseded") else ""
+            where = claim["scope"].get("family") or claim["scope"].get("concept") or "?"
+            lines.append(
+                f"  - {claim['statement']} (on {where}, "
+                f"confidence {claim.get('confidence')}{record}){status}"
+            )
+        if hit.get("used_by_searches"):
+            lines.append(f"  used by: {', '.join(hit['used_by_searches'])}")
+    return "\n".join(lines)
+
+
 def graph_stats(graph: KnowledgeGraph) -> str:
     from collections import Counter
 

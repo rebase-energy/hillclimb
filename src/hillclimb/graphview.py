@@ -26,7 +26,7 @@ from rich.style import Style
 from rich.text import Text
 
 from hillclimb.config import Config
-from hillclimb.graph import GraphNode, KnowledgeGraph, graph_at
+from hillclimb.graph import GraphNode, KnowledgeGraph, fuzzy_match, graph_at
 
 # --- pure data layer ---
 
@@ -511,38 +511,6 @@ def hit_test(
             best = node.node_id
             best_dist = dist
     return best
-
-
-def fuzzy_match(nodes: list[GraphNode], query: str, limit: int = 20) -> list[GraphNode]:
-    """Subsequence scorer: all query chars must appear in order; contiguity
-    and prefix matches score higher."""
-    query = query.strip().lower()
-    if not query:
-        return []
-    scored: list[tuple[float, str, GraphNode]] = []
-    for node in nodes:
-        haystack = f"{node.label} {node.id}".lower()
-        score = _subsequence_score(haystack, query)
-        if score > 0:
-            scored.append((score, node.id, node))
-    scored.sort(key=lambda item: (-item[0], item[1]))
-    return [node for _, _, node in scored[:limit]]
-
-
-def _subsequence_score(haystack: str, query: str) -> float:
-    index = 0
-    score = 0.0
-    streak = 0
-    for char in query:
-        found = haystack.find(char, index)
-        if found < 0:
-            return 0.0
-        streak = streak + 1 if found == index else 1
-        score += streak
-        if found == 0:
-            score += 2  # prefix bonus
-        index = found + 1
-    return score / (1 + len(haystack) / 40)
 
 
 def snap_to_event(events: list[str], fraction: float) -> int:

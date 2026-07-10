@@ -1,0 +1,1 @@
+- Cross-search memory is queryable (read-only): `{{knowledge_cli}} knowledge query "<keywords>"` shows what previous searches learned about a technique or this problem family (what helped, what failed, measured track records). Use it BEFORE re-deriving something expensive; at most one or two queries, don't browse.
