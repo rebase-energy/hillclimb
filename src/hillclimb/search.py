@@ -103,6 +103,8 @@ class GreedySearcher:
         abort: threading.Event | None = None,
         seed_solution: Path | None = None,
         knowledge_context: str | None = None,
+        reference_solution: Path | None = None,
+        reference_note: str = "",
         complexity_start: int = 0,
         policy: SearchPolicy | None = None,
         router: Router | None = None,
@@ -124,6 +126,10 @@ class GreedySearcher:
         self.abort = abort or threading.Event()
         self.seed_solution = seed_solution  # incumbent model: scored as a floor candidate
         self.knowledge_context = knowledge_context  # prior-experience prompt section
+        # skill library: a proven prior solution copied into the FIRST
+        # draft's workspace as reference_solution.py (later drafts explore)
+        self.reference_solution = reference_solution
+        self.reference_note = reference_note
         self.complexity_start = complexity_start  # learned draft-complexity offset
         self.policy = policy or GreedyPolicy(complexity_start=complexity_start)
         self.router = router  # None: everything routes to `backend` + config.model
@@ -544,6 +550,8 @@ class GreedySearcher:
             self.problem.problem_dir,
             parent_solution,
         )
+        if self._wants_reference(operator):
+            shutil.copy(self.reference_solution, workspace / "reference_solution.py")
         ensemble_inputs = None
         if action.inspiration_ids:
             ensemble_inputs = [self.journal.candidates[i] for i in action.inspiration_ids]
@@ -608,6 +616,17 @@ class GreedySearcher:
                 if self.backends is not None
                 else None
             ),
+        )
+
+    def _wants_reference(self, operator: str) -> bool:
+        """The skill-library reference goes to the FIRST draft only — later
+        drafts must diverge, so seeding them all would fight exploration.
+        (With parallel first drafts both may qualify; harmless.)"""
+        return (
+            operator == "draft"
+            and self.reference_solution is not None
+            and self.reference_solution.exists()
+            and not self.journal.drafts()
         )
 
     def _resolve_route(self, action: Action) -> ResolvedRoute:
@@ -1036,6 +1055,15 @@ class GreedySearcher:
                 if self.config.operators.draft_retrieval
                 else ""
             )
+            starter_cue = ""
+            if self._wants_reference(operator):
+                note = f" ({self.reference_note})" if self.reference_note else ""
+                starter_cue = (
+                    "# Starter reference\n\n"
+                    f"A proven solution from a previous search is at "
+                    f"`./reference_solution.py`{note}. Use it as a scaffold: adapt "
+                    "and improve it for THIS problem — do not resubmit it unchanged.\n"
+                )
             return render(
                 "draft",
                 description=self.problem.description,
@@ -1043,6 +1071,7 @@ class GreedySearcher:
                 direction=direction,
                 data_listing=self._data_listing(),
                 research_cue=research_cue,
+                starter_cue=starter_cue,
                 complexity_cue=COMPLEXITY_CUES[complexity or "minimal"],
                 prior_experience=prior or "(no prior searches recorded)",
                 prior_drafts=self._candidate_summaries(self.journal.drafts()) or "(none yet)",

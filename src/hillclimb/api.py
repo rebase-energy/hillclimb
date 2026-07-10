@@ -477,6 +477,20 @@ def _distill_knowledge(
                     )
             except Exception as exc:  # noqa: BLE001
                 log(f"learning: credit assignment failed (card unaffected): {exc}")
+        if config.learning.skills and knowledge_dir is not None:
+            # procedural memory: a scored winner joins the skill library
+            try:
+                from hillclimb.skills import harvest_skill
+
+                skill_dir = harvest_skill(
+                    journal, problem=problem, card=card,
+                    knowledge_dir=knowledge_dir,
+                    selection=config.holdout.selection, log=log,
+                )
+                if skill_dir is not None:
+                    log(f"learning: skill harvested -> {skill_dir}")
+            except Exception as exc:  # noqa: BLE001
+                log(f"learning: skill harvest failed (card unaffected): {exc}")
         if knowledge_dir is not None:
             # keep the derived graph index fresh; cheap at this scale and
             # best-effort like everything else here
@@ -537,6 +551,31 @@ def execute_search(
             from hillclimb.credit import record_injected_claims
 
             record_injected_claims(search_dir, _claim_ids)
+    reference_solution: Path | None = None
+    reference_note = ""
+    if config.learning.skills:
+        _kdir = resolve_knowledge_dir(config)
+        if _kdir is not None:
+            try:
+                from hillclimb.claims import problem_concepts
+                from hillclimb.knowledge import problem_family
+                from hillclimb.skills import SKILL_CODE_FILENAME, select_skill
+
+                kind = "emflow" if target.startswith("emflow://") else getattr(problem, "kind", "csv")
+                match = select_skill(
+                    _kdir,
+                    family=problem_family(problem.problem_id, target),
+                    concepts=problem_concepts(kind, problem.metric_name),
+                    lower_is_better=problem.lower_is_better,
+                )
+                if match is not None:
+                    skill, skill_dir = match
+                    reference_solution = skill_dir / SKILL_CODE_FILENAME
+                    score = f"{skill.score:g} {skill.metric}" if skill.score is not None else "unscored"
+                    reference_note = f"scored {score} on {skill.problem_id}"
+                    log(f"learning: reference solution from {skill.run_ref} ({reference_note})")
+            except Exception as exc:  # noqa: BLE001
+                log(f"learning: skill selection failed (draft unaffected): {exc}")
     backend_obj = get_backend(config.backend, auth=config.backend_auth)
     if hasattr(backend_obj, "abort"):
         backend_obj.abort = abort
@@ -569,6 +608,8 @@ def execute_search(
         abort=abort,
         seed_solution=seed_from,
         knowledge_context=knowledge_context if knowledge_context is not None else _kc,
+        reference_solution=reference_solution,
+        reference_note=reference_note,
         complexity_start=_offset,
         policy=get_policy(
             config.search.policy, config.search.policy_params, complexity_start=_offset

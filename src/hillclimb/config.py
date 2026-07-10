@@ -129,6 +129,9 @@ class LearningConfig(BaseModel):
     # raw claims block in draft prompts when one matches the problem's
     # concepts; credit flows to the playbook's source claims
     playbooks: bool = True
+    # skill library: harvest scored winners into knowledge/skills/ and hand
+    # the best match to the first draft as reference_solution.py
+    skills: bool = True
 
 
 class ReportConfig(BaseModel):
