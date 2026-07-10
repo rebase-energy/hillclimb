@@ -1,0 +1,92 @@
+schema_version: 1
+problem_id: circle-packing
+family: circle-packing
+target: ''
+metric: sum-radii
+lower_is_better: false
+run_ref: 20260710-155719-credit-demo/circle-packing
+finished_at: '2026-07-10T14:07:15.857044+00:00'
+budget_s: 720
+cost_usd: 0.8429
+n_candidates: 2
+n_ok: 2
+n_buggy: 0
+selected_val: 2.634292
+selected_operator: draft
+operator_stats:
+  draft:
+    attempts: 2
+    ok: 2
+    best_val: 2.634292
+top_approaches:
+- candidate_id: c001
+  operator: draft
+  val_score: 2.634292
+  complexity: minimal
+  summary: Monotonic basin hopping (targeted relocation of the weakest/smallest circles
+    + SLSQP local re-optimization + accept-only-improvements) starting from several
+    structured row layouts.
+  libraries:
+  - scipy
+- candidate_id: c002
+  operator: draft
+  val_score: 2.63173
+  complexity: moderate
+  summary: Greedy sequential largest-first construction (many random-candidate restarts)
+    followed by joint SLSQP polish over all 78 (x, y, r) variables with analytic Jacobians,
+    then jittered-restart refinement on the incumbent until the time budget is
+  libraries:
+  - scipy
+failure_modes: []
+claims:
+- claim_id: a7837def4474
+  subject: monotonic-basin-hopping
+  relation: outperforms
+  object: greedy-sequential-construction
+  scope:
+    family: circle-packing
+    problem_id: circle-packing
+    budget_s: 720
+  confidence: 0.7
+  evidence:
+  - c001
+  - c002
+  observed_at: '2026-07-10T14:08:47.683998+00:00'
+- claim_id: 418521a12e1a
+  subject: joint-slsqp-optimization
+  relation: helps
+  object: ''
+  scope:
+    family: circle-packing
+    problem_id: circle-packing
+    budget_s: 720
+  confidence: 0.85
+  evidence:
+  - c001
+  - c002
+  observed_at: '2026-07-10T14:08:47.685489+00:00'
+- claim_id: d1dd0f6b32ef
+  subject: analytic-constraint-jacobian
+  relation: helps
+  object: ''
+  scope:
+    family: circle-packing
+    problem_id: circle-packing
+    budget_s: 720
+  confidence: 0.8
+  evidence:
+  - c001
+  - c002
+  observed_at: '2026-07-10T14:08:47.685525+00:00'
+- claim_id: 1aa35b2e37b3
+  subject: feasibility-repair
+  relation: helps
+  object: ''
+  scope:
+    family: circle-packing
+    problem_id: circle-packing
+    budget_s: 720
+  confidence: 0.65
+  evidence:
+  - c001
+  observed_at: '2026-07-10T14:08:47.685541+00:00'
