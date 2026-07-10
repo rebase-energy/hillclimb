@@ -332,24 +332,41 @@ def build_knowledge_context(
     claim_ids: list[str] = []
     if config.learning.graph_retrieval:
         # graph-walk retrieval: distilled claims for this family plus
-        # cross-family claims that share a concept with the problem.
+        # cross-family claims that share a concept with the problem. When a
+        # consolidated playbook covers the problem's concepts it REPLACES the
+        # raw claim list (evolved prose beats retrieved facts), and credit
+        # flows to the claims the playbook was built from.
         # Best effort — the cards block above never depends on the graph.
         try:
             from hillclimb.claims import problem_concepts, render_claims
             from hillclimb.graph import load_or_build_graph, node_to_claim, retrieve_claims
 
             kind = "emflow" if target.startswith("emflow://") else getattr(problem, "kind", "csv")
-            nodes = retrieve_claims(
-                load_or_build_graph(knowledge_dir),
-                family=family,
-                problem_id=problem.problem_id,
-                concepts=problem_concepts(kind, problem.metric_name),
-            )
-            claims_text = render_claims([node_to_claim(n) for n in nodes])
-            if claims_text:
-                log(f"learning: {len(nodes)} distilled claim(s) inform this search")
-                text = f"{text}\n\n{claims_text}"
-                claim_ids = [n.id.removeprefix("claim:") for n in nodes]
+            concepts = problem_concepts(kind, problem.metric_name)
+            playbooks = []
+            if config.learning.playbooks:
+                from hillclimb.consolidate import load_playbooks, render_playbooks
+
+                playbooks = load_playbooks(knowledge_dir, concepts)
+            if playbooks:
+                log(
+                    "learning: playbook(s) inform this search: "
+                    + ", ".join(p.concept for p in playbooks)
+                )
+                text = f"{text}\n\n{render_playbooks(playbooks)}"
+                claim_ids = sorted({cid for p in playbooks for cid in p.source_claims})
+            else:
+                nodes = retrieve_claims(
+                    load_or_build_graph(knowledge_dir),
+                    family=family,
+                    problem_id=problem.problem_id,
+                    concepts=concepts,
+                )
+                claims_text = render_claims([node_to_claim(n) for n in nodes])
+                if claims_text:
+                    log(f"learning: {len(nodes)} distilled claim(s) inform this search")
+                    text = f"{text}\n\n{claims_text}"
+                    claim_ids = [n.id.removeprefix("claim:") for n in nodes]
         except Exception as exc:  # noqa: BLE001
             log(f"learning: graph retrieval failed (prior cards unaffected): {exc}")
     return text, offset, claim_ids

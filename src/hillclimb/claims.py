@@ -202,6 +202,27 @@ def save_concepts(knowledge_dir: Path, concepts: list[Concept]) -> None:
     _save_registry(knowledge_dir / CONCEPTS_FILENAME, "concepts", concepts)
 
 
+CONSOLIDATED_FILENAME = "consolidated.yaml"
+
+
+def load_consolidated_claims(knowledge_dir: Path) -> list[Claim]:
+    """Generalized claims written by the consolidation pass — claims whose
+    scope is a concept rather than a family."""
+    return _load_registry(knowledge_dir / CONSOLIDATED_FILENAME, "claims", Claim)
+
+
+def save_consolidated_claims(knowledge_dir: Path, claims: list[Claim]) -> None:
+    """Dedup by claim_id (deterministic for a given generalization), newest
+    observed_at wins — re-running consolidation is idempotent."""
+    by_id: dict[str, Claim] = {}
+    for claim in sorted(claims, key=lambda c: c.observed_at):
+        by_id[claim.claim_id] = claim
+    _save_registry(
+        knowledge_dir / CONSOLIDATED_FILENAME, "claims",
+        sorted(by_id.values(), key=lambda c: c.claim_id),
+    )
+
+
 def merge_entities(
     existing: list[Entity], new: list[Entity], known_concepts: set[str]
 ) -> list[Entity]:
@@ -377,18 +398,47 @@ def _entities_block(entities: list[Entity], limit: int = 80) -> str:
     return "\n".join(lines) or "(none yet)"
 
 
-def _resolve_distill_route(config: Config) -> tuple[str, str, str]:
-    """(backend, model, auth) for the distill pass. Falls through the normal
-    routing layers, but when neither `distill` nor `default` pins a model the
-    global scalar is overridden by DEFAULT_DISTILL_MODEL — summarization does
-    not need the search's operator model."""
-    route = Router(config).resolve("distill")
+def resolve_pass_route(config: Config, operator: str, default_model: str) -> tuple[str, str, str]:
+    """(backend, model, auth) for a knowledge pass (distill / consolidate).
+    Falls through the normal routing layers, but when neither the operator
+    key nor `default` pins a model the global scalar is overridden by the
+    pass's own default — these passes don't need the search's operator
+    model."""
+    route = Router(config).resolve(operator)
     explicit = any(
         key in config.routing and (config.routing[key].model or config.routing[key].models)
-        for key in ("distill", "default")
+        for key in (operator, "default")
     )
-    model = route.model if explicit else DEFAULT_DISTILL_MODEL
+    model = route.model if explicit else default_model
     return route.backend, model, route.backend_auth
+
+
+def invoke_knowledge_agent(
+    config: Config,
+    *,
+    operator: str,
+    prompt: str,
+    workspace: Path,
+    timeout_s: int,
+    default_model: str,
+):
+    """One headless agent call for a knowledge pass; the agent communicates
+    by writing files into `workspace` (prompt.md stays there for
+    inspection). Resolved through the api seam tests patch."""
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "prompt.md").write_text(prompt)
+    backend_name, model, auth = resolve_pass_route(config, operator, default_model)
+    # resolve through the api namespace — the seam tests patch to keep every
+    # agent call fake; lazy import avoids the module cycle
+    from hillclimb.api import get_backend
+
+    backend = get_backend(backend_name, auth=auth)
+    return backend.invoke(
+        OperatorRequest(
+            operator=operator, prompt=prompt, workspace=workspace,
+            timeout_s=timeout_s, model=model,
+        )
+    )
 
 
 def _distill(
@@ -418,22 +468,13 @@ def _distill(
         relations=" | ".join(CLAIM_RELATIONS),
         claims_filename=CLAIMS_FILENAME,
     )
-    workspace.mkdir(parents=True, exist_ok=True)
-    (workspace / "prompt.md").write_text(prompt)
-    backend_name, model, auth = _resolve_distill_route(config)
-    # resolve through the api namespace — the seam tests patch to keep every
-    # agent call fake; lazy import avoids the module cycle
-    from hillclimb.api import get_backend
-
-    backend = get_backend(backend_name, auth=auth)
-    result = backend.invoke(
-        OperatorRequest(
-            operator="distill",
-            prompt=prompt,
-            workspace=workspace,
-            timeout_s=config.learning.claims_timeout_s,
-            model=model,
-        )
+    result = invoke_knowledge_agent(
+        config,
+        operator="distill",
+        prompt=prompt,
+        workspace=workspace,
+        timeout_s=config.learning.claims_timeout_s,
+        default_model=DEFAULT_DISTILL_MODEL,
     )
     if not result.ok:
         log(f"learning: distill agent failed ({result.error_kind}): {result.error_message}")

@@ -60,6 +60,7 @@ EDGE_COLORS = {
     "ran_on": "dim blue", "belongs_to": "dim yellow", "used": "dim cyan",
     "about": "dim green", "derived_from": "dim green", "applies_to": "dim green",
     "supersedes": "dim red", "has_concept": "dim magenta", "is_a": "dim magenta",
+    "generalizes": "dim green",
 }
 # fixed 8-color pool for concept coloring — theme-safe, no RGB gradients
 CONCEPT_COLOR_POOL = (

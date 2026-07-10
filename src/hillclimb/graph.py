@@ -52,6 +52,7 @@ EDGE_KINDS = (
     "supersedes",    # newer claim -> older claim
     "has_concept",   # entity/problem -> concept
     "is_a",          # concept -> parent concept
+    "generalizes",   # consolidated claim -> the family claims it lifted
 )
 
 # concept nodes are timeless: first_seen="" sorts before every ISO timestamp,
@@ -308,6 +309,35 @@ def build_graph(knowledge_dir: Path, previous: KnowledgeGraph | None = None) -> 
                 else family_id
             )
             add_edge(claim_id, scope_target, "applies_to", first_seen=claim.observed_at)
+
+    # generalized (consolidated) claims: scoped to a concept, linked down to
+    # the family-scoped claims they were lifted from
+    from hillclimb.claims import load_consolidated_claims
+
+    for claim in load_consolidated_claims(knowledge_dir):
+        all_claims.append(claim)
+        claim_id = f"claim:{claim.claim_id}"
+        subject = entity_by_slug.get(claim.subject)
+        label = f"{claim.subject} {claim.relation}" + (f" {claim.object}" if claim.object else "")
+        concept = str(claim.scope.get("concept", ""))
+        add_node(GraphNode(
+            id=claim_id, type="claim", label=label,
+            concepts=sorted(set((subject.concepts if subject else [])) | ({concept} if concept else set())),
+            first_seen=claim.observed_at,
+            data={
+                "subject": claim.subject, "relation": claim.relation,
+                "object": claim.object, "confidence": claim.confidence,
+                "evidence": claim.evidence, "scope": claim.scope,
+                "consolidated": True,
+            },
+        ))
+        if f"entity:{claim.subject}" in nodes:
+            add_edge(claim_id, f"entity:{claim.subject}", "about", first_seen=claim.observed_at)
+        if concept and f"concept:{concept}" in nodes:
+            add_edge(claim_id, f"concept:{concept}", "applies_to", first_seen=claim.observed_at)
+        for source in claim.scope.get("sources", []):
+            if f"claim:{source}" in nodes:
+                add_edge(claim_id, f"claim:{source}", "generalizes", first_seen=claim.observed_at)
 
     for claim_id, (at, by) in compute_supersessions(all_claims).items():
         node = nodes.get(f"claim:{claim_id}")

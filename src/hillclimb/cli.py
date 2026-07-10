@@ -323,6 +323,35 @@ def knowledge_distill(
     typer.echo(f"{len(card.claims)} claim(s) -> {path}")
 
 
+@knowledge_app.command("consolidate")
+def knowledge_consolidate(
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would generalize / which playbooks would rewrite; no writes, no agent calls"
+    ),
+):
+    """The sleep phase: lift multi-family claims up the concept hierarchy
+    (mechanical) and rewrite per-concept playbooks (one agent call per
+    qualifying concept, routing key `consolidate`). Playbook rewrites land
+    as reviewable git diffs."""
+    from hillclimb.api import resolve_knowledge_dir
+    from hillclimb.consolidate import consolidate
+
+    config = load_config()
+    knowledge_dir = resolve_knowledge_dir(config)
+    if knowledge_dir is None:
+        typer.echo("learning is disabled or no workspace/knowledge dir resolvable", err=True)
+        raise typer.Exit(1)
+    summary = consolidate(knowledge_dir, config, typer.echo, dry_run=dry_run)
+    verb = "would generalize" if dry_run else "generalized"
+    typer.echo(f"{verb} {len(summary['generalized'])} claim(s)")
+    if dry_run:
+        typer.echo(
+            "playbook candidates: " + (", ".join(summary["playbook_concepts"]) or "(none)")
+        )
+    else:
+        typer.echo(f"{len(summary['playbooks_written'])} playbook(s) written")
+
+
 @knowledge_app.command("rebuild")
 def knowledge_rebuild():
     """Force-rebuild knowledge/graph.json from the cards and registries.

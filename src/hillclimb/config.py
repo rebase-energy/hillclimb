@@ -125,6 +125,10 @@ class LearningConfig(BaseModel):
     # track records adjust retrieval confidence and retire failing claims
     # (credit.py)
     credit: bool = True
+    # consolidated playbooks (knowledge/playbooks/<concept>.md) replace the
+    # raw claims block in draft prompts when one matches the problem's
+    # concepts; credit flows to the playbook's source claims
+    playbooks: bool = True
 
 
 class ReportConfig(BaseModel):
