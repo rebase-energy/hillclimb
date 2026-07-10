@@ -55,6 +55,10 @@ class ProblemSpec(BaseModel):
     contract: str | None = None  # problem-authored solution-contract prompt section
     requirements_file: Path | None = None  # per-problem venv requirements
     baseline_solution: Path | None = None  # floor solution scored as c000
+    # MLE-bench competition id; set only by the mlebench provider. Marks the
+    # search for one official grade-sample run on the selected candidate
+    # after the search finishes (never during — selection integrity).
+    mlebench_comp_id: str | None = None
 
 
 class SuiteEntry(BaseModel):
@@ -95,7 +99,7 @@ class ResolvedTarget:
 
 # Target schemes served by optional problem providers (lazy imports so the
 # core has no hard dependency on them).
-PROVIDER_SCHEMES = ("emflow",)
+PROVIDER_SCHEMES = ("emflow", "mlebench")
 
 
 def _split_scheme(target: str | Path) -> tuple[str, str] | None:
@@ -115,6 +119,16 @@ def _emflow_provider():
             "pip install 'hillclimb[emflow]'"
         ) from exc
     return provider
+
+
+def _provider_calls(scheme: str):
+    """(load_problem, resolve_target) pair for a provider scheme."""
+    if scheme == "emflow":
+        provider = _emflow_provider()
+        return provider.load_emflow_problem, provider.resolve_emflow_target
+    from hillclimb.integrations.mlebench import provider
+
+    return provider.load_mlebench_problem, provider.resolve_mlebench_target
 
 
 def _read_yaml(path: Path) -> dict:
@@ -194,7 +208,8 @@ def _load_evaluator_problem(meta: dict, problem_yaml: Path, problem_dir: Path, c
 def load_problem(target: str | Path, config: Config) -> ProblemSpec:
     scheme = _split_scheme(target)
     if scheme is not None:
-        return _emflow_provider().load_emflow_problem(scheme[1], config)
+        load, _ = _provider_calls(scheme[0])
+        return load(scheme[1], config)
     problem_yaml = resolve_problem_yaml(target, config)
     problem_dir = problem_yaml.parent
     meta = _read_yaml(problem_yaml)
@@ -317,7 +332,8 @@ def resolve_target(target: str | Path, config: Config) -> ResolvedTarget:
     """Resolve a `hillclimb run <target>` argument as a problem or suite."""
     scheme = _split_scheme(target)
     if scheme is not None:
-        return _emflow_provider().resolve_emflow_target(scheme[1], config)
+        _, resolve = _provider_calls(scheme[0])
+        return resolve(scheme[1], config)
     try:
         suite = load_suite(target, config)
     except FileNotFoundError:

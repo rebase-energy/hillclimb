@@ -134,6 +134,25 @@ for real, and a finished search ends with one official emflow Verifier run
 Programmatic use: `hillclimb.run_search("emflow://gefcom2014:solar",
 budget_s=7200)`.
 
+## MLE-bench problems
+
+Targets of the form `mlebench://<competition-id>` run
+[MLE-bench](https://github.com/openai/mle-bench) competitions against a local
+mle-bench checkout (located via `paths.mlebench_python`; prepare data first
+with `mlebench prepare -c <competition-id>` in that venv). Agents see only the
+prepared PUBLIC split and climb on their own validation score; when the search
+finishes, the engine runs `mlebench grade-sample` exactly once on the selected
+candidate and writes the report (score + medal flags) to
+`mlebench-grade.json` — the private test set never influences selection.
+
+A split name is a virtual suite, one search per listed competition
+(`lite` is an alias for the 22-competition `low` split):
+
+```bash
+uv run hillclimb run mlebench://spaceship-titanic --budget 2h   # one competition
+uv run hillclimb run mlebench://lite --budget 4h                # MLE-bench Lite
+```
+
 ## Defining Problems
 
 A problem is a folder. Users define new problems without changing Python code:
@@ -229,6 +248,36 @@ yours via `segment_label`) worst-first. Producers, by trust:
 Only `"split": "validation"` reports are ever fed back to operators — holdout
 evaluations never produce one, by construction. `report.enabled: false` in
 config disables prompt injection (data is still recorded).
+
+## Operator scaffolds and model routing
+
+Two prompt scaffolds sharpen the default operators (both on by default; the
+`operators:` config block gates prompt injection only, so A/B arms record
+identical data):
+
+- **Retrieval-augmented draft** (`operators.draft_retrieval`) — the draft
+  agent is told to web-search the current state of the art for the problem
+  *class* before writing code (methods only — searching for solutions to the
+  specific competition is explicitly forbidden).
+- **Ablation-guided improve** (`operators.improve_ablation`) — the improve
+  agent first attributes the score to the solution's components (fast,
+  subsampled ablation runs, focused by the trial report's breakdown), records
+  findings in `ablation.md`, then confines its ONE change to the
+  highest-leverage component. Later improves of the same solution are handed
+  the newest sibling `ablation.md` so components aren't re-measured.
+
+The `routing:` block maps operators to backends/models; giving a route a
+`models:` **pool** instead of a scalar turns model choice into a UCB1 bandit
+(per operator) that learns which model earns improvements — rewards derive
+from journaled results (improved on parent = 1, working-but-flat = 0.25,
+buggy = 0), so bandit state rebuilds from journal replay and survives
+`resume`:
+
+```yaml
+routing:
+  improve: {models: [sonnet, opus-4.8]}   # bandit picks per call
+  debug: {model: haiku}                   # scalar routes stay scalars
+```
 
 ## Local optimization demo suite
 

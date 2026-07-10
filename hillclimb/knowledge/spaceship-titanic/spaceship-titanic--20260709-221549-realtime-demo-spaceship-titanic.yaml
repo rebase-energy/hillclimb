@@ -1,0 +1,55 @@
+schema_version: 1
+problem_id: spaceship-titanic
+family: spaceship-titanic
+target: mlebench://spaceship-titanic
+metric: accuracy
+lower_is_better: false
+run_ref: 20260709-221549-realtime-demo/spaceship-titanic
+finished_at: "2026-07-09T20:17:57.708782+00:00"
+budget_s: 600
+cost_usd: 0
+n_candidates: 49
+n_ok: 48
+n_buggy: 1
+selected_val: 0.8075284090909091
+selected_holdout: 0.7318007662835249
+selected_operator: debug
+operator_stats:
+    debug:
+        attempts: 1
+        ok: 1
+        best_val: 0.8075284090909091
+    draft:
+        attempts: 3
+        ok: 2
+        best_val: 0.8082386363636364
+    improve:
+        attempts: 45
+        ok: 45
+        best_val: 0.8061079545454546
+top_approaches:
+    - candidate_id: c003
+      operator: draft
+      val_score: 0.8082386363636364
+      holdout_score: 0.7113665389527458
+      complexity: moderate
+      summary: 'draft #3 (HistGradientBoosting, 100 iters)'
+      libraries:
+        - sklearn
+    - candidate_id: c004
+      operator: draft
+      val_score: 0.8082386363636364
+      holdout_score: 0.7113665389527458
+      complexity: advanced
+      summary: 'draft #4 (HistGradientBoosting, 100 iters)'
+      libraries:
+        - sklearn
+    - candidate_id: c002
+      operator: debug
+      val_score: 0.8075284090909091
+      holdout_score: 0.7318007662835249
+      summary: 'fix: removed undefined variable'
+      libraries:
+        - sklearn
+failure_modes:
+    - 'NameError: name ''undefined_variable_to_trigger_debug'' is not defined (x1)'

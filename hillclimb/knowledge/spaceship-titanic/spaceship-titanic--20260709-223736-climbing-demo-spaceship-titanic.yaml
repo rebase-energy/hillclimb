@@ -1,0 +1,53 @@
+schema_version: 1
+problem_id: spaceship-titanic
+family: spaceship-titanic
+target: mlebench://spaceship-titanic
+metric: accuracy
+lower_is_better: false
+run_ref: 20260709-223736-climbing-demo/spaceship-titanic
+finished_at: "2026-07-09T20:39:16.913150+00:00"
+budget_s: 600
+cost_usd: 0
+n_candidates: 49
+n_ok: 48
+n_buggy: 1
+selected_val: 0.7741477272727273
+selected_holdout: 0.768837803320562
+selected_operator: improve
+operator_stats:
+    debug:
+        attempts: 1
+        ok: 1
+        best_val: 0.7457386363636364
+    draft:
+        attempts: 3
+        ok: 2
+        best_val: 0.7464488636363636
+    improve:
+        attempts: 45
+        ok: 45
+        best_val: 0.8075284090909091
+top_approaches:
+    - candidate_id: c030
+      operator: improve
+      val_score: 0.8075284090909091
+      holdout_score: 0.7037037037037037
+      summary: 'improve #26: 100% of features, max_iter 360'
+      libraries:
+        - sklearn
+    - candidate_id: c031
+      operator: improve
+      val_score: 0.8075284090909091
+      holdout_score: 0.7037037037037037
+      summary: 'improve #27: 100% of features, max_iter 360'
+      libraries:
+        - sklearn
+    - candidate_id: c032
+      operator: improve
+      val_score: 0.8075284090909091
+      holdout_score: 0.7037037037037037
+      summary: 'improve #28: 100% of features, max_iter 360'
+      libraries:
+        - sklearn
+failure_modes:
+    - 'NameError: name ''undefined_variable_to_trigger_debug'' is not defined (x1)'

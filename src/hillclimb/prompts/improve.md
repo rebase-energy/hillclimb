@@ -23,8 +23,10 @@ Its execution stdout (tail):
 {{sibling_summaries}}
 
 {{live_experience}}
+{{prior_ablations}}
 # Instruction
 
+{{ablation_cue}}
 Make **exactly ONE measurable change** to improve validation {{metric_name}}: one engineered feature, one model swap, one hyperparameter adjustment, one validation-scheme fix — a single attributable modification. State your hypothesis as the first line of `notes.md`. Keep everything else identical so the score change is attributable to your change.
 
 {{contract}}

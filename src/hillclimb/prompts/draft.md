@@ -15,6 +15,7 @@ Files in `./data/`:
 
 You may inspect the data (EDA) before writing the script.
 
+{{research_cue}}
 # Complexity guidance
 
 {{complexity_cue}}

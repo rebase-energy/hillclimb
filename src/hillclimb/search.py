@@ -147,11 +147,13 @@ class GreedySearcher:
             log(f"  recovered stale pending candidate {stale.candidate_id} -> abandoned")
         existing = journal.selected_candidate(problem.lower_is_better, config.holdout.selection)
         self._selection_id = existing.candidate_id if existing else None  # resume-safe
-        # resume contract: stateful policies rebuild their caches from the
-        # replayed journal (in journal order, after stale-pending recovery)
+        # resume contract: stateful policies (and the routing bandit) rebuild
+        # their caches from the replayed journal (in journal order, after
+        # stale-pending recovery)
         replay_view = self._view()
         for candidate in journal.candidates.values():
             self.policy.observe(replay_view, candidate)
+            self._observe_route(candidate)
 
     @property
     def data_dir(self) -> Path:
@@ -640,6 +642,7 @@ class GreedySearcher:
                 slot.release()
         candidate.backend = BackendInfo(
             name=backend.name,
+            model=job.request.model,
             session_id=result.session_id,
             cost_usd=result.cost_usd,
             num_turns=result.num_turns,
@@ -769,6 +772,22 @@ class GreedySearcher:
         half of the observe contract; construction replays history)."""
         self.journal.candidate_result(candidate)
         self.policy.observe(self._view(), candidate)
+        self._observe_route(candidate)
+
+    def _observe_route(self, candidate: Candidate) -> None:
+        """Credit the model that authored this candidate in the routing
+        bandit. Same replay discipline as policy.observe: called for every
+        journaled terminal result and for every candidate on construction."""
+        if self.router is None:
+            return
+        from hillclimb.bandit import candidate_reward
+
+        parent = (
+            self.journal.candidates.get(candidate.parent_id) if candidate.parent_id else None
+        )
+        reward = candidate_reward(candidate, parent, self.problem.lower_is_better)
+        if reward is not None:
+            self.router.observe(candidate.operator, candidate.backend.model, reward)
 
     def _set_phase(self, candidate_id: str, phase: str) -> None:
         if self.status is not None:
@@ -1012,12 +1031,18 @@ class GreedySearcher:
             live = self._live_experience()
             prior = self.knowledge_context or ""
             prior = "\n\n".join(part for part in (prior, live) if part)
+            research_cue = (
+                render("research_cue", network_note=network_note).rstrip() + "\n"
+                if self.config.operators.draft_retrieval
+                else ""
+            )
             return render(
                 "draft",
                 description=self.problem.description,
                 metric_name=self.problem.metric_name,
                 direction=direction,
                 data_listing=self._data_listing(),
+                research_cue=research_cue,
                 complexity_cue=COMPLEXITY_CUES[complexity or "minimal"],
                 prior_experience=prior or "(no prior searches recorded)",
                 prior_drafts=self._candidate_summaries(self.journal.drafts()) or "(none yet)",
@@ -1056,6 +1081,11 @@ class GreedySearcher:
             assert target is not None
             last_trial = target.last_trial
             live = self._live_experience()
+            ablation_cue = (
+                render("ablation_cue").rstrip() + "\n"
+                if self.config.operators.improve_ablation
+                else ""
+            )
             return render(
                 "improve",
                 description=self.problem.description,
@@ -1069,6 +1099,8 @@ class GreedySearcher:
                 live_experience=(
                     f"# Discoveries from concurrent searches\n\n{live}\n" if live else ""
                 ),
+                prior_ablations=self._prior_ablations(target),
+                ablation_cue=ablation_cue,
                 contract=contract,
             )
         raise ValueError(f"Unknown operator: {operator}")
@@ -1174,6 +1206,29 @@ class GreedySearcher:
                 f"{delta}\n"
             )
         return section
+
+    def _prior_ablations(self, target: Candidate, max_chars: int = 3000) -> str:
+        """Improve-prompt section: the newest `ablation.md` an earlier improve
+        attempt wrote while analyzing this same solution, so successive
+        improves of one target don't re-measure the same components. Gated
+        with the cue — without the cue nothing writes ablation.md anyway."""
+        if not self.config.operators.improve_ablation:
+            return ""
+        for child in reversed(self.journal.children(target.candidate_id, include_pruned=True)):
+            path = Path(child.workspace) / "ablation.md"
+            if not path.exists():
+                continue
+            try:
+                body = path.read_text(errors="replace").strip()[:max_chars]
+            except OSError:
+                continue
+            if not body:
+                continue
+            return (
+                f"# Prior ablation findings for this solution "
+                f"(measured by {child.candidate_id})\n\n{body}\n"
+            )
+        return ""
 
     def _candidate_summaries(self, candidates: list[Candidate]) -> str:
         lines = []

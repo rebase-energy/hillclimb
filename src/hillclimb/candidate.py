@@ -17,6 +17,7 @@ class BackendInfo(BaseModel):
     Lives on the Candidate (not a Trial): it describes creation, not execution."""
 
     name: str = ""
+    model: str | None = None  # resolved model that ran the call (bandit arm on replay)
     session_id: str | None = None
     cost_usd: float | None = None
     num_turns: int | None = None

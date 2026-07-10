@@ -36,6 +36,19 @@ class SearchConfig(BaseModel):
     policy_params: dict = Field(default_factory=dict)  # opaque; validated by the policy factory
 
 
+class OperatorsConfig(BaseModel):
+    """Operator-scaffold knobs (the `operators:` config block). Both gate
+    ONLY prompt injection, so A/B arms differ in what the agent is told, not
+    in what the engine records."""
+
+    # draft: instruct the agent to web-search current SOTA methods for the
+    # problem class before writing code (counters training-data staleness)
+    draft_retrieval: bool = True
+    # improve: instruct the agent to run a component ablation of the parent
+    # solution and target only the highest-impact component
+    improve_ablation: bool = True
+
+
 class RouteConfig(BaseModel):
     """Per-operator backend/model override (the `routing:` config block).
     None fields inherit the global `backend`/`model`/`backend_auth` scalars."""
@@ -43,6 +56,11 @@ class RouteConfig(BaseModel):
     backend: str | None = None
     model: str | None = None
     backend_auth: str | None = None
+    # model POOL: when set (2+ entries), a UCB1 bandit picks the model per
+    # call, rewarded by whether the candidate improved on its parent
+    # (bandit.py). Takes precedence over `model` in the same layer; a
+    # single-entry pool behaves like `model`.
+    models: list[str] | None = None
 
 
 class HoldoutConfig(BaseModel):
@@ -146,6 +164,7 @@ class Config(BaseModel):
     emflow: EmflowConfig = EmflowConfig()
     learning: LearningConfig = LearningConfig()
     report: ReportConfig = ReportConfig()
+    operators: OperatorsConfig = OperatorsConfig()
     # Resolved at load time; None for embedders that construct Config()
     # directly and set absolute paths themselves (e.g. the hosted container).
     workspace_root: Path | None = Field(default=None, exclude=True)

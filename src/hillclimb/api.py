@@ -269,6 +269,8 @@ def create_search(
             problem=(
                 f"emflow://{problem.emflow_problem}"
                 if problem.kind == "emflow"
+                else f"mlebench://{problem.mlebench_comp_id}"
+                if problem.mlebench_comp_id
                 else str(problem.problem_dir)
             ),
             problem_id=problem.problem_id,
@@ -474,6 +476,8 @@ def execute_search(
     status.finalize("done")
     if problem.kind == "emflow" and selected is not None:
         _official_verify(config, problem, search_dir, journal, selected, log)
+    if problem.mlebench_comp_id and selected is not None:
+        _mlebench_grade(config, problem, search_dir, selected, log)
     _distill_knowledge(
         config, problem, search_dir, journal,
         target=target, budget_s=budget.total_s,
@@ -509,6 +513,39 @@ def _official_verify(
         )
     except Exception as exc:  # noqa: BLE001
         log(f"official verification failed (search result unaffected): {exc}")
+
+
+def _mlebench_grade(
+    config: Config,
+    problem: ProblemSpec,
+    search_dir: Path,
+    selected: Candidate,
+    log: Log,
+) -> None:
+    """One official `mlebench grade-sample` run on the selected candidate's
+    submission, AFTER the search finishes — the private test set never
+    influences selection (MLE-bench protocol). The report (score + medal
+    flags) lands in mlebench-grade.json next to the search artifacts. Best
+    effort: a grading failure never fails a finished search."""
+    import json
+
+    from hillclimb.grading import grade_submission
+
+    try:
+        submission = Path(selected.workspace) / "submission.csv"
+        if not submission.exists():
+            raise FileNotFoundError(f"selected candidate has no submission.csv: {submission}")
+        report = grade_submission(submission, problem.mlebench_comp_id, config)
+        (search_dir / "mlebench-grade.json").write_text(json.dumps(report, indent=2))
+        medal = next(
+            (m for m in ("gold_medal", "silver_medal", "bronze_medal") if report.get(m)), None
+        )
+        log(
+            f"mlebench grade: score={report.get('score')} "
+            + (f"medal={medal.removesuffix('_medal')}" if medal else "no medal")
+        )
+    except Exception as exc:  # noqa: BLE001
+        log(f"mlebench grading failed (search result unaffected): {exc}")
 
 
 def run_search(
