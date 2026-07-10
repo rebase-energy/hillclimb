@@ -290,6 +290,7 @@ def create_search(
             holdout_fraction=config.holdout.fraction,
             holdout_strategy=problem.holdout.strategy if problem.holdout else "random",
             seed_from=str(seed_from) if seed_from else None,
+            learning_enabled=config.learning.enabled,
         ),
     )
     return search_dir

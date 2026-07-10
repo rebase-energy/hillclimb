@@ -111,6 +111,31 @@ def test_run_suite_launches_one_child_per_problem(config, tmp_path, monkeypatch)
     assert (run_dirs[0] / "logs").is_dir()
 
 
+def test_run_suite_threads_no_learning_flag(config, tmp_path, monkeypatch):
+    root = tmp_path / "problems"
+    write_problem(root, "a")
+    suite = root / "suite.yaml"
+    suite.write_text("suite_id: demo\nproblems:\n  - a\n")
+    config.paths.problems_dir = root
+    config.paths.runs_dir = tmp_path / "runs"
+    calls = []
+
+    class DummyProc:
+        pid = 123
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("subprocess.Popen", lambda cmd, **kw: (calls.append(cmd), DummyProc())[1])
+
+    _run_suite(str(suite), config, budget=None, backend="dummy", model=None,
+               holdout=True, name="Demo", learning=False)
+    assert all("--no-learning" in cmd for cmd in calls)
+
+    calls.clear()
+    _run_suite(str(suite), config, budget=None, backend="dummy", model=None,
+               holdout=True, name="Demo2", learning=True)
+    assert all("--no-learning" not in cmd for cmd in calls)
+
+
 def test_run_suite_rejects_duplicate_problem_ids(config, tmp_path, monkeypatch):
     root = tmp_path / "problems"
     write_problem(root, "a")

@@ -366,6 +366,77 @@ def knowledge_graph(
     GraphApp(config).run()
 
 
+bench_app = typer.Typer(help="Learning A/B benchmark: does cross-search memory help?")
+app.add_typer(bench_app, name="bench")
+
+
+@bench_app.command("run")
+def bench_run(
+    target: str = typer.Argument(..., help="One problem (not a suite)"),
+    pairs: int = typer.Option(1, "--pairs", help="Number of off/on pairs to run"),
+    budget: str = typer.Option(None, "--budget", help="Per-search budget, e.g. 10m"),
+    backend: str = typer.Option(None, "--backend"),
+    model: str = typer.Option(None, "--model"),
+):
+    """Run paired searches: a memory-blind arm (--no-learning) then a
+    memory-full arm, sequentially per pair. Off first, so a pair's blind arm
+    never sees what its sibling learned; the on-arm accumulates knowledge
+    between pairs exactly as production searches do. Real agent runs —
+    subscription-billed; `--pairs` is your cost dial."""
+    from hillclimb.bench import bench_run_name, slugify_target
+
+    config = load_config()
+    resolved = resolve_target(target, config)
+    if resolved.kind == "suite":
+        raise typer.BadParameter("bench runs one problem at a time, not a suite")
+    problem = load_problem(target, config)
+    slug = slugify_target(problem.problem_id)
+    child_cwd = config.workspace_root or Path.cwd()
+    child_env = {**os.environ, "HILLCLIMB_WORKSPACE": str(child_cwd)}
+    for pair in range(1, pairs + 1):
+        for learning in (False, True):
+            arm = "on" if learning else "off"
+            run_name = bench_run_name(slug, pair, learning)
+            cmd = [sys.executable, "-m", "hillclimb.cli", "run", target, "--name", run_name]
+            if budget:
+                cmd += ["--budget", budget]
+            if backend:
+                cmd += ["--backend", backend]
+            if model:
+                cmd += ["--model", model]
+            if not learning:
+                cmd.append("--no-learning")
+            typer.echo(f"=== pair {pair}/{pairs}, {arm} arm: {run_name} ===")
+            result = subprocess.run(cmd, cwd=child_cwd, env=child_env)
+            if result.returncode != 0:
+                hint = " (parked — resume it, then rerun bench report)" if result.returncode == 2 else ""
+                typer.echo(f"{arm} arm exited {result.returncode}{hint}; stopping bench", err=True)
+                raise typer.Exit(result.returncode)
+    typer.echo("")
+    _bench_report_impl(config, problem.problem_id, include_all=False)
+
+
+@bench_app.command("report")
+def bench_report(
+    problem: str = typer.Option("", "--problem", help="Filter to one problem id"),
+    include_all: bool = typer.Option(
+        False, "--all", help="Group EVERY finished search by its learning flag, not just bench-* runs"
+    ),
+):
+    """Compare learning-on vs learning-off arms on the selected candidate's
+    holdout score (falls back to val when holdout was off)."""
+    _bench_report_impl(load_config(), problem, include_all=include_all)
+
+
+def _bench_report_impl(config: Config, problem_id: str, *, include_all: bool) -> None:
+    from hillclimb.bench import collect_bench_results, pair_and_summarize, render_bench_report
+
+    rows = collect_bench_results(
+        config.paths.runs_dir, problem_id=problem_id, include_all=include_all
+    )
+    typer.echo(render_bench_report(pair_and_summarize(rows)))
+
+
 def parse_budget(value: str) -> int:
     match = re.fullmatch(r"(\d+)\s*([hms]?)", value.strip())
     if not match:
@@ -502,6 +573,7 @@ def _run_suite(
     parallel_agents: int | None = None,
     n_trials: int | None = None,
     seed_from: Path | None = None,
+    learning: bool = True,
 ) -> None:
     resolved = resolve_target(target, config)
     if resolved.kind != "suite" or resolved.suite is None:
@@ -575,6 +647,8 @@ def _run_suite(
             cmd += ["--seed-from", str(seed_path)]
         if not holdout:
             cmd.append("--no-holdout")
+        if not learning:
+            cmd.append("--no-learning")
         out = log_path.open("w")
         proc = subprocess.Popen(
             cmd,
@@ -601,6 +675,10 @@ def run(
         None, "--policy", help="Search policy (default: greedy); params via config search.policy_params"
     ),
     holdout: bool = typer.Option(True, "--holdout/--no-holdout", help="Hidden selection holdout"),
+    learning: bool = typer.Option(
+        True, "--learning/--no-learning",
+        help="Cross-search memory (cards/claims injection + distillation); off = memory-blind arm",
+    ),
     name: str = typer.Option(None, "--name", help="Run name shown in the TUI"),
     parallel_agents: int = typer.Option(
         None, "--parallel-agents", help="Concurrent operators (worker pool)"
@@ -618,6 +696,8 @@ def run(
     config = load_config(backend=backend, model=model)
     if not holdout:
         config.holdout.enabled = False
+    if not learning:
+        config.learning.enabled = False
     if policy is not None:
         config.search.policy = policy
     if parallel_agents is not None:
@@ -629,7 +709,7 @@ def run(
         _run_suite(
             target, config, budget, backend, model, holdout, name,
             policy=policy, parallel_agents=parallel_agents, n_trials=n_trials,
-            seed_from=seed_from,
+            seed_from=seed_from, learning=learning,
         )
         return
     _run_problem(
