@@ -6,12 +6,12 @@ and color by concept. The pure functions at the top carry all geometry,
 rasterization, and hit-testing so they stay testable without driving Textual;
 the widgets below are thin shells in the style of watch.py.
 
-Geometry lives in BRAILLE-DOT SPACE: each terminal cell is 2x4 braille dots,
-and a dot is roughly square on screen — so distances, hit tests, and line
-rasterization done in dots sidestep the 1:2 cell aspect distortion entirely.
-Edges are drawn as braille lines, nodes as single-cell glyphs (a node owns
-its cell's style — one Rich style per cell), labels as plain text with a
-greedy collision mask.
+Geometry lives in DOT SPACE: each terminal cell is 2x4 dots, and a dot is
+roughly square on screen — so distances, camera math, and hit tests done in
+dots sidestep the 1:2 cell aspect distortion entirely. Edges render as thin
+continuous strokes (─ │ ╱ ╲ picked per cell by line direction), nodes as
+single-cell glyphs (a node owns its cell's style — one Rich style per cell),
+labels as plain text with a greedy collision mask.
 """
 
 from __future__ import annotations
@@ -30,9 +30,11 @@ from hillclimb.graph import GraphNode, KnowledgeGraph, graph_at
 
 # --- pure data layer ---
 
-BRAILLE_BASE = 0x2800
-# braille dot bit for [row 0-3][col 0-1] within one cell
-DOT_BITS = ((0x01, 0x08), (0x02, 0x10), (0x04, 0x20), (0x40, 0x80))
+# Edges rasterize as thin box-drawing strokes, one character per cell picked
+# by the line's local direction — continuous connecting lines, not scattered
+# dots (braille) or half-cell slabs (quadrant blocks). Geometry stays in 2x4
+# dot space (square dots); rasterization walks the line at cell resolution.
+LINE_H, LINE_V, LINE_UP, LINE_DOWN = "─", "│", "╱", "╲"
 
 SCALE_MIN = 1.0
 SCALE_MAX = 20000.0
@@ -293,21 +295,20 @@ def fit_camera(bounds: WorldBounds, dots_w: int, dots_h: int) -> Camera:
 
 
 class CellBuffer:
-    """A cells_w x cells_h frame: braille bitmasks for edges, whole-cell
-    characters for glyphs/labels (chars win over dots at flush), one style
-    string per cell."""
+    """A cells_w x cells_h frame: an edge-stroke layer under a whole-cell
+    glyph/label layer (chars win over lines at flush), one style string per
+    cell."""
 
     def __init__(self, cells_w: int, cells_h: int):
         self.w = cells_w
         self.h = cells_h
-        self.dots = [[0] * cells_w for _ in range(cells_h)]
+        self.lines: list[list[str | None]] = [[None] * cells_w for _ in range(cells_h)]
         self.chars: list[list[str | None]] = [[None] * cells_w for _ in range(cells_h)]
         self.styles: list[list[str | None]] = [[None] * cells_w for _ in range(cells_h)]
 
-    def set_dot(self, dx: int, dy: int, style: str) -> None:
-        cx, cy = dx // 2, dy // 4
+    def set_line(self, cx: int, cy: int, char: str, style: str) -> None:
         if 0 <= cx < self.w and 0 <= cy < self.h:
-            self.dots[cy][cx] |= DOT_BITS[dy % 4][dx % 2]
+            self.lines[cy][cx] = char  # crossing edges: last drawn wins the cell
             if self.chars[cy][cx] is None:  # a glyph keeps its own style
                 self.styles[cy][cx] = style
 
@@ -326,10 +327,7 @@ class CellBuffer:
             run: list[str] = []
             run_style: str | None = None
             for x in range(self.w):
-                char = self.chars[y][x]
-                if char is None:
-                    mask = self.dots[y][x]
-                    char = chr(BRAILLE_BASE + mask) if mask else " "
+                char = self.chars[y][x] or self.lines[y][x] or " "
                 style = self.styles[y][x] if char != " " else None
                 if style != run_style and run:
                     segments.append(Segment("".join(run), Style.parse(run_style) if run_style else None))
@@ -370,23 +368,37 @@ def clip_segment(
 
 
 def draw_line(buf: CellBuffer, x0: int, y0: int, x1: int, y1: int, style: str) -> None:
-    """Integer Bresenham in dot coordinates."""
-    dx = abs(x1 - x0)
-    dy = -abs(y1 - y0)
-    sx = 1 if x0 < x1 else -1
-    sy = 1 if y0 < y1 else -1
+    """Rasterize an edge as a thin stroke: Bresenham over CELLS (endpoints
+    arrive in dot coordinates), each step stamping ─ │ ╱ or ╲ by the step's
+    direction so consecutive cells read as one continuous line."""
+    cx, cy = x0 // 2, y0 // 4
+    ex, ey = x1 // 2, y1 // 4
+    dx = abs(ex - cx)
+    dy = -abs(ey - cy)
+    sx = 1 if cx < ex else -1
+    sy = 1 if cy < ey else -1
+    if cx == ex and cy == ey:
+        buf.set_line(cx, cy, LINE_H if abs(x1 - x0) >= abs(y1 - y0) else LINE_V, style)
+        return
     err = dx + dy
-    while True:
-        buf.set_dot(x0, y0, style)
-        if x0 == x1 and y0 == y1:
-            return
+    while not (cx == ex and cy == ey):
         e2 = 2 * err
+        stepped_x = stepped_y = False
         if e2 >= dy:
             err += dy
-            x0 += sx
+            cx += sx
+            stepped_x = True
         if e2 <= dx:
             err += dx
-            y0 += sy
+            cy += sy
+            stepped_y = True
+        if stepped_x and stepped_y:
+            char = LINE_DOWN if sx == sy else LINE_UP  # y grows downward
+        elif stepped_x:
+            char = LINE_H
+        else:
+            char = LINE_V
+        buf.set_line(cx, cy, char, style)
 
 
 def concept_color(concept: str) -> str:
@@ -417,7 +429,7 @@ def render_frame(
     hovered: str | None = None,
     color_by: str = "type",
 ) -> tuple[list[list[Segment]], list[PlacedNode]]:
-    """Rasterize one frame. Z-order: edge dots < node glyphs < labels <
+    """Rasterize one frame. Z-order: edge strokes < node glyphs < labels <
     selection ring. Returns the rows plus the on-screen node positions
     (in dots) that hit-testing consumes."""
     buf = CellBuffer(cells_w, cells_h)

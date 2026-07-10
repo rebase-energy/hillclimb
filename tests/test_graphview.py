@@ -77,16 +77,30 @@ class TestCamera:
 
 
 class TestRaster:
-    def test_draw_line_horizontal_braille(self):
+    def test_draw_line_horizontal_stroke(self):
         buf = CellBuffer(4, 2)
-        draw_line(buf, 0, 0, 3, 0, "cyan")
-        # top row of dots across two cells: bits 0x01|0x08 = 0x09
-        assert buf.dots[0][0] == 0x09
-        assert buf.dots[0][1] == 0x09
+        draw_line(buf, 0, 0, 7, 0, "cyan")  # dots 0..7 -> cells 0..3
         rows = buf.to_segments()
         text = "".join(seg.text for seg in rows[0])
-        assert text[0] == chr(0x2800 + 0x09)
+        assert text[1:4] == "───"
         assert len(text) == 4
+
+    def test_draw_line_vertical_and_diagonal_strokes(self):
+        buf = CellBuffer(4, 4)
+        draw_line(buf, 0, 0, 0, 15, "cyan")  # dots rows 0..15 -> cells 0..3
+        column = [buf.lines[y][0] for y in range(1, 4)]
+        assert column == ["│", "│", "│"]
+        buf2 = CellBuffer(4, 4)
+        draw_line(buf2, 0, 0, 7, 15, "cyan")  # down-right diagonal
+        assert "╲" in {buf2.lines[y][x] for y in range(4) for x in range(4)} - {None}
+        buf3 = CellBuffer(4, 4)
+        draw_line(buf3, 0, 15, 7, 0, "cyan")  # up-right diagonal
+        assert "╱" in {buf3.lines[y][x] for y in range(4) for x in range(4)} - {None}
+
+    def test_same_cell_edge_stub(self):
+        buf = CellBuffer(2, 2)
+        draw_line(buf, 0, 0, 1, 0, "cyan")  # both endpoints inside cell (0,0)
+        assert buf.lines[0][0] == "─"
 
     def test_rows_are_exact_width(self):
         buf = CellBuffer(7, 3)
@@ -95,12 +109,12 @@ class TestRaster:
         for row in buf.to_segments():
             assert sum(len(seg.text) for seg in row) == 7
 
-    def test_glyph_wins_over_dots(self):
+    def test_glyph_wins_over_edges(self):
         buf = CellBuffer(2, 1)
         draw_line(buf, 0, 0, 3, 0, "dim blue")
-        buf.set_char(0, 0, "●", "yellow")
+        buf.set_char(1, 0, "●", "yellow")
         text = "".join(seg.text for seg in buf.to_segments()[0])
-        assert text[0] == "●"
+        assert text[1] == "●"
 
     def test_clip_segment(self):
         assert clip_segment(-5, -5, -1, -1, 100, 100) is None
