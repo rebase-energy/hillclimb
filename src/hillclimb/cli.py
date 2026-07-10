@@ -323,6 +323,49 @@ def knowledge_distill(
     typer.echo(f"{len(card.claims)} claim(s) -> {path}")
 
 
+@knowledge_app.command("rebuild")
+def knowledge_rebuild():
+    """Force-rebuild knowledge/graph.json from the cards and registries.
+    The graph is a derived index — always safe to rebuild, never hand-edit."""
+    from hillclimb.api import resolve_knowledge_dir
+    from hillclimb.graph import graph_path, graph_stats, rebuild_graph
+
+    config = load_config()
+    knowledge_dir = resolve_knowledge_dir(config)
+    if knowledge_dir is None:
+        typer.echo("learning is disabled or no workspace/knowledge dir resolvable", err=True)
+        raise typer.Exit(1)
+    graph = rebuild_graph(knowledge_dir)
+    typer.echo(f"rebuilt {graph_path(knowledge_dir)}")
+    typer.echo(graph_stats(graph))
+
+
+@knowledge_app.command("graph")
+def knowledge_graph(
+    stats: bool = typer.Option(False, "--stats", help="Print index stats instead of the TUI"),
+):
+    """Explore the knowledge graph. Default: the interactive TUI screen
+    (zoom/pan/click, time scrubber); --stats prints a text summary."""
+    from hillclimb.api import resolve_knowledge_dir
+    from hillclimb.graph import graph_stats, load_or_build_graph
+
+    config = load_config()
+    knowledge_dir = resolve_knowledge_dir(config)
+    if knowledge_dir is None:
+        typer.echo("learning is disabled or no workspace/knowledge dir resolvable", err=True)
+        raise typer.Exit(1)
+    if stats:
+        typer.echo(graph_stats(load_or_build_graph(knowledge_dir)))
+        return
+    try:
+        from hillclimb.graphview import GraphApp
+    except ModuleNotFoundError as exc:
+        raise typer.BadParameter(
+            "`hillclimb knowledge graph` needs the TUI extra: pip install 'hillclimb[tui]'"
+        ) from exc
+    GraphApp(config).run()
+
+
 def parse_budget(value: str) -> int:
     match = re.fullmatch(r"(\d+)\s*([hms]?)", value.strip())
     if not match:

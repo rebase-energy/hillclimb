@@ -280,6 +280,7 @@ emflow = [
     { name = "emflow" },
 ]
 tui = [
+    { name = "networkx" },
     { name = "pydot" },
     { name = "textual" },
 ]
@@ -287,6 +288,7 @@ tui = [
 [package.dev-dependencies]
 dev = [
     { name = "emflow" },
+    { name = "networkx" },
     { name = "pydot" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -296,6 +298,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "emflow", marker = "extra == 'emflow'", editable = "../emflow" },
+    { name = "networkx", marker = "extra == 'tui'", specifier = ">=3.0" },
     { name = "pandas", specifier = ">=3.0.3" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pydot", marker = "extra == 'tui'", specifier = ">=4.0.1" },
@@ -309,6 +312,7 @@ provides-extras = ["tui", "emflow"]
 [package.metadata.requires-dev]
 dev = [
     { name = "emflow", editable = "../emflow" },
+    { name = "networkx", specifier = ">=3.0" },
     { name = "pydot", specifier = ">=4.0.1" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
@@ -447,6 +451,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e8/ac/66ed1fc6e38a0c0f330627ec5c5d597990d6159b6712b82af0ad2c65f06c/narwhals-2.23.0.tar.gz", hash = "sha256:13e7ff5b4bb4a2f77b907c2e4d8a76e273dfc1323a3c997440a2f9fd26aed408", size = 656209, upload-time = "2026-07-01T11:21:53.278Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f4/4e/afc8c31605cb8be1d3bb4438c4d979daa104dab6306cd2b87abe9c3a7299/narwhals-2.23.0-py3-none-any.whl", hash = "sha256:769e7b9ab102c93d8fa019f6b4cd1a657909b04a20bf6210e5a35aae06814ae9", size = 458938, upload-time = "2026-07-01T11:21:51.677Z" },
+]
+
+[[package]]
+name = "networkx"
+version = "3.6.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6a/51/63fe664f3908c97be9d2e4f1158eb633317598cfa6e1fc14af5383f17512/networkx-3.6.1.tar.gz", hash = "sha256:26b7c357accc0c8cde558ad486283728b65b6a95d85ee1cd66bafab4c8168509", size = 2517025, upload-time = "2025-12-08T17:02:39.908Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9e/c9/b2622292ea83fbb4ec318f5b9ab867d0a28ab43c5717bb85b0a5f6b3b0a4/networkx-3.6.1-py3-none-any.whl", hash = "sha256:d47fbf302e7d9cbbb9e2555a0d267983d2aa476bac30e90dfbe5669bd57f3762", size = 2068504, upload-time = "2025-12-08T17:02:38.159Z" },
 ]
 
 [[package]]

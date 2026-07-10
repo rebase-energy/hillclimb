@@ -15,6 +15,7 @@ dependencies = [
 tui = [
     "textual>=1.0",
     "pydot>=4.0.1",
+    "networkx>=3.0",
 ]
 emflow = [
     "emflow>=0.3,<0.4",
@@ -29,6 +30,7 @@ dev = [
     "pytest-asyncio>=1.4.0",
     "textual>=1.0",
     "pydot>=4.0.1",
+    "networkx>=3.0",
     "emflow",
 ]
 

@@ -394,6 +394,15 @@ def _distill_knowledge(
             # running loaded their static prior cards before this search
             # finished, so the live channel is how its result reaches them
             write_live_card(search_dir.parents[1], card, search_dir.name)
+        if knowledge_dir is not None:
+            # keep the derived graph index fresh; cheap at this scale and
+            # best-effort like everything else here
+            try:
+                from hillclimb.graph import rebuild_graph
+
+                rebuild_graph(knowledge_dir)
+            except Exception as exc:  # noqa: BLE001
+                log(f"learning: graph rebuild failed (card unaffected): {exc}")
     except Exception as exc:  # noqa: BLE001
         log(f"learning: card distillation failed (search result unaffected): {exc}")
 
