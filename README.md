@@ -311,6 +311,22 @@ git-versionable — it lives in your workspace's `hillclimb/knowledge/`:
   every claim accumulates a measured track record that adjusts its retrieval
   ranking; chronically failing claims retire. Memory that learns whether
   it's right.
+- **Playbooks** (`learning.playbooks`, default on) — `hillclimb knowledge
+  consolidate` is the sleep phase: multi-family claims generalize up the
+  concept hierarchy, and each concept with enough evidence gets an
+  agent-written playbook (`knowledge/playbooks/<concept>.md`, a reviewable
+  git diff) that replaces the raw claims block in draft prompts; credit
+  flows to the playbook's source claims.
+- **Skills** (`learning.skills`, default on) — winning solutions are
+  harvested into `knowledge/skills/` (2 best per family) and the best match
+  lands in the next search's first draft as `reference_solution.py`: proven
+  scaffolds, not prose hints.
+- **Query tool** (`operators.knowledge_tool`, default on) — operator agents
+  are told they can run `hillclimb knowledge query "<keywords>"` mid-search
+  to consult the memory before re-deriving something expensive.
+- **Benchmark** — `hillclimb bench run <problem> --pairs N` answers the only
+  question that matters: do memory-on searches beat memory-blind ones on
+  holdout? `bench report` renders the verdict.
 
 Explore it interactively with `hillclimb knowledge graph` (or `g` inside
 `hillclimb watch`): a zoom/pan/click canvas with a node detail panel, a time
@@ -359,7 +375,11 @@ the run has a single search), or `latest` (the default).
 | `knowledge graph [--stats]` | interactive knowledge-graph TUI (or a text summary) |
 | `knowledge rebuild` | force-rebuild the derived `knowledge/graph.json` index |
 | `knowledge distill [search] [--backfill]` | run the LLM claims pass on a search / all cards |
+| `knowledge consolidate [--dry-run]` | sleep phase: generalize claims + rewrite playbooks |
+| `knowledge query "<terms>" [--json]` | read-only memory lookup (also available to agents) |
 | `knowledge show <target>` | the prior-experience section a new search would get |
+| `bench run <problem> --pairs N` | paired learning-on/off searches (the memory A/B) |
+| `bench report [--problem X] [--all]` | compare the arms on holdout |
 
 Exit code `2` from `run`/`resume` means the search parked or was stopped — resume it.
 

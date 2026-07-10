@@ -22,6 +22,36 @@ computed at graph-build time (two temporal rules in
 `graph.compute_supersessions`) instead of writing `superseded_by` into old
 cards — cards stay immutable once written.
 
+## Roadmap steps 2-4 + benchmark (added 2026-07-10)
+
+- **A/B benchmark** (`bench.py`): `hillclimb bench run <problem> --pairs N`
+  executes sequential off/on pairs (`--no-learning` arm first per pair, so
+  the blind arm never sees its sibling's card while the on-arm keeps
+  learning between pairs); `bench report` groups finished searches by
+  `SearchMeta.learning_enabled` and compares arms on the selected
+  candidate's holdout (val fallback) with per-pair winners and a win-rate
+  verdict. This is the measuring stick everything below answers to.
+- **Consolidation + playbooks** (`consolidate.py`, manual
+  `hillclimb knowledge consolidate`): mechanically lifts claims asserted in
+  2+ families up the concept hierarchy (evidence union, mean of MEASURED
+  confidences, deterministic ids, `generalizes` edges in the graph), then
+  one agent call per concept with 3+ live claims rewrites
+  `knowledge/playbooks/<concept>.md` — reviewable git diffs. Draft prompts
+  inject a matching playbook INSTEAD of the raw claims block
+  (`learning.playbooks`), and credit flows to the playbook's
+  `source_claims`, keeping the loop closed through the rewrite.
+- **Skill library** (`skills.py`): scored non-baseline winners are harvested
+  verbatim into `knowledge/skills/<family>--<run-ref>/` (2 best per family,
+  direction-aware). The next search's FIRST draft gets the best match
+  (same-family by score, else concept-sibling by recency) as
+  `reference_solution.py` plus a starter cue; later drafts stay
+  reference-free (`learning.skills`).
+- **Memory as a tool**: `hillclimb knowledge query "<terms>" [--json]` is an
+  LLM-free graph lookup (entities lead with their live claims, track
+  records, retirement status). All operator contracts advertise it via a
+  tools clause (`operators.knowledge_tool`) using the engine's own
+  interpreter path.
+
 ## Credit assignment (added 2026-07-10, roadmap step 1)
 
 Claims answer for their advice. When a search's draft prompt carries

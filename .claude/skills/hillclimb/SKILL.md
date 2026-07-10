@@ -105,7 +105,11 @@ uv run hillclimb knowledge graph --stats        # text summary of the graph
 uv run hillclimb knowledge graph                # interactive TUI (zoom/pan/click/scrub) — don't run headless
 uv run hillclimb knowledge rebuild              # regenerate the derived graph.json
 uv run hillclimb knowledge distill [search]     # claims pass for one search (--backfill: all cards)
+uv run hillclimb knowledge consolidate          # sleep phase: generalize claims + rewrite playbooks (agent calls)
+uv run hillclimb knowledge query "<terms>"      # read-only memory lookup (no agent calls)
 uv run hillclimb knowledge show <target>        # prior-experience block a new search would get
+uv run hillclimb bench run <problem> --pairs 1 --budget 10m  # learning on/off A/B (2 real searches per pair)
+uv run hillclimb bench report                   # compare the arms on holdout
 ```
 
 ## Rules

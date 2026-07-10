@@ -10,3 +10,4 @@ tasks/data/**/*.zip
 .gstack/
 hillclimb/knowledge/graph.json
 hillclimb/knowledge/.distill/
+hillclimb/knowledge/.consolidate/
