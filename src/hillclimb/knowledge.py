@@ -29,6 +29,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from hillclimb.candidate import utcnow
+from hillclimb.claims import Claim
 
 SCHEMA_VERSION = 1
 CARD_FILENAME = "knowledge_card.yaml"
@@ -79,6 +80,9 @@ class KnowledgeCard(BaseModel):
     operator_stats: dict[str, OperatorStat] = Field(default_factory=dict)
     top_approaches: list[ApproachNote] = Field(default_factory=list)
     failure_modes: list[str] = Field(default_factory=list)
+    # semantic layer (claims.py): typed claims distilled by the post-search
+    # LLM pass. Additive — cards without it load unchanged.
+    claims: list[Claim] = Field(default_factory=list)
 
 
 def problem_family(problem_id: str, target: str = "") -> str:

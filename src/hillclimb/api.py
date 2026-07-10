@@ -357,13 +357,31 @@ def _distill_knowledge(
             cost_usd=cost_usd,
             selection=config.holdout.selection,
         )
+        knowledge_dir = resolve_knowledge_dir(config)
+        if config.learning.claims and knowledge_dir is not None:
+            # inner guard: a failed distill pass costs the claims, not the card
+            try:
+                from hillclimb.claims import distill_claims
+
+                card.claims = distill_claims(
+                    journal,
+                    problem=problem,
+                    card=card,
+                    search_dir=search_dir,
+                    knowledge_dir=knowledge_dir,
+                    config=config,
+                    log=log,
+                )
+                if card.claims:
+                    log(f"learning: {len(card.claims)} claim(s) distilled")
+            except Exception as exc:  # noqa: BLE001
+                log(f"learning: claims distillation failed (card unaffected): {exc}")
         # always keep a copy with the search artifacts (synced for hosted runs)
         import yaml as _yaml
 
         (search_dir / CARD_FILENAME).write_text(
             _yaml.safe_dump(card.model_dump(exclude_none=True), sort_keys=False)
         )
-        knowledge_dir = resolve_knowledge_dir(config)
         if knowledge_dir is not None:
             path = write_card(knowledge_dir, card)
             log(f"learning: knowledge card written to {path}")

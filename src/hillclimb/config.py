@@ -113,6 +113,14 @@ class LearningConfig(BaseModel):
     # opt-in policy bias: start the draft complexity schedule one step up
     # when past winners were never 'minimal'
     complexity_prior: bool = False
+    # semantic layer: one cheap agent pass after each finished search
+    # distills typed claims into the card (claims.py). Routed via
+    # `routing: distill:` (default model: haiku).
+    claims: bool = True
+    claims_timeout_s: int = 300
+    # inject graph-ranked claims into operator prompts when
+    # knowledge/graph.json exists (its own flag so A/B stays possible)
+    graph_retrieval: bool = True
 
 
 class ReportConfig(BaseModel):
@@ -153,8 +161,9 @@ class Config(BaseModel):
     backend: str = "claude-code"
     backend_auth: str = "subscription"  # subscription | api-key
     model: str = "sonnet"
-    # per-operator routing; keys: draft | debug | improve | ensemble | default.
-    # Missing keys (or an absent block) fall back to the scalars above.
+    # per-operator routing; keys: draft | debug | improve | ensemble |
+    # distill | default. Missing keys (or an absent block) fall back to the
+    # scalars above (except distill's model, which defaults to haiku).
     routing: dict[str, RouteConfig] = Field(default_factory=dict)
     budget: BudgetConfig = BudgetConfig()
     search: SearchConfig = SearchConfig()

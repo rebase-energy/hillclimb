@@ -244,6 +244,85 @@ def knowledge_show(target: str = typer.Argument(..., help="Problem target, e.g. 
     typer.echo(render_prior_experience(cards, max_cards=config.learning.max_cards))
 
 
+@knowledge_app.command("distill")
+def knowledge_distill(
+    search: str = typer.Argument(
+        "latest", help="Search ref (run-id/search-id), or `latest`"
+    ),
+    backfill: bool = typer.Option(
+        False, "--backfill", help="Extract claims for every knowledge card that has none"
+    ),
+):
+    """Run the LLM claims pass: distill typed claims (entities, concepts)
+    from a finished search — or backfill them across existing cards."""
+    from hillclimb.api import resolve_knowledge_dir
+    from hillclimb.claims import distill_claims, distill_claims_from_card
+    from hillclimb.knowledge import SCHEMA_VERSION, KnowledgeCard, distill_card, write_card
+
+    import yaml as _yaml
+
+    config = load_config()
+    knowledge_dir = resolve_knowledge_dir(config)
+    if knowledge_dir is None:
+        typer.echo("learning is disabled or no workspace/knowledge dir resolvable", err=True)
+        raise typer.Exit(1)
+
+    if backfill:
+        distilled = 0
+        for path in sorted(knowledge_dir.glob("*/*.yaml")):
+            try:
+                data = _yaml.safe_load(path.read_text()) or {}
+                if data.get("schema_version") != SCHEMA_VERSION or data.get("claims"):
+                    continue
+                card = KnowledgeCard.model_validate(data)
+            except Exception:  # noqa: BLE001
+                continue
+            workspace = knowledge_dir / ".distill" / path.stem
+            card.claims = distill_claims_from_card(
+                card, workspace=workspace, knowledge_dir=knowledge_dir,
+                config=config, log=typer.echo,
+            )
+            if card.claims:
+                write_card(knowledge_dir, card)
+                distilled += 1
+                typer.echo(f"  {path.relative_to(knowledge_dir)}: {len(card.claims)} claim(s)")
+        typer.echo(f"{distilled} card(s) backfilled with claims")
+        return
+
+    if search == "latest":
+        search_dir = latest_search_dir(config.paths.runs_dir)
+        if search_dir is None:
+            typer.echo(f"No searches found in {config.paths.runs_dir}", err=True)
+            raise typer.Exit(1)
+    else:
+        run_id, _, search_id = search.partition("/")
+        search_dir = config.paths.runs_dir / run_id / SEARCHES_DIRNAME / search_id
+    meta = load_search_meta(search_dir)
+    if meta is None:
+        raise typer.BadParameter(f"No search at {search_dir}")
+    journal = Journal(search_dir / "journal.jsonl")
+    if not journal.scored_candidates():
+        typer.echo("search has no scored candidates — nothing to distill", err=True)
+        raise typer.Exit(1)
+    problem = SimpleNamespace(
+        problem_id=meta.problem_id,
+        metric_name=meta.metric,
+        lower_is_better=meta.lower_is_better,
+    )
+    target = meta.problem if meta.problem.startswith("emflow://") else ""
+    card = distill_card(
+        journal, problem=problem, run_ref=search_ref(search_dir),
+        target=target, budget_s=meta.budget_s,
+        selection=config.holdout.selection,
+    )
+    card.claims = distill_claims(
+        journal, problem=problem, card=card, search_dir=search_dir,
+        knowledge_dir=knowledge_dir, config=config, log=typer.echo,
+    )
+    path = write_card(knowledge_dir, card)
+    typer.echo(f"{len(card.claims)} claim(s) -> {path}")
+
+
 def parse_budget(value: str) -> int:
     match = re.fullmatch(r"(\d+)\s*([hms]?)", value.strip())
     if not match:

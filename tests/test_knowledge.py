@@ -201,6 +201,7 @@ class TestLiveSharing:
         def run_search(problem, notes):
             for note, val in zip(notes, (0.7, 0.75)):
                 backend.queue(script=ok_script(val), notes=note + "\n")
+            backend.queue(operator="distill", files={"claims.yaml": "claims: []\n"})
             search_dir = create_search(config, problem, run_dir, "suite-run", 3600)
             outcome = execute_search(
                 config, problem, search_dir, BudgetManager(3600, stop_margin_s=1),
@@ -249,6 +250,15 @@ class TestEndToEnd:
 
         def run_once(name, val, note):
             backend.queue(script=ok_script(val), notes=note + "\n")
+            backend.queue(operator="distill", files={"claims.yaml": (
+                "claims:\n"
+                "  - subject: gradient-boosting\n"
+                "    relation: helps\n"
+                "    confidence: 0.7\n"
+                "entities:\n"
+                "  - slug: gradient-boosting\n"
+                "    concepts: [decision-trees]\n"
+            )})
             run_dir = create_run_dir(config.paths.runs_dir, name)
             search_dir = create_search(config, task, run_dir, name, 3600)
             return execute_search(
@@ -261,8 +271,12 @@ class TestEndToEnd:
         config.search.num_drafts = 1
         outcome1 = run_once("run-one", 0.7, "winning approach: gradient boosting")
         assert outcome1.state == "done"
-        cards = list((tmp_path / "knowledge").rglob("*.yaml"))
+        # cards live in family subdirs; the knowledge-dir root holds the
+        # concept/entity registries the distill pass maintains
+        cards = list((tmp_path / "knowledge").glob("*/*.yaml"))
         assert len(cards) == 1
+        card_text = cards[0].read_text()
+        assert "gradient-boosting" in card_text and "claims:" in card_text
 
         # second search: the draft prompt must carry the first search's learnings
         outcome2 = run_once("run-two", 0.8, "second approach\n")
