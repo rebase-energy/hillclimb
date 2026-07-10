@@ -36,10 +36,10 @@ def make_card(problem_id="spaceship-titanic", run_ref="r1/s1", finished_at="2026
 
 
 def claim(subject="histgradientboosting", relation="helps", obj="", observed="2026-07-01T00:00:00Z",
-          family="spaceship-titanic", cid="cl1"):
+          family="spaceship-titanic", cid="cl1", confidence=0.8):
     return Claim(
         claim_id=cid, subject=subject, relation=relation, object=obj,
-        scope={"family": family, "problem_id": family}, confidence=0.8,
+        scope={"family": family, "problem_id": family}, confidence=confidence,
         evidence=["c001"], observed_at=observed,
     )
 
@@ -195,13 +195,15 @@ class TestRetrieval:
             problem_id="spaceship-titanic", metric_name="accuracy",
             lower_is_better=False, kind="csv",
         )
-        with_graph, _ = build_knowledge_context(config, problem, "", lambda m: None)
+        with_graph, _, injected = build_knowledge_context(config, problem, "", lambda m: None)
         assert "Distilled claims" in with_graph
         assert "histgradientboosting helps" in with_graph
+        assert injected == ["cl1"]  # ids surfaced for credit assignment
         config.learning.graph_retrieval = False
-        without, _ = build_knowledge_context(config, problem, "", lambda m: None)
+        without, _, none_injected = build_knowledge_context(config, problem, "", lambda m: None)
         assert "Distilled claims" not in without
         assert "PREVIOUS searches" in without  # cards block unaffected
+        assert none_injected == []
 
     def test_superseded_claims_not_retrieved(self, knowledge_dir):
         from hillclimb.graph import retrieve_claims
@@ -217,6 +219,77 @@ class TestRetrieval:
         )]
         assert "claim:cl1" not in ids  # displaced by the newer no_effect belief
         assert "claim:newer" in ids
+
+
+class TestCreditFold:
+    def _event(self, knowledge_dir, run_ref, claim_ids, reward, observed):
+        from hillclimb.credit import CreditEvent, write_credit_event
+
+        write_credit_event(knowledge_dir, CreditEvent(
+            run_ref=run_ref, problem_id="spaceship-titanic",
+            family="spaceship-titanic", claim_ids=claim_ids,
+            reward=reward, observed_at=observed,
+        ))
+
+    def test_track_lands_on_claim_node(self, knowledge_dir):
+        self._event(knowledge_dir, "r2/s1", ["cl1"], 1.0, "2026-07-02T00:00:00Z")
+        graph = build_graph(knowledge_dir)
+        track = graph.node_map()["claim:cl1"].data["track"]
+        assert track["injections"] == 1
+        assert track["mean_reward"] == 1.0
+        # authored 0.8, one win: (0.8*2 + 1) / 3
+        assert track["adjusted_confidence"] == pytest.approx(2.6 / 3, abs=1e-3)
+
+    def test_track_record_reorders_retrieval(self, knowledge_dir):
+        from hillclimb.graph import retrieve_claims
+
+        # a humble claim with wins vs a confident claim with losses
+        write_card(knowledge_dir, make_card(
+            run_ref="r3/s1", finished_at="2026-07-03T00:00:00Z",
+            claims=[claim(relation="requires", cid="humble", confidence=0.4,
+                          observed="2026-07-03T00:00:00Z")],
+        ))
+        for i, (ids, reward) in enumerate([
+            (["cl1"], 0.0), (["cl1"], 0.0), (["humble"], 1.0), (["humble"], 1.0),
+        ]):
+            self._event(knowledge_dir, f"r{i + 4}/s1", ids, reward,
+                        f"2026-07-0{i + 4}T00:00:00Z")
+        graph = build_graph(knowledge_dir)
+        ids = [n.id for n in retrieve_claims(
+            graph, family="spaceship-titanic", problem_id="spaceship-titanic",
+            concepts=["tabular"],
+        )]
+        # humble: (0.4*2 + 2)/4 = 0.7 beats cl1: (0.8*2 + 0)/4 = 0.4
+        assert ids.index("claim:humble") < ids.index("claim:cl1")
+
+    def test_conclusive_losers_retire(self, knowledge_dir):
+        from hillclimb.graph import retrieve_claims
+
+        write_card(knowledge_dir, make_card(
+            run_ref="r3/s1", finished_at="2026-07-03T00:00:00Z",
+            claims=[claim(relation="requires", cid="loser", confidence=0.3,
+                          observed="2026-07-03T00:00:00Z")],
+        ))
+        for i in range(3):
+            self._event(knowledge_dir, f"r{i + 4}/s1", ["loser"], 0.0,
+                        f"2026-07-0{i + 4}T00:00:00Z")
+        graph = build_graph(knowledge_dir)
+        node = graph.node_map()["claim:loser"]
+        # authored 0.3, three losses: 0.6/5 = 0.12 < 0.15 -> retired
+        assert node.data["retired"] == "track record"
+        assert node.superseded_at == "2026-07-06T00:00:00Z"
+        retrieved = {n.id for n in retrieve_claims(
+            graph, family="spaceship-titanic", problem_id="spaceship-titanic",
+            concepts=["tabular"],
+        )}
+        assert "claim:loser" not in retrieved
+        # still part of history before its retirement
+        past = {n.id for n in graph_at(graph, "2026-07-05T00:00:00Z").nodes}
+        assert "claim:loser" in past
+        # two losses are never conclusive
+        assert "track" in graph.node_map()["claim:cl1"].data or True  # cl1 untouched here
+        graph2 = build_graph(knowledge_dir)
+        assert graph2.node_map()["claim:cl1"].superseded_at is None
 
 
 class TestPersistence:

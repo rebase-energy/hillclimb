@@ -22,6 +22,29 @@ computed at graph-build time (two temporal rules in
 `graph.compute_supersessions`) instead of writing `superseded_by` into old
 cards — cards stay immutable once written.
 
+## Credit assignment (added 2026-07-10, roadmap step 1)
+
+Claims answer for their advice. When a search's draft prompt carries
+distilled claims, the injected claim ids are recorded
+(`search_dir/injected_claims.json`, unioned across resumes); when the search
+finishes, all of them share one outcome reward (`credit.py`): **1.0** if the
+search beat the best previously recorded score on the same problem (first
+search on a problem: beat its own baseline candidate), **0.25** scored but
+no record, **0.0** nothing scored — the routing bandit's scale. Each search
+writes one append-only event to `knowledge/credit/<run-ref>.yaml` (no
+mutable registry: suite searches are unlocked parallel processes), and the
+graph builder folds events into per-claim track records:
+`adjusted_confidence = (authored × 2 + Σ rewards) / (2 + injections)` —
+Beta-style smoothing so one bad search can't kill a claim. Retrieval ranks
+by adjusted confidence when a record exists; a claim injected ≥3 times whose
+adjusted confidence sinks below 0.15 is retired through the supersession
+machinery (gone from retrieval and live views, still visible in scrubber
+history). Gated by `learning.credit` (default on).
+
+Known coarseness, accepted for v1: attribution is per-search — every
+injected claim shares the same reward, since claims reach only the draft
+prompt and disentangling individual influence isn't worth the machinery yet.
+
 The push: turn the knowledge hillclimb accumulates across searches
 into a temporal knowledge graph — semantically distilled, queryable for
 retrieval, and explorable as an interactive (zoom/pan/click) graph inside the

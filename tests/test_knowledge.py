@@ -287,3 +287,18 @@ class TestEndToEnd:
         # ...including the graph-retrieved distilled claim from run one
         assert "Distilled claims" in draft_prompt
         assert "gradient-boosting helps" in draft_prompt
+
+        # credit assignment: run-two improved 0.7 -> 0.8 over run-one's
+        # record, so the injected claim earned a full-reward event...
+        from hillclimb.credit import load_credit_events
+        from hillclimb.graph import graph_path, load_graph
+
+        events = load_credit_events(tmp_path / "knowledge")
+        assert len(events) == 1
+        assert events[0].reward == 1.0 and events[0].basis == "prior-best"
+        assert len(events[0].claim_ids) == 1
+        # ...and the rebuilt graph carries the track on the claim node
+        graph = load_graph(graph_path(tmp_path / "knowledge"))
+        claim_node = graph.node_map()[f"claim:{events[0].claim_ids[0]}"]
+        assert claim_node.data["track"]["injections"] == 1
+        assert claim_node.data["track"]["mean_reward"] == 1.0

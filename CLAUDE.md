@@ -28,6 +28,7 @@ keeps the last record per candidate.
 
 `hillclimb/knowledge/graph.json` is a **derived index** (gitignored) rebuilt
 deterministically from the knowledge YAML (cards, entities.yaml,
-concepts.yaml) — never hand-edit it; `hillclimb knowledge rebuild`
+concepts.yaml, credit/) — never hand-edit it; `hillclimb knowledge rebuild`
 regenerates it. The YAML files are the source of truth and are
-git-versioned.
+git-versioned; `knowledge/credit/` holds append-only per-search outcome
+events (one file per search — never merge or rewrite them).

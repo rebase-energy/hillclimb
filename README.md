@@ -306,6 +306,11 @@ git-versionable — it lives in your workspace's `hillclimb/knowledge/`:
 - **Retrieval** (`learning.graph_retrieval`, default on) — new searches also
   get the top graph-ranked claims: same-family first, then cross-family
   claims that share a concept with the problem.
+- **Credit** (`learning.credit`, default on) — injected claims share the
+  search's outcome (did it beat the best prior score on the problem?), so
+  every claim accumulates a measured track record that adjusts its retrieval
+  ranking; chronically failing claims retire. Memory that learns whether
+  it's right.
 
 Explore it interactively with `hillclimb knowledge graph` (or `g` inside
 `hillclimb watch`): a zoom/pan/click canvas with a node detail panel, a time

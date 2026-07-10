@@ -316,6 +316,30 @@ def build_graph(knowledge_dir: Path, previous: KnowledgeGraph | None = None) -> 
             node.data["superseded_by"] = by
             add_edge(f"claim:{by}", f"claim:{claim_id}", "supersedes", first_seen=at)
 
+    # fold credit events into per-claim track records: adjusted confidence
+    # drives retrieval; a conclusively bad record retires the claim through
+    # the same supersession machinery (visible in history, gone from now)
+    from hillclimb.credit import (
+        adjusted_confidence,
+        fold_track,
+        load_credit_events,
+        should_retire,
+    )
+
+    for claim_id, track in fold_track(load_credit_events(knowledge_dir)).items():
+        node = nodes.get(f"claim:{claim_id}")
+        if node is None:
+            continue
+        adjusted = adjusted_confidence(float(node.data.get("confidence", 0.5)), track)
+        node.data["track"] = {
+            "injections": track.injections,
+            "mean_reward": round(track.mean_reward, 3),
+            "adjusted_confidence": round(adjusted, 3),
+        }
+        if node.superseded_at is None and should_retire(adjusted, track):
+            node.superseded_at = track.last_observed_at
+            node.data["retired"] = "track record"
+
     # drop edges whose endpoints never materialized (e.g. a claim subject
     # missing from the registry — shouldn't happen, but stay robust)
     edge_list = [e for e in edges.values() if e.src in nodes and e.dst in nodes]
@@ -426,7 +450,10 @@ def retrieve_claims(
         if not same_family and not (wanted & set(node.concepts)):
             continue
         evidence = node.data.get("evidence") or []
-        score = float(node.data.get("confidence", 0.5)) * (1 + 0.2 * min(len(evidence), 3))
+        track = node.data.get("track") or {}
+        # a measured track record beats the authored guess
+        confidence = float(track.get("adjusted_confidence", node.data.get("confidence", 0.5)))
+        score = confidence * (1 + 0.2 * min(len(evidence), 3))
         ranked.append((same_family, score, node.first_seen, node))
     ranked.sort(key=lambda r: (r[0], r[1], r[2]), reverse=True)
     return [r[3] for r in ranked[:limit]]
@@ -460,4 +487,8 @@ def graph_stats(graph: KnowledgeGraph) -> str:
     superseded = sum(1 for n in graph.nodes if n.superseded_at is not None)
     if superseded:
         lines.append(f"{superseded} superseded claim(s)")
+    tracked = [n for n in graph.nodes if n.type == "claim" and "track" in n.data]
+    if tracked:
+        retired = sum(1 for n in tracked if n.data.get("retired"))
+        lines.append(f"{len(tracked)} claim(s) with a track record, {retired} retired by record")
     return "\n".join(lines)

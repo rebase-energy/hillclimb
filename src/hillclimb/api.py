@@ -307,9 +307,10 @@ def resolve_knowledge_dir(config: Config) -> Path | None:
 
 def build_knowledge_context(
     config: Config, problem: ProblemSpec, target: str, log: Log
-) -> tuple[str | None, int]:
-    """(prior-experience prompt section, draft-complexity offset) from the
-    workspace knowledge cards."""
+) -> tuple[str | None, int, list[str]]:
+    """(prior-experience prompt section, draft-complexity offset, injected
+    claim ids) from the workspace knowledge cards. The claim ids feed credit
+    assignment: whoever gets quoted in the prompt answers for the outcome."""
     from hillclimb.knowledge import (
         complexity_offset,
         load_cards,
@@ -319,14 +320,15 @@ def build_knowledge_context(
 
     knowledge_dir = resolve_knowledge_dir(config)
     if knowledge_dir is None:
-        return None, 0
+        return None, 0, []
     family = problem_family(problem.problem_id, target)
     cards = load_cards(knowledge_dir, problem_id=problem.problem_id, family=family)
     if not cards:
-        return None, 0
+        return None, 0, []
     log(f"learning: {len(cards)} prior search card(s) inform this search")
     offset = complexity_offset(cards) if config.learning.complexity_prior else 0
     text = render_prior_experience(cards, max_cards=config.learning.max_cards)
+    claim_ids: list[str] = []
     if config.learning.graph_retrieval:
         # graph-walk retrieval: distilled claims for this family plus
         # cross-family claims that share a concept with the problem.
@@ -346,9 +348,10 @@ def build_knowledge_context(
             if claims_text:
                 log(f"learning: {len(nodes)} distilled claim(s) inform this search")
                 text = f"{text}\n\n{claims_text}"
+                claim_ids = [n.id.removeprefix("claim:") for n in nodes]
         except Exception as exc:  # noqa: BLE001
             log(f"learning: graph retrieval failed (prior cards unaffected): {exc}")
-    return text, offset
+    return text, offset, claim_ids
 
 
 def _distill_knowledge(
@@ -413,6 +416,49 @@ def _distill_knowledge(
             # running loaded their static prior cards before this search
             # finished, so the live channel is how its result reaches them
             write_live_card(search_dir.parents[1], card, search_dir.name)
+        if (
+            config.learning.credit
+            and config.learning.graph_retrieval
+            and knowledge_dir is not None
+        ):
+            # credit assignment: the claims this search's drafts were shown
+            # share its outcome (see credit.py for the reward definition)
+            try:
+                from hillclimb.credit import (
+                    CreditEvent,
+                    read_injected_claims,
+                    search_reward,
+                    write_credit_event,
+                )
+                from hillclimb.knowledge import load_cards
+
+                claim_ids = read_injected_claims(search_dir)
+                if claim_ids:
+                    prior_cards = [
+                        c for c in load_cards(
+                            knowledge_dir,
+                            problem_id=card.problem_id,
+                            family=card.family,
+                        )
+                        if c.run_ref != card.run_ref  # own card is already on disk
+                    ]
+                    reward, basis = search_reward(
+                        journal, problem, prior_cards, selection=config.holdout.selection
+                    )
+                    write_credit_event(knowledge_dir, CreditEvent(
+                        run_ref=card.run_ref,
+                        problem_id=card.problem_id,
+                        family=card.family,
+                        claim_ids=claim_ids,
+                        reward=reward,
+                        basis=basis,
+                    ))
+                    log(
+                        f"learning: credit {reward:g} ({basis}) recorded for "
+                        f"{len(claim_ids)} injected claim(s)"
+                    )
+            except Exception as exc:  # noqa: BLE001
+                log(f"learning: credit assignment failed (card unaffected): {exc}")
         if knowledge_dir is not None:
             # keep the derived graph index fresh; cheap at this scale and
             # best-effort like everything else here
@@ -468,7 +514,11 @@ def execute_search(
     abort = threading.Event()
     _kc, _offset = (None, 0)
     if knowledge_context is None:
-        _kc, _offset = build_knowledge_context(config, problem, target, log)
+        _kc, _offset, _claim_ids = build_knowledge_context(config, problem, target, log)
+        if _claim_ids:
+            from hillclimb.credit import record_injected_claims
+
+            record_injected_claims(search_dir, _claim_ids)
     backend_obj = get_backend(config.backend, auth=config.backend_auth)
     if hasattr(backend_obj, "abort"):
         backend_obj.abort = abort

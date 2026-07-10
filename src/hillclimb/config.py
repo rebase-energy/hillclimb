@@ -121,6 +121,10 @@ class LearningConfig(BaseModel):
     # inject graph-ranked claims into operator prompts when
     # knowledge/graph.json exists (its own flag so A/B stays possible)
     graph_retrieval: bool = True
+    # credit assignment: injected claims share the search's outcome reward;
+    # track records adjust retrieval confidence and retire failing claims
+    # (credit.py)
+    credit: bool = True
 
 
 class ReportConfig(BaseModel):
