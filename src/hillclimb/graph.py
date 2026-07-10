@@ -292,7 +292,8 @@ def build_graph(knowledge_dir: Path, previous: KnowledgeGraph | None = None) -> 
                 concepts=subject.concepts if subject else [],
                 first_seen=claim.observed_at,
                 data={
-                    "relation": claim.relation, "confidence": claim.confidence,
+                    "subject": claim.subject, "relation": claim.relation,
+                    "object": claim.object, "confidence": claim.confidence,
                     "evidence": claim.evidence, "scope": claim.scope,
                 },
             ))
@@ -400,6 +401,49 @@ def load_or_build_graph(knowledge_dir: Path, *, force: bool = False) -> Knowledg
 
 def rebuild_graph(knowledge_dir: Path) -> KnowledgeGraph:
     return load_or_build_graph(knowledge_dir, force=True)
+
+
+def retrieve_claims(
+    graph: KnowledgeGraph,
+    *,
+    family: str,
+    problem_id: str,
+    concepts: list[str],
+    limit: int = 8,
+) -> list[GraphNode]:
+    """The graph walk behind prompt retrieval: live (non-superseded) claims
+    scoped to this family/problem first, then cross-family claims that share
+    a concept with the problem — the concept layer is what lets a lesson from
+    one tabular competition reach another. Ranked by scope match, then
+    confidence weighted by evidence volume, then recency."""
+    wanted = set(concepts)
+    ranked: list[tuple[bool, float, str, GraphNode]] = []
+    for node in graph.nodes:
+        if node.type != "claim" or node.superseded_at is not None:
+            continue
+        scope = node.data.get("scope") or {}
+        same_family = scope.get("family") == family or scope.get("problem_id") == problem_id
+        if not same_family and not (wanted & set(node.concepts)):
+            continue
+        evidence = node.data.get("evidence") or []
+        score = float(node.data.get("confidence", 0.5)) * (1 + 0.2 * min(len(evidence), 3))
+        ranked.append((same_family, score, node.first_seen, node))
+    ranked.sort(key=lambda r: (r[0], r[1], r[2]), reverse=True)
+    return [r[3] for r in ranked[:limit]]
+
+
+def node_to_claim(node: GraphNode) -> Claim:
+    """Rehydrate a Claim from its graph node (for rendering)."""
+    return Claim(
+        claim_id=node.id.removeprefix("claim:"),
+        subject=node.data.get("subject") or node.label.split(" ")[0],
+        relation=node.data.get("relation", "helps"),
+        object=node.data.get("object", ""),
+        scope=node.data.get("scope") or {},
+        confidence=float(node.data.get("confidence", 0.5)),
+        evidence=list(node.data.get("evidence") or []),
+        observed_at=node.first_seen or utcnow(),
+    )
 
 
 def graph_stats(graph: KnowledgeGraph) -> str:

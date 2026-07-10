@@ -154,6 +154,71 @@ class TestSupersession:
         assert "claim:cl1" not in {n.id for n in graph_at(graph, "2026-07-03T00:00:00Z").nodes}
 
 
+class TestRetrieval:
+    def test_ranking_and_scope(self, knowledge_dir):
+        from hillclimb.graph import node_to_claim, retrieve_claims
+
+        # cross-family card whose claim shares the `tabular` concept via its
+        # subject entity, plus one claim about an unrelated concept space
+        write_card(knowledge_dir, make_card(
+            problem_id="other-comp", run_ref="r4/s1",
+            finished_at="2026-07-04T00:00:00Z",
+            claims=[claim(family="other-comp", observed="2026-07-04T00:00:00Z", cid="cross")],
+        ))
+        graph = build_graph(knowledge_dir)
+        nodes = retrieve_claims(
+            graph, family="spaceship-titanic", problem_id="spaceship-titanic",
+            concepts=["tabular", "classification"],
+        )
+        ids = [n.id for n in nodes]
+        # same-family claim first, concept-overlapping cross-family claim after
+        assert ids == ["claim:cl1", "claim:cross"]
+        # no concept overlap and different family -> cross claim drops out
+        assert [n.id for n in retrieve_claims(
+            graph, family="spaceship-titanic", problem_id="spaceship-titanic",
+            concepts=["image"],
+        )] == ["claim:cl1"]
+        rehydrated = node_to_claim(nodes[0])
+        assert rehydrated.subject == "histgradientboosting"
+        assert rehydrated.relation == "helps"
+        assert rehydrated.evidence == ["c001"]
+
+    def test_flag_gates_claims_injection(self, knowledge_dir):
+        from types import SimpleNamespace
+
+        from hillclimb.api import build_knowledge_context
+        from hillclimb.config import Config
+
+        config = Config()
+        config.learning.dir = knowledge_dir
+        problem = SimpleNamespace(
+            problem_id="spaceship-titanic", metric_name="accuracy",
+            lower_is_better=False, kind="csv",
+        )
+        with_graph, _ = build_knowledge_context(config, problem, "", lambda m: None)
+        assert "Distilled claims" in with_graph
+        assert "histgradientboosting helps" in with_graph
+        config.learning.graph_retrieval = False
+        without, _ = build_knowledge_context(config, problem, "", lambda m: None)
+        assert "Distilled claims" not in without
+        assert "PREVIOUS searches" in without  # cards block unaffected
+
+    def test_superseded_claims_not_retrieved(self, knowledge_dir):
+        from hillclimb.graph import retrieve_claims
+
+        write_card(knowledge_dir, make_card(
+            run_ref="r5/s1", finished_at="2026-07-05T00:00:00Z",
+            claims=[claim(relation="no_effect", observed="2026-07-05T00:00:00Z", cid="newer")],
+        ))
+        graph = build_graph(knowledge_dir)
+        ids = [n.id for n in retrieve_claims(
+            graph, family="spaceship-titanic", problem_id="spaceship-titanic",
+            concepts=["tabular"],
+        )]
+        assert "claim:cl1" not in ids  # displaced by the newer no_effect belief
+        assert "claim:newer" in ids
+
+
 class TestPersistence:
     def test_roundtrip(self, knowledge_dir, tmp_path):
         graph = build_graph(knowledge_dir)

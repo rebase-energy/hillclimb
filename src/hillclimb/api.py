@@ -320,16 +320,35 @@ def build_knowledge_context(
     knowledge_dir = resolve_knowledge_dir(config)
     if knowledge_dir is None:
         return None, 0
-    cards = load_cards(
-        knowledge_dir,
-        problem_id=problem.problem_id,
-        family=problem_family(problem.problem_id, target),
-    )
+    family = problem_family(problem.problem_id, target)
+    cards = load_cards(knowledge_dir, problem_id=problem.problem_id, family=family)
     if not cards:
         return None, 0
     log(f"learning: {len(cards)} prior search card(s) inform this search")
     offset = complexity_offset(cards) if config.learning.complexity_prior else 0
-    return render_prior_experience(cards, max_cards=config.learning.max_cards), offset
+    text = render_prior_experience(cards, max_cards=config.learning.max_cards)
+    if config.learning.graph_retrieval:
+        # graph-walk retrieval: distilled claims for this family plus
+        # cross-family claims that share a concept with the problem.
+        # Best effort — the cards block above never depends on the graph.
+        try:
+            from hillclimb.claims import problem_concepts, render_claims
+            from hillclimb.graph import load_or_build_graph, node_to_claim, retrieve_claims
+
+            kind = "emflow" if target.startswith("emflow://") else getattr(problem, "kind", "csv")
+            nodes = retrieve_claims(
+                load_or_build_graph(knowledge_dir),
+                family=family,
+                problem_id=problem.problem_id,
+                concepts=problem_concepts(kind, problem.metric_name),
+            )
+            claims_text = render_claims([node_to_claim(n) for n in nodes])
+            if claims_text:
+                log(f"learning: {len(nodes)} distilled claim(s) inform this search")
+                text = f"{text}\n\n{claims_text}"
+        except Exception as exc:  # noqa: BLE001
+            log(f"learning: graph retrieval failed (prior cards unaffected): {exc}")
+    return text, offset
 
 
 def _distill_knowledge(

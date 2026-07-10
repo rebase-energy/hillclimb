@@ -284,3 +284,6 @@ class TestEndToEnd:
         draft_prompt = next(p.read_text() for p in prompts)
         assert "winning approach: gradient boosting" in draft_prompt
         assert "PREVIOUS searches" in draft_prompt
+        # ...including the graph-retrieved distilled claim from run one
+        assert "Distilled claims" in draft_prompt
+        assert "gradient-boosting helps" in draft_prompt
