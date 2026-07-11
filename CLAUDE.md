@@ -35,4 +35,17 @@ per-search outcome events (one file per search — never merge or rewrite
 them). `knowledge/playbooks/`, `knowledge/consolidated.yaml`, and
 `knowledge/skills/` are consolidation/harvest outputs — regenerate via
 `hillclimb knowledge consolidate` rather than hand-editing (playbook edits
-are legitimate but land as reviewed git diffs).
+are legitimate but land as reviewed git diffs). Schema v2: nodes carry both
+`pos` (2D, consumed by hillclimb-go) and `pos3` (3D, the plotui viewer) —
+keep `pos` byte-stable when touching layout code.
+
+## plotui dependency
+
+The knowledge-graph viewer renders through `plotui`, an editable local path
+dep (`../plotui`, Rust core via maturin) in the `tui` extra and dev group —
+`uv sync` builds it and needs a Rust toolchain. After editing plotui's Rust
+source, run `uv sync --reinstall-package plotui` here (uv won't notice `.rs`
+changes on its own). Never override PlotWidget's Textual `on_*` handlers in
+subclasses — Textual dispatches them per MRO class (both run); hook the
+`apply_zoom/apply_rotate/apply_pan/apply_reset/on_click_at` primitives
+instead.

@@ -90,6 +90,7 @@ class TestBuild:
     def test_positions_computed_and_missing_networkx_tolerated(self, knowledge_dir, monkeypatch):
         graph = build_graph(knowledge_dir)
         assert all(n.pos is not None for n in graph.nodes)
+        assert all(n.pos3 is not None and len(n.pos3) == 3 for n in graph.nodes)
 
         def no_networkx(*args, **kwargs):
             raise ModuleNotFoundError("networkx")
@@ -97,6 +98,7 @@ class TestBuild:
         monkeypatch.setattr("hillclimb.graph._spring_positions", no_networkx)
         bare = build_graph(knowledge_dir)
         assert all(n.pos is None for n in bare.nodes)
+        assert all(n.pos3 is None for n in bare.nodes)
 
     def test_incremental_layout_pins_old_positions(self, knowledge_dir):
         first = build_graph(knowledge_dir)
@@ -108,7 +110,9 @@ class TestBuild:
         for node in second.nodes:
             if node.id in old and old[node.id].pos is not None:
                 assert node.pos == old[node.id].pos
+                assert node.pos3 == old[node.id].pos3
         assert second.node_map()["search:r3/s1"].pos is not None
+        assert second.node_map()["search:r3/s1"].pos3 is not None
 
 
 class TestTimeFilter:

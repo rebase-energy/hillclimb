@@ -1,5 +1,5 @@
-"""Graph view: camera math, braille rasterization, hit-testing, LOD, and the
-Textual screen (Pilot-driven pan/zoom/click/scrub)."""
+"""Graph view: LOD/filter logic, the VisibleGraph→plotui adapter, label
+placement, and the Textual screen (Pilot-driven rotate/zoom/click/scrub)."""
 
 from __future__ import annotations
 
@@ -12,148 +12,34 @@ from hillclimb.graph import GraphEdge, GraphNode, KnowledgeGraph, rebuild_graph
 from hillclimb.graphview import (
     COLLAPSE_ENTER,
     COLLAPSE_EXIT,
-    Camera,
-    CellBuffer,
+    EDGE_COLORS,
+    LABEL_MAX,
+    LABEL_ZOOM,
+    NODE_COLORS,
+    NODE_SIZE,
+    SUPERNODE_SIZE_CAP,
     VNode,
     VisibleGraph,
-    WorldBounds,
     apply_lod,
-    clip_segment,
-    dot_to_world,
-    draw_line,
+    build_plot,
+    fallback_pos,
     filter_concepts,
-    fit_camera,
     fuzzy_match,
-    hit_test,
     lod_collapsed,
     node_detail_renderables,
-    pan_camera,
-    render_frame,
+    node_size,
+    place_labels,
     render_scrubber,
     snap_to_event,
-    world_bounds,
-    world_to_dot,
-    zoom_about,
-    PlacedNode,
+    style_to_rgb,
 )
 from tests.test_graph import claim, make_card
-
-BOUNDS = WorldBounds(-10, -10, 10, 10)
-
-
-class TestCamera:
-    def test_world_dot_roundtrip(self):
-        cam = Camera(cx=0.3, cy=-0.2, scale=50)
-        dx, dy = world_to_dot(cam, 200, 100, 0.7, 0.1)
-        wx, wy = dot_to_world(cam, 200, 100, dx, dy)
-        assert abs(wx - 0.7) < 1e-9 and abs(wy - 0.1) < 1e-9
-
-    def test_zoom_about_keeps_cursor_point_fixed(self):
-        cam = Camera(cx=0.0, cy=0.0, scale=40)
-        cursor = (37.0, 81.0)
-        before = dot_to_world(cam, 200, 100, *cursor)
-        zoomed = zoom_about(cam, 200, 100, *cursor, 1.25, BOUNDS)
-        after = dot_to_world(zoomed, 200, 100, *cursor)
-        assert abs(before[0] - after[0]) < 1e-9
-        assert abs(before[1] - after[1]) < 1e-9
-        assert zoomed.scale == pytest.approx(50)
-
-    def test_pan_and_clamp(self):
-        cam = Camera(cx=0, cy=0, scale=10)
-        panned = pan_camera(cam, 20, -40, BOUNDS)
-        assert panned.cx == pytest.approx(2.0)
-        assert panned.cy == pytest.approx(-4.0)
-        far = pan_camera(cam, 1e6, 1e6, BOUNDS)
-        assert far.cx == BOUNDS.max_x and far.cy == BOUNDS.max_y
-
-    def test_fit_contains_all_nodes(self):
-        nodes = [VNode(id="a", type="search", label="a", x=-1, y=-1),
-                 VNode(id="b", type="search", label="b", x=1, y=1)]
-        bounds = world_bounds(nodes)
-        cam = fit_camera(bounds, 200, 100)
-        for node in nodes:
-            dx, dy = world_to_dot(cam, 200, 100, node.x, node.y)
-            assert 0 <= dx < 200 and 0 <= dy < 100
-
-
-class TestRaster:
-    def test_draw_line_horizontal_stroke(self):
-        buf = CellBuffer(4, 2)
-        draw_line(buf, 0, 0, 7, 0, "cyan")  # dots 0..7 -> cells 0..3
-        rows = buf.to_segments()
-        text = "".join(seg.text for seg in rows[0])
-        assert text[1:4] == "───"
-        assert len(text) == 4
-
-    def test_draw_line_vertical_and_diagonal_strokes(self):
-        buf = CellBuffer(4, 4)
-        draw_line(buf, 0, 0, 0, 15, "cyan")  # dots rows 0..15 -> cells 0..3
-        column = [buf.lines[y][0] for y in range(1, 4)]
-        assert column == ["│", "│", "│"]
-        buf2 = CellBuffer(4, 4)
-        draw_line(buf2, 0, 0, 7, 15, "cyan")  # down-right diagonal
-        assert "╲" in {buf2.lines[y][x] for y in range(4) for x in range(4)} - {None}
-        buf3 = CellBuffer(4, 4)
-        draw_line(buf3, 0, 15, 7, 0, "cyan")  # up-right diagonal
-        assert "╱" in {buf3.lines[y][x] for y in range(4) for x in range(4)} - {None}
-
-    def test_same_cell_edge_stub(self):
-        buf = CellBuffer(2, 2)
-        draw_line(buf, 0, 0, 1, 0, "cyan")  # both endpoints inside cell (0,0)
-        assert buf.lines[0][0] == "─"
-
-    def test_rows_are_exact_width(self):
-        buf = CellBuffer(7, 3)
-        draw_line(buf, 0, 0, 13, 11, "green")
-        buf.set_char(2, 1, "●", "cyan")
-        for row in buf.to_segments():
-            assert sum(len(seg.text) for seg in row) == 7
-
-    def test_glyph_wins_over_edges(self):
-        buf = CellBuffer(2, 1)
-        draw_line(buf, 0, 0, 3, 0, "dim blue")
-        buf.set_char(1, 0, "●", "yellow")
-        text = "".join(seg.text for seg in buf.to_segments()[0])
-        assert text[1] == "●"
-
-    def test_clip_segment(self):
-        assert clip_segment(-5, -5, -1, -1, 100, 100) is None
-        inside = clip_segment(1, 1, 5, 5, 100, 100)
-        assert inside == (1, 1, 5, 5)
-        clipped = clip_segment(-10, 2, 10, 2, 100, 100)
-        assert clipped is not None and clipped[0] == 0
-
-    def test_render_frame_places_nodes_and_labels_collide(self):
-        vg = VisibleGraph(
-            nodes=(
-                VNode(id="a", type="technique", label="alpha", x=0.0, y=0.0),
-                VNode(id="b", type="library", label="beta", x=0.02, y=0.0),
-            ),
-            edges=(),
-        )
-        cam = Camera(cx=0, cy=0, scale=100)  # above LABEL_SCALE -> labels on
-        rows, placed = render_frame(vg, cam, 40, 10)
-        assert {p.node_id for p in placed} == {"a", "b"}
-        text = "\n".join("".join(seg.text for seg in row) for row in rows)
-        # both glyphs land; the two labels overlap so only one survives
-        assert "●" in text and "■" in text
-        assert ("alpha" in text) != ("beta" in text)
-        assert all(sum(len(seg.text) for seg in row) == 40 for row in rows)
-
-
-class TestHitTest:
-    def test_nearest_within_radius(self):
-        placed = [PlacedNode("a", 10, 10), PlacedNode("b", 14, 10)]
-        assert hit_test(placed, 11, 10) == "a"
-        assert hit_test(placed, 13.5, 10) == "b"
-        assert hit_test(placed, 50, 50) is None
-        assert hit_test([], 0, 0) is None
 
 
 class TestLod:
     def test_hysteresis(self):
-        assert lod_collapsed(COLLAPSE_ENTER - 1, False) is True
-        assert lod_collapsed(COLLAPSE_ENTER + 1, False) is False
+        assert lod_collapsed(COLLAPSE_ENTER - 0.01, False) is True
+        assert lod_collapsed(COLLAPSE_ENTER + 0.01, False) is False
         # inside the band the previous state sticks
         mid = (COLLAPSE_ENTER + COLLAPSE_EXIT) / 2
         assert lod_collapsed(mid, True) is True
@@ -162,12 +48,13 @@ class TestLod:
     def _graph(self):
         return KnowledgeGraph(nodes=[
             GraphNode(id="entity:a", type="technique", label="a",
-                      concepts=["decision-trees"], pos=(0.0, 0.0)),
+                      concepts=["decision-trees"], pos=(0.0, 0.0), pos3=(0.0, 0.0, 0.0)),
             GraphNode(id="entity:b", type="technique", label="b",
-                      concepts=["decision-trees"], pos=(1.0, 1.0)),
+                      concepts=["decision-trees"], pos=(1.0, 1.0), pos3=(1.0, 1.0, 1.0)),
             GraphNode(id="concept:decision-trees", type="concept",
-                      label="decision-trees", pos=(0.5, 0.5)),
-            GraphNode(id="search:r1/s1", type="search", label="r1/s1", pos=(2.0, 2.0)),
+                      label="decision-trees", pos=(0.5, 0.5), pos3=(0.5, 0.5, 0.5)),
+            GraphNode(id="search:r1/s1", type="search", label="r1/s1",
+                      pos=(2.0, 2.0), pos3=(2.0, 2.0, 2.0)),
         ], edges=[
             GraphEdge(src="search:r1/s1", dst="entity:a", type="used"),
             GraphEdge(src="search:r1/s1", dst="entity:b", type="used"),
@@ -179,7 +66,9 @@ class TestLod:
         by_id = {n.id: n for n in vg.nodes}
         supernode = by_id["supernode:decision-trees"]
         assert supernode.count == 2
-        assert supernode.x == pytest.approx(0.5) and supernode.y == pytest.approx(0.5)
+        assert supernode.x == pytest.approx(0.5)
+        assert supernode.y == pytest.approx(0.5)
+        assert supernode.z == pytest.approx(0.5)
         assert set(supernode.members) == {"entity:a", "entity:b"}
         assert "search:r1/s1" in by_id  # skeleton stays atomic
         assert "entity:a" not in by_id and "concept:decision-trees" not in by_id
@@ -191,6 +80,117 @@ class TestLod:
         assert {n.id for n in vg.nodes} == {
             "entity:a", "entity:b", "concept:decision-trees", "search:r1/s1",
         }
+        by_id = {n.id: n for n in vg.nodes}
+        assert by_id["entity:b"].z == pytest.approx(1.0)  # pos3 carried through
+
+    def test_unplaced_nodes_get_deterministic_fallback(self):
+        graph = KnowledgeGraph(nodes=[
+            GraphNode(id="entity:a", type="technique", label="a"),
+        ])
+        first = apply_lod(graph, collapsed=False).nodes[0]
+        second = apply_lod(graph, collapsed=False).nodes[0]
+        assert (first.x, first.y, first.z) == (second.x, second.y, second.z)
+
+
+class TestAdapter:
+    def test_style_to_rgb(self):
+        # Vivid palette: saturated base colors, bold brightens, dim darkens.
+        assert style_to_rgb("yellow") == (234, 179, 8)
+        assert style_to_rgb("bold yellow") > style_to_rgb("yellow")
+        assert style_to_rgb("dim red") < style_to_rgb("red")
+        assert style_to_rgb("bright_black") == style_to_rgb("bold black")
+        for style in list(NODE_COLORS.values()) + list(EDGE_COLORS.values()):
+            rgb = style_to_rgb(style)
+            assert len(rgb) == 3 and all(0 <= c <= 255 for c in rgb)
+
+    def test_fallback_pos_is_3d_and_deterministic(self):
+        a = fallback_pos("entity:a")
+        assert len(a) == 3
+        assert fallback_pos("entity:a") == a
+        assert fallback_pos("entity:b") != a
+        assert sum(c * c for c in a) ** 0.5 <= 1.01  # inside the unit-ish ball
+
+    def test_node_size_scales_supernodes(self):
+        plain = VNode(id="a", type="technique", label="a", x=0, y=0)
+        assert node_size(plain) == NODE_SIZE
+        small = VNode(id="s", type="supernode", label="s", x=0, y=0, count=2)
+        huge = VNode(id="h", type="supernode", label="h", x=0, y=0, count=500)
+        assert NODE_SIZE < node_size(small) < node_size(huge) <= SUPERNODE_SIZE_CAP
+
+    def test_build_plot_maps_ids_and_survives_rendering(self):
+        from hillclimb.graphview import VEdge
+
+        vg = VisibleGraph(
+            nodes=(
+                VNode(id="a", type="technique", label="alpha", x=0.0, y=0.0, z=0.0),
+                VNode(id="b", type="library", label="beta", x=1.0, y=0.0, z=0.5),
+                VNode(id="s", type="supernode", label="s (3)", x=0.5, y=1.0, z=0.0,
+                      count=3),
+            ),
+            edges=(
+                VEdge(src="a", dst="b", type="used"),
+                VEdge(src="a", dst="ghost", type="used"),  # endpoint missing
+            ),
+        )
+        plot, ids = build_plot(vg, color_by="type", selected="b")
+        assert ids == ["a", "b", "s"]
+        rgba = plot.render_rgba(120, 80)
+        assert len(rgba) == 120 * 80 * 4
+        # selection ring: the selected node renders with white pixels
+        white = bytes((255, 255, 255, 255))
+        assert any(rgba[i:i + 4] == white for i in range(0, len(rgba), 4))
+        # a vanished selection or empty graph must not blow up
+        plot2, ids2 = build_plot(vg, selected="gone")
+        assert ids2 == ["a", "b", "s"]
+        plot3, ids3 = build_plot(VisibleGraph(nodes=(), edges=()))
+        assert ids3 == [] and plot3.render_rgba(20, 10) is not None
+
+
+class TestLabels:
+    def _nodes(self):
+        return [
+            VNode(id="a", type="technique", label="alpha", x=0, y=0),
+            VNode(id="b", type="library", label="beta", x=0, y=0),
+        ]
+
+    def test_zoom_threshold_and_always_show(self):
+        nodes = self._nodes()
+        projected = [(5.0, 4.0, 0.0), (5.0, 12.0, 0.0)]  # cells (2,5) and (6,5)
+        quiet = place_labels(nodes, projected, cols=40, rows=10, cell_px=(1, 2),
+                             zoom=LABEL_ZOOM / 2)
+        assert quiet == []
+        selected = place_labels(nodes, projected, cols=40, rows=10, cell_px=(1, 2),
+                                zoom=LABEL_ZOOM / 2, selected="a")
+        assert [s[2] for s in selected] == ["alpha"]
+        assert selected[0][3] == "bold white"
+        loud = place_labels(nodes, projected, cols=40, rows=10, cell_px=(1, 2),
+                            zoom=LABEL_ZOOM * 2)
+        assert {s[2] for s in loud} == {"alpha", "beta"}
+        supernode = [VNode(id="s", type="supernode", label="s (2)", x=0, y=0, count=2)]
+        always = place_labels(supernode, [(5.0, 4.0, 0.0)], cols=40, rows=10,
+                              cell_px=(1, 2), zoom=LABEL_ZOOM / 2)
+        assert [s[2] for s in always] == ["s (2)"]
+
+    def test_collision_keeps_higher_priority(self):
+        nodes = self._nodes()
+        # same row, one cell apart: labels overlap, only one survives
+        projected = [(5.0, 4.0, 0.0), (6.0, 4.0, 0.0)]
+        spans = place_labels(nodes, projected, cols=40, rows=10, cell_px=(1, 2),
+                             zoom=LABEL_ZOOM * 2)
+        assert len(spans) == 1
+        # hovering the loser flips the priority
+        hovered = place_labels(nodes, projected, cols=40, rows=10, cell_px=(1, 2),
+                               zoom=LABEL_ZOOM * 2, hovered="b")
+        assert hovered[0][2] == "beta"
+
+    def test_truncation_and_offscreen(self):
+        long_label = VNode(id="l", type="technique", label="x" * 40, x=0, y=0)
+        spans = place_labels([long_label], [(5.0, 4.0, 0.0)], cols=80, rows=10,
+                             cell_px=(1, 2), zoom=LABEL_ZOOM * 2)
+        assert spans[0][2] == "x" * LABEL_MAX + "…"
+        gone = place_labels([long_label], [(-5.0, 4.0, 0.0)], cols=80, rows=10,
+                            cell_px=(1, 2), zoom=LABEL_ZOOM * 2)
+        assert gone == []
 
 
 class TestFilter:
@@ -259,10 +259,13 @@ class TestDetail:
 
 
 @pytest.fixture
-def graph_workspace(tmp_path):
+def graph_workspace(tmp_path, monkeypatch):
     from hillclimb.claims import Entity, ensure_concepts, save_entities
     from hillclimb.knowledge import write_card
 
+    # deterministic render path regardless of the terminal the tests run in
+    # (placeholder emits escape strings — safe headlessly)
+    monkeypatch.setenv("PLOTUI_RENDER", "placeholder")
     kdir = tmp_path / "knowledge"
     ensure_concepts(kdir)
     save_entities(kdir, [
@@ -285,58 +288,77 @@ def _scroll_stub(x: int, y: int) -> SimpleNamespace:
     )
 
 
+def _cell_of_some_node(canvas) -> tuple[int, int, str]:
+    """A widget cell whose center picks a node, plus that node's id — using
+    the widget's own geometry so the click test can't drift from it."""
+    px_w, px_h = canvas._px_dims()
+    cell_w, cell_h = canvas._cell_px_size()
+    for flat, (sx, sy, _depth) in enumerate(canvas._plot.project_nodes(px_w, px_h)):
+        col, row = int(sx // cell_w), int(sy // cell_h)
+        if not (0 <= col < canvas.size.width and 0 <= row < canvas.size.height):
+            continue
+        _pw, _ph, px, py, radius = canvas._pixel_geometry(col, row)
+        picked = canvas._plot.pick_px(px_w, px_h, px, py, radius)
+        if picked is not None:
+            return col, row, canvas._ids[picked]
+    raise AssertionError("no pickable node on screen")
+
+
 @pytest.mark.asyncio
 async def test_graph_app_mounts_and_zooms(graph_workspace):
-    from hillclimb.graphview import GraphApp, GraphCanvas
+    from hillclimb.graphview import GraphApp, GraphPlotWidget
 
     app = GraphApp(graph_workspace)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        canvas = app.screen.query_one("#graph-canvas", GraphCanvas)
-        assert canvas.camera is not None
-        assert canvas._placed  # nodes on screen
-        scale = canvas.camera.scale
+        canvas = app.screen.query_one("#graph-canvas", GraphPlotWidget)
+        assert canvas._ids  # nodes loaded
+        zoom = canvas._plot.camera_state()[2]
         await pilot.press("plus")
-        assert canvas.camera.scale > scale
+        zoomed_in = canvas._plot.camera_state()[2]
+        assert zoomed_in > zoom
         await pilot.press("minus")
-        assert canvas.camera.scale == pytest.approx(scale)
-        # wheel zoom about a stubbed cursor keeps that world point fixed
+        assert canvas._plot.camera_state()[2] < zoomed_in
         canvas.on_mouse_scroll_up(_scroll_stub(canvas.region.x + 10, canvas.region.y + 5))
-        assert canvas.camera.scale > scale
+        assert canvas._plot.camera_state()[2] > zoom * 0.99
 
 
 @pytest.mark.asyncio
-async def test_drag_pans_camera(graph_workspace):
-    from hillclimb.graphview import GraphApp, GraphCanvas
+async def test_drag_rotates_and_pan_moves_camera(graph_workspace):
+    from hillclimb.graphview import GraphApp, GraphPlotWidget
 
     app = GraphApp(graph_workspace)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        canvas = app.screen.query_one("#graph-canvas", GraphCanvas)
-        cx_before = canvas.camera.cx
+        canvas = app.screen.query_one("#graph-canvas", GraphPlotWidget)
+        yaw_before = canvas._plot.camera_state()[0]
         await pilot.mouse_down("#graph-canvas", offset=(40, 10))
         await pilot.hover("#graph-canvas", offset=(50, 10))
-        assert canvas.camera.cx < cx_before  # dragged right -> camera left
+        assert canvas._plot.camera_state()[0] > yaw_before  # dragged right -> yaw
         assert canvas.dragging
         await pilot.mouse_up("#graph-canvas", offset=(50, 10))
         assert not canvas.dragging
+        # the screen-contract pan shifts the projection center
+        pan_before = canvas._plot.camera_state()[3]
+        canvas.pan(0.25, 0.0)
+        assert canvas._plot.camera_state()[3] > pan_before
 
 
 @pytest.mark.asyncio
 async def test_click_selects_node_and_opens_detail(graph_workspace):
     from textual.widgets import RichLog
 
-    from hillclimb.graphview import GraphApp, GraphCanvas
+    from hillclimb.graphview import GraphApp, GraphPlotWidget
 
     app = GraphApp(graph_workspace)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        canvas = app.screen.query_one("#graph-canvas", GraphCanvas)
-        target = canvas._placed[0]
-        cell = (int(target.dot_x // 2), int(target.dot_y // 4))
-        await pilot.mouse_down("#graph-canvas", offset=cell)
-        await pilot.mouse_up("#graph-canvas", offset=cell)
-        assert canvas.selected == target.node_id
+        canvas = app.screen.query_one("#graph-canvas", GraphPlotWidget)
+        col, row, node_id = _cell_of_some_node(canvas)
+        await pilot.mouse_down("#graph-canvas", offset=(col, row))
+        await pilot.mouse_up("#graph-canvas", offset=(col, row))
+        await pilot.pause()
+        assert canvas.selected == node_id
         detail = app.screen.query_one("#node-detail", RichLog)
         assert detail.styles.display != "none"
         # escape clears the selection before popping the screen
@@ -347,29 +369,50 @@ async def test_click_selects_node_and_opens_detail(graph_workspace):
 
 @pytest.mark.asyncio
 async def test_scrubber_steps_and_refresh_keeps_state(graph_workspace):
-    from hillclimb.graphview import GraphApp, GraphCanvas, TimeScrubber
+    from hillclimb.graphview import GraphApp, GraphPlotWidget, TimeScrubber
 
     app = GraphApp(graph_workspace)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        canvas = app.screen.query_one("#graph-canvas", GraphCanvas)
+        canvas = app.screen.query_one("#graph-canvas", GraphPlotWidget)
         scrubber = app.screen.query_one("#time-scrubber", TimeScrubber)
         assert scrubber.index is None and len(scrubber.events_list) == 2
-        assert any(p.node_id == "search:r2/s1" for p in canvas._placed)
+        assert "search:r2/s1" in canvas._ids
         await pilot.press("left_square_bracket")
         await pilot.pause()
         assert scrubber.index == 0
-        assert all(p.node_id != "search:r2/s1" for p in canvas._placed)
+        assert "search:r2/s1" not in canvas._ids
         # live refresh must not move the time cursor or the camera
-        camera = canvas.camera
+        camera = canvas._plot.camera_state()
         app.screen.refresh_data()
         await pilot.pause()
         assert scrubber.index == 0
-        assert canvas.camera == camera
+        assert canvas._plot.camera_state() == camera
         await pilot.press("end")
         await pilot.pause()
         assert scrubber.index is None
-        assert any(p.node_id == "search:r2/s1" for p in canvas._placed)
+        assert "search:r2/s1" in canvas._ids
+
+
+@pytest.mark.asyncio
+async def test_zoom_out_collapses_and_members_expand(graph_workspace):
+    from hillclimb.graphview import GraphApp, GraphPlotWidget
+
+    app = GraphApp(graph_workspace)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        canvas = app.screen.query_one("#graph-canvas", GraphPlotWidget)
+        assert not any(i.startswith("supernode:") for i in canvas._ids)
+        zoom = canvas._plot.camera_state()[2]
+        canvas.zoom((COLLAPSE_ENTER * 0.9) / zoom)
+        await pilot.pause()
+        supernodes = [i for i in canvas._ids if i.startswith("supernode:")]
+        assert supernodes, "zooming out must fold entities into supernodes"
+        target = next(n for n in canvas._visible.nodes if n.id == supernodes[0])
+        canvas.zoom_to_members(target.members)
+        await pilot.pause()
+        assert canvas._plot.camera_state()[2] >= COLLAPSE_EXIT
+        assert all(m in canvas._ids for m in target.members)
 
 
 @pytest.mark.asyncio

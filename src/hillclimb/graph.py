@@ -33,7 +33,9 @@ from hillclimb.claims import (
     slugify,
 )
 
-GRAPH_SCHEMA_VERSION = 1
+# v2: nodes gained pos3 (3D spring layout for the plotui viewer). The version
+# check in load_graph makes stale v1 graph.json rebuild on first load.
+GRAPH_SCHEMA_VERSION = 2
 GRAPH_FILENAME = "graph.json"
 LAYOUT_SEED = 42
 
@@ -65,6 +67,9 @@ class GraphNode(BaseModel):
     label: str = ""
     concepts: list[str] = Field(default_factory=list)
     pos: tuple[float, float] | None = None
+    # 3D twin of pos, used by the plotui graph viewer. pos stays 2D for
+    # external consumers of graph.json (hillclimb-go renders from it).
+    pos3: tuple[float, float, float] | None = None
     first_seen: str = ""
     superseded_at: str | None = None
     data: dict = Field(default_factory=dict)
@@ -138,7 +143,7 @@ def compute_supersessions(claims: list[Claim]) -> dict[str, tuple[str, str]]:
 
 
 def _spring_positions(nodes: list[str], edges: list[tuple[str, str]],
-                      previous: dict[str, tuple[float, float]]) -> dict:
+                      previous: dict[str, tuple], dim: int = 2) -> dict:
     import networkx as nx
 
     graph = nx.Graph()
@@ -153,31 +158,36 @@ def _spring_positions(nodes: list[str], edges: list[tuple[str, str]],
             continue
         placed = [pos[n] for n in graph.neighbors(node) if n in pinned]
         if placed:
-            pos[node] = (
-                sum(p[0] for p in placed) / len(placed),
-                sum(p[1] for p in placed) / len(placed),
+            pos[node] = tuple(
+                sum(p[k] for p in placed) / len(placed) for k in range(dim)
             )
     layout = nx.spring_layout(
         graph,
         pos=pos or None,
         fixed=list(pinned) or None,
         seed=LAYOUT_SEED,
+        dim=dim,
     )
-    return {node: (round(float(x), 4), round(float(y), 4)) for node, (x, y) in layout.items()}
+    return {node: tuple(round(float(c), 4) for c in xy) for node, xy in layout.items()}
 
 
 def compute_layout(
     nodes: list[GraphNode], edges: list[GraphEdge],
     previous: KnowledgeGraph | None,
-) -> dict[str, tuple[float, float]]:
+    *, dim: int = 2,
+) -> dict[str, tuple]:
     """Pinned incremental spring layout; {} (pos stays None) when networkx
-    is not installed — the index is still fully usable, only unplaced."""
+    is not installed — the index is still fully usable, only unplaced.
+    dim=2 pins against previous pos, dim=3 against previous pos3."""
     prior = {}
     if previous is not None:
-        prior = {n.id: n.pos for n in previous.nodes if n.pos is not None}
+        if dim == 3:
+            prior = {n.id: n.pos3 for n in previous.nodes if n.pos3 is not None}
+        else:
+            prior = {n.id: n.pos for n in previous.nodes if n.pos is not None}
     try:
         return _spring_positions(
-            [n.id for n in nodes], [(e.src, e.dst) for e in edges], prior
+            [n.id for n in nodes], [(e.src, e.dst) for e in edges], prior, dim=dim
         )
     except ModuleNotFoundError:
         return {}
@@ -376,8 +386,10 @@ def build_graph(knowledge_dir: Path, previous: KnowledgeGraph | None = None) -> 
     node_list = sorted(nodes.values(), key=lambda n: n.id)
     edge_list.sort(key=lambda e: (e.src, e.dst, e.type))
     positions = compute_layout(node_list, edge_list, previous)
+    positions3 = compute_layout(node_list, edge_list, previous, dim=3)
     for node in node_list:
         node.pos = positions.get(node.id)
+        node.pos3 = positions3.get(node.id)
     return KnowledgeGraph(
         events=sorted({card.finished_at for card in cards}),
         nodes=node_list,

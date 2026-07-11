@@ -329,9 +329,14 @@ git-versionable — it lives in your workspace's `hillclimb/knowledge/`:
   holdout? `bench report` renders the verdict.
 
 Explore it interactively with `hillclimb knowledge graph` (or `g` inside
-`hillclimb watch`): a zoom/pan/click canvas with a node detail panel, a time
-scrubber that replays how the graph grew search by search, and a concept
-sidebar for filtering and coloring.
+`hillclimb watch`): a true-3D scene rendered by [plotui](../plotui) (Rust
+rasterizer; full-pixel Kitty graphics — kitty, Ghostty, iTerm2 ≥ 3.5, and
+WezTerm are supported). Drag rotates, shift-drag pans, scroll zooms — and zoom
+doubles as semantic level-of-detail: zoom out and entities fold into concept
+supernodes. Click a node for the detail panel (re-click or Enter opens a
+search's candidates), scrub through time search by search, filter and
+color by concept from the sidebar. Node positions come from a 3D spring
+layout cached in graph.json (`pos3`; the 2D `pos` stays for hillclimb-go).
 
 ![knowledge graph TUI](docs/graph-tui.png)
 

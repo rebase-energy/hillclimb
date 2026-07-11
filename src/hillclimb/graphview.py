@@ -1,27 +1,31 @@
 """Interactive knowledge-graph screen for the watch TUI.
 
-Strictly a *viewer* over `knowledge/graph.json` (built by graph.py): zoom,
-pan, click nodes, scrub through time (one tick per finished search), filter
-and color by concept. The pure functions at the top carry all geometry,
-rasterization, and hit-testing so they stay testable without driving Textual;
-the widgets below are thin shells in the style of watch.py.
+Strictly a *viewer* over `knowledge/graph.json` (built by graph.py): rotate,
+pan, zoom, click nodes, scrub through time (one tick per finished search),
+filter and color by concept. The graph renders as a true-3D scene through
+plotui (Rust rasterizer → Kitty pixel graphics: placeholder placement in
+kitty/Ghostty, direct placement in iTerm2 ≥ 3.5/WezTerm/Konsole, a support
+notice elsewhere); node positions come from the 3D spring layout cached in
+graph.json (`pos3`). The pure functions at the top carry LOD, color, and
+label geometry so they stay testable without driving Textual; the widgets
+below are thin shells in the style of watch.py.
 
-Geometry lives in DOT SPACE: each terminal cell is 2x4 dots, and a dot is
-roughly square on screen — so distances, camera math, and hit tests done in
-dots sidestep the 1:2 cell aspect distortion entirely. Edges render as thin
-continuous strokes (─ │ ╱ ╲ picked per cell by line direction), nodes as
-single-cell glyphs (a node owns its cell's style — one Rich style per cell),
-labels as plain text with a greedy collision mask.
+Zoom drives semantic LOD: below COLLAPSE_ENTER the concept-bearing nodes fold
+into concept supernodes (hysteresis so the boundary doesn't flicker), and
+labels appear past LABEL_ZOOM as a text overlay spliced over the image by
+plotui's PlotWidget.
 """
 
 from __future__ import annotations
 
 import hashlib
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
+from typing import Sequence
 
-from rich.segment import Segment
+from rich.color import Color as RichColor
 from rich.style import Style
 from rich.text import Text
 
@@ -30,26 +34,15 @@ from hillclimb.graph import GraphNode, KnowledgeGraph, fuzzy_match, graph_at
 
 # --- pure data layer ---
 
-# Edges rasterize as thin box-drawing strokes, one character per cell picked
-# by the line's local direction — continuous connecting lines, not scattered
-# dots (braille) or half-cell slabs (quadrant blocks). Geometry stays in 2x4
-# dot space (square dots); rasterization walks the line at cell resolution.
-LINE_H, LINE_V, LINE_UP, LINE_DOWN = "─", "│", "╱", "╲"
-
-SCALE_MIN = 1.0
-SCALE_MAX = 20000.0
 ZOOM_FACTOR = 1.25
-LABEL_SCALE = 55.0     # world coords are spring-normalized to ~[-1,1]
-COLLAPSE_ENTER = 25.0  # below this scale entities fold into concept supernodes
+# plotui camera zoom units: 1.0 = the whole graph auto-framed to the widget.
+LABEL_ZOOM = 1.6       # labels appear past this zoom
+COLLAPSE_ENTER = 0.55  # below this zoom entities fold into concept supernodes
 COLLAPSE_EXIT = COLLAPSE_ENTER * 1.4
 LABEL_MAX = 18
-HIT_RADIUS_DOTS = 6.0
+NODE_SIZE = 3.5        # base node radius in framebuffer px (pre-supersampling)
+SUPERNODE_SIZE_CAP = 9.0
 
-NODE_GLYPHS = {
-    "problem": "○", "family": "◎", "search": "▲", "operator": "•",
-    "concept": "◉", "claim": "◇", "technique": "●", "library": "■",
-    "model_family": "◆", "feature": "◆", "practice": "◆", "supernode": "◉",
-}
 NODE_COLORS = {
     "problem": "yellow", "family": "bold yellow", "search": "blue",
     "operator": "bright_black", "concept": "magenta", "claim": "green",
@@ -69,21 +62,6 @@ CONCEPT_COLOR_POOL = (
 
 
 @dataclass(frozen=True)
-class Camera:
-    cx: float
-    cy: float
-    scale: float  # braille dots per world unit
-
-
-@dataclass(frozen=True)
-class WorldBounds:
-    min_x: float
-    min_y: float
-    max_x: float
-    max_y: float
-
-
-@dataclass(frozen=True)
 class VNode:
     """A drawable node: original graph node(s) resolved to a world position.
     count > 1 marks a concept supernode."""
@@ -93,6 +71,7 @@ class VNode:
     label: str
     x: float
     y: float
+    z: float = 0.0
     concepts: tuple[str, ...] = ()
     first_seen: str = ""
     count: int = 1
@@ -113,24 +92,22 @@ class VisibleGraph:
     edges: tuple[VEdge, ...]
 
 
-@dataclass(frozen=True)
-class PlacedNode:
-    node_id: str
-    dot_x: float
-    dot_y: float
-
-
-def fallback_pos(node_id: str) -> tuple[float, float]:
-    """Deterministic radial placement for nodes the index left unplaced
+def fallback_pos(node_id: str) -> tuple[float, float, float]:
+    """Deterministic spherical placement for nodes the index left unplaced
     (engine-only installs without networkx)."""
     digest = int(hashlib.sha1(node_id.encode()).hexdigest()[:12], 16)
-    angle = (digest % 3600) / 3600 * 2 * math.pi
-    radius = 0.4 + ((digest // 3600) % 600) / 1000
-    return (radius * math.cos(angle), radius * math.sin(angle))
+    theta = (digest % 3600) / 3600 * 2 * math.pi
+    phi = ((digest // 3600) % 1800) / 1800 * math.pi
+    radius = 0.4 + ((digest // (3600 * 1800)) % 600) / 1000
+    return (
+        radius * math.sin(phi) * math.cos(theta),
+        radius * math.sin(phi) * math.sin(theta),
+        radius * math.cos(phi),
+    )
 
 
-def node_pos(node: GraphNode) -> tuple[float, float]:
-    return node.pos if node.pos is not None else fallback_pos(node.id)
+def node_pos(node: GraphNode) -> tuple[float, float, float]:
+    return node.pos3 if node.pos3 is not None else fallback_pos(node.id)
 
 
 def filter_concepts(graph: KnowledgeGraph, enabled: frozenset[str] | None) -> KnowledgeGraph:
@@ -153,11 +130,11 @@ def filter_concepts(graph: KnowledgeGraph, enabled: frozenset[str] | None) -> Kn
     )
 
 
-def lod_collapsed(scale: float, was_collapsed: bool) -> bool:
+def lod_collapsed(zoom: float, was_collapsed: bool) -> bool:
     """Hysteresis so the boundary doesn't flicker while zooming."""
     if was_collapsed:
-        return scale < COLLAPSE_EXIT
-    return scale < COLLAPSE_ENTER
+        return zoom < COLLAPSE_EXIT
+    return zoom < COLLAPSE_ENTER
 
 
 def apply_lod(graph: KnowledgeGraph, collapsed: bool) -> VisibleGraph:
@@ -168,7 +145,8 @@ def apply_lod(graph: KnowledgeGraph, collapsed: bool) -> VisibleGraph:
         return VisibleGraph(
             nodes=tuple(
                 VNode(
-                    id=n.id, type=n.type, label=n.label, x=node_pos(n)[0], y=node_pos(n)[1],
+                    id=n.id, type=n.type, label=n.label,
+                    x=node_pos(n)[0], y=node_pos(n)[1], z=node_pos(n)[2],
                     concepts=tuple(n.concepts), first_seen=n.first_seen,
                 )
                 for n in graph.nodes
@@ -190,21 +168,21 @@ def apply_lod(graph: KnowledgeGraph, collapsed: bool) -> VisibleGraph:
             atoms.append(node)
     nodes = [
         VNode(
-            id=n.id, type=n.type, label=n.label, x=node_pos(n)[0], y=node_pos(n)[1],
+            id=n.id, type=n.type, label=n.label,
+            x=node_pos(n)[0], y=node_pos(n)[1], z=node_pos(n)[2],
             first_seen=n.first_seen,
         )
         for n in atoms
     ]
     for concept, members in sorted(groups.items()):
         if members:
-            xs = [node_pos(m)[0] for m in members]
-            ys = [node_pos(m)[1] for m in members]
-            x, y = sum(xs) / len(xs), sum(ys) / len(ys)
+            positions = [node_pos(m) for m in members]
+            x, y, z = (sum(p[k] for p in positions) / len(positions) for k in range(3))
         else:
-            x, y = fallback_pos(f"supernode:{concept}")
+            x, y, z = fallback_pos(f"supernode:{concept}")
         nodes.append(VNode(
             id=f"supernode:{concept}", type="supernode",
-            label=f"{concept} ({len(members)})", x=x, y=y,
+            label=f"{concept} ({len(members)})", x=x, y=y, z=z,
             concepts=(concept,), count=max(len(members), 1),
             members=tuple(m.id for m in members),
         ))
@@ -221,185 +199,6 @@ def apply_lod(graph: KnowledgeGraph, collapsed: bool) -> VisibleGraph:
         for (src, dst, kind), weight in sorted(aggregated.items())
     )
     return VisibleGraph(nodes=tuple(nodes), edges=edges)
-
-
-def world_bounds(nodes: tuple[VNode, ...] | list[VNode]) -> WorldBounds:
-    if not nodes:
-        return WorldBounds(-1.0, -1.0, 1.0, 1.0)
-    xs = [n.x for n in nodes]
-    ys = [n.y for n in nodes]
-    pad_x = max((max(xs) - min(xs)) * 0.2, 0.1)
-    pad_y = max((max(ys) - min(ys)) * 0.2, 0.1)
-    return WorldBounds(min(xs) - pad_x, min(ys) - pad_y, max(xs) + pad_x, max(ys) + pad_y)
-
-
-def dot_size(cells_w: int, cells_h: int) -> tuple[int, int]:
-    return cells_w * 2, cells_h * 4
-
-
-def world_to_dot(cam: Camera, dots_w: int, dots_h: int, wx: float, wy: float) -> tuple[float, float]:
-    return (
-        (wx - cam.cx) * cam.scale + dots_w / 2,
-        (wy - cam.cy) * cam.scale + dots_h / 2,
-    )
-
-
-def dot_to_world(cam: Camera, dots_w: int, dots_h: int, dx: float, dy: float) -> tuple[float, float]:
-    return (
-        (dx - dots_w / 2) / cam.scale + cam.cx,
-        (dy - dots_h / 2) / cam.scale + cam.cy,
-    )
-
-
-def clamp_camera(cam: Camera, bounds: WorldBounds) -> Camera:
-    return replace(
-        cam,
-        cx=min(max(cam.cx, bounds.min_x), bounds.max_x),
-        cy=min(max(cam.cy, bounds.min_y), bounds.max_y),
-    )
-
-
-def zoom_about(
-    cam: Camera, dots_w: int, dots_h: int,
-    cursor_dx: float, cursor_dy: float, factor: float, bounds: WorldBounds,
-) -> Camera:
-    """Invariant: the world point under the cursor stays under the cursor."""
-    wx, wy = dot_to_world(cam, dots_w, dots_h, cursor_dx, cursor_dy)
-    scale = min(max(cam.scale * factor, SCALE_MIN), SCALE_MAX)
-    return clamp_camera(
-        Camera(
-            cx=wx - (cursor_dx - dots_w / 2) / scale,
-            cy=wy - (cursor_dy - dots_h / 2) / scale,
-            scale=scale,
-        ),
-        bounds,
-    )
-
-
-def pan_camera(cam: Camera, ddx_dots: float, ddy_dots: float, bounds: WorldBounds) -> Camera:
-    return clamp_camera(
-        replace(cam, cx=cam.cx + ddx_dots / cam.scale, cy=cam.cy + ddy_dots / cam.scale),
-        bounds,
-    )
-
-
-def fit_camera(bounds: WorldBounds, dots_w: int, dots_h: int) -> Camera:
-    span_x = max(bounds.max_x - bounds.min_x, 1e-6)
-    span_y = max(bounds.max_y - bounds.min_y, 1e-6)
-    scale = min(dots_w / span_x, dots_h / span_y)
-    scale = min(max(scale, SCALE_MIN), SCALE_MAX)
-    return Camera(
-        cx=(bounds.min_x + bounds.max_x) / 2,
-        cy=(bounds.min_y + bounds.max_y) / 2,
-        scale=scale,
-    )
-
-
-class CellBuffer:
-    """A cells_w x cells_h frame: an edge-stroke layer under a whole-cell
-    glyph/label layer (chars win over lines at flush), one style string per
-    cell."""
-
-    def __init__(self, cells_w: int, cells_h: int):
-        self.w = cells_w
-        self.h = cells_h
-        self.lines: list[list[str | None]] = [[None] * cells_w for _ in range(cells_h)]
-        self.chars: list[list[str | None]] = [[None] * cells_w for _ in range(cells_h)]
-        self.styles: list[list[str | None]] = [[None] * cells_w for _ in range(cells_h)]
-
-    def set_line(self, cx: int, cy: int, char: str, style: str) -> None:
-        if 0 <= cx < self.w and 0 <= cy < self.h:
-            self.lines[cy][cx] = char  # crossing edges: last drawn wins the cell
-            if self.chars[cy][cx] is None:  # a glyph keeps its own style
-                self.styles[cy][cx] = style
-
-    def set_char(self, cx: int, cy: int, char: str, style: str) -> None:
-        if 0 <= cx < self.w and 0 <= cy < self.h:
-            self.chars[cy][cx] = char
-            self.styles[cy][cx] = style
-
-    def char_free(self, cx: int, cy: int) -> bool:
-        return 0 <= cx < self.w and 0 <= cy < self.h and self.chars[cy][cx] is None
-
-    def to_segments(self) -> list[list[Segment]]:
-        rows: list[list[Segment]] = []
-        for y in range(self.h):
-            segments: list[Segment] = []
-            run: list[str] = []
-            run_style: str | None = None
-            for x in range(self.w):
-                char = self.chars[y][x] or self.lines[y][x] or " "
-                style = self.styles[y][x] if char != " " else None
-                if style != run_style and run:
-                    segments.append(Segment("".join(run), Style.parse(run_style) if run_style else None))
-                    run = []
-                run_style = style
-                run.append(char)
-            if run:
-                segments.append(Segment("".join(run), Style.parse(run_style) if run_style else None))
-            rows.append(segments)
-        return rows
-
-
-def clip_segment(
-    x0: float, y0: float, x1: float, y1: float, w: int, h: int
-) -> tuple[float, float, float, float] | None:
-    """Liang-Barsky against [0,w) x [0,h) — clip BEFORE Bresenham so a deep
-    zoom never rasterizes miles of off-screen line."""
-    dx, dy = x1 - x0, y1 - y0
-    t0, t1 = 0.0, 1.0
-    for p, q in (
-        (-dx, x0), (dx, w - 1 - x0),
-        (-dy, y0), (dy, h - 1 - y0),
-    ):
-        if p == 0:
-            if q < 0:
-                return None
-            continue
-        r = q / p
-        if p < 0:
-            if r > t1:
-                return None
-            t0 = max(t0, r)
-        else:
-            if r < t0:
-                return None
-            t1 = min(t1, r)
-    return (x0 + t0 * dx, y0 + t0 * dy, x0 + t1 * dx, y0 + t1 * dy)
-
-
-def draw_line(buf: CellBuffer, x0: int, y0: int, x1: int, y1: int, style: str) -> None:
-    """Rasterize an edge as a thin stroke: Bresenham over CELLS (endpoints
-    arrive in dot coordinates), each step stamping ─ │ ╱ or ╲ by the step's
-    direction so consecutive cells read as one continuous line."""
-    cx, cy = x0 // 2, y0 // 4
-    ex, ey = x1 // 2, y1 // 4
-    dx = abs(ex - cx)
-    dy = -abs(ey - cy)
-    sx = 1 if cx < ex else -1
-    sy = 1 if cy < ey else -1
-    if cx == ex and cy == ey:
-        buf.set_line(cx, cy, LINE_H if abs(x1 - x0) >= abs(y1 - y0) else LINE_V, style)
-        return
-    err = dx + dy
-    while not (cx == ex and cy == ey):
-        e2 = 2 * err
-        stepped_x = stepped_y = False
-        if e2 >= dy:
-            err += dy
-            cx += sx
-            stepped_x = True
-        if e2 <= dx:
-            err += dx
-            cy += sy
-            stepped_y = True
-        if stepped_x and stepped_y:
-            char = LINE_DOWN if sx == sy else LINE_UP  # y grows downward
-        elif stepped_x:
-            char = LINE_H
-        else:
-            char = LINE_V
-        buf.set_line(cx, cy, char, style)
 
 
 def concept_color(concept: str) -> str:
@@ -420,97 +219,123 @@ def node_color(node: VNode, color_by: str, latest: str = "") -> str:
     return NODE_COLORS.get(node.type, "white")
 
 
-def render_frame(
-    vg: VisibleGraph,
-    cam: Camera,
-    cells_w: int,
-    cells_h: int,
+# Saturated, high-contrast node colors — the standard-ANSI truecolors Rich
+# returns (green #008000, yellow #808000/olive, cyan #008080/teal) read muddy
+# over a dark background and blur together where nodes overlap. These vivid
+# values give the graph the punchy per-category look of a molecular viewer.
+_VIVID: dict[str, tuple[int, int, int]] = {
+    "red": (239, 68, 68),
+    "green": (34, 197, 94),
+    "yellow": (234, 179, 8),
+    "blue": (96, 165, 250),
+    "magenta": (224, 33, 138),
+    "cyan": (34, 211, 238),
+    "white": (229, 231, 235),
+    "black": (90, 99, 120),  # 'bright_black'/operator — visible on dark bg
+}
+
+
+@lru_cache(maxsize=256)
+def style_to_rgb(style: str) -> tuple[int, int, int]:
+    """A Rich style string ("bold yellow", "dim red", "bright_black") as the
+    vivid RGB plotui wants. Base names resolve through the saturated `_VIVID`
+    palette (not Rich's muddy standard-ANSI truecolors); ``bold``/``bright_``
+    brightens, ``dim`` darkens."""
+    parts = style.split()
+    base = parts[-1].removeprefix("bright_")
+    rgb = _VIVID.get(base)
+    if rgb is None:  # a truecolor name/hex — trust Rich
+        c = RichColor.parse(parts[-1]).get_truecolor()
+        rgb = (c.red, c.green, c.blue)
+    bright = "bold" in parts or parts[-1].startswith("bright_")
+    factor = 1.25 if bright else 0.5 if "dim" in parts else 1.0
+    return tuple(min(255, round(c * factor)) for c in rgb)
+
+
+def node_size(node: VNode) -> float:
+    """Supernodes grow with member count (log-scaled, capped); everything
+    else renders at the base radius."""
+    if node.type != "supernode":
+        return NODE_SIZE
+    return min(NODE_SIZE * (1.0 + 0.45 * math.log2(node.count + 1)), SUPERNODE_SIZE_CAP)
+
+
+def build_plot(vg: VisibleGraph, *, color_by: str = "type", selected: str | None = None):
+    """VisibleGraph -> a fresh plotui Plot plus the flat-index -> node-id list
+    (a single Graph3d trace, so flat index == node order). Selection is set on
+    the plot; camera state is the caller's to restore."""
+    from plotui import Plot
+
+    ids = [n.id for n in vg.nodes]
+    index_of = {node_id: i for i, node_id in enumerate(ids)}
+    latest = max((n.first_seen for n in vg.nodes if n.first_seen), default="")
+    plot = Plot()
+    plot.set_show_box(False)  # the axis cube reads as clutter over a graph
+    if vg.nodes:
+        edges = [e for e in vg.edges if e.src in index_of and e.dst in index_of]
+        plot.add_graph3d(
+            [n.x for n in vg.nodes],
+            [n.y for n in vg.nodes],
+            [n.z for n in vg.nodes],
+            edges=[(index_of[e.src], index_of[e.dst]) for e in edges],
+            node_colors=[style_to_rgb(node_color(n, color_by, latest)) for n in vg.nodes],
+            size=NODE_SIZE,
+            node_sizes=[node_size(n) for n in vg.nodes],
+            edge_colors=[style_to_rgb(EDGE_COLORS.get(e.type, "dim white")) for e in edges],
+        )
+        if selected in index_of:
+            plot.set_selected(index_of[selected])
+    return plot, ids
+
+
+def place_labels(
+    nodes: Sequence[VNode],
+    projected: Sequence[tuple[float, float, float]],
     *,
+    cols: int,
+    rows: int,
+    cell_px: tuple[int, int],
+    zoom: float,
     selected: str | None = None,
     hovered: str | None = None,
-    color_by: str = "type",
-) -> tuple[list[list[Segment]], list[PlacedNode]]:
-    """Rasterize one frame. Z-order: edge strokes < node glyphs < labels <
-    selection ring. Returns the rows plus the on-screen node positions
-    (in dots) that hit-testing consumes."""
-    buf = CellBuffer(cells_w, cells_h)
-    dots_w, dots_h = dot_size(cells_w, cells_h)
-    positions = {
-        n.id: world_to_dot(cam, dots_w, dots_h, n.x, n.y) for n in vg.nodes
-    }
-    latest = max((n.first_seen for n in vg.nodes if n.first_seen), default="")
-
-    for edge in vg.edges:
-        a, b = positions.get(edge.src), positions.get(edge.dst)
-        if a is None or b is None:
-            continue
-        clipped = clip_segment(a[0], a[1], b[0], b[1], dots_w, dots_h)
-        if clipped is None:
-            continue
-        style = EDGE_COLORS.get(edge.type, "dim white")
-        draw_line(buf, round(clipped[0]), round(clipped[1]),
-                  round(clipped[2]), round(clipped[3]), style)
-
-    placed: list[PlacedNode] = []
-    on_screen: list[VNode] = []
-    for node in vg.nodes:
-        dx, dy = positions[node.id]
-        if not (0 <= dx < dots_w and 0 <= dy < dots_h):
-            continue
-        placed.append(PlacedNode(node_id=node.id, dot_x=dx, dot_y=dy))
-        on_screen.append(node)
-        color = node_color(node, color_by, latest)
-        glyph = NODE_GLYPHS.get(node.type, "●")
-        cx, cy = int(dx // 2), int(dy // 4)
-        if node.id == selected:
-            buf.set_char(cx, cy, glyph, f"reverse bold {_base_color(color)}")
-            if cx > 0:
-                buf.set_char(cx - 1, cy, "(", "bold white")
-            buf.set_char(cx + 1, cy, ")", "bold white")
-        elif node.id == hovered:
-            buf.set_char(cx, cy, glyph, f"bold {_base_color(color)}")
-        else:
-            buf.set_char(cx, cy, glyph, color)
-
-    show_labels = cam.scale >= LABEL_SCALE
+) -> list[tuple[int, int, str, str]]:
+    """Label spans for the overlay: `(row, col, text, style_str)` per label.
+    Rules carried over from the braille canvas: all labels past LABEL_ZOOM,
+    always for selected/hovered/supernodes; priority order (selection, hover,
+    supernode weight, nearer depth) with a greedy collision mask; text
+    truncated to LABEL_MAX. Node cells themselves are masked so a label never
+    covers another node's mark."""
+    cell_w, cell_h = cell_px
+    show_all = zoom >= LABEL_ZOOM
+    on_screen: list[tuple[VNode, int, int, float]] = []
+    claimed: set[tuple[int, int]] = set()
+    for node, (sx, sy, depth) in zip(nodes, projected):
+        col, row = int(sx // cell_w), int(sy // cell_h)
+        if 0 <= col < cols and 0 <= row < rows:
+            on_screen.append((node, col, row, depth))
+            claimed.add((row, col))
     by_priority = sorted(
         on_screen,
-        key=lambda n: (n.id == selected, n.id == hovered, n.count, n.label),
+        key=lambda item: (
+            item[0].id == selected, item[0].id == hovered,
+            item[0].count, -item[3], item[0].label,
+        ),
         reverse=True,
     )
-    for node in by_priority:
-        if not (show_labels or node.id in (selected, hovered) or node.type == "supernode"):
+    spans: list[tuple[int, int, str, str]] = []
+    for node, col, row, _depth in by_priority:
+        if not (show_all or node.id in (selected, hovered) or node.type == "supernode"):
             continue
-        dx, dy = positions[node.id]
-        cx, cy = int(dx // 2) + 2, int(dy // 4)
         label = node.label[:LABEL_MAX] + ("…" if len(node.label) > LABEL_MAX else "")
-        span = range(cx, cx + len(label))
-        if not all(buf.char_free(x, cy) for x in span if x < cells_w):
-            continue  # greedy collision mask: lower priority label skipped
-        for offset, char in enumerate(label):
-            if cx + offset >= cells_w:
-                break
-            buf.set_char(cx + offset, cy, char, "bright_black" if node.id not in (selected, hovered) else "bold white")
-    return buf.to_segments(), placed
-
-
-def _base_color(style: str) -> str:
-    return style.split()[-1]
-
-
-def hit_test(
-    placed: list[PlacedNode], dot_x: float, dot_y: float, radius: float = HIT_RADIUS_DOTS
-) -> str | None:
-    """Nearest on-screen node within radius (dot space is ~square, so this
-    is a true Euclidean nearest)."""
-    best: str | None = None
-    best_dist = radius
-    for node in placed:
-        dist = math.hypot(node.dot_x - dot_x, node.dot_y - dot_y)
-        if dist <= best_dist:
-            best = node.node_id
-            best_dist = dist
-    return best
+        start = col + 2
+        cells = [(row, x) for x in range(start, min(start + len(label), cols))]
+        if not cells or any(cell in claimed for cell in cells):
+            continue  # greedy collision mask: lower-priority label skipped
+        claimed.update(cells)
+        label = label[: len(cells)]
+        style = "bold white" if node.id in (selected, hovered) else "bright_black"
+        spans.append((row, start, label, style))
+    return spans
 
 
 def snap_to_event(events: list[str], fraction: float) -> int:
@@ -591,14 +416,14 @@ def search_dir_from_run_ref(config: Config, run_ref: str) -> Path | None:
 
 # --- Textual widgets ---
 
+from plotui import Plot  # noqa: E402
+from plotui.textual import PlotWidget  # noqa: E402
 from textual.app import App, ComposeResult  # noqa: E402
 from textual.binding import Binding  # noqa: E402
 from textual import events  # noqa: E402
 from textual.containers import Vertical  # noqa: E402
 from textual.message import Message  # noqa: E402
 from textual.screen import Screen  # noqa: E402
-from textual.strip import Strip  # noqa: E402
-from textual.widget import Widget  # noqa: E402
 from textual.widgets import (  # noqa: E402
     Footer, Header, Input, OptionList, RichLog, Select, SelectionList, Static,
 )
@@ -606,15 +431,16 @@ from textual.widgets.option_list import Option  # noqa: E402
 
 from hillclimb.watch import REFRESH_S, _mouse_event_x, _mouse_event_y  # noqa: E402
 
-DRAG_THRESHOLD = 1  # cells before a press becomes a pan instead of a click
-PAN_STEP_FRACTION = 8  # arrow keys pan viewport/8
 
+class GraphPlotWidget(PlotWidget):
+    """The 3D plotui view of the knowledge graph. All state that must survive
+    a data refresh (camera, selection, hover, LOD) lives here, never derived
+    from data — the plotui Plot itself is rebuilt from the screen-supplied
+    graph on every change (its traces are append-only), with the camera
+    captured and restored around each rebuild.
 
-class GraphCanvas(Widget):
-    """The zoomable/pannable braille canvas. All state that must survive a
-    data refresh (camera, hover) lives here, never derived from data."""
-
-    can_focus = True
+    Interaction: drag rotates, shift-drag pans, scroll and +/- zoom (zoom
+    drives the semantic-LOD collapse), click selects, re-click activates."""
 
     class NodeSelected(Message):
         def __init__(self, node_id: str | None):
@@ -627,22 +453,17 @@ class GraphCanvas(Widget):
             self.node_id = node_id
 
     def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.camera: Camera | None = None
+        super().__init__(Plot(), **kwargs)
         self.color_by = "type"
         self.selected: str | None = None
         self._graph: KnowledgeGraph | None = None
         self._visible: VisibleGraph | None = None
+        self._ids: list[str] = []
+        self._index: dict[str, int] = {}
         self._collapsed = False
-        self._strips: list[Strip] = []
-        self._placed: list[PlacedNode] = []
         self._hover: str | None = None
-        self._press: tuple[int, int] | None = None
-        self._dragged = False
 
-    @property
-    def dragging(self) -> bool:
-        return self._press is not None and self._dragged
+    # -- data --
 
     def set_graph(self, graph: KnowledgeGraph) -> None:
         self._graph = graph
@@ -651,165 +472,185 @@ class GraphCanvas(Widget):
             self.post_message(self.NodeSelected(None))
         self.rebuild()
 
-    def set_camera(self, camera: Camera) -> None:
-        self.camera = camera
-        self.rebuild()
-
-    def _bounds(self) -> WorldBounds:
-        nodes = self._visible.nodes if self._visible else ()
-        return world_bounds(list(nodes))
-
-    def fit(self) -> None:
-        if self._graph is None or not self._graph.nodes:
-            return
-        # fit against the uncollapsed extents so LOD flips can't shrink the view
-        all_nodes = apply_lod(self._graph, False).nodes
-        dots_w, dots_h = dot_size(max(self.size.width, 1), max(self.size.height, 1))
-        self.camera = fit_camera(world_bounds(list(all_nodes)), dots_w, dots_h)
-        self.rebuild()
-
     def rebuild(self) -> None:
-        if self._graph is None or self.size.width <= 0 or self.size.height <= 0:
+        if self._graph is None:
             return
-        if self.camera is None:
-            all_nodes = apply_lod(self._graph, False).nodes
-            dots_w, dots_h = dot_size(self.size.width, self.size.height)
-            self.camera = fit_camera(world_bounds(list(all_nodes)), dots_w, dots_h)
-        self._collapsed = lod_collapsed(self.camera.scale, self._collapsed)
+        yaw, pitch, zoom, pan_x, pan_y = self._plot.camera_state()
+        self._collapsed = lod_collapsed(zoom, self._collapsed)
         self._visible = apply_lod(self._graph, self._collapsed)
-        rows, self._placed = render_frame(
-            self._visible, self.camera, self.size.width, self.size.height,
-            selected=self.selected, hovered=self._hover, color_by=self.color_by,
+        plot, self._ids = build_plot(
+            self._visible, color_by=self.color_by, selected=self.selected
         )
-        self._strips = [Strip(row, cell_length=self.size.width) for row in rows]
-        self.refresh()
+        self._index = {node_id: i for i, node_id in enumerate(self._ids)}
+        if self._hover is not None:
+            if self._hover in self._index:
+                plot.set_hovered(self._index[self._hover])
+            else:
+                self._hover = None
+        plot.set_camera_state(yaw, pitch, zoom, pan_x, pan_y)
+        self._plot = plot
+        self._refresh_overlay()
+        self.invalidate()
 
-    def render_line(self, y: int) -> Strip:
-        if y < len(self._strips):
-            return self._strips[y]
-        return Strip.blank(self.size.width)
+    # -- geometry helpers --
+
+    def _px_dims(self) -> tuple[int, int]:
+        """Framebuffer pixel size (cells × the supersampling cell size)."""
+        w, h = max(self.size.width, 1), max(self.size.height, 1)
+        return w * self._cell_w, h * self._cell_h
+
+    def _cell_px_size(self) -> tuple[int, int]:
+        return self._cell_w, self._cell_h
+
+    def _node_at(self, event: events.MouseEvent) -> str | None:
+        # widget-relative cell coords via the watch.py shims — raw event.x/y
+        # can be screen-relative while the mouse is captured
+        x = _mouse_event_x(event) - self.region.x
+        y = _mouse_event_y(event) - self.region.y
+        px_w, px_h, px, py, radius = self._pixel_geometry(x, y)
+        flat = self._plot.pick_px(px_w, px_h, px, py, radius)
+        if flat is None or flat >= len(self._ids):
+            return None
+        return self._ids[flat]
+
+    def _refresh_overlay(self) -> None:
+        if self._mode == "unsupported":
+            return  # the widget shows its terminal-support notice instead
+        if self._visible is None or not self._ids or self.size.width <= 0:
+            self.set_overlay([])
+            return
+        spans = place_labels(
+            self._visible.nodes,
+            self._plot.project_nodes(*self._px_dims()),
+            cols=self.size.width,
+            rows=self.size.height,
+            cell_px=self._cell_px_size(),
+            zoom=self._plot.camera_state()[2],
+            selected=self.selected,
+            hovered=self._hover,
+        )
+        self.set_overlay(
+            [(row, col, text, Style.parse(style)) for row, col, text, style in spans]
+        )
+
+    def _lod_check(self) -> None:
+        """After any zoom change: rebuild when the collapse state flips,
+        else just retrace the labels."""
+        zoom = self._plot.camera_state()[2]
+        if lod_collapsed(zoom, self._collapsed) != self._collapsed:
+            self.rebuild()
+        else:
+            self._refresh_overlay()
 
     def on_resize(self, event: events.Resize) -> None:
-        self.rebuild()
+        self._refresh_overlay()
 
-    # -- interaction --
+    # -- interaction hooks (PlotWidget routes all input through these) --
 
-    def _event_dots(self, event: events.MouseEvent) -> tuple[float, float]:
-        cx = _mouse_event_x(event) - self.region.x
-        cy = _mouse_event_y(event) - self.region.y
-        return cx * 2 + 1, cy * 4 + 2  # center of the cell, in dots
+    def apply_zoom(self, factor: float) -> None:
+        super().apply_zoom(factor)
+        self._lod_check()
 
-    def on_mouse_down(self, event: events.MouseDown) -> None:
-        self._press = (_mouse_event_x(event), _mouse_event_y(event))
-        self._dragged = False
-        self.capture_mouse()
-        self.focus()
-        event.prevent_default()
-        event.stop()
+    def apply_rotate(self, d_yaw: float, d_pitch: float) -> None:
+        super().apply_rotate(d_yaw, d_pitch)
+        self._refresh_overlay()
 
-    def on_mouse_move(self, event: events.MouseMove) -> None:
-        if self._press is not None:
-            x, y = _mouse_event_x(event), _mouse_event_y(event)
-            dx, dy = x - self._press[0], y - self._press[1]
-            if self._dragged or max(abs(dx), abs(dy)) >= DRAG_THRESHOLD:
-                self._dragged = True
-                if self.camera is not None:
-                    # drag right -> world moves with the pointer (camera left);
-                    # cells -> dots is the one place the 2x4 factor leaks in
-                    self.camera = pan_camera(self.camera, -dx * 2, -dy * 4, self._bounds())
-                self._press = (x, y)
-                self.rebuild()
-            event.prevent_default()
-            event.stop()
-            return
-        dot_x, dot_y = self._event_dots(event)
-        hover = hit_test(self._placed, dot_x, dot_y)
-        if hover != self._hover:
-            self._hover = hover
-            self.rebuild()
+    def apply_pan(self, dx: float, dy: float) -> None:
+        super().apply_pan(dx, dy)
+        self._refresh_overlay()
 
-    def on_mouse_up(self, event: events.MouseUp) -> None:
-        was_click = self._press is not None and not self._dragged
-        self._press = None
-        self._dragged = False
-        self.release_mouse()
-        if was_click:
-            dot_x, dot_y = self._event_dots(event)
-            node_id = hit_test(self._placed, dot_x, dot_y)
-            if node_id != self.selected:
-                self.selected = node_id
-                self.rebuild()
-                self.post_message(self.NodeSelected(node_id))
-            elif node_id is not None:
-                self.post_message(self.NodeActivated(node_id))
-        event.prevent_default()
-        event.stop()
+    def apply_reset(self) -> None:
+        super().apply_reset()
+        self._lod_check()
 
-    def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
-        self._zoom_at_event(event, ZOOM_FACTOR)
-        event.prevent_default()
-        event.stop()
+    def on_click_at(self, event: events.MouseUp) -> None:
+        node_id = self._node_at(event)
+        if node_id != self.selected:
+            self.selected = node_id
+            self._plot.set_selected(self._index.get(node_id) if node_id else None)
+            self.invalidate()
+            self._refresh_overlay()
+            self.post_message(self.NodeSelected(node_id))
+        elif node_id is not None:
+            self.post_message(self.NodeActivated(node_id))
 
-    def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
-        self._zoom_at_event(event, 1 / ZOOM_FACTOR)
-        event.prevent_default()
-        event.stop()
-
-    def _zoom_at_event(self, event: events.MouseEvent, factor: float) -> None:
-        if self.camera is None:
-            return
-        dots_w, dots_h = dot_size(self.size.width, self.size.height)
-        dot_x, dot_y = self._event_dots(event)
-        self.camera = zoom_about(self.camera, dots_w, dots_h, dot_x, dot_y, factor, self._bounds())
-        self.rebuild()
+    # -- camera (the GraphScreen contract) --
 
     def zoom(self, factor: float) -> None:
-        if self.camera is None:
-            return
-        dots_w, dots_h = dot_size(self.size.width, self.size.height)
-        self.camera = zoom_about(
-            self.camera, dots_w, dots_h, dots_w / 2, dots_h / 2, factor, self._bounds()
-        )
-        self.rebuild()
+        self.apply_zoom(factor)
 
     def pan(self, dx_fraction: float, dy_fraction: float) -> None:
-        if self.camera is None:
-            return
-        dots_w, dots_h = dot_size(self.size.width, self.size.height)
-        self.camera = pan_camera(
-            self.camera, dx_fraction * dots_w, dy_fraction * dots_h, self._bounds()
-        )
-        self.rebuild()
+        px_w, px_h = self._px_dims()
+        self.apply_pan(dx_fraction * px_w, dy_fraction * px_h)
+
+    def fit(self) -> None:
+        # zoom 1.0 = the whole graph auto-framed; keep the current rotation
+        yaw, pitch, _zoom, _px, _py = self._plot.camera_state()
+        self._plot.set_camera_state(yaw, pitch, 1.0, 0.0, 0.0)
+        self.invalidate()
+        self._lod_check()
 
     def center_on(self, node_id: str, *, select: bool = True) -> None:
         if self._graph is None:
             return
-        node = self._graph.node_map().get(node_id)
-        if node is None:
-            return
-        x, y = node_pos(node)
-        scale = max(self.camera.scale if self.camera else LABEL_SCALE, LABEL_SCALE)
-        self.camera = Camera(cx=x, cy=y, scale=scale)
+        # centering implies label-visible zoom, which is past the LOD exit —
+        # rebuild first so the node exists as its own mark, then pan its
+        # projection to the view center (projector: cx = w/2 + pan_x).
+        yaw, pitch, zoom, pan_x, pan_y = self._plot.camera_state()
+        self._plot.set_camera_state(yaw, pitch, max(zoom, LABEL_ZOOM), pan_x, pan_y)
         if select:
             self.selected = node_id
-            self.post_message(self.NodeSelected(node_id))
         self.rebuild()
+        flat = self._index.get(node_id)
+        if flat is not None:
+            px_w, px_h = self._px_dims()
+            sx, sy, _depth = self._plot.project_nodes(px_w, px_h)[flat]
+            self.apply_pan(px_w / 2 - sx, px_h / 2 - sy)
+        if select:
+            self.post_message(self.NodeSelected(node_id))
 
     def zoom_to_members(self, member_ids: tuple[str, ...]) -> None:
         if self._graph is None or not member_ids:
             return
-        nodes = [n for n in self._graph.nodes if n.id in set(member_ids)]
-        if not nodes:
-            return
-        vnodes = [
-            VNode(id=n.id, type=n.type, label=n.label, x=node_pos(n)[0], y=node_pos(n)[1])
-            for n in nodes
-        ]
-        dots_w, dots_h = dot_size(self.size.width, self.size.height)
-        camera = fit_camera(world_bounds(vnodes), dots_w, dots_h)
-        # land past the LOD exit threshold so the supernode actually expands
-        self.camera = replace(camera, scale=max(camera.scale, COLLAPSE_EXIT * 1.1))
+        # land past the LOD exit threshold so the supernode actually expands,
+        # then frame the members: zoom to their projected bounding box and
+        # pan its center to the view center.
+        yaw, pitch, zoom, pan_x, pan_y = self._plot.camera_state()
+        self._plot.set_camera_state(
+            yaw, pitch, max(zoom, COLLAPSE_EXIT * 1.1), pan_x, pan_y
+        )
         self.rebuild()
+        flats = [self._index[m] for m in member_ids if m in self._index]
+        if not flats:
+            return
+        px_w, px_h = self._px_dims()
+        projected = self._plot.project_nodes(px_w, px_h)
+        xs = [projected[f][0] for f in flats]
+        ys = [projected[f][1] for f in flats]
+        span_x = max(max(xs) - min(xs), 1.0)
+        span_y = max(max(ys) - min(ys), 1.0)
+        factor = min(px_w / span_x, px_h / span_y) * 0.7
+        if factor > 1.0:
+            self._plot.zoom_by(factor)
+            projected = self._plot.project_nodes(px_w, px_h)
+            xs = [projected[f][0] for f in flats]
+            ys = [projected[f][1] for f in flats]
+        self.apply_pan(px_w / 2 - (max(xs) + min(xs)) / 2, px_h / 2 - (max(ys) + min(ys)) / 2)
+
+    # -- hover (drag/click/scroll/keys are handled by PlotWidget's own
+    #    handlers, which route through the apply_*/on_click_at hooks above;
+    #    Textual dispatches this handler IN ADDITION to the base class's) --
+
+    def on_mouse_move(self, event: events.MouseMove) -> None:
+        if self._dragging:
+            return  # PlotWidget's handler rotates/pans via the hooks
+        hover = self._node_at(event)
+        if hover != self._hover:
+            self._hover = hover
+            element = self._index.get(hover) if hover is not None else None
+            if self._plot.set_hovered(element):
+                self.invalidate()
+            self._refresh_overlay()
 
 
 class TimeScrubber(Static):
@@ -952,10 +793,6 @@ class GraphScreen(Screen):
         Binding("+,=", "zoom_in", "zoom in"),
         Binding("-", "zoom_out", "zoom out"),
         Binding("f,0", "fit", "fit"),
-        Binding("up", "pan_up", show=False),
-        Binding("down", "pan_down", show=False),
-        Binding("left", "pan_left", show=False),
-        Binding("right", "pan_right", show=False),
         Binding("slash", "search", "search"),
         Binding("left_square_bracket", "scrub_back", "back in time"),
         Binding("right_square_bracket", "scrub_forward", "forward"),
@@ -988,12 +825,12 @@ class GraphScreen(Screen):
         yield ConceptSidebar(id="concept-sidebar")
         yield RichLog(id="node-detail", wrap=True, markup=False, auto_scroll=False)
         yield TimeScrubber(id="time-scrubber")
-        yield GraphCanvas(id="graph-canvas")
+        yield GraphPlotWidget(id="graph-canvas")
         yield Footer()
 
     def on_mount(self) -> None:
         self.refresh_data()
-        self.query_one("#graph-canvas", GraphCanvas).focus()
+        self.query_one("#graph-canvas", GraphPlotWidget).focus()
         self.set_interval(REFRESH_S, self.refresh_data)
 
     def _knowledge_dir(self) -> Path | None:
@@ -1004,7 +841,7 @@ class GraphScreen(Screen):
     def refresh_data(self) -> None:
         from hillclimb.graph import graph_path, load_or_build_graph
 
-        canvas = self.query_one("#graph-canvas", GraphCanvas)
+        canvas = self.query_one("#graph-canvas", GraphPlotWidget)
         if canvas.dragging:
             return  # no disk I/O mid-drag; in-memory rebuilds keep flowing
         knowledge_dir = self._knowledge_dir()
@@ -1032,13 +869,15 @@ class GraphScreen(Screen):
             t = scrubber.events_list[scrubber.index]
         view = graph_at(self._graph, t)
         view = filter_concepts(view, self._filters)
-        self.query_one("#graph-canvas", GraphCanvas).set_graph(view)
+        self.query_one("#graph-canvas", GraphPlotWidget).set_graph(view)
 
     # -- messages --
 
-    def on_graph_canvas_node_selected(self, message: GraphCanvas.NodeSelected) -> None:
+    def on_graph_plot_widget_node_selected(
+        self, message: GraphPlotWidget.NodeSelected
+    ) -> None:
         detail = self.query_one("#node-detail", RichLog)
-        canvas = self.query_one("#graph-canvas", GraphCanvas)
+        canvas = self.query_one("#graph-canvas", GraphPlotWidget)
         if message.node_id is None or canvas._graph is None:
             detail.styles.display = "none"
             detail.clear()
@@ -1049,7 +888,9 @@ class GraphScreen(Screen):
         for renderable in node_detail_renderables(source, message.node_id):
             detail.write(renderable, expand=True)
 
-    def on_graph_canvas_node_activated(self, message: GraphCanvas.NodeActivated) -> None:
+    def on_graph_plot_widget_node_activated(
+        self, message: GraphPlotWidget.NodeActivated
+    ) -> None:
         self._activate(message.node_id)
 
     def on_time_scrubber_time_changed(self, message: TimeScrubber.TimeChanged) -> None:
@@ -1057,7 +898,7 @@ class GraphScreen(Screen):
 
     def on_concept_sidebar_filters_changed(self, message: ConceptSidebar.FiltersChanged) -> None:
         self._filters = message.enabled
-        canvas = self.query_one("#graph-canvas", GraphCanvas)
+        canvas = self.query_one("#graph-canvas", GraphPlotWidget)
         canvas.color_by = message.color_by
         self._apply_view()
 
@@ -1067,7 +908,7 @@ class GraphScreen(Screen):
         matches = fuzzy_match(self._graph.nodes, event.value, limit=1)
         self._hide_search()
         if matches:
-            self.query_one("#graph-canvas", GraphCanvas).center_on(matches[0].id)
+            self.query_one("#graph-canvas", GraphPlotWidget).center_on(matches[0].id)
         event.stop()
 
     def on_input_changed(self, event: Input.Changed) -> None:
@@ -1089,13 +930,13 @@ class GraphScreen(Screen):
             return
         self._hide_search()
         if event.option.id:
-            self.query_one("#graph-canvas", GraphCanvas).center_on(event.option.id)
+            self.query_one("#graph-canvas", GraphPlotWidget).center_on(event.option.id)
         event.stop()
 
     # -- actions --
 
-    def _canvas(self) -> GraphCanvas:
-        return self.query_one("#graph-canvas", GraphCanvas)
+    def _canvas(self) -> GraphPlotWidget:
+        return self.query_one("#graph-canvas", GraphPlotWidget)
 
     def action_zoom_in(self) -> None:
         self._canvas().zoom(ZOOM_FACTOR)
@@ -1105,18 +946,6 @@ class GraphScreen(Screen):
 
     def action_fit(self) -> None:
         self._canvas().fit()
-
-    def action_pan_up(self) -> None:
-        self._canvas().pan(0, -1 / PAN_STEP_FRACTION)
-
-    def action_pan_down(self) -> None:
-        self._canvas().pan(0, 1 / PAN_STEP_FRACTION)
-
-    def action_pan_left(self) -> None:
-        self._canvas().pan(-1 / PAN_STEP_FRACTION, 0)
-
-    def action_pan_right(self) -> None:
-        self._canvas().pan(1 / PAN_STEP_FRACTION, 0)
 
     def action_scrub_back(self) -> None:
         self.query_one("#time-scrubber", TimeScrubber).step(-1)
@@ -1175,7 +1004,7 @@ class GraphScreen(Screen):
         if canvas.selected is not None:
             canvas.selected = None
             canvas.rebuild()
-            self.on_graph_canvas_node_selected(GraphCanvas.NodeSelected(None))
+            self.on_graph_plot_widget_node_selected(GraphPlotWidget.NodeSelected(None))
             return
         self.app.pop_screen()
 

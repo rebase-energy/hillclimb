@@ -10,10 +10,15 @@ the design rationale; the shipped surface is:
   supersession rules, pinned networkx layout, `load_or_build_graph`,
   `retrieve_claims` (graph-walk retrieval).
 - `graphview.py` — the interactive TUI screen (`g` in watch,
-  `hillclimb knowledge graph`): braille canvas with zoom/pan/click, node
-  detail panel, time scrubber over search-finish events, concept sidebar
-  (filter + color-by), semantic zoom into concept supernodes. Screenshot:
-  `graph-tui.png`.
+  `hillclimb knowledge graph`): a true-3D scene rendered by plotui
+  (Rust rasterizer → Kitty pixel graphics: kitty/Ghostty via placeholders,
+  iTerm2 ≥ 3.5/WezTerm via direct placement, a support notice elsewhere;
+  replaced the original braille canvas 2026-07-10).
+  Drag rotates, shift-drag pans, scroll zooms with semantic zoom into
+  concept supernodes; node detail panel, time scrubber over search-finish
+  events, concept sidebar (filter + color-by). Positions come from a 3D
+  spring layout cached in graph.json (`pos3`, schema v2; the 2D `pos`
+  stays for hillclimb-go). Screenshot: `graph-tui.png`.
 - Config: `learning.claims`, `learning.claims_timeout_s`,
   `learning.graph_retrieval`; CLI: `knowledge distill|rebuild|graph`.
 
@@ -167,6 +172,11 @@ cross-family claims that generalize. Injected as the prior-experience block.
 Evaluate with/without on holdout — this layer is where memory earns its keep.
 
 ### 4. TUI graph — interactive visualization
+
+> 2026-07-10: the braille canvas sketched below shipped first and was then
+> replaced wholesale by plotui (true-3D Rust renderer, Kitty pixel graphics,
+> `pos3` layout). The sketch is kept as design history; the labels-as-text,
+> LOD, filters, and scrubber ideas all carried over.
 
 New screen in `hillclimb watch` (`g` key), Textual ≥1.0 (mouse support is
 native):
