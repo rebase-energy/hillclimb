@@ -2,7 +2,7 @@
 name = "hillclimb"
 version = "0.2.0"
 description = "Auto-hillclimbing CLI for ML engineering tasks: deterministic greedy search over agent-drafted solutions"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12"
 dependencies = [
     "typer>=0.12",
     "pydantic>=2.7",
@@ -19,7 +19,7 @@ tui = [
     "plotui>=0.2",
 ]
 emflow = [
-    "emflow>=0.3,<0.4",
+    "emflow>=0.3.1,<0.4",
 ]
 
 [project.scripts]
@@ -37,11 +37,9 @@ dev = [
 ]
 
 [tool.uv.sources]
-# git, not a relative path: consumers that pull hillclimb from git inherit this
-# source, and "../emflow" cannot resolve inside their checkout. Not PyPI either
-# — the published 0.3.0 wheel predates "Ship gefcom2014 benchmark CSVs in
-# wheels", so benchmark evals die with FileNotFoundError. Co-developing emflow?
-# Re-add the editable checkout on top: uv pip install -e ../emflow
+# Use emflow main while developing hillclimb from source. Published hillclimb
+# artifacts resolve the compatible emflow release from PyPI via the extra above.
+# Co-developing emflow? Re-add the editable checkout: uv pip install -e ../emflow
 emflow = { git = "https://github.com/rebase-energy/emflow.git", branch = "main" }
 # maturin backend: uv builds the Rust crate on sync (needs a Rust toolchain).
 # After editing plotui's Rust source: uv sync --reinstall-package plotui
