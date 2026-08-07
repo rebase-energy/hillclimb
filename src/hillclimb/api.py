@@ -290,6 +290,7 @@ def create_search(
             holdout_fraction=config.holdout.fraction,
             holdout_strategy=problem.holdout.strategy if problem.holdout else "random",
             seed_from=str(seed_from) if seed_from else None,
+            learning_enabled=config.learning.enabled,
         ),
     )
     return search_dir
@@ -307,9 +308,10 @@ def resolve_knowledge_dir(config: Config) -> Path | None:
 
 def build_knowledge_context(
     config: Config, problem: ProblemSpec, target: str, log: Log
-) -> tuple[str | None, int]:
-    """(prior-experience prompt section, draft-complexity offset) from the
-    workspace knowledge cards."""
+) -> tuple[str | None, int, list[str]]:
+    """(prior-experience prompt section, draft-complexity offset, injected
+    claim ids) from the workspace knowledge cards. The claim ids feed credit
+    assignment: whoever gets quoted in the prompt answers for the outcome."""
     from hillclimb.knowledge import (
         complexity_offset,
         load_cards,
@@ -319,17 +321,55 @@ def build_knowledge_context(
 
     knowledge_dir = resolve_knowledge_dir(config)
     if knowledge_dir is None:
-        return None, 0
-    cards = load_cards(
-        knowledge_dir,
-        problem_id=problem.problem_id,
-        family=problem_family(problem.problem_id, target),
-    )
+        return None, 0, []
+    family = problem_family(problem.problem_id, target)
+    cards = load_cards(knowledge_dir, problem_id=problem.problem_id, family=family)
     if not cards:
-        return None, 0
+        return None, 0, []
     log(f"learning: {len(cards)} prior search card(s) inform this search")
     offset = complexity_offset(cards) if config.learning.complexity_prior else 0
-    return render_prior_experience(cards, max_cards=config.learning.max_cards), offset
+    text = render_prior_experience(cards, max_cards=config.learning.max_cards)
+    claim_ids: list[str] = []
+    if config.learning.graph_retrieval:
+        # graph-walk retrieval: distilled claims for this family plus
+        # cross-family claims that share a concept with the problem. When a
+        # consolidated playbook covers the problem's concepts it REPLACES the
+        # raw claim list (evolved prose beats retrieved facts), and credit
+        # flows to the claims the playbook was built from.
+        # Best effort — the cards block above never depends on the graph.
+        try:
+            from hillclimb.claims import problem_concepts, render_claims
+            from hillclimb.graph import load_or_build_graph, node_to_claim, retrieve_claims
+
+            kind = "emflow" if target.startswith("emflow://") else getattr(problem, "kind", "csv")
+            concepts = problem_concepts(kind, problem.metric_name)
+            playbooks = []
+            if config.learning.playbooks:
+                from hillclimb.consolidate import load_playbooks, render_playbooks
+
+                playbooks = load_playbooks(knowledge_dir, concepts)
+            if playbooks:
+                log(
+                    "learning: playbook(s) inform this search: "
+                    + ", ".join(p.concept for p in playbooks)
+                )
+                text = f"{text}\n\n{render_playbooks(playbooks)}"
+                claim_ids = sorted({cid for p in playbooks for cid in p.source_claims})
+            else:
+                nodes = retrieve_claims(
+                    load_or_build_graph(knowledge_dir),
+                    family=family,
+                    problem_id=problem.problem_id,
+                    concepts=concepts,
+                )
+                claims_text = render_claims([node_to_claim(n) for n in nodes])
+                if claims_text:
+                    log(f"learning: {len(nodes)} distilled claim(s) inform this search")
+                    text = f"{text}\n\n{claims_text}"
+                    claim_ids = [n.id.removeprefix("claim:") for n in nodes]
+        except Exception as exc:  # noqa: BLE001
+            log(f"learning: graph retrieval failed (prior cards unaffected): {exc}")
+    return text, offset, claim_ids
 
 
 def _distill_knowledge(
@@ -357,13 +397,31 @@ def _distill_knowledge(
             cost_usd=cost_usd,
             selection=config.holdout.selection,
         )
+        knowledge_dir = resolve_knowledge_dir(config)
+        if config.learning.claims and knowledge_dir is not None:
+            # inner guard: a failed distill pass costs the claims, not the card
+            try:
+                from hillclimb.claims import distill_claims
+
+                card.claims = distill_claims(
+                    journal,
+                    problem=problem,
+                    card=card,
+                    search_dir=search_dir,
+                    knowledge_dir=knowledge_dir,
+                    config=config,
+                    log=log,
+                )
+                if card.claims:
+                    log(f"learning: {len(card.claims)} claim(s) distilled")
+            except Exception as exc:  # noqa: BLE001
+                log(f"learning: claims distillation failed (card unaffected): {exc}")
         # always keep a copy with the search artifacts (synced for hosted runs)
         import yaml as _yaml
 
         (search_dir / CARD_FILENAME).write_text(
             _yaml.safe_dump(card.model_dump(exclude_none=True), sort_keys=False)
         )
-        knowledge_dir = resolve_knowledge_dir(config)
         if knowledge_dir is not None:
             path = write_card(knowledge_dir, card)
             log(f"learning: knowledge card written to {path}")
@@ -376,6 +434,72 @@ def _distill_knowledge(
             # running loaded their static prior cards before this search
             # finished, so the live channel is how its result reaches them
             write_live_card(search_dir.parents[1], card, search_dir.name)
+        if (
+            config.learning.credit
+            and config.learning.graph_retrieval
+            and knowledge_dir is not None
+        ):
+            # credit assignment: the claims this search's drafts were shown
+            # share its outcome (see credit.py for the reward definition)
+            try:
+                from hillclimb.credit import (
+                    CreditEvent,
+                    read_injected_claims,
+                    search_reward,
+                    write_credit_event,
+                )
+                from hillclimb.knowledge import load_cards
+
+                claim_ids = read_injected_claims(search_dir)
+                if claim_ids:
+                    prior_cards = [
+                        c for c in load_cards(
+                            knowledge_dir,
+                            problem_id=card.problem_id,
+                            family=card.family,
+                        )
+                        if c.run_ref != card.run_ref  # own card is already on disk
+                    ]
+                    reward, basis = search_reward(
+                        journal, problem, prior_cards, selection=config.holdout.selection
+                    )
+                    write_credit_event(knowledge_dir, CreditEvent(
+                        run_ref=card.run_ref,
+                        problem_id=card.problem_id,
+                        family=card.family,
+                        claim_ids=claim_ids,
+                        reward=reward,
+                        basis=basis,
+                    ))
+                    log(
+                        f"learning: credit {reward:g} ({basis}) recorded for "
+                        f"{len(claim_ids)} injected claim(s)"
+                    )
+            except Exception as exc:  # noqa: BLE001
+                log(f"learning: credit assignment failed (card unaffected): {exc}")
+        if config.learning.skills and knowledge_dir is not None:
+            # procedural memory: a scored winner joins the skill library
+            try:
+                from hillclimb.skills import harvest_skill
+
+                skill_dir = harvest_skill(
+                    journal, problem=problem, card=card,
+                    knowledge_dir=knowledge_dir,
+                    selection=config.holdout.selection, log=log,
+                )
+                if skill_dir is not None:
+                    log(f"learning: skill harvested -> {skill_dir}")
+            except Exception as exc:  # noqa: BLE001
+                log(f"learning: skill harvest failed (card unaffected): {exc}")
+        if knowledge_dir is not None:
+            # keep the derived graph index fresh; cheap at this scale and
+            # best-effort like everything else here
+            try:
+                from hillclimb.graph import rebuild_graph
+
+                rebuild_graph(knowledge_dir)
+            except Exception as exc:  # noqa: BLE001
+                log(f"learning: graph rebuild failed (card unaffected): {exc}")
     except Exception as exc:  # noqa: BLE001
         log(f"learning: card distillation failed (search result unaffected): {exc}")
 
@@ -422,7 +546,36 @@ def execute_search(
     abort = threading.Event()
     _kc, _offset = (None, 0)
     if knowledge_context is None:
-        _kc, _offset = build_knowledge_context(config, problem, target, log)
+        _kc, _offset, _claim_ids = build_knowledge_context(config, problem, target, log)
+        if _claim_ids:
+            from hillclimb.credit import record_injected_claims
+
+            record_injected_claims(search_dir, _claim_ids)
+    reference_solution: Path | None = None
+    reference_note = ""
+    if config.learning.skills:
+        _kdir = resolve_knowledge_dir(config)
+        if _kdir is not None:
+            try:
+                from hillclimb.claims import problem_concepts
+                from hillclimb.knowledge import problem_family
+                from hillclimb.skills import SKILL_CODE_FILENAME, select_skill
+
+                kind = "emflow" if target.startswith("emflow://") else getattr(problem, "kind", "csv")
+                match = select_skill(
+                    _kdir,
+                    family=problem_family(problem.problem_id, target),
+                    concepts=problem_concepts(kind, problem.metric_name),
+                    lower_is_better=problem.lower_is_better,
+                )
+                if match is not None:
+                    skill, skill_dir = match
+                    reference_solution = skill_dir / SKILL_CODE_FILENAME
+                    score = f"{skill.score:g} {skill.metric}" if skill.score is not None else "unscored"
+                    reference_note = f"scored {score} on {skill.problem_id}"
+                    log(f"learning: reference solution from {skill.run_ref} ({reference_note})")
+            except Exception as exc:  # noqa: BLE001
+                log(f"learning: skill selection failed (draft unaffected): {exc}")
     backend_obj = get_backend(config.backend, auth=config.backend_auth)
     if hasattr(backend_obj, "abort"):
         backend_obj.abort = abort
@@ -455,6 +608,8 @@ def execute_search(
         abort=abort,
         seed_solution=seed_from,
         knowledge_context=knowledge_context if knowledge_context is not None else _kc,
+        reference_solution=reference_solution,
+        reference_note=reference_note,
         complexity_start=_offset,
         policy=get_policy(
             config.search.policy, config.search.policy_params, complexity_start=_offset

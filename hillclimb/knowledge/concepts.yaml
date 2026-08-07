@@ -1,0 +1,79 @@
+schema_version: 1
+concepts:
+- slug: tabular
+  dimension: modality
+  description: Row/column structured data
+  proposed: false
+- slug: time-series
+  dimension: modality
+  description: Temporally ordered observations
+  proposed: false
+- slug: text
+  dimension: modality
+  description: Natural-language data
+  proposed: false
+- slug: image
+  dimension: modality
+  description: Pixel data
+  proposed: false
+- slug: classification
+  dimension: task
+  description: Predict a discrete label
+  proposed: false
+- slug: regression
+  dimension: task
+  description: Predict a continuous value
+  proposed: false
+- slug: forecasting
+  dimension: task
+  description: Predict future values of a series
+  proposed: false
+- slug: decision-trees
+  dimension: model-family
+  description: Tree and gradient-boosted-tree models
+  proposed: false
+- slug: neural-networks
+  dimension: model-family
+  description: Deep learning models
+  proposed: false
+- slug: linear-models
+  dimension: model-family
+  description: Linear/logistic regression and kin
+  proposed: false
+- slug: ensemble
+  dimension: model-family
+  description: Combinations of multiple models
+  proposed: false
+- slug: nearest-neighbors
+  dimension: model-family
+  description: Instance/similarity-based models
+  proposed: false
+- slug: probabilistic
+  dimension: model-family
+  description: Quantile/distributional/Bayesian models
+  proposed: false
+- slug: feature-engineering
+  dimension: stage
+  description: Constructing or transforming features
+  proposed: false
+- slug: preprocessing
+  dimension: stage
+  description: Cleaning, imputation, encoding, scaling
+  proposed: false
+- slug: validation
+  dimension: stage
+  description: Split design and evaluation hygiene
+  proposed: false
+- slug: tuning
+  dimension: stage
+  description: Hyperparameter search
+  proposed: false
+- slug: post-processing
+  dimension: stage
+  description: Calibration, clipping, blending of outputs
+  proposed: false
+- slug: geometric-optimization
+  dimension: task
+  description: Geometric or spatial optimization problems such as circle packing and
+    layout
+  proposed: true

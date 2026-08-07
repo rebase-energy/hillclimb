@@ -15,6 +15,8 @@ dependencies = [
 tui = [
     "textual>=1.0",
     "pydot>=4.0.1",
+    "networkx>=3.0",
+    "plotui>=0.2",
 ]
 emflow = [
     "emflow>=0.3,<0.4",
@@ -29,11 +31,16 @@ dev = [
     "pytest-asyncio>=1.4.0",
     "textual>=1.0",
     "pydot>=4.0.1",
+    "networkx>=3.0",
+    "plotui>=0.2",
     "emflow",
 ]
 
 [tool.uv.sources]
 emflow = { path = "../emflow", editable = true }
+# maturin backend: uv builds the Rust crate on sync (needs a Rust toolchain).
+# After editing plotui's Rust source: uv sync --reinstall-package plotui
+plotui = { path = "../plotui", editable = true }
 
 [build-system]
 requires = ["hatchling"]

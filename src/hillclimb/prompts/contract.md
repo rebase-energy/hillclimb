@@ -16,4 +16,5 @@ Rules:
 - When executed by the orchestrator (`python solution.py`, cwd = this directory), the script must finish within {{exec_timeout_min}} minutes.
 - Available packages: {{runtime_pkgs}}. Nothing else is installed. {{network_note}}
 - Set random seeds for reproducibility.
+{{tools_clause}}
 - Total hillclimb time remaining for this problem: {{time_remaining}}.

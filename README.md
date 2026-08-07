@@ -279,6 +279,69 @@ routing:
   debug: {model: haiku}                   # scalar routes stay scalars
 ```
 
+## Cross-search memory: the knowledge graph
+
+hillclimb learns across searches, and the memory is file-based and
+git-versionable — it lives in your workspace's `hillclimb/knowledge/`:
+
+- **Cards** (`knowledge/<family>/*.yaml`) — every finished search distills a
+  statistical card (operator stats, top approaches, failure modes; no model
+  calls) that future searches on the family receive as a "prior experience"
+  prompt section. Concurrent searches in one run also share **live cards**
+  mid-flight.
+- **Claims** (`learning.claims`, default on) — after distilling the card, one
+  cheap agent pass (routing key `distill`, default model haiku) turns the
+  search into typed claims: `histgradientboosting helps` on this family,
+  with confidence and candidate-id evidence. Claim subjects are canonical
+  **entities** (`knowledge/entities.yaml`, alias-deduped) classified
+  closed-set into a small curated **concept ontology**
+  (`knowledge/concepts.yaml` — tabular / time-series / decision-trees /
+  neural-networks / …; the agent may only *propose* additions, which you
+  promote by flipping `proposed: false`).
+- **Graph** (`knowledge/graph.json`) — a derived index rebuilt
+  deterministically from the YAML (never hand-edit; `hillclimb knowledge
+  rebuild` regenerates it, and it is gitignored). Every node/edge carries
+  `first_seen`, claims gain `superseded_at` when a newer belief displaces
+  them, so any historical view is a pure filter.
+- **Retrieval** (`learning.graph_retrieval`, default on) — new searches also
+  get the top graph-ranked claims: same-family first, then cross-family
+  claims that share a concept with the problem.
+- **Credit** (`learning.credit`, default on) — injected claims share the
+  search's outcome (did it beat the best prior score on the problem?), so
+  every claim accumulates a measured track record that adjusts its retrieval
+  ranking; chronically failing claims retire. Memory that learns whether
+  it's right.
+- **Playbooks** (`learning.playbooks`, default on) — `hillclimb knowledge
+  consolidate` is the sleep phase: multi-family claims generalize up the
+  concept hierarchy, and each concept with enough evidence gets an
+  agent-written playbook (`knowledge/playbooks/<concept>.md`, a reviewable
+  git diff) that replaces the raw claims block in draft prompts; credit
+  flows to the playbook's source claims.
+- **Skills** (`learning.skills`, default on) — winning solutions are
+  harvested into `knowledge/skills/` (2 best per family) and the best match
+  lands in the next search's first draft as `reference_solution.py`: proven
+  scaffolds, not prose hints.
+- **Query tool** (`operators.knowledge_tool`, default on) — operator agents
+  are told they can run `hillclimb knowledge query "<keywords>"` mid-search
+  to consult the memory before re-deriving something expensive.
+- **Benchmark** — `hillclimb bench run <problem> --pairs N` answers the only
+  question that matters: do memory-on searches beat memory-blind ones on
+  holdout? `bench report` renders the verdict.
+
+Explore it interactively with `hillclimb knowledge graph` (or `g` inside
+`hillclimb watch`): a true-3D scene rendered by [plotui](../plotui) (Rust
+rasterizer; full-pixel Kitty graphics — kitty, Ghostty, iTerm2 ≥ 3.5, and
+WezTerm are supported). Drag rotates, shift-drag pans, scroll zooms — and zoom
+doubles as semantic level-of-detail: zoom out and entities fold into concept
+supernodes. Click a node for the detail panel (re-click or Enter opens a
+search's candidates), scrub through time search by search, filter and
+color by concept from the sidebar. Node positions come from a 3D spring
+layout cached in graph.json (`pos3`; the 2D `pos` stays for hillclimb-go).
+
+![knowledge graph TUI](docs/graph-tui.png)
+
+Design notes and rationale: `docs/memory-graph.md`.
+
 ## Local optimization demo suite
 
 These problems are small, local, and require no download, so they are good for
@@ -314,6 +377,14 @@ the run has a single search), or `latest` (the default).
 | `prune <search> <candidate-id>` | cut a candidate and its subtree from the search |
 | `tree [search]` | render the exploration tree to `<search>/tree.png` |
 | `smoke [problem]` | one real agent call end-to-end (auth / contract check) |
+| `knowledge graph [--stats]` | interactive knowledge-graph TUI (or a text summary) |
+| `knowledge rebuild` | force-rebuild the derived `knowledge/graph.json` index |
+| `knowledge distill [search] [--backfill]` | run the LLM claims pass on a search / all cards |
+| `knowledge consolidate [--dry-run]` | sleep phase: generalize claims + rewrite playbooks |
+| `knowledge query "<terms>" [--json]` | read-only memory lookup (also available to agents) |
+| `knowledge show <target>` | the prior-experience section a new search would get |
+| `bench run <problem> --pairs N` | paired learning-on/off searches (the memory A/B) |
+| `bench report [--problem X] [--all]` | compare the arms on holdout |
 
 Exit code `2` from `run`/`resume` means the search parked or was stopped — resume it.
 

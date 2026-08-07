@@ -50,6 +50,9 @@ class SearchMeta(BaseModel):
     holdout_fraction: float | None = None
     holdout_strategy: str = "random"
     seed_from: str | None = None  # incumbent solution the search was seeded with
+    # whether cross-search memory was active — the grouping key for the
+    # learning on/off A/B benchmark (bench.py)
+    learning_enabled: bool = True
     started_at: str = Field(default_factory=utcnow)
 
 

@@ -47,6 +47,9 @@ class OperatorsConfig(BaseModel):
     # improve: instruct the agent to run a component ablation of the parent
     # solution and target only the highest-impact component
     improve_ablation: bool = True
+    # all operators: contract clause advertising the read-only
+    # `hillclimb knowledge query` memory lookup (needs learning enabled)
+    knowledge_tool: bool = True
 
 
 class RouteConfig(BaseModel):
@@ -113,6 +116,25 @@ class LearningConfig(BaseModel):
     # opt-in policy bias: start the draft complexity schedule one step up
     # when past winners were never 'minimal'
     complexity_prior: bool = False
+    # semantic layer: one cheap agent pass after each finished search
+    # distills typed claims into the card (claims.py). Routed via
+    # `routing: distill:` (default model: haiku).
+    claims: bool = True
+    claims_timeout_s: int = 300
+    # inject graph-ranked claims into operator prompts when
+    # knowledge/graph.json exists (its own flag so A/B stays possible)
+    graph_retrieval: bool = True
+    # credit assignment: injected claims share the search's outcome reward;
+    # track records adjust retrieval confidence and retire failing claims
+    # (credit.py)
+    credit: bool = True
+    # consolidated playbooks (knowledge/playbooks/<concept>.md) replace the
+    # raw claims block in draft prompts when one matches the problem's
+    # concepts; credit flows to the playbook's source claims
+    playbooks: bool = True
+    # skill library: harvest scored winners into knowledge/skills/ and hand
+    # the best match to the first draft as reference_solution.py
+    skills: bool = True
 
 
 class ReportConfig(BaseModel):
@@ -153,8 +175,9 @@ class Config(BaseModel):
     backend: str = "claude-code"
     backend_auth: str = "subscription"  # subscription | api-key
     model: str = "sonnet"
-    # per-operator routing; keys: draft | debug | improve | ensemble | default.
-    # Missing keys (or an absent block) fall back to the scalars above.
+    # per-operator routing; keys: draft | debug | improve | ensemble |
+    # distill | default. Missing keys (or an absent block) fall back to the
+    # scalars above (except distill's model, which defaults to haiku).
     routing: dict[str, RouteConfig] = Field(default_factory=dict)
     budget: BudgetConfig = BudgetConfig()
     search: SearchConfig = SearchConfig()

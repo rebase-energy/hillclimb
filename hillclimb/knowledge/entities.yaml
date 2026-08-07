@@ -1,0 +1,50 @@
+schema_version: 1
+entities:
+- slug: physics-center-movement
+  kind: technique
+  aliases:
+  - physics-based center moves
+  - push-apart simulation
+  concepts:
+  - geometric-optimization
+  first_seen: '2026-07-10T10:01:48.760224+00:00'
+- slug: monotonic-basin-hopping
+  kind: technique
+  aliases:
+  - MBH
+  - monotonic basin hopping
+  concepts:
+  - geometric-optimization
+  first_seen: '2026-07-10T14:08:47.685563+00:00'
+- slug: greedy-sequential-construction
+  kind: technique
+  aliases:
+  - greedy construction
+  - largest-first
+  concepts:
+  - geometric-optimization
+  first_seen: '2026-07-10T14:08:47.685574+00:00'
+- slug: joint-slsqp-optimization
+  kind: technique
+  aliases:
+  - joint SLSQP
+  - multi-variable SLSQP
+  concepts:
+  - geometric-optimization
+  first_seen: '2026-07-10T14:08:47.685578+00:00'
+- slug: analytic-constraint-jacobian
+  kind: technique
+  aliases:
+  - analytic Jacobian
+  concepts:
+  - geometric-optimization
+  first_seen: '2026-07-10T14:08:47.685581+00:00'
+- slug: feasibility-repair
+  kind: technique
+  aliases:
+  - constraint enforcement
+  - post-optimization repair
+  concepts:
+  - geometric-optimization
+  - post-processing
+  first_seen: '2026-07-10T14:08:47.685589+00:00'

@@ -1047,6 +1047,7 @@ class SearchesScreen(Screen):
         Binding("escape", "app.pop_screen", "back"),
         Binding("enter", "open_search", "open", priority=True),
         Binding("s", "stop_search", "stop search"),
+        Binding("g", "open_graph", "graph"),
         Binding("q", "app.quit", "quit"),
     ]
 
@@ -1108,6 +1109,13 @@ class SearchesScreen(Screen):
         if search_dir is not None:
             self.app.push_screen(CandidateScreen(self.config, search_dir))
 
+    def action_open_graph(self) -> None:
+        # lazy so watch never pays for graphview at import time (and the
+        # reverse import of the mouse helpers stays cycle-free)
+        from hillclimb.graphview import GraphScreen
+
+        self.app.push_screen(GraphScreen(self.config))
+
     def action_stop_search(self) -> None:
         search_dir = self._selected_search_dir()
         if search_dir is None:
@@ -1129,6 +1137,7 @@ class RunsScreen(Screen):
 
     BINDINGS = [
         Binding("enter", "open_run", "open", priority=True),
+        Binding("g", "open_graph", "graph"),
         Binding("q", "app.quit", "quit"),
     ]
 
@@ -1192,6 +1201,11 @@ class RunsScreen(Screen):
             return
         run_id, name = selected
         self.app.push_screen(SearchesScreen(self.config, self.config.paths.runs_dir / run_id, name))
+
+    def action_open_graph(self) -> None:
+        from hillclimb.graphview import GraphScreen
+
+        self.app.push_screen(GraphScreen(self.config))
 
 
 class WatchApp(App):

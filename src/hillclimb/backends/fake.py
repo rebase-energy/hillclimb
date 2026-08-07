@@ -26,11 +26,13 @@ class FakeBackend:
         notes: str = "",
         result: dict | None = None,
         operator: str | None = None,
+        files: dict[str, str] | None = None,
         **result_kwargs,
     ) -> None:
         merged = {**(result or {}), **result_kwargs}
         self.responses.append(
-            {"script": script, "notes": notes, "result": merged, "operator": operator}
+            {"script": script, "notes": notes, "result": merged, "operator": operator,
+             "files": files}
         )
 
     def _pop_response(self, request: OperatorRequest) -> dict:
@@ -49,6 +51,10 @@ class FakeBackend:
             (request.workspace / "solution.py").write_text(response["script"])
         if response.get("notes"):
             (request.workspace / "notes.md").write_text(response["notes"])
+        for name, content in (response.get("files") or {}).items():
+            path = request.workspace / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
         return OperatorResult(**{"ok": True, **response.get("result", {})})
 
 

@@ -10,6 +10,7 @@ def test_render_replaces_tokens():
         time_remaining="1h 30m",
         holdout_clause="",
         report_clause="",
+        tools_clause="",
         verifier_clause="- prints exactly one line `val_score: <float>` for accuracy",
         network_note="Assume no internet access at execution time.",
     )
@@ -24,6 +25,7 @@ def test_render_replaces_tokens():
         time_remaining="1h 30m",
         network_note="Assume no internet access at execution time.",
         verifier_clause="- prints exactly one line `val_score: <float>` for accuracy",
+        tools_clause="",
         report_clause=render("report_clause").rstrip(),
         holdout_clause=render(
             "holdout_clause",

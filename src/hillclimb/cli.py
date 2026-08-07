@@ -244,6 +244,254 @@ def knowledge_show(target: str = typer.Argument(..., help="Problem target, e.g. 
     typer.echo(render_prior_experience(cards, max_cards=config.learning.max_cards))
 
 
+@knowledge_app.command("distill")
+def knowledge_distill(
+    search: str = typer.Argument(
+        "latest", help="Search ref (run-id/search-id), or `latest`"
+    ),
+    backfill: bool = typer.Option(
+        False, "--backfill", help="Extract claims for every knowledge card that has none"
+    ),
+):
+    """Run the LLM claims pass: distill typed claims (entities, concepts)
+    from a finished search — or backfill them across existing cards."""
+    from hillclimb.api import resolve_knowledge_dir
+    from hillclimb.claims import distill_claims, distill_claims_from_card
+    from hillclimb.knowledge import SCHEMA_VERSION, KnowledgeCard, distill_card, write_card
+
+    import yaml as _yaml
+
+    config = load_config()
+    knowledge_dir = resolve_knowledge_dir(config)
+    if knowledge_dir is None:
+        typer.echo("learning is disabled or no workspace/knowledge dir resolvable", err=True)
+        raise typer.Exit(1)
+
+    if backfill:
+        distilled = 0
+        for path in sorted(knowledge_dir.glob("*/*.yaml")):
+            try:
+                data = _yaml.safe_load(path.read_text()) or {}
+                if data.get("schema_version") != SCHEMA_VERSION or data.get("claims"):
+                    continue
+                card = KnowledgeCard.model_validate(data)
+            except Exception:  # noqa: BLE001
+                continue
+            workspace = knowledge_dir / ".distill" / path.stem
+            card.claims = distill_claims_from_card(
+                card, workspace=workspace, knowledge_dir=knowledge_dir,
+                config=config, log=typer.echo,
+            )
+            if card.claims:
+                write_card(knowledge_dir, card)
+                distilled += 1
+                typer.echo(f"  {path.relative_to(knowledge_dir)}: {len(card.claims)} claim(s)")
+        typer.echo(f"{distilled} card(s) backfilled with claims")
+        return
+
+    if search == "latest":
+        search_dir = latest_search_dir(config.paths.runs_dir)
+        if search_dir is None:
+            typer.echo(f"No searches found in {config.paths.runs_dir}", err=True)
+            raise typer.Exit(1)
+    else:
+        run_id, _, search_id = search.partition("/")
+        search_dir = config.paths.runs_dir / run_id / SEARCHES_DIRNAME / search_id
+    meta = load_search_meta(search_dir)
+    if meta is None:
+        raise typer.BadParameter(f"No search at {search_dir}")
+    journal = Journal(search_dir / "journal.jsonl")
+    if not journal.scored_candidates():
+        typer.echo("search has no scored candidates — nothing to distill", err=True)
+        raise typer.Exit(1)
+    problem = SimpleNamespace(
+        problem_id=meta.problem_id,
+        metric_name=meta.metric,
+        lower_is_better=meta.lower_is_better,
+    )
+    target = meta.problem if meta.problem.startswith("emflow://") else ""
+    card = distill_card(
+        journal, problem=problem, run_ref=search_ref(search_dir),
+        target=target, budget_s=meta.budget_s,
+        selection=config.holdout.selection,
+    )
+    card.claims = distill_claims(
+        journal, problem=problem, card=card, search_dir=search_dir,
+        knowledge_dir=knowledge_dir, config=config, log=typer.echo,
+    )
+    path = write_card(knowledge_dir, card)
+    typer.echo(f"{len(card.claims)} claim(s) -> {path}")
+
+
+@knowledge_app.command("query")
+def knowledge_query(
+    terms: str = typer.Argument(..., help="Keywords, e.g. 'gradient boosting' or a technique slug"),
+    family: str = typer.Option("", "--family", help="Restrict claims to one problem family"),
+    limit: int = typer.Option(5, "--limit"),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
+):
+    """Read-only memory lookup (no model calls) — also advertised to
+    operator agents so they can consult accumulated knowledge mid-search."""
+    import json as _json
+
+    from hillclimb.api import resolve_knowledge_dir
+    from hillclimb.graph import load_or_build_graph, query_graph, render_query_hits
+
+    config = load_config()
+    knowledge_dir = resolve_knowledge_dir(config)
+    if knowledge_dir is None:
+        typer.echo("learning is disabled or no workspace/knowledge dir resolvable", err=True)
+        raise typer.Exit(1)
+    hits = query_graph(load_or_build_graph(knowledge_dir), terms, family=family, limit=limit)
+    if as_json:
+        typer.echo(_json.dumps(hits, indent=1))
+    else:
+        typer.echo(render_query_hits(hits))
+
+
+@knowledge_app.command("consolidate")
+def knowledge_consolidate(
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would generalize / which playbooks would rewrite; no writes, no agent calls"
+    ),
+):
+    """The sleep phase: lift multi-family claims up the concept hierarchy
+    (mechanical) and rewrite per-concept playbooks (one agent call per
+    qualifying concept, routing key `consolidate`). Playbook rewrites land
+    as reviewable git diffs."""
+    from hillclimb.api import resolve_knowledge_dir
+    from hillclimb.consolidate import consolidate
+
+    config = load_config()
+    knowledge_dir = resolve_knowledge_dir(config)
+    if knowledge_dir is None:
+        typer.echo("learning is disabled or no workspace/knowledge dir resolvable", err=True)
+        raise typer.Exit(1)
+    summary = consolidate(knowledge_dir, config, typer.echo, dry_run=dry_run)
+    verb = "would generalize" if dry_run else "generalized"
+    typer.echo(f"{verb} {len(summary['generalized'])} claim(s)")
+    if dry_run:
+        typer.echo(
+            "playbook candidates: " + (", ".join(summary["playbook_concepts"]) or "(none)")
+        )
+    else:
+        typer.echo(f"{len(summary['playbooks_written'])} playbook(s) written")
+
+
+@knowledge_app.command("rebuild")
+def knowledge_rebuild():
+    """Force-rebuild knowledge/graph.json from the cards and registries.
+    The graph is a derived index — always safe to rebuild, never hand-edit."""
+    from hillclimb.api import resolve_knowledge_dir
+    from hillclimb.graph import graph_path, graph_stats, rebuild_graph
+
+    config = load_config()
+    knowledge_dir = resolve_knowledge_dir(config)
+    if knowledge_dir is None:
+        typer.echo("learning is disabled or no workspace/knowledge dir resolvable", err=True)
+        raise typer.Exit(1)
+    graph = rebuild_graph(knowledge_dir)
+    typer.echo(f"rebuilt {graph_path(knowledge_dir)}")
+    typer.echo(graph_stats(graph))
+
+
+@knowledge_app.command("graph")
+def knowledge_graph(
+    stats: bool = typer.Option(False, "--stats", help="Print index stats instead of the TUI"),
+):
+    """Explore the knowledge graph. Default: the interactive TUI screen
+    (zoom/pan/click, time scrubber); --stats prints a text summary."""
+    from hillclimb.api import resolve_knowledge_dir
+    from hillclimb.graph import graph_stats, load_or_build_graph
+
+    config = load_config()
+    knowledge_dir = resolve_knowledge_dir(config)
+    if knowledge_dir is None:
+        typer.echo("learning is disabled or no workspace/knowledge dir resolvable", err=True)
+        raise typer.Exit(1)
+    if stats:
+        typer.echo(graph_stats(load_or_build_graph(knowledge_dir)))
+        return
+    try:
+        from hillclimb.graphview import GraphApp
+    except ModuleNotFoundError as exc:
+        raise typer.BadParameter(
+            "`hillclimb knowledge graph` needs the TUI extra: pip install 'hillclimb[tui]'"
+        ) from exc
+    GraphApp(config).run()
+
+
+bench_app = typer.Typer(help="Learning A/B benchmark: does cross-search memory help?")
+app.add_typer(bench_app, name="bench")
+
+
+@bench_app.command("run")
+def bench_run(
+    target: str = typer.Argument(..., help="One problem (not a suite)"),
+    pairs: int = typer.Option(1, "--pairs", help="Number of off/on pairs to run"),
+    budget: str = typer.Option(None, "--budget", help="Per-search budget, e.g. 10m"),
+    backend: str = typer.Option(None, "--backend"),
+    model: str = typer.Option(None, "--model"),
+):
+    """Run paired searches: a memory-blind arm (--no-learning) then a
+    memory-full arm, sequentially per pair. Off first, so a pair's blind arm
+    never sees what its sibling learned; the on-arm accumulates knowledge
+    between pairs exactly as production searches do. Real agent runs —
+    subscription-billed; `--pairs` is your cost dial."""
+    from hillclimb.bench import bench_run_name, slugify_target
+
+    config = load_config()
+    resolved = resolve_target(target, config)
+    if resolved.kind == "suite":
+        raise typer.BadParameter("bench runs one problem at a time, not a suite")
+    problem = load_problem(target, config)
+    slug = slugify_target(problem.problem_id)
+    child_cwd = config.workspace_root or Path.cwd()
+    child_env = {**os.environ, "HILLCLIMB_WORKSPACE": str(child_cwd)}
+    for pair in range(1, pairs + 1):
+        for learning in (False, True):
+            arm = "on" if learning else "off"
+            run_name = bench_run_name(slug, pair, learning)
+            cmd = [sys.executable, "-m", "hillclimb.cli", "run", target, "--name", run_name]
+            if budget:
+                cmd += ["--budget", budget]
+            if backend:
+                cmd += ["--backend", backend]
+            if model:
+                cmd += ["--model", model]
+            if not learning:
+                cmd.append("--no-learning")
+            typer.echo(f"=== pair {pair}/{pairs}, {arm} arm: {run_name} ===")
+            result = subprocess.run(cmd, cwd=child_cwd, env=child_env)
+            if result.returncode != 0:
+                hint = " (parked — resume it, then rerun bench report)" if result.returncode == 2 else ""
+                typer.echo(f"{arm} arm exited {result.returncode}{hint}; stopping bench", err=True)
+                raise typer.Exit(result.returncode)
+    typer.echo("")
+    _bench_report_impl(config, problem.problem_id, include_all=False)
+
+
+@bench_app.command("report")
+def bench_report(
+    problem: str = typer.Option("", "--problem", help="Filter to one problem id"),
+    include_all: bool = typer.Option(
+        False, "--all", help="Group EVERY finished search by its learning flag, not just bench-* runs"
+    ),
+):
+    """Compare learning-on vs learning-off arms on the selected candidate's
+    holdout score (falls back to val when holdout was off)."""
+    _bench_report_impl(load_config(), problem, include_all=include_all)
+
+
+def _bench_report_impl(config: Config, problem_id: str, *, include_all: bool) -> None:
+    from hillclimb.bench import collect_bench_results, pair_and_summarize, render_bench_report
+
+    rows = collect_bench_results(
+        config.paths.runs_dir, problem_id=problem_id, include_all=include_all
+    )
+    typer.echo(render_bench_report(pair_and_summarize(rows)))
+
+
 def parse_budget(value: str) -> int:
     match = re.fullmatch(r"(\d+)\s*([hms]?)", value.strip())
     if not match:
@@ -380,6 +628,7 @@ def _run_suite(
     parallel_agents: int | None = None,
     n_trials: int | None = None,
     seed_from: Path | None = None,
+    learning: bool = True,
 ) -> None:
     resolved = resolve_target(target, config)
     if resolved.kind != "suite" or resolved.suite is None:
@@ -453,6 +702,8 @@ def _run_suite(
             cmd += ["--seed-from", str(seed_path)]
         if not holdout:
             cmd.append("--no-holdout")
+        if not learning:
+            cmd.append("--no-learning")
         out = log_path.open("w")
         proc = subprocess.Popen(
             cmd,
@@ -479,6 +730,10 @@ def run(
         None, "--policy", help="Search policy (default: greedy); params via config search.policy_params"
     ),
     holdout: bool = typer.Option(True, "--holdout/--no-holdout", help="Hidden selection holdout"),
+    learning: bool = typer.Option(
+        True, "--learning/--no-learning",
+        help="Cross-search memory (cards/claims injection + distillation); off = memory-blind arm",
+    ),
     name: str = typer.Option(None, "--name", help="Run name shown in the TUI"),
     parallel_agents: int = typer.Option(
         None, "--parallel-agents", help="Concurrent operators (worker pool)"
@@ -496,6 +751,8 @@ def run(
     config = load_config(backend=backend, model=model)
     if not holdout:
         config.holdout.enabled = False
+    if not learning:
+        config.learning.enabled = False
     if policy is not None:
         config.search.policy = policy
     if parallel_agents is not None:
@@ -507,7 +764,7 @@ def run(
         _run_suite(
             target, config, budget, backend, model, holdout, name,
             policy=policy, parallel_agents=parallel_agents, n_trials=n_trials,
-            seed_from=seed_from,
+            seed_from=seed_from, learning=learning,
         )
         return
     _run_problem(

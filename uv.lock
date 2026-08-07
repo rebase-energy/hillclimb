@@ -280,6 +280,8 @@ emflow = [
     { name = "emflow" },
 ]
 tui = [
+    { name = "networkx" },
+    { name = "plotui" },
     { name = "pydot" },
     { name = "textual" },
 ]
@@ -287,6 +289,8 @@ tui = [
 [package.dev-dependencies]
 dev = [
     { name = "emflow" },
+    { name = "networkx" },
+    { name = "plotui" },
     { name = "pydot" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -296,7 +300,9 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "emflow", marker = "extra == 'emflow'", editable = "../emflow" },
+    { name = "networkx", marker = "extra == 'tui'", specifier = ">=3.0" },
     { name = "pandas", specifier = ">=3.0.3" },
+    { name = "plotui", marker = "extra == 'tui'", editable = "../plotui" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pydot", marker = "extra == 'tui'", specifier = ">=4.0.1" },
     { name = "pyyaml", specifier = ">=6.0" },
@@ -309,6 +315,8 @@ provides-extras = ["tui", "emflow"]
 [package.metadata.requires-dev]
 dev = [
     { name = "emflow", editable = "../emflow" },
+    { name = "networkx", specifier = ">=3.0" },
+    { name = "plotui", editable = "../plotui" },
     { name = "pydot", specifier = ">=4.0.1" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
@@ -450,6 +458,15 @@ wheels = [
 ]
 
 [[package]]
+name = "networkx"
+version = "3.6.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6a/51/63fe664f3908c97be9d2e4f1158eb633317598cfa6e1fc14af5383f17512/networkx-3.6.1.tar.gz", hash = "sha256:26b7c357accc0c8cde558ad486283728b65b6a95d85ee1cd66bafab4c8168509", size = 2517025, upload-time = "2025-12-08T17:02:39.908Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9e/c9/b2622292ea83fbb4ec318f5b9ab867d0a28ab43c5717bb85b0a5f6b3b0a4/networkx-3.6.1-py3-none-any.whl", hash = "sha256:d47fbf302e7d9cbbb9e2555a0d267983d2aa476bac30e90dfbe5669bd57f3762", size = 2068504, upload-time = "2025-12-08T17:02:38.159Z" },
+]
+
+[[package]]
 name = "numpy"
 version = "2.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -506,6 +523,15 @@ sdist = { url = "https://files.pythonhosted.org/packages/d7/47/e4501f49c178ae1d9
 wheels = [
     { url = "https://files.pythonhosted.org/packages/81/e6/cd9575ac904136b3cbf7aa7ee819ef86eedb7274e46f230e94ea4342e729/platformdirs-4.10.0-py3-none-any.whl", hash = "sha256:fb516cdb12eb0d857d0cd85a7c57cea4d060bee4578d6cf5a14dfdf8cbf8784a", size = 22743, upload-time = "2026-05-28T03:32:52.175Z" },
 ]
+
+[[package]]
+name = "plotui"
+version = "0.2.0"
+source = { editable = "../plotui" }
+
+[package.metadata]
+requires-dist = [{ name = "textual", marker = "extra == 'textual'", specifier = ">=0.60" }]
+provides-extras = ["textual"]
 
 [[package]]
 name = "pluggy"
