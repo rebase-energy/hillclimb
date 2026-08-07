@@ -2,6 +2,7 @@
 name = "hillclimb"
 version = "0.2.0"
 description = "Auto-hillclimbing CLI for ML engineering tasks: deterministic greedy search over agent-drafted solutions"
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "typer>=0.12",
