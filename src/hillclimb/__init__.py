@@ -6,7 +6,7 @@ Public API (lazy — `import hillclimb` stays dependency-light):
     hillclimb.Config
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = ["__version__", "Config", "SearchOutcome", "run_search", "execute_search"]
 

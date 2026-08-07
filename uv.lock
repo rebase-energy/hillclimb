@@ -105,7 +105,7 @@ wheels = [
 [[package]]
 name = "emflow"
 version = "0.3.0"
-source = { editable = "../emflow" }
+source = { git = "https://github.com/rebase-energy/emflow.git?branch=main#7e6c6bb25e1709f45ab813ba93afb78fabf98da3" }
 dependencies = [
     { name = "energydatamodel" },
     { name = "fsspec" },
@@ -114,33 +114,6 @@ dependencies = [
     { name = "pyarrow" },
     { name = "pyyaml" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "build", marker = "extra == 'dev'", specifier = ">=1.2.2" },
-    { name = "energydatamodel", specifier = ">=0.7.0,<0.8.0" },
-    { name = "fsspec", specifier = ">=2023.1.0" },
-    { name = "gymnasium", specifier = ">=1.1.1" },
-    { name = "huggingface-hub", specifier = ">=0.20" },
-    { name = "huggingface-hub", marker = "extra == 'submissions'", specifier = ">=0.20" },
-    { name = "ipykernel", marker = "extra == 'dev'", specifier = ">=6.29.5" },
-    { name = "ipywidgets", marker = "extra == 'dev'", specifier = ">=8.1.5" },
-    { name = "matplotlib", marker = "extra == 'examples'", specifier = ">=3.8" },
-    { name = "myst-parser", marker = "extra == 'dev'", specifier = ">=4.0.1" },
-    { name = "nbsphinx", marker = "extra == 'dev'", specifier = ">=0.9.7" },
-    { name = "netcdf4", marker = "extra == 'build-data'", specifier = ">=1.6" },
-    { name = "plotly", marker = "extra == 'examples'", specifier = ">=5.0" },
-    { name = "pyarrow", specifier = ">=15.0.0" },
-    { name = "pyarrow", marker = "extra == 'dev'", specifier = ">=15.0.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "sphinx", marker = "extra == 'dev'", specifier = "==7.2.6" },
-    { name = "sphinx-autodoc-typehints", marker = "extra == 'dev'", specifier = ">=2.0.1" },
-    { name = "sphinx-rtd-theme", marker = "extra == 'dev'", specifier = ">=3.0.2" },
-    { name = "twine", marker = "extra == 'dev'", specifier = ">=6.1.0" },
-    { name = "xarray", marker = "extra == 'build-data'", specifier = ">=2024.1" },
-]
-provides-extras = ["examples", "submissions", "build-data", "dev"]
 
 [[package]]
 name = "energydatamodel"
@@ -299,7 +272,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "emflow", marker = "extra == 'emflow'", editable = "../emflow" },
+    { name = "emflow", marker = "extra == 'emflow'", git = "https://github.com/rebase-energy/emflow.git?branch=main" },
     { name = "networkx", marker = "extra == 'tui'", specifier = ">=3.0" },
     { name = "pandas", specifier = ">=3.0.3" },
     { name = "plotui", marker = "extra == 'tui'", editable = "../plotui" },
@@ -314,7 +287,7 @@ provides-extras = ["tui", "emflow"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "emflow", editable = "../emflow" },
+    { name = "emflow", git = "https://github.com/rebase-energy/emflow.git?branch=main" },
     { name = "networkx", specifier = ">=3.0" },
     { name = "plotui", editable = "../plotui" },
     { name = "pydot", specifier = ">=4.0.1" },
