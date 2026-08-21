@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from statistics import median
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -82,14 +83,29 @@ class Candidate(BaseModel):
     def last_trial(self) -> Trial | None:
         return self.trials[-1] if self.trials else None
 
-    # Aggregate rule: mean val over scored trials is the climbing signal
-    # (noise-robust for stochastic candidates); with one trial this equals
-    # the trial's own score. Holdout is evaluated once per candidate, so the
-    # last non-None value is the candidate's holdout score.
+    # Aggregate rule: MEDIAN val over scored trials is the climbing signal.
+    # With one trial (the default) it is that trial's score; with several it
+    # resists the single slow run or unlucky seed that a mean would carry
+    # straight into the search's ranking. Holdout is evaluated once per
+    # candidate, so the last non-None value is the candidate's holdout score.
     @property
     def val_score(self) -> float | None:
-        scores = [t.val_score for t in self.trials if t.val_score is not None]
-        return sum(scores) / len(scores) if scores else None
+        return median(self.trial_scores) if self.trial_scores else None
+
+    @property
+    def trial_scores(self) -> list[float]:
+        return [t.val_score for t in self.trials if t.val_score is not None]
+
+    @property
+    def trial_spread(self) -> float | None:
+        """Median absolute deviation of this candidate's trial scores — how
+        much the same code moves between identical evaluations. None until
+        two trials have scored."""
+        scores = self.trial_scores
+        if len(scores) < 2:
+            return None
+        centre = median(scores)
+        return median([abs(value - centre) for value in scores])
 
     @property
     def holdout_score(self) -> float | None:

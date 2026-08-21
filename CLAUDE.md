@@ -26,6 +26,11 @@ off stdout — agent code shares that stream.
 - New problem: `hillclimb init` scaffolds `problems/example/`; check a
   verifier with `hillclimb verify <problem> --repeat 5` (the spread it prints
   is the noise floor — improvements below it are not real)
+- Noisy metrics: a candidate's score is the MEDIAN of its trials;
+  `search.n_trials` + `noise_k`/`min_improvement` set an accept band so the
+  search cannot climb noise, and `trial_mode: serial` is mandatory when the
+  metric measures the machine (time/throughput/memory) — parallel trials
+  measure each other
 - CLI: `uv run hillclimb --help` (engine); `uv run hillclimb watch` (live TUI)
 - Driving runs from chat: use the `hillclimb` skill (`.claude/skills/hillclimb/SKILL.md`)
 

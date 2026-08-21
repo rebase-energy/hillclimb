@@ -647,6 +647,23 @@ def test_verifier_without_report_discards_agent_file(task, config):
     assert journal.get("c001").trials[0].report is None
 
 
+def test_bare_number_result_has_no_report_and_does_not_crash(task, config):
+    """The simplest verifier form (`echo 12.5 > $HILLCLIMB_RESULT`) carries no
+    report block — the trial must score, not explode reading one."""
+    task = add_verifier(
+        task, script='import os\nopen(os.environ["HILLCLIMB_RESULT"], "w").write("12.5")\n'
+    )
+    config.search.num_drafts = 1
+    backend = FakeBackend()
+    backend.queue(script=ok_script(0.9), notes="draft\n")
+    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=2)
+    searcher.run()
+    draft = journal.get("c001")
+    assert draft.status == "ok"
+    assert draft.val_score == 12.5
+    assert draft.trials[0].report is None
+
+
 def test_agent_report_labelled_self_reported(task, config):
     """Tier 2: verifier-less problems store the agent's own report, stamped
     source=agent and rendered with the self-reported caveat."""

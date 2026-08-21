@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import queue
 import shutil
 import threading
@@ -14,7 +13,7 @@ from hillclimb.budget import BudgetManager
 from hillclimb.candidate import BackendInfo, Candidate, Trial, utcnow
 from hillclimb.config import Config
 from hillclimb.control import ControlCommand, apply_prune, read_commands, resync_best
-from hillclimb.executor import Executor, HoldoutScorer
+from hillclimb.executor import RESULT_FILE, Executor, HoldoutScorer, read_result
 from hillclimb.journal import Journal
 from hillclimb.policies.greedy import GreedyPolicy
 from hillclimb.policy import Action, BudgetView, InflightRef, SearchPolicy, SearchView
@@ -781,10 +780,21 @@ class GreedySearcher:
                             last.holdout_score = msg.holdout_score
                     if candidate.status == "ok":
                         previous_best = self.journal.best_candidate(self.problem.lower_is_better)
-                        if previous_best is None or self._improves(
-                            candidate.val_score, previous_best.val_score
-                        ):
+                        if previous_best is None:
                             candidate.is_best = True
+                        elif self._improves(candidate.val_score, previous_best.val_score):
+                            candidate.is_best = True
+                        elif self._improves(
+                            candidate.val_score, previous_best.val_score, band=0.0
+                        ):
+                            # nominally ahead, but by less than the search can
+                            # measure — say so rather than silently climbing it
+                            self.log(
+                                f"  {candidate.candidate_id} val={candidate.val_score:.5g} beats "
+                                f"{previous_best.candidate_id} "
+                                f"({previous_best.val_score:.5g}) by less than the accept band "
+                                f"({self.accept_band():.3g}): within noise, not promoted"
+                            )
                 else:
                     candidate.status = "buggy"
                 candidate.finished_at = utcnow()
@@ -816,7 +826,9 @@ class GreedySearcher:
         parent = (
             self.journal.candidates.get(candidate.parent_id) if candidate.parent_id else None
         )
-        reward = candidate_reward(candidate, parent, self.problem.lower_is_better)
+        reward = candidate_reward(
+            candidate, parent, self.problem.lower_is_better, band=self.accept_band()
+        )
         if reward is not None:
             self.router.observe(candidate.operator, candidate.backend.model, reward)
 
@@ -827,10 +839,14 @@ class GreedySearcher:
     def _run_trials(
         self, candidate: Candidate, solution: Path, workspace: Path, exec_timeout: int
     ) -> bool:
-        """Run n_trials validation evaluations (parallel when >1, each in its
-        own trial dir with a distinct seed) and append the Trials in index
-        order. Returns True only if every trial passed — a seed-flaky
-        candidate is buggy."""
+        """Run n_trials validation evaluations (each in its own trial dir with
+        a distinct seed) and append the Trials in index order. Returns True
+        only if every trial passed — a seed-flaky candidate is buggy.
+
+        `search.trial_mode` decides whether they share the machine: parallel
+        for seed variance, serial when the metric is a measurement of the
+        machine itself (time, memory, throughput) and concurrent trials would
+        measure each other."""
         n = max(1, self.config.search.n_trials)
         if n == 1:
             trial, ok = self._execute_one_trial(solution, workspace, exec_timeout, seed=None)
@@ -847,8 +863,11 @@ class GreedySearcher:
                 trial_dir / solution.name, trial_dir, exec_timeout, seed=index
             )
 
-        with ThreadPoolExecutor(max_workers=n, thread_name_prefix="trial") as pool:
-            results = list(pool.map(run, range(n)))
+        if self.config.search.trial_mode == "serial":
+            results = [run(index) for index in range(n)]
+        else:
+            with ThreadPoolExecutor(max_workers=n, thread_name_prefix="trial") as pool:
+                results = list(pool.map(run, range(n)))
         candidate.trials.extend(trial for trial, _ in results)
         # trial-0 artifacts surface at the workspace root so best/-sync,
         # ensemble copies, and holdout scoring stay untouched
@@ -892,9 +911,10 @@ class GreedySearcher:
         problem has no verifier. The split check is the orchestrator half of
         the leakage contract: holdout and verify results must never reach
         prompts."""
-        try:
-            payload = json.loads((cwd / "eval_result.json").read_text())
-        except (OSError, ValueError):
+        # the result file may legitimately be a bare number (the simplest
+        # verifier form) — only the object form can carry a report
+        _, payload = read_result(cwd / RESULT_FILE)
+        if not isinstance(payload, dict):
             return None
         if payload.get("split") != "validation" or not isinstance(payload.get("report"), dict):
             return None
@@ -929,7 +949,7 @@ class GreedySearcher:
     def _gate_passes(self, val_score: float | None, threshold: float | None) -> bool:
         if threshold is None or val_score is None:
             return True
-        return self._improves(val_score, threshold) or val_score == threshold
+        return self._improves(val_score, threshold, band=0.0) or val_score == threshold
 
     def _sync_selection(self) -> None:
         """Keep best/ pointing at the currently selected candidate. Selection
@@ -955,8 +975,25 @@ class GreedySearcher:
             return None, None
         return self.holdout_scorer.score(workspace)
 
-    def _improves(self, score: float, best: float) -> bool:
-        return score < best if self.problem.lower_is_better else score > best
+    def accept_band(self) -> float:
+        """How much better a candidate must be before the engine believes it.
+
+        `min_improvement` is the author's own floor in metric units; `noise_k`
+        multiples of the measured noise floor is the search's own evidence
+        about itself. Zero (the default) is the strict comparison."""
+        band = self.config.search.min_improvement
+        if self.config.search.noise_k > 0:
+            floor = self.journal.noise_floor()
+            if floor is not None:
+                band = max(band, self.config.search.noise_k * floor)
+        return band
+
+    def _improves(self, score: float, best: float, band: float | None = None) -> bool:
+        """Strictly better by more than the accept band. Pass band=0.0 for a
+        raw comparison (ranking and gating, where a near-tie should still be
+        evaluated rather than dropped)."""
+        delta = (best - score) if self.problem.lower_is_better else (score - best)
+        return delta > (self.accept_band() if band is None else band)
 
     def _draft_complexity(self) -> str:
         return self.policy.draft_complexity(self._view())

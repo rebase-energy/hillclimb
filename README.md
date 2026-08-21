@@ -269,6 +269,49 @@ Only `"split": "validation"` reports are ever fed back to operators — holdout
 evaluations never produce one, by construction. `report.enabled: false` in
 config disables prompt injection (data is still recorded).
 
+## Noise: not climbing your own measurement error
+
+A greedy search will happily spend a whole budget chasing a metric that moves
+on its own. Three settings decide whether it can:
+
+```yaml
+search:
+  n_trials: 5            # evaluate each candidate this many times
+  trial_mode: serial     # `parallel` (default) | `serial`
+  noise_k: 2             # a gain must beat 2x the measured noise floor
+  min_improvement: 0.0   # ...or an absolute floor, in metric units
+```
+
+- **The candidate's score is the MEDIAN of its trials**, so one slow run or
+  unlucky seed does not become the number the search ranks on. With
+  `n_trials: 1` (the default) it is simply that trial's score.
+- **`trial_mode: serial` is required whenever the metric measures the
+  machine** — wall-clock time, throughput, memory. Parallel trials share a
+  CPU, so they measure each other. For seed variance, parallel is right and
+  three times faster.
+- **The accept band** is what stops the climb. A candidate becomes the new
+  best only if it beats the incumbent by more than
+  `max(min_improvement, noise_k x noise_floor)`, where the noise floor is the
+  median per-candidate trial spread (MAD) the search has actually observed.
+  Both default to `0`, which is the strict comparison. The band also gates the
+  routing bandit's reward, so noise cannot train the model router either.
+  Rejected near-misses are logged, not hidden:
+
+```
+c007 val=0.8123 beats c004 (0.8109) by less than the accept band (0.0042): within noise, not promoted
+```
+
+Measure before you tune: `hillclimb verify <problem> --repeat 5` runs the
+verifier five times and reports the floor, with the settings to match.
+
+```
+5 runs: median 0.9738, spread 0.0822, noise floor (MAD) 0.0104
+an improvement smaller than ~0.0208 cannot be told from noise. To stop the search climbing it:
+  search:
+    n_trials: 5
+    noise_k: 2
+```
+
 ## Operator scaffolds and model routing
 
 Two prompt scaffolds sharpen the default operators (both on by default; the

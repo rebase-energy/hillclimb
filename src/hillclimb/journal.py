@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from statistics import median
 
 from hillclimb.candidate import Candidate, utcnow
 
@@ -95,6 +96,19 @@ class Journal:
 
     def drafts(self) -> list[Candidate]:
         return [c for c in self.candidates.values() if c.operator == "draft" and not c.pruned]
+
+    def noise_floor(self) -> float | None:
+        """How much an identical candidate moves between identical
+        evaluations, measured from the search's own repeated trials: the
+        median of the per-candidate trial spreads. None when no candidate has
+        been evaluated twice (n_trials = 1), which is the honest answer — the
+        search has no evidence about its own noise."""
+        spreads = [
+            candidate.trial_spread
+            for candidate in self.candidates.values()
+            if candidate.trial_spread is not None
+        ]
+        return median(spreads) if spreads else None
 
     def scored_candidates(self) -> list[Candidate]:
         return [c for c in self.candidates.values() if c.is_scored and not c.pruned]

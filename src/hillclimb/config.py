@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from typing import Literal
+
 import yaml
 from pydantic import BaseModel, Field
 
@@ -30,7 +32,19 @@ class SearchConfig(BaseModel):
     num_drafts: int = 3
     max_debug_depth: int = 3
     parallel_agents: int = 1  # >1 enables the worker pool; 1 = serial (default)
-    n_trials: int = 1  # validation evals per candidate (mean val is the climbing score)
+    n_trials: int = 1  # validation evals per candidate (median val is the climbing score)
+    # how repeated trials run. "parallel" is right for seed variance (and 3x
+    # faster); "serial" is REQUIRED for anything that measures time — trials
+    # sharing a machine contend, and the contention is the measurement.
+    trial_mode: Literal["parallel", "serial"] = "parallel"
+    # Noise guard. A candidate is only better than the incumbent when it beats
+    # it by more than the band, so the search cannot climb measurement noise.
+    #   min_improvement: absolute floor, in metric units
+    #   noise_k: multiples of the observed noise floor (the median per-candidate
+    #            trial spread); needs n_trials > 1 to have anything to measure
+    # Both default to 0 = off, which is the strict comparison.
+    min_improvement: float = 0.0
+    noise_k: float = 0.0
     machine_max_agents: int = 0  # machine-wide concurrent-agent cap across searches; 0 = off
     policy: str = "greedy"  # search policy (policies registry)
     policy_params: dict = Field(default_factory=dict)  # opaque; validated by the policy factory

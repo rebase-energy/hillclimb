@@ -118,7 +118,10 @@ model: sonnet
 
 # search:
 #   parallel_agents: 1   # >1 runs concurrent operators
-#   n_trials: 1          # validation evals per candidate
+#   n_trials: 1          # evals per candidate (median is the climbing score)
+#   trial_mode: parallel # `serial` when the metric measures the machine (time!)
+#   noise_k: 0           # require gains > k x the measured noise floor
+#   min_improvement: 0   # ...or an absolute floor, in metric units
 
 # holdout:
 #   enabled: true
@@ -277,7 +280,12 @@ def verify(
             )
             script = workspace / "solution.py"
             script.write_text(source)
-            result = executor.execute(script, workspace, config.budget.exec_timeout_s)
+            # distinct seeds, exactly as the engine's repeated trials run, so
+            # the floor reported here is the one the search will face
+            result = executor.execute(
+                script, workspace, config.budget.exec_timeout_s,
+                seed=index if repeat > 1 else None,
+            )
             if not result.ok:
                 reason = "timed out" if result.timed_out else f"exit {result.returncode}"
                 if result.val_score is None and not result.timed_out:
@@ -295,13 +303,24 @@ def verify(
                     value, error = scorer.score(workspace)
                     typer.echo(f"  holdout: {error if error else format(value, '.6g')}")
     if len(scores) > 1:
+        centre = statistics.median(scores)
+        mad = statistics.median([abs(value - centre) for value in scores])
         spread = max(scores) - min(scores)
         typer.echo(
-            f"\nnoise floor over {len(scores)} runs: spread {spread:.6g}, "
-            f"median {statistics.median(scores):.6g}"
+            f"\n{len(scores)} runs: median {centre:.6g}, spread {spread:.6g}, "
+            f"noise floor (MAD) {mad:.6g}"
         )
+        if mad == 0:
+            typer.echo("deterministic across runs — any improvement is real")
+            return
         typer.echo(
-            "an improvement smaller than the spread cannot be distinguished from noise"
+            f"an improvement smaller than ~{2 * mad:.3g} cannot be told from noise. "
+            "To stop the search climbing it:"
+        )
+        typer.echo(f"  search:\n    n_trials: {max(3, repeat)}\n    noise_k: 2")
+        typer.echo(
+            "  add `trial_mode: serial` if this metric measures the machine "
+            "(time, throughput, memory) — parallel trials would measure each other"
         )
 
 
@@ -723,7 +742,7 @@ def _execute(
             f"({problem.metric_name}, {'lower' if problem.lower_is_better else 'higher'} is better)"
         )
     else:
-        typer.echo("\nDone. No scored solution; best/ holds the baseline submission.")
+        typer.echo("\nDone. No scored solution; best/ holds the t=0 baseline.")
     # the solution is always the artifact; a submission file only exists
     # where the problem's verifier asks for one
     artifact = "solution.py"
@@ -1075,6 +1094,12 @@ def status(search: str = typer.Argument("latest")):
         gaps = [abs(c.val_score - c.holdout_score) for c in scored]
         typer.echo(
             f"val→holdout gap: mean {sum(gaps)/len(gaps):.5g}, max {max(gaps):.5g} over {len(scored)} candidates"
+        )
+    floor = journal.noise_floor()
+    if floor is not None:
+        typer.echo(
+            f"noise floor: {floor:.5g} (median trial spread) — gains below "
+            f"~{2 * floor:.3g} are not measurable"
         )
 
 

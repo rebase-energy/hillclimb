@@ -67,6 +67,18 @@ sample = Path("problem") / "sample_submission.csv"
 shutil.copy(sample, "submission.csv")
 '''
 
+# Nothing to imitate: no sample submission and no training data, so the only
+# thing this stand-in can do is emit a number and let the problem's verifier
+# decide what to make of it. Enough to exercise the engine loop end to end on
+# a freshly scaffolded problem.
+BARE_TEMPLATE = '''\
+import os
+
+# a tiny bit of movement per call so successive candidates differ
+print("dummy solution")
+print(round(0.5 + 0.01 * int(os.environ.get("HILLCLIMB_TRIAL_SEED", 0)), 4))
+'''
+
 
 class DummyBackend:
     """Emits canned sklearn scripts so the whole loop can run without an LLM.
@@ -82,14 +94,11 @@ class DummyBackend:
         if not (request.workspace / "problem" / "sample_submission.csv").exists():
             # problems whose verifier drives solution.py directly have no
             # sample_submission to mimic
-            return OperatorResult(
-                ok=False,
-                error_kind="unsupported",
-                error_message=(
-                    "the dummy backend only supports csv problems "
-                    "(no sample_submission.csv found to fabricate from)"
-                ),
+            (request.workspace / "solution.py").write_text(BARE_TEMPLATE)
+            (request.workspace / "notes.md").write_text(
+                "dummy: prints a number for the problem's verifier to score\n"
             )
+            return OperatorResult(ok=True, session_id=f"dummy-{self.calls}", duration_s=0.0)
         if not (request.workspace / "data" / "train.csv").exists():
             script = VERIFIER_PROBLEM_TEMPLATE
             note = "baseline copy for verifier-defined problem"
