@@ -2,8 +2,8 @@ problem_id: tsp-200
 metric: tour-length
 lower_is_better: true
 description: description.md
-sample_submission: sample_submission.csv
-verifier: verify.py
 data_dir: data
+# valid-by-construction floor: best/ always holds something
+baseline_files: {submission.csv: sample_submission.csv}
 time_budget_s: 900
 allow_network: false

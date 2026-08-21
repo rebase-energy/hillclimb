@@ -118,9 +118,10 @@ Run
 With the `emflow` extra installed (`pip install 'hillclimb[emflow]'`),
 targets of the form `emflow://<name>` run problems from
 [emflow](https://github.com/rebase-energy/emflow)'s registry — agents author
-`Predictor` classes (`solution.py` exposing `get_model()`), a generic
-evaluator fits and scores them on the problem's validation split, and the
-hidden holdout is a second evaluator run. A bare package name is a virtual
+`Predictor` classes (`solution.py` exposing `get_model()`), and the provider
+supplies the verifier command: a generic evaluator fits and scores them on the
+problem's validation split, with the hidden holdout as a second run of the
+same command. A bare package name is a virtual
 suite (one search per variant):
 
 ```bash
@@ -155,14 +156,14 @@ uv run hillclimb run mlebench://lite --budget 4h                # MLE-bench Lite
 
 ## Defining Problems
 
-A problem is a folder. Users define new problems without changing Python code:
+A problem is a folder, and a problem **is its verifier**. Users define new
+problems without changing Python code:
 
 ```
 problems/my-problem/
 ├── problem.yaml
 ├── description.md
-├── verify.py
-├── sample_submission.csv
+├── verifier.sh            # the contract: exit 0 = valid, write the score
 └── data/                  # optional runtime inputs
 ```
 
@@ -173,50 +174,69 @@ problem_id: my-problem
 metric: my-score
 lower_is_better: false
 description: description.md
-sample_submission: sample_submission.csv
-verifier: verify.py
 time_budget_s: 900
 ```
 
-Generated `solution.py` writes `submission.csv`. The orchestrator then runs the
-problem verifier and parses its final `val_score: <number>` line.
-
-### Evaluator problems (`kind: evaluator`)
-
-When "write a submission CSV and grade it" doesn't fit — the solution is a
-module the evaluator drives, a program to benchmark, a policy to simulate —
-the problem can own its whole evaluation:
+Everything else is optional:
 
 ```yaml
-problem_id: bin-packing
-kind: evaluator
-metric: mean-bins
-lower_is_better: true
-description: description.md
+verifier: verifier.sh            # the default
+holdout: true                    # engine also runs `verifier.sh --holdout`
 contract: contract.md            # what solution.py must be/do (prompt section)
-eval: "{python} problem/evaluate.py"                # the ONLY validation process
-holdout_eval: "{python} problem/evaluate.py --holdout"  # optional; hidden dir, full env
-requirements: requirements.txt   # optional; per-problem venv (default: shared csv venv)
-baseline: baseline.py            # optional; scored at t=0 as the floor candidate
-time_budget_s: 900
+baseline: baseline.py            # scored at t=0 as the floor candidate
+requirements: requirements.txt   # per-problem venv (default: shared csv venv)
+data_dir: data
+allow_network: false
 ```
 
-The eval command runs with cwd = the candidate workspace (`solution.py`,
-`./problem/` and `./data/` symlinks present), must print `val_score: <float>`
-as its final stdout line, and must write `eval_result.json`
-(`{"split": "validation", "score": ..., "report": {...}}`) — the completion
-proof, and the carrier for the trial report above (evaluator-trusted).
-Placeholders: `{python}` → the managed runtime venv's interpreter (always use
-it — bare `python` resolves via PATH), `{solution}` → the solution path.
-Validation runs get a credential-scrubbed environment and
-`HILLCLIMB_TRIAL_SEED`; `holdout_eval` runs in a directory agents never see
-with the full environment. `problems/bin-packing/` is the reference example.
+### The verifier contract
+
+`verifier.sh` is the only process the engine starts. It drives `solution.py`
+itself — run it, import it, shell out to it — and reports the score:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+"$HILLCLIMB_PYTHON" "$HILLCLIMB_SOLUTION"   # writes ./submission.csv
+
+rm -f "$HILLCLIMB_RESULT"                   # only the scorer may score
+exec "$HILLCLIMB_PYTHON" problem/verify.py  # writes $HILLCLIMB_RESULT
+```
+
+| | |
+|---|---|
+| exit 0 | the candidate is valid; non-zero routes it to the `debug` operator |
+| `$HILLCLIMB_RESULT` | the score: `{"score": <float>, "report": {...}}`, or a bare number |
+| `$HILLCLIMB_PYTHON` | the managed runtime venv's interpreter (bare `python` resolves via PATH: wrong interpreter) |
+| `$HILLCLIMB_SOLUTION` | the solution path for this run (trial-dir aware) |
+| `$HILLCLIMB_SPLIT` | `validation` or `holdout` |
+| `$HILLCLIMB_TRIAL_SEED` | set when the engine runs repeated trials |
+
+The result file is both the score carrier and the completion proof: the engine
+deletes it before every run, so a stale file can never fake success, and exit 0
+without one is a contract violation rather than a silent zero. Reading the
+score from a file rather than stdout is what keeps it honest — agent-authored
+code runs inside the verifier and shares its stdout.
+
+The command runs with cwd = the candidate workspace (`solution.py`, plus
+`./problem/` and `./data/` symlinks). Validation runs get a
+credential-scrubbed environment; `--holdout` runs in a directory agents never
+see, with the full environment (private holdout data may be gated).
+
+```bash
+uv run hillclimb verify my-problem --repeat 5   # score it outside a search
+```
+
+`hillclimb verify` is the fastest way to check a new verifier, and `--repeat`
+reports the spread between identical runs — an improvement smaller than that
+is noise, not progress. `problems/bin-packing/` and `problems/circle-packing/`
+are the two reference shapes (evaluator-driven, and run-then-score).
 
 ### Trial reports (optional)
 
-`eval_result.json` is hillclimb's evaluator report contract: any evaluation
-that writes it into the working directory gets its breakdown stored on the
-trial, rendered into improve prompts ("attack the largest contributors"),
+`$HILLCLIMB_RESULT` may carry a `report` block alongside the score: any
+verifier that writes one gets its breakdown stored on the trial, rendered into improve prompts ("attack the largest contributors"),
 and shown by `hillclimb show` and the watch TUI:
 
 ```json
@@ -239,11 +259,11 @@ yours via `segment_label`) worst-first. Producers, by trust:
 
 - **emflow problems** — the evaluator computes the full breakdown (per-zone,
   per-horizon, per-quantile calibration, persistence skill) automatically.
-- **problems with a `verifier:`** — the verifier may write the file (see
-  `problems/circle-packing/verify.py`); anything the solution itself wrote is
-  discarded before the verifier runs, so the report carries evaluator trust.
-- **verifier-less problems** — the agent's own script may write it (the
-  contract invites this); it is stored and rendered labelled *self-reported*.
+- **directory problems** — the verifier writes the file (see
+  `problems/circle-packing/verify.py`); a verifier that discards what the
+  solution left behind gives its report evaluator trust.
+- **self-reported problems** (MLE-bench) — the number is the agent's own
+  claim, so the report is stored and rendered labelled *self-reported*.
 
 Only `"split": "validation"` reports are ever fed back to operators — holdout
 evaluations never produce one, by construction. `report.enabled: false` in

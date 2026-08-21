@@ -3,41 +3,57 @@ from hillclimb.prompts.render import COMPLEXITY_CUES, render
 
 def test_render_replaces_tokens():
     text = render(
-        "contract",
+        "contract_verifier",
         metric_name="accuracy",
         exec_timeout_min=30,
         runtime_pkgs="pandas, numpy",
         time_remaining="1h 30m",
+        verifier_display="./problem/verifier.sh",
+        problem_contract="solution.py must define answer().",
         holdout_clause="",
-        report_clause="",
         tools_clause="",
-        verifier_clause="- prints exactly one line `val_score: <float>` for accuracy",
         network_note="Assume no internet access at execution time.",
     )
     assert "accuracy" in text
     assert "30 minutes" in text
+    assert "./problem/verifier.sh" in text
     assert "{{" not in text
+
     with_holdout = render(
-        "contract",
+        "contract_verifier",
         metric_name="accuracy",
         exec_timeout_min=30,
         runtime_pkgs="pandas, numpy",
         time_remaining="1h 30m",
-        network_note="Assume no internet access at execution time.",
-        verifier_clause="- prints exactly one line `val_score: <float>` for accuracy",
+        verifier_display="./problem/verifier.sh",
+        problem_contract="solution.py must define answer().",
         tools_clause="",
-        report_clause=render("report_clause").rstrip(),
-        holdout_clause=render(
-            "holdout_clause",
-            holdout_id_col="id",
-            holdout_target_cols="`target`",
-            holdout_split_note="These rows were held out at random from the training data.",
-        ).rstrip(),
+        network_note="Assume no internet access at execution time.",
+        holdout_clause=render("holdout_clause", metric_name="accuracy").rstrip(),
     )
-    assert "holdout_predictions.csv" in with_holdout
-    assert "`id`" in with_holdout
-    assert "eval_result.json" in with_holdout
+    assert "Hidden holdout" in with_holdout
+    assert "never see" in with_holdout
     assert "{{" not in with_holdout
+
+
+def test_self_reported_contract_still_renders():
+    """MLE-bench-shaped problems: the agent prints its own score and may
+    write its own report."""
+    text = render(
+        "contract_submission",
+        metric_name="accuracy",
+        exec_timeout_min=30,
+        runtime_pkgs="pandas, numpy",
+        time_remaining="1h 30m",
+        verifier_clause="- prints exactly one line `val_score: <float>` for accuracy",
+        report_clause=render("report_clause").rstrip(),
+        holdout_clause="",
+        tools_clause="",
+        network_note="Assume no internet access at execution time.",
+    )
+    assert "val_score" in text
+    assert "eval_result.json" in text
+    assert "{{" not in text
 
 
 def test_render_safe_with_braces():

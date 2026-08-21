@@ -91,20 +91,43 @@ def load_emflow_problem(name: str, config: Config) -> ProblemSpec:
     cache_root = machine_cache_dir()  # materialize appends emflow-problems/
     problem_dir = materialize_problem_dir(problem, name, cache_root)
     quantiles = getattr(problem.env("validation"), "quantiles", None)
+    baseline = _find_baseline(name)
+    eval_runner = str(Path(__file__).parent / "eval_runner.py")
+    verifier_cmd = [
+        "{python}", eval_runner, "{solution}",
+        "--problem", name,
+        "--split", "validation",
+        "--result-json", "{result}",
+    ]
+    holdout_cmd = [
+        "{python}", eval_runner, "{solution}",
+        "--problem", name,
+        "--split", "holdout",
+        "--result-json", "{result}",
+    ]
     return ProblemSpec(
-        kind="emflow",
         problem_id=_slug(name),
         problem_dir=problem_dir.resolve(),
         data_dir=problem_dir.resolve(),
         description=(problem_dir / "description.md").read_text(),
         metric_name=problem.objective.name,
         lower_is_better=problem.objective.lower_is_better,
-        sample_submission=None,
-        verifier=None,
         time_budget_s=config.budget.total_s,
-        holdout_mode="evaluator",
+        verifier_cmd=verifier_cmd,
+        holdout_cmd=holdout_cmd,
+        # cache pre-warmed at resolve time; offline keeps agent-side evals
+        # hermetic (and no ambient HF credentials exist either way)
+        verifier_env={"HF_HUB_OFFLINE": "1"},
+        verifier_display=f"the emflow evaluator, on the validation split of {name}",
+        holdout_needs_credentials=True,  # the private holdout may be gated
+        runtime="emflow",
+        contract_template="contract_emflow",
+        baseline_text=(
+            f'"""Reference baseline for {name}."""\n'
+            f"from {baseline} import get_model  # noqa: F401\n"
+        ) if baseline else None,
+        baseline_summary=f"baseline: {baseline}.get_model()" if baseline else "baseline",
         emflow_problem=name,
-        emflow_baseline=_find_baseline(name),
         emflow_quantiles=list(quantiles) if quantiles else None,
     )
 
@@ -124,27 +147,3 @@ def resolve_emflow_target(name: str, config: Config) -> ResolvedTarget:
                 ),
             )
     return ResolvedTarget(kind="problem", problem=load_emflow_problem(name, config))
-
-
-def write_emflow_baseline(
-    problem: ProblemSpec,
-    search_dir: Path,
-    executor,
-    holdout_scorer,
-    timeout_s: int,
-) -> Candidate:
-    """c000 = the benchmark's reference model, evaluated for real — a genuine
-    scored floor that agent drafts must beat. Degrades to an unscored
-    placeholder when the problem ships no baseline or the eval fails."""
-    from hillclimb.baseline import run_scored_baseline, unscored_placeholder
-
-    if problem.emflow_baseline is None or executor is None:
-        return unscored_placeholder(search_dir)
-    return run_scored_baseline(
-        problem, search_dir, executor, holdout_scorer, timeout_s,
-        solution_text=(
-            f'"""Reference baseline for {problem.emflow_problem}."""\n'
-            f"from {problem.emflow_baseline} import get_model  # noqa: F401\n"
-        ),
-        summary=f"baseline: {problem.emflow_baseline}.get_model()",
-    )

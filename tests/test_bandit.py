@@ -11,7 +11,7 @@ from hillclimb.bandit import UCB1, OperatorBandits, candidate_reward
 from hillclimb.budget import BudgetManager
 from hillclimb.candidate import BackendInfo, Candidate, Trial
 from hillclimb.config import Config, RouteConfig
-from hillclimb.executor import LocalExecutor
+from tests.conftest import local_executor
 from hillclimb.journal import Journal
 from hillclimb.routing import Router
 from hillclimb.search import GreedySearcher
@@ -128,7 +128,7 @@ def make_searcher(task, config, backend, search_dir=None, router=None):
         config=config,
         journal=journal,
         backend=backend,
-        executor=LocalExecutor(Path(sys.executable)),
+        executor=local_executor(),
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir,
         log=lambda *_: None,

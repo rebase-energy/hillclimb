@@ -89,17 +89,26 @@ def load_mlebench_problem(comp_id: str, config: Config) -> ProblemSpec:
             f"run `mlebench prepare -c {comp_id}` in the mle-bench venv first"
         )
 
+    from hillclimb.runtime import RUN_SOLUTION
+
     return ProblemSpec(
-        kind="csv",
         problem_id=comp_id,
         problem_dir=public,  # data listing + workspace ./problem both serve the public split
         data_dir=public,
         description=(comp_dir / "description.md").read_text(),
         metric_name=meta["grader"]["name"],
         lower_is_better=_lower_is_better(comp_dir / "leaderboard.csv"),
-        sample_submission=sample_submission,
-        verifier=None,  # agent self-reports val_score; official grading is post-search
         time_budget_s=config.budget.total_s,
+        # the competition ships no runnable validator: the agent splits the
+        # public data and reports its own score; official grading is one
+        # `mlebench grade-sample` run after the search
+        verifier_cmd=["{python}", str(RUN_SOLUTION), "{solution}", "--require", "submission.csv"],
+        verifier_display="python solution.py   (must write ./submission.csv)",
+        report_trusted=False,
+        contract_template="contract_submission",
+        # never selected (no trials), but keeps best/ shippable if no
+        # candidate ever succeeds
+        baseline_files={"submission.csv": sample_submission},
         mlebench_comp_id=comp_id,
     )
 

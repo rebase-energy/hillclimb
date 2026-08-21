@@ -99,7 +99,6 @@ def make_evaluator_problem(tmp_path, **overrides):
     problem_dir.mkdir(exist_ok=True)
     (problem_dir / "evaluate.py").write_text(EVALUATE_PY)
     fields = dict(
-        kind="evaluator",
         problem_id="eval-problem",
         problem_dir=problem_dir,
         data_dir=problem_dir,
@@ -107,8 +106,7 @@ def make_evaluator_problem(tmp_path, **overrides):
         metric_name="score",
         lower_is_better=False,
         time_budget_s=600,
-        holdout_mode="evaluator",
-        eval_command="{python} problem/evaluate.py",
+        verifier_cmd=["{python}", "problem/evaluate.py"],
     )
     fields.update(overrides)
     return ProblemSpec(**fields)
@@ -118,7 +116,7 @@ def test_build_executor_dispatches_command_executor(config, tmp_path, monkeypatc
     import sys
 
     from hillclimb import api
-    from hillclimb.command_executor import CommandExecutor
+    from hillclimb.executor import CommandExecutor
 
     monkeypatch.setattr(api, "ensure_runtime_venv", lambda *a, **k: Path(sys.executable))
     executor = api.build_executor(config, make_evaluator_problem(tmp_path), log=lambda *_: None)
@@ -129,7 +127,7 @@ def test_build_holdout_scorer_for_evaluator(config, tmp_path, monkeypatch):
     import sys
 
     from hillclimb import api
-    from hillclimb.command_executor import CommandHoldoutScorer
+    from hillclimb.executor import CommandHoldoutScorer
 
     monkeypatch.delenv("HF_TOKEN", raising=False)
     monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
@@ -138,9 +136,9 @@ def test_build_holdout_scorer_for_evaluator(config, tmp_path, monkeypatch):
     no_holdout = make_evaluator_problem(tmp_path)
     assert api.build_holdout_scorer(config, no_holdout, tmp_path / "s") is None
 
-    # no HF-credential preflight for evaluator problems (that check is emflow's)
+    # the HF-credential preflight is opt-in per problem (emflow sets it)
     with_holdout = make_evaluator_problem(
-        tmp_path, holdout_command="{python} problem/evaluate.py --holdout"
+        tmp_path, holdout_cmd=["{python}", "problem/evaluate.py", "--holdout"]
     )
     scorer = api.build_holdout_scorer(config, with_holdout, tmp_path / "s")
     assert isinstance(scorer, CommandHoldoutScorer)
@@ -150,7 +148,7 @@ def test_evaluator_baseline_placeholder_and_scored(config, tmp_path):
     import sys
 
     from hillclimb.baseline import write_baseline
-    from hillclimb.command_executor import CommandExecutor
+    from hillclimb.executor import CommandExecutor
     from hillclimb.workspace import create_search_dir
 
     problem = make_evaluator_problem(tmp_path)
@@ -162,9 +160,9 @@ def test_evaluator_baseline_placeholder_and_scored(config, tmp_path):
 
     baseline_file = problem.problem_dir / "baseline.py"
     baseline_file.write_text("def answer():\n    return 0.25\n")
-    problem = make_evaluator_problem(tmp_path, baseline_solution=baseline_file)
+    problem = make_evaluator_problem(tmp_path, baseline_text=baseline_file.read_text())
     search_dir = create_search_dir(tmp_path / "runs" / "r2", "eval-problem")
-    executor = CommandExecutor(Path(sys.executable), problem.eval_command)
+    executor = CommandExecutor(Path(sys.executable), problem.verifier_cmd)
     scored = write_baseline(problem, search_dir, executor=executor, timeout_s=60)
     assert scored.val_score == 0.25
     assert scored.is_best

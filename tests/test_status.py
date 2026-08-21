@@ -9,7 +9,7 @@ import pytest
 
 from hillclimb.backends.fake import FakeBackend
 from hillclimb.budget import BudgetManager
-from hillclimb.executor import LocalExecutor
+from tests.conftest import local_executor
 from hillclimb.journal import Journal
 from hillclimb.search import GreedySearcher, ParkedSearch
 from hillclimb.status import (
@@ -105,7 +105,7 @@ def make_searcher_with_status(task, config, backend, budget_s=3600):
         config=config,
         journal=Journal(search_dir / "journal.jsonl"),
         backend=backend,
-        executor=LocalExecutor(Path(sys.executable)),
+        executor=local_executor(),
         budget=budget,
         search_dir=search_dir,
         max_candidates=4,

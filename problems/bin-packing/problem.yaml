@@ -1,11 +1,9 @@
 problem_id: bin-packing
-kind: evaluator
 metric: mean-bins
 lower_is_better: true
 description: description.md
 contract: contract.md
-eval: "{python} problem/evaluate.py"
-holdout_eval: "{python} problem/evaluate.py --holdout"
+holdout: true
 baseline: baseline.py
 time_budget_s: 900
 allow_network: false

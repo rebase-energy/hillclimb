@@ -11,7 +11,7 @@ import pytest
 from hillclimb.backends.fake import FakeBackend
 from hillclimb.budget import BudgetManager
 from hillclimb.candidate import Candidate, Trial
-from hillclimb.executor import LocalExecutor
+from tests.conftest import local_executor
 from hillclimb.journal import Journal
 from hillclimb.policies import get_policy
 from hillclimb.policies.greedy import GreedyPolicy
@@ -194,7 +194,7 @@ def test_custom_policy_drives_search(task, config):
         config=config,
         journal=Journal(search_dir / "journal.jsonl"),
         backend=backend,
-        executor=LocalExecutor(Path(sys.executable)),
+        executor=local_executor(),
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir,
         max_candidates=3,  # baseline + two drafts
@@ -225,7 +225,7 @@ def test_policy_replay_on_resume(task, config, tmp_path):
         config=config,
         journal=Journal(tmp_path / "j.jsonl"),  # fresh replay of the same file
         backend=FakeBackend(),
-        executor=LocalExecutor(Path(sys.executable)),
+        executor=local_executor(),
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=tmp_path,
         log=lambda *_: None,

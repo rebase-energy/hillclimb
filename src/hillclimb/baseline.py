@@ -8,11 +8,18 @@ from hillclimb.problem import ProblemSpec
 from hillclimb.workspace import create_candidate_workspace
 
 
-def unscored_placeholder(search_dir: Path) -> Candidate:
+def unscored_placeholder(search_dir: Path, files: dict[str, Path] | None = None) -> Candidate:
     """c000 when the problem ships no runnable baseline: keeps the tree
-    rooted (the engine requires c000) without pretending to a score."""
+    rooted (the engine requires c000) without pretending to a score. Any
+    `files` maps a workspace name to a valid-by-construction source (a sample
+    submission copied in as `submission.csv`) so the search always has
+    something to ship."""
     workspace = search_dir / "candidates" / "c000"
     workspace.mkdir(parents=True, exist_ok=True)
+    for name, source in (files or {}).items():
+        shutil.copy(source, workspace / name)
+        (search_dir / "best").mkdir(parents=True, exist_ok=True)
+        shutil.copy(source, search_dir / "best" / name)
     return Candidate(
         candidate_id="c000",
         operator="baseline",
@@ -78,39 +85,13 @@ def write_baseline(
     holdout_scorer=None,
     timeout_s: int = 1800,
 ) -> Candidate:
-    """t=0 safety net / scored floor, by problem kind.
-
-    csv: copy of sample_submission.csv — valid by construction so the search
-    always has *something* gradeable in best/, never selected (no trials).
-
-    emflow: the benchmark's reference model (get_model()) evaluated for real,
-    so agent drafts must beat it to become best.
-
-    evaluator: the problem's optional `baseline:` solution evaluated for
-    real; unscored placeholder when none ships."""
-    if problem.kind == "emflow":
-        from hillclimb.integrations.emflow.provider import write_emflow_baseline
-
-        return write_emflow_baseline(problem, search_dir, executor, holdout_scorer, timeout_s)
-
-    if problem.kind == "evaluator":
-        if problem.baseline_solution is None or executor is None:
-            return unscored_placeholder(search_dir)
-        return run_scored_baseline(
-            problem, search_dir, executor, holdout_scorer, timeout_s,
-            solution_text=problem.baseline_solution.read_text(),
-            summary=f"baseline: {problem.baseline_solution.name}",
-        )
-
-    workspace = search_dir / "candidates" / "c000"
-    workspace.mkdir(parents=True, exist_ok=True)
-    shutil.copy(problem.sample_submission, workspace / "submission.csv")
-    shutil.copy(problem.sample_submission, search_dir / "best" / "submission.csv")
-    return Candidate(
-        candidate_id="c000",
-        operator="baseline",
-        status="ok",
-        workspace=str(workspace),
-        summary="baseline: copy of sample_submission.csv",
-        finished_at=utcnow(),
+    """t=0 scored floor: the problem's baseline solution evaluated for real,
+    so agent drafts must beat something honest to become best. Problems that
+    ship no baseline get the unscored placeholder."""
+    if problem.baseline_text is None or executor is None:
+        return unscored_placeholder(search_dir, problem.baseline_files)
+    return run_scored_baseline(
+        problem, search_dir, executor, holdout_scorer, timeout_s,
+        solution_text=problem.baseline_text,
+        summary=problem.baseline_summary,
     )

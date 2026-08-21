@@ -20,13 +20,20 @@ def econfig(config, tmp_path):
 
 def test_load_emflow_problem(econfig):
     spec = load_problem("emflow://swedish-temperatures:ar", econfig)
-    assert spec.kind == "emflow"
     assert spec.problem_id == "swedish-temperatures-ar"
     assert spec.emflow_problem == "swedish-temperatures:ar"
     assert spec.metric_name == "MeanAbsoluteError"
     assert spec.lower_is_better is True
-    assert spec.sample_submission is None
-    assert spec.holdout_mode == "evaluator"
+    # the provider supplies the verifier: the emflow evaluator, one command
+    # per split
+    assert spec.verifier_cmd[1].endswith("eval_runner.py")
+    assert spec.verifier_cmd[-3:] == ["--split", "validation", "--result-json"] or (
+        "validation" in spec.verifier_cmd
+    )
+    assert "holdout" in spec.holdout_cmd
+    assert spec.runtime == "emflow"
+    assert spec.holdout_needs_credentials
+    assert spec.contract_template == "contract_emflow"
     # materialized problem dir feeds prompts and workspace symlinks
     assert spec.problem_dir.is_dir()
     assert "MeanAbsoluteError" in spec.description
@@ -36,7 +43,7 @@ def test_load_emflow_problem(econfig):
 def test_resolve_single_variant_is_problem(econfig):
     resolved = resolve_target("emflow://swedish-temperatures:ar", econfig)
     assert resolved.kind == "problem"
-    assert resolved.problem.kind == "emflow"
+    assert resolved.problem.emflow_problem == "swedish-temperatures:ar"
 
 
 def test_bare_package_resolves_to_virtual_suite(econfig):
@@ -87,7 +94,7 @@ def test_emflow_contract_prompt(econfig):
 
     from hillclimb.backends.fake import FakeBackend
     from hillclimb.budget import BudgetManager
-    from hillclimb.executor import LocalExecutor
+    from tests.conftest import local_executor
     from hillclimb.journal import Journal
     from hillclimb.search import GreedySearcher
 
@@ -96,7 +103,7 @@ def test_emflow_contract_prompt(econfig):
     (search_dir / "candidates").mkdir(parents=True)
     searcher = GreedySearcher(
         problem=spec, config=econfig, journal=Journal(search_dir / "journal.jsonl"),
-        backend=FakeBackend(), executor=LocalExecutor(Path(sys.executable)),
+        backend=FakeBackend(), executor=local_executor(),
         budget=BudgetManager(600, stop_margin_s=1), search_dir=search_dir,
         log=lambda *_: None,
     )
@@ -117,9 +124,9 @@ def test_quantile_note_literal():
 
     note = GreedySearcher._quantile_note
     spec = ProblemSpec(
-        kind="emflow", problem_id="q", problem_dir=Path("."), data_dir=Path("."),
+        problem_id="q", problem_dir=Path("."), data_dir=Path("."),
         description="", metric_name="pinball", lower_is_better=True,
-        time_budget_s=600, emflow_problem="x",
+        time_budget_s=600, emflow_problem="x", verifier_cmd=["eval"],
         emflow_quantiles=[i / 100 for i in range(1, 100)],
     )
     class Stub:  # noqa: N801 — minimal receiver for the unbound method

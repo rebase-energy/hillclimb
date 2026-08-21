@@ -3,8 +3,11 @@ installation into site-packages (no repo-root assumptions)."""
 
 from __future__ import annotations
 
-from pathlib import Path
 from importlib import resources
+from pathlib import Path
+
+# generic verifier for self-reported problems (see run_solution.py)
+RUN_SOLUTION = Path(__file__).parent / "run_solution.py"
 
 KINDS = ("csv", "emflow")
 

@@ -80,7 +80,8 @@ class DummyBackend:
     def invoke(self, request: OperatorRequest) -> OperatorResult:
         self.calls += 1
         if not (request.workspace / "problem" / "sample_submission.csv").exists():
-            # evaluator-kind problems have no sample_submission to mimic
+            # problems whose verifier drives solution.py directly have no
+            # sample_submission to mimic
             return OperatorResult(
                 ok=False,
                 error_kind="unsupported",

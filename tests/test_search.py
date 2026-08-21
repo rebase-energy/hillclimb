@@ -8,7 +8,7 @@ import pytest
 from hillclimb.backends.fake import FakeBackend
 from hillclimb.budget import BudgetManager
 from hillclimb.control import ControlCommand, write_command
-from hillclimb.executor import LocalExecutor
+from tests.conftest import executor_for, local_executor
 from hillclimb.journal import Journal
 from hillclimb.search import GreedySearcher, ParkedSearch, StopRequested
 from hillclimb.workspace import create_search_dir
@@ -23,7 +23,7 @@ def make_searcher(task, config, backend, max_candidates=10, budget_s=3600):
         config=config,
         journal=journal,
         backend=backend,
-        executor=LocalExecutor(Path(sys.executable)),
+        executor=executor_for(task),
         budget=BudgetManager(budget_s, stop_margin_s=1),
         search_dir=search_dir,
         max_candidates=max_candidates,
@@ -113,7 +113,7 @@ def test_rate_limit_parks_run(task, config):
     search_dir2_journal = Journal(search_dir / "journal.jsonl")
     searcher2 = GreedySearcher(
         problem=task, config=config, journal=search_dir2_journal, backend=backend2,
-        executor=LocalExecutor(Path(sys.executable)),
+        executor=local_executor(),
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir, max_candidates=len(search_dir2_journal.candidates) + 2, log=lambda *_: None,
     )
@@ -199,7 +199,7 @@ def test_stop_is_graceful_current_operator_finishes(task, config):
     journal = Journal(search_dir_probe / "journal.jsonl")
     searcher = GreedySearcher(
         problem=task, config=config, journal=journal, backend=backend,
-        executor=LocalExecutor(Path(sys.executable)),
+        executor=local_executor(),
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir_probe, max_candidates=5, log=lambda *_: None,
     )
@@ -251,50 +251,55 @@ def test_prune_unknown_node_is_rejected_not_fatal(task, config):
     assert all(not n.pruned for n in journal.candidates.values())
 
 
-def holdout_script(val: float, holdout_pred_flip: bool = False) -> str:
-    """Fixture script that writes all three artifacts. holdout_pred_flip
-    controls holdout accuracy: False → perfect, True → all-wrong."""
+def holdout_script(val: float, holdout: float = 1.0) -> str:
+    """Fixture script writing a submission, a val_score, and the artifact the
+    stand-in holdout scorer below reads."""
     return f'''
 import pandas as pd
 sample = pd.read_csv("data/sample_submission.csv")
 sample.to_csv("submission.csv", index=False)
-hold = pd.read_csv("data/holdout.csv")
-truth = (hold["feature"] > 0)  # matches the fixture's target rule
-pred = ~truth if {holdout_pred_flip} else truth
-pd.DataFrame({{"id": hold["id"], "target": pred.astype(int)}}).to_csv(
-    "holdout_predictions.csv", index=False)
+open("holdout_predictions.csv", "w").write("{holdout}")
 print("val_score: {val}")
 '''
 
 
-def make_holdout_searcher(task, config, backend, tmp_path, max_candidates=10):
-    from hillclimb.holdout import build_data_view
+class FileHoldoutScorer:
+    """Stand-in for a problem's `verifier.sh --holdout`: scores the candidate
+    out of sight and reports (score, error) the same way."""
 
+    def score(self, workspace):
+        path = Path(workspace) / "holdout_predictions.csv"
+        if not path.exists():
+            return None, "`holdout_predictions.csv` was not written"
+        return float(path.read_text()), None
+
+
+def make_holdout_searcher(task, config, backend, tmp_path, max_candidates=10):
     search_dir = create_search_dir(config.paths.runs_dir, "test-run")
-    info = build_data_view(task.data_dir, search_dir, task.sample_submission, 0.3, 42)
-    assert info is not None
     journal = Journal(search_dir / "journal.jsonl")
+    task = task.model_copy(update={"holdout_cmd": task.verifier_cmd + ["--holdout"]})
     searcher = GreedySearcher(
         problem=task, config=config, journal=journal, backend=backend,
-        executor=LocalExecutor(Path(sys.executable)),
+        executor=executor_for(task),
         budget=BudgetManager(3600, stop_margin_s=1),
-        search_dir=search_dir, max_candidates=max_candidates, log=lambda *_: None, holdout=info,
+        search_dir=search_dir, max_candidates=max_candidates, log=lambda *_: None,
+        holdout_scorer=FileHoldoutScorer(),
     )
     return searcher, journal, search_dir
 
 
-def test_selection_by_holdout_not_val(task_larger, config):
+def test_selection_by_holdout_not_val(task, config):
     """The leaf-classification scenario: highest val_score but bad holdout
     must NOT be selected; selection = argmax holdout."""
     backend = FakeBackend()
     backend.queue(script=holdout_script(0.70), notes="honest draft\n")
-    backend.queue(script=holdout_script(0.99, holdout_pred_flip=True), notes="overfit draft\n")
+    backend.queue(script=holdout_script(0.99, holdout=0.0), notes="overfit draft\n")
     backend.queue(script=holdout_script(0.80), notes="honest draft 2\n")
-    searcher, journal, search_dir = make_holdout_searcher(task_larger, config, backend, None, max_candidates=4)
+    searcher, journal, search_dir = make_holdout_searcher(task, config, backend, None, max_candidates=4)
     selected = searcher.run()
 
     overfit = journal.get("c002")
-    assert overfit.val_score == 0.99 and overfit.holdout_score == 0.0  # flipped preds
+    assert overfit.val_score == 0.99 and overfit.holdout_score == 0.0  # fits val only
     assert overfit.is_best  # it IS the val-best (climbing signal)
     assert not overfit.is_selected
     assert selected.holdout_score == 1.0
@@ -304,11 +309,11 @@ def test_selection_by_holdout_not_val(task_larger, config):
         Path(selected.workspace) / "solution.py").read_text()
 
 
-def test_missing_holdout_predictions_is_buggy(task_larger, config):
+def test_failed_holdout_evaluation_is_buggy(task, config):
     backend = FakeBackend()
     backend.queue(script=ok_script(0.9), notes="wrote no holdout preds\n")
     backend.queue(script=holdout_script(0.6), notes="compliant\n")
-    searcher, journal, _ = make_holdout_searcher(task_larger, config, backend, None, max_candidates=3)
+    searcher, journal, _ = make_holdout_searcher(task, config, backend, None, max_candidates=3)
     searcher.run()
     bad = journal.get("c001")
     assert bad.status == "buggy"
@@ -317,55 +322,14 @@ def test_missing_holdout_predictions_is_buggy(task_larger, config):
     assert any("holdout_predictions.csv" in r.prompt for r in backend.requests if r.operator == "debug")
 
 
-def test_holdout_prompt_mentions_contract(task_larger, config):
+def test_holdout_prompt_warns_about_the_hidden_split(task, config):
     backend = FakeBackend()
     backend.queue(script=holdout_script(0.7), notes="d\n")
-    searcher, _, _ = make_holdout_searcher(task_larger, config, backend, None, max_candidates=2)
+    searcher, _, _ = make_holdout_searcher(task, config, backend, None, max_candidates=2)
     searcher.run()
     prompt = backend.requests[0].prompt
-    assert "holdout_predictions.csv" in prompt
-    assert "holdout.csv" in prompt
-
-
-def test_time_tail_prompt_names_id_col_and_warns_chronological(tmp_path, config):
-    import pandas as pd
-
-    from hillclimb.holdout import HoldoutOverride, build_data_view
-    from hillclimb.problem import ProblemSpec
-
-    d = tmp_path / "ts-public"
-    d.mkdir()
-    ts = pd.date_range("2025-05-01", periods=100, freq="h").strftime("%Y-%m-%d %H:%M:%S")
-    pd.DataFrame({"timestamp_utc": ts, "net_load_kwh": range(100)}).to_csv(
-        d / "train.csv", index=False
-    )
-    pd.DataFrame({"row_id": [0], "net_load_kwh": [0.0]}).to_csv(
-        d / "sample_submission.csv", index=False
-    )
-    (d / "description.md").write_text("forecast")
-    override = HoldoutOverride(
-        strategy="time-tail", time_col="timestamp_utc", id_col="timestamp_utc",
-        target_cols=["net_load_kwh"], fraction=0.1,
-    )
-    ts_task = ProblemSpec(
-        problem_id="ts", problem_dir=d, data_dir=d, description="forecast",
-        metric_name="nrmse", lower_is_better=True,
-        sample_submission=d / "sample_submission.csv", time_budget_s=3600,
-        holdout=override,
-    )
-    search_dir = create_search_dir(config.paths.runs_dir, "ts-run")
-    info = build_data_view(d, search_dir, ts_task.sample_submission, 0.1, 42, override=override)
-    searcher = GreedySearcher(
-        problem=ts_task, config=config, journal=Journal(search_dir / "journal.jsonl"),
-        backend=FakeBackend(), executor=LocalExecutor(Path(sys.executable)),
-        budget=BudgetManager(3600, stop_margin_s=1),
-        search_dir=search_dir, log=lambda *_: None, holdout=info,
-    )
-    prompt = searcher.build_prompt("draft", None, "minimal")
-    assert "`timestamp_utc`" in prompt
-    assert "chronological TAIL" in prompt
-    assert "do not train on them" in prompt
-    assert info.time_cutoff in prompt
+    assert "Hidden holdout" in prompt
+    assert "never see" in prompt
     assert "{{" not in prompt
 
 
@@ -386,7 +350,7 @@ def make_ensemble_searcher(task, config, backend, spent_frac=0.0, max_candidates
     journal = Journal(search_dir / "journal.jsonl")
     searcher = GreedySearcher(
         problem=task, config=config, journal=journal, backend=backend,
-        executor=LocalExecutor(Path(sys.executable)),
+        executor=local_executor(),
         budget=BudgetManager(1000, stop_margin_s=1, spent_s=1000 * spent_frac),
         search_dir=search_dir, max_candidates=max_candidates, log=lambda *_: None,
     )
@@ -470,40 +434,6 @@ def test_buggy_ensemble_gets_debugged_and_counts_as_success(task, config):
     assert searcher._ensemble_succeeded() is True  # via the debug chain root
 
 
-def test_holdout_clause_uses_submission_columns_for_class_targets(tmp_path, config):
-    """spooky-style task: target col `author` is not a submission column, so
-    the clause must direct predictions to submission format, not `author`."""
-    from hillclimb.problem import ProblemSpec
-
-    d = tmp_path / "pub"
-    d.mkdir()
-    rows = "".join(f"{i},x,{a}\n" for i, a in enumerate(["EAP", "HPL", "MWS"] * 10))
-    (d / "train.csv").write_text("id,text,author\n" + rows)
-    (d / "sample_submission.csv").write_text("id,EAP,HPL,MWS\n9,0.3,0.3,0.4\n")
-    (d / "description.md").write_text("d")
-    spec = ProblemSpec(
-        problem_id="t", problem_dir=d, data_dir=d, description="d",
-        metric_name="multi-class-log-loss", lower_is_better=True,
-        sample_submission=d / "sample_submission.csv", time_budget_s=600,
-    )
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.5), notes="d\n")
-    search_dir = create_search_dir(config.paths.runs_dir, "clause-test")
-    from hillclimb.holdout import build_data_view
-
-    info = build_data_view(d, search_dir, spec.sample_submission, 0.2, 42)
-    searcher = GreedySearcher(
-        problem=spec, config=config, journal=Journal(search_dir / "journal.jsonl"),
-        backend=backend, executor=LocalExecutor(Path(sys.executable)),
-        budget=BudgetManager(600, stop_margin_s=1), search_dir=search_dir,
-        max_candidates=2, log=lambda *_: None, holdout=info,
-    )
-    prompt = searcher.build_prompt("draft", None, "minimal")
-    assert "same prediction columns as submission.csv" in prompt
-    assert "`EAP`" in prompt
-    assert "prediction column(s): `author`" not in prompt
-
-
 def test_stale_pending_node_recovered_on_resume(task, config):
     """If the orchestrator dies mid-operator, the pending node must be
     abandoned at next construction, not block the tree forever."""
@@ -518,7 +448,7 @@ def test_stale_pending_node_recovered_on_resume(task, config):
     backend.queue(script=ok_script(0.5), notes="post-crash draft\n")
     searcher = GreedySearcher(
         problem=task, config=config, journal=journal, backend=backend,
-        executor=LocalExecutor(Path(sys.executable)),
+        executor=local_executor(),
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir, max_candidates=2, log=lambda *_: None,
     )
@@ -642,14 +572,24 @@ def test_improve_prompt_carries_delta_vs_parent(task, config):
 
 
 VERIFIER_WITH_REPORT = """\
-import json
+import json, os
 report = {"version": 1, "split": "validation", "objective": "accuracy",
           "lower_is_better": False, "segment_label": "class",
           "overall": {"score": 0.66, "n_origins": 2, "n_scored": 4},
           "zones": [{"zone": "cat", "score": 0.4, "n_scored": 2},
                     {"zone": "dog", "score": 0.9, "n_scored": 2}]}
-json.dump({"split": "validation", "report": report}, open("eval_result.json", "w"))
-print("val_score: 0.66")
+json.dump({"split": "validation", "score": 0.66, "report": report},
+          open(os.environ["HILLCLIMB_RESULT"], "w"))
+"""
+
+# a real two-step verifier.sh, in python so the fixture stays portable:
+# run the candidate, drop whatever it left behind, then score it
+VERIFIER_WRAPPER = """\
+import os, subprocess, sys
+subprocess.run([sys.executable, os.environ["HILLCLIMB_SOLUTION"]], check=True)
+if os.path.exists(os.environ["HILLCLIMB_RESULT"]):
+    os.remove(os.environ["HILLCLIMB_RESULT"])   # trust boundary
+subprocess.run([sys.executable, "problem/verify.py"], check=True)
 """
 
 AGENT_FAKED_REPORT = (
@@ -663,17 +603,20 @@ AGENT_FAKED_REPORT = (
 
 
 def add_verifier(task, script=VERIFIER_WITH_REPORT):
-    verifier = task.problem_dir / "verify.py"
-    verifier.write_text(script)
-    task.verifier = verifier
-    return task
+    """Turn the fixture problem into one whose verifier owns the score."""
+    (task.problem_dir / "verify.py").write_text(script)
+    (task.problem_dir / "wrapper.py").write_text(VERIFIER_WRAPPER)
+    return task.model_copy(update={
+        "verifier_cmd": ["{python}", "problem/wrapper.py"],
+        "report_trusted": True,
+    })
 
 
 def test_verifier_report_is_trusted_and_overrides_agent_file(task, config):
     """Tier 1: on verifier problems the verifier's eval_result.json is the
     report (evaluator trust) — anything the solution wrote is discarded,
     exactly like its val_score line."""
-    add_verifier(task)
+    task = add_verifier(task)
     config.search.num_drafts = 1
     backend = FakeBackend()
     backend.queue(script=AGENT_FAKED_REPORT, notes="draft\n")
@@ -695,7 +638,7 @@ def test_verifier_report_is_trusted_and_overrides_agent_file(task, config):
 def test_verifier_without_report_discards_agent_file(task, config):
     """The trust boundary also holds when the verifier writes no report:
     the agent's file must not survive as a fake evaluator report."""
-    add_verifier(task, script='print("val_score: 0.66")\n')
+    task = add_verifier(task, script='import json, os\njson.dump({"score": 0.66}, open(os.environ["HILLCLIMB_RESULT"], "w"))\n')
     config.search.num_drafts = 1
     backend = FakeBackend()
     backend.queue(script=AGENT_FAKED_REPORT, notes="draft\n")
@@ -717,16 +660,15 @@ def test_agent_report_labelled_self_reported(task, config):
     assert "Self-reported" in backend.requests[1].prompt
 
 
-def test_report_clause_only_on_verifier_less_problems(task, config):
-    backend = FakeBackend()
-    searcher, _, _ = make_searcher(task, config, backend)
+def test_report_clause_only_where_the_agent_reports_its_own_score(task, config):
+    searcher, _, _ = make_searcher(task, config, FakeBackend())
     clause_prompt = searcher.build_prompt("draft", None, "minimal")
     assert "eval_result.json" in clause_prompt  # Tier-2 invitation present
     assert "{{report_clause}}" not in clause_prompt
 
-    add_verifier(task)
-    verifier_prompt = searcher.build_prompt("draft", None, "minimal")
-    assert "eval_result.json" not in verifier_prompt  # would be discarded anyway
+    verifier_searcher, _, _ = make_searcher(add_verifier(task), config, FakeBackend())
+    verifier_prompt = verifier_searcher.build_prompt("draft", None, "minimal")
+    assert "eval_result.json" not in verifier_prompt  # the verifier owns it
     assert "{{report_clause}}" not in verifier_prompt
 
 
@@ -752,14 +694,13 @@ print(f"val_score: {score}")
 
 
 def make_evaluator_searcher(config, tmp_path, backend, evaluate_py=EVALUATOR_EVALUATE, **searcher_kwargs):
-    from hillclimb.command_executor import CommandExecutor
+    from hillclimb.executor import CommandExecutor
     from hillclimb.problem import ProblemSpec
 
     problem_dir = tmp_path / "eval-problem"
     problem_dir.mkdir(exist_ok=True)
     (problem_dir / "evaluate.py").write_text(evaluate_py)
     problem = ProblemSpec(
-        kind="evaluator",
         problem_id="eval-problem",
         problem_dir=problem_dir,
         data_dir=problem_dir,
@@ -767,8 +708,8 @@ def make_evaluator_searcher(config, tmp_path, backend, evaluate_py=EVALUATOR_EVA
         metric_name="score",
         lower_is_better=False,
         time_budget_s=3600,
-        holdout_mode="evaluator",
-        eval_command="{python} problem/evaluate.py",
+        verifier_cmd=["{python}", "problem/evaluate.py"],
+        verifier_display="./problem/evaluate.py",
         contract="solution.py must define `answer() -> float`.",
     )
     search_dir = create_search_dir(config.paths.runs_dir, "eval-run")
@@ -778,7 +719,7 @@ def make_evaluator_searcher(config, tmp_path, backend, evaluate_py=EVALUATOR_EVA
         config=config,
         journal=journal,
         backend=backend,
-        executor=CommandExecutor(Path(sys.executable), problem.eval_command),
+        executor=CommandExecutor(Path(sys.executable), problem.verifier_cmd),
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir,
         log=lambda *_: None,
@@ -805,7 +746,7 @@ def test_evaluator_kind_full_loop(config, tmp_path):
     assert best.val_score == 0.7
 
     draft_prompt = backend.requests[0].prompt
-    assert "python problem/evaluate.py" in draft_prompt  # display form, not {python}
+    assert "./problem/evaluate.py" in draft_prompt  # display form, not the argv
     assert "`answer() -> float`" in draft_prompt  # problem-supplied contract
     assert "submission.csv" not in draft_prompt
     assert "{{" not in draft_prompt
@@ -833,7 +774,7 @@ def test_evaluator_missing_result_json_wording(config, tmp_path):
     assert journal.get("c001").status == "buggy"
     assert backend.requests[1].operator == "debug"
     debug_prompt = backend.requests[1].prompt
-    assert "produced no `eval_result.json`" in debug_prompt
+    assert "the verifier reported no score" in debug_prompt
     assert "submission.csv" not in debug_prompt
 
 

@@ -67,9 +67,10 @@ class RouteConfig(BaseModel):
 
 
 class HoldoutConfig(BaseModel):
+    """Selection hygiene for problems whose verifier ships a hidden split
+    (`holdout: true`). `enabled: false` turns the split off search-wide."""
+
     enabled: bool = True
-    fraction: float = 0.1
-    seed: int = 42
     climb_on: str = "val"  # seam only; 'holdout' climbing is a future experiment
     selection: str = "rank-blend"  # rank-blend | holdout | val
     # holdout hygiene: only candidates whose val score ranks top-k get a

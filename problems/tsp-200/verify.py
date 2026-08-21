@@ -1,10 +1,12 @@
 """Official scorer for the tsp-200 problem.
 
 Reads ./submission.csv (position,city; a permutation of 0..199), validates it,
-and prints the official `val_score:` line (closed-tour Euclidean length;
+and writes the score to $HILLCLIMB_RESULT (closed-tour Euclidean length;
 1000.0 penalty if invalid — lower is better).
 """
 
+import json
+import os
 import sys
 from pathlib import Path
 
@@ -15,8 +17,17 @@ N = 200
 PENALTY = 1000.0
 
 
+def emit(score: float) -> None:
+    """hillclimb's verifier contract: the score is written to the result
+    file, not scraped from stdout (agent-authored code shares this stream)."""
+    path = Path(os.environ.get("HILLCLIMB_RESULT", "eval_result.json"))
+    path.write_text(json.dumps({"split": os.environ.get("HILLCLIMB_SPLIT", "validation"),
+                                "score": score}))
+
+
 def fail(reason: str) -> None:
     print(f"INVALID: {reason}")
+    emit(PENALTY)
     print(f"val_score: {PENALTY}")
     sys.exit(0)
 
@@ -40,6 +51,7 @@ def main() -> None:
     diffs = np.diff(np.vstack([ordered, ordered[:1]]), axis=0)
     length = float(np.sqrt((diffs**2).sum(axis=1)).sum())
     print(f"valid tour; length = {length:.6f}")
+    emit(length)
     print(f"val_score: {length:.6f}")
 
 

@@ -24,7 +24,6 @@ from hillclimb.budget import BudgetManager
 from hillclimb.candidate import Candidate
 from hillclimb.config import Config
 from hillclimb.control import clear_stale_stops
-from hillclimb.executor import LocalExecutor
 from hillclimb.journal import Journal
 from hillclimb.problem import ProblemSpec, load_problem
 from hillclimb.run import RunMeta, SearchMeta, write_run_meta, write_search_meta
@@ -154,78 +153,44 @@ def ensure_runtime_venv(
 
 
 def build_executor(config: Config, problem: ProblemSpec, log: Log = print):
-    if problem.kind == "emflow":
-        from hillclimb.integrations.emflow.executor import EmflowLocalExecutor
+    """The problem's verifier command, wired to the runtime venv it needs."""
+    from hillclimb.executor import CommandExecutor
 
-        return EmflowLocalExecutor(
-            ensure_runtime_venv(config, kind="emflow", log=log),
-            problem.emflow_problem,
-            allow_network=problem.allow_network,
-        )
-    if problem.kind == "evaluator":
-        from hillclimb.command_executor import CommandExecutor
-
-        # no requirements file -> the shared csv runtime venv; with one, a
-        # content-keyed per-problem venv
-        python = ensure_runtime_venv(config, log=log, requirements=problem.requirements_file)
-        return CommandExecutor(python, problem.eval_command)
-    return LocalExecutor(ensure_runtime_venv(config, log=log))
+    return CommandExecutor(
+        ensure_runtime_venv(
+            config, kind=problem.runtime, log=log, requirements=problem.requirements_file
+        ),
+        problem.verifier_cmd,
+        env_extra=problem.verifier_env,
+    )
 
 
 def build_holdout_scorer(config: Config, problem: ProblemSpec, search_dir: Path, log: Log = print):
-    if not config.holdout.enabled or problem.holdout_mode != "evaluator":
+    """Hidden-split scorer, or None when holdout is off for this search —
+    selection then climbs on validation alone."""
+    if not config.holdout.enabled or problem.holdout_cmd is None:
         return None
-    if problem.kind == "evaluator":
-        if problem.holdout_command is None:
-            return None  # no holdout for this problem: selection climbs on val alone
-        from hillclimb.command_executor import CommandHoldoutScorer
-
-        return CommandHoldoutScorer(
-            ensure_runtime_venv(config, log=log, requirements=problem.requirements_file),
-            problem.holdout_command,
-            problem_dir=problem.problem_dir,
-            data_dir=problem.data_dir,
-            work_root=search_dir / "holdout-eval",
-            timeout_s=config.budget.exec_timeout_s,
-        )
-    if not (os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")):
-        # emflow only — fail fast: without credentials every holdout eval nans
-        # out and the search burns debug cycles diagnosing the environment
+    if problem.holdout_needs_credentials and not (
+        os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
+    ):
+        # fail fast: without credentials every holdout eval nans out and the
+        # search burns debug cycles diagnosing the environment
         raise RuntimeError(
             "holdout scoring for this problem needs private data credentials: "
             "export HF_TOKEN (or HUGGINGFACE_TOKEN), or run with --no-holdout"
         )
-    from hillclimb.integrations.emflow.executor import EmflowHoldoutScorer
+    from hillclimb.executor import CommandHoldoutScorer
 
-    return EmflowHoldoutScorer(
-        ensure_runtime_venv(config, kind="emflow", log=log),
-        problem.emflow_problem,
-        search_dir / "holdout-eval",
+    return CommandHoldoutScorer(
+        ensure_runtime_venv(
+            config, kind=problem.runtime, log=log, requirements=problem.requirements_file
+        ),
+        problem.holdout_cmd,
+        problem_dir=problem.problem_dir,
+        data_dir=problem.data_dir,
+        work_root=search_dir / "holdout-eval",
         timeout_s=config.budget.exec_timeout_s,
     )
-
-
-def build_holdout(config: Config, problem: ProblemSpec, search_dir: Path, log: Log = print):
-    if not config.holdout.enabled or problem.holdout_mode == "evaluator":
-        return None  # evaluator mode: the problem scores its own holdout
-    from hillclimb.holdout import build_data_view
-
-    info = build_data_view(
-        problem.data_dir,
-        search_dir,
-        problem.sample_submission,
-        config.holdout.fraction,
-        config.holdout.seed,
-        override=problem.holdout,
-    )
-    if info is None:
-        log("holdout: disabled for this problem (no train.csv or targets not inferable)")
-    else:
-        log(
-            f"holdout: {info.n_holdout} rows hidden "
-            f"({info.strategy}; targets: {', '.join(info.target_cols)})"
-        )
-    return info
 
 
 def spent_seconds(journal: Journal) -> float:
@@ -268,7 +233,7 @@ def create_search(
             run_id=run_id,
             problem=(
                 f"emflow://{problem.emflow_problem}"
-                if problem.kind == "emflow"
+                if problem.emflow_problem
                 else f"mlebench://{problem.mlebench_comp_id}"
                 if problem.mlebench_comp_id
                 else str(problem.problem_dir)
@@ -285,10 +250,7 @@ def create_search(
             metric=problem.metric_name,
             lower_is_better=problem.lower_is_better,
             budget_s=total_s,
-            holdout_enabled=config.holdout.enabled,
-            holdout_seed=config.holdout.seed,
-            holdout_fraction=config.holdout.fraction,
-            holdout_strategy=problem.holdout.strategy if problem.holdout else "random",
+            holdout_enabled=config.holdout.enabled and problem.holdout_cmd is not None,
             seed_from=str(seed_from) if seed_from else None,
             learning_enabled=config.learning.enabled,
         ),
@@ -601,7 +563,6 @@ def execute_search(
         budget=budget,
         search_dir=search_dir,
         log=log,
-        holdout=build_holdout(config, problem, search_dir, log),
         holdout_scorer=build_holdout_scorer(config, problem, search_dir, log),
         status=status,
         slots=slots,
@@ -629,7 +590,7 @@ def execute_search(
         status.finalize("failed", last_error=f"{type(exc).__name__}: {exc}"[:500])
         raise
     status.finalize("done")
-    if problem.kind == "emflow" and selected is not None:
+    if problem.emflow_problem and selected is not None:
         _official_verify(config, problem, search_dir, journal, selected, log)
     if problem.mlebench_comp_id and selected is not None:
         _mlebench_grade(config, problem, search_dir, selected, log)

@@ -6,7 +6,22 @@ from pathlib import Path
 import pytest
 
 from hillclimb.config import Config
+from hillclimb.executor import CommandExecutor
 from hillclimb.problem import ProblemSpec
+from hillclimb.runtime import RUN_SOLUTION
+
+# fixture problems are self-reported: the verifier just runs solution.py and
+# takes the `val_score:` line it prints (what MLE-bench problems do for real)
+SELF_REPORT_CMD = ["{python}", str(RUN_SOLUTION), "{solution}", "--require", "submission.csv"]
+
+
+def local_executor() -> CommandExecutor:
+    return CommandExecutor(Path(sys.executable), SELF_REPORT_CMD)
+
+
+def executor_for(problem) -> CommandExecutor:
+    """The problem's own verifier command, run by the dev interpreter."""
+    return CommandExecutor(Path(sys.executable), problem.verifier_cmd, problem.verifier_env)
 
 OK_SCRIPT = """\
 import shutil
@@ -32,7 +47,9 @@ def task(tmp_path: Path) -> ProblemSpec:
         description="Predict target from feature.",
         metric_name="accuracy",
         lower_is_better=False,
-        sample_submission=data_dir / "sample_submission.csv",
+        verifier_cmd=SELF_REPORT_CMD,
+        report_trusted=False,
+        contract_template="contract_submission",
         time_budget_s=3600,
     )
 
@@ -59,7 +76,9 @@ def task_larger(tmp_path: Path) -> ProblemSpec:
         description="Predict target from feature.",
         metric_name="accuracy",
         lower_is_better=False,
-        sample_submission=data_dir / "sample_submission.csv",
+        verifier_cmd=SELF_REPORT_CMD,
+        report_trusted=False,
+        contract_template="contract_submission",
         time_budget_s=3600,
     )
 

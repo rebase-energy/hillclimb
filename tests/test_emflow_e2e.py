@@ -13,10 +13,7 @@ pytest.importorskip("emflow")
 
 from hillclimb.backends.fake import FakeBackend  # noqa: E402
 from hillclimb.budget import BudgetManager  # noqa: E402
-from hillclimb.integrations.emflow.executor import (  # noqa: E402
-    EmflowHoldoutScorer,
-    EmflowLocalExecutor,
-)
+from hillclimb.executor import CommandExecutor, CommandHoldoutScorer  # noqa: E402
 from hillclimb.journal import Journal  # noqa: E402
 from hillclimb.problem import load_problem  # noqa: E402
 from hillclimb.search import GreedySearcher  # noqa: E402
@@ -70,13 +67,14 @@ def test_full_emflow_search(config, tmp_path):
         config=config,
         journal=journal,
         backend=backend,
-        executor=EmflowLocalExecutor(python, PROBLEM),
+        executor=CommandExecutor(python, spec.verifier_cmd, spec.verifier_env),
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir,
         max_candidates=4,
         log=lambda *_: None,
-        holdout_scorer=EmflowHoldoutScorer(
-            python, PROBLEM, search_dir / "holdout-eval", timeout_s=300
+        holdout_scorer=CommandHoldoutScorer(
+            python, spec.holdout_cmd, problem_dir=spec.problem_dir,
+            data_dir=spec.data_dir, work_root=search_dir / "holdout-eval", timeout_s=300,
         ),
     )
     selected = searcher.run()

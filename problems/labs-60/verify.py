@@ -1,11 +1,14 @@
 """Official scorer for the labs-60 problem.
 
-Reads ./submission.csv (id,spin; 60 rows of +/-1), validates, and prints the
-official `val_score:` line (autocorrelation sidelobe energy; 100000.0 penalty
+Reads ./submission.csv (id,spin; 60 rows of +/-1), validates, and writes the score to
+$HILLCLIMB_RESULT (autocorrelation sidelobe energy; 100000.0 penalty
 if invalid — lower is better).
 """
 
+import json
+import os
 import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -14,8 +17,17 @@ N = 60
 PENALTY = 100000.0
 
 
+def emit(score: float) -> None:
+    """hillclimb's verifier contract: the score is written to the result
+    file, not scraped from stdout (agent-authored code shares this stream)."""
+    path = Path(os.environ.get("HILLCLIMB_RESULT", "eval_result.json"))
+    path.write_text(json.dumps({"split": os.environ.get("HILLCLIMB_SPLIT", "validation"),
+                                "score": score}))
+
+
 def fail(reason: str) -> None:
     print(f"INVALID: {reason}")
+    emit(PENALTY)
     print(f"val_score: {PENALTY}")
     sys.exit(0)
 
@@ -36,6 +48,7 @@ def main() -> None:
     s = s.astype(int)
     energy = sum(int(np.dot(s[: N - k], s[k:])) ** 2 for k in range(1, N))
     print(f"valid sequence; energy = {energy}")
+    emit(energy)
     print(f"val_score: {energy}")
 
 

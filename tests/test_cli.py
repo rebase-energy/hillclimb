@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 import typer
 
-from hillclimb.cli import _run_problem, _run_suite, resolve_search_dir
+from hillclimb.cli import BANNER_LINES, _run_problem, _run_suite, resolve_search_dir
+from hillclimb.cli import main as cli_main
 from hillclimb.run import (
     RunMeta,
     SearchMeta,
@@ -24,13 +25,13 @@ problem_id: {name}
 metric: score
 lower_is_better: false
 description: description.md
-sample_submission: sample_submission.csv
-verifier: verify.py
 """
     )
     (problem / "description.md").write_text(name)
     (problem / "sample_submission.csv").write_text("id,x\n0,0\n")
-    (problem / "verify.py").write_text('print("val_score: 1")\n')
+    verifier = problem / "verifier.sh"
+    verifier.write_text('#!/bin/sh\necho 1 > "$HILLCLIMB_RESULT"\n')
+    verifier.chmod(0o755)
     return problem
 
 
@@ -400,3 +401,36 @@ def test_show_renders_report_diff_and_notes(config, tmp_path, monkeypatch, capsy
 
     with pytest.raises(typer.BadParameter, match="No candidate"):
         show("run-1/a", "c999")
+
+
+def test_bare_invocation_prints_banner_and_command_list(capsys):
+    """`hillclimb` with no arguments is a request for the menu, not a usage error."""
+    with pytest.raises(SystemExit) as exc:
+        cli_main([])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert BANNER_LINES[0] in out
+    assert "Usage: hillclimb" in out
+    for command in ("run", "status", "watch", "knowledge", "bench"):
+        assert command in out
+
+
+def test_help_flags_print_the_banner_too(capsys):
+    for flag in ("--help", "-h"):
+        with pytest.raises(SystemExit) as exc:
+            cli_main([flag])
+        assert exc.value.code == 0
+        assert BANNER_LINES[0] in capsys.readouterr().out
+
+
+def test_subcommand_help_skips_the_banner(capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli_main(["run", "--help"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert BANNER_LINES[0] not in out
+    assert "Usage: hillclimb run" in out
+
+
+def test_banner_lines_are_uniform_width():
+    assert len({len(line) for line in BANNER_LINES}) == 1

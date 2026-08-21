@@ -51,11 +51,11 @@ def mb_config(tmp_path, config):
 
 def test_load_mlebench_problem(mb_config):
     problem = load_problem("mlebench://fake-comp", mb_config)
-    assert problem.kind == "csv"
+    assert not problem.report_trusted  # the agent reports its own score
     assert problem.mlebench_comp_id == "fake-comp"
     assert problem.metric_name == "accuracy"
     assert problem.lower_is_better is False  # leaderboard best-first, 0.99 on top
-    assert problem.verifier is None
+    assert problem.verifier_cmd[-2:] == ["--require", "submission.csv"]
     assert problem.data_dir.name == "public"
     assert "Predict the thing" in problem.description
 

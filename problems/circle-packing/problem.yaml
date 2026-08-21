@@ -2,7 +2,7 @@ problem_id: circle-packing
 metric: sum-radii
 lower_is_better: false
 description: description.md
-sample_submission: sample_submission.csv
-verifier: verify.py
+# valid-by-construction floor: best/ always holds something
+baseline_files: {submission.csv: sample_submission.csv}
 time_budget_s: 900
 allow_network: false

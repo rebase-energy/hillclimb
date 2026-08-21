@@ -8,7 +8,7 @@ from pathlib import Path
 
 from hillclimb.backends.fake import FakeBackend
 from hillclimb.budget import BudgetManager
-from hillclimb.executor import LocalExecutor
+from tests.conftest import local_executor
 from hillclimb.journal import Journal
 from hillclimb.search import GreedySearcher
 from hillclimb.workspace import create_search_dir
@@ -23,7 +23,7 @@ def make_searcher(task, config, backend, max_candidates=10):
         config=config,
         journal=journal,
         backend=backend,
-        executor=LocalExecutor(Path(sys.executable)),
+        executor=local_executor(),
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir,
         max_candidates=max_candidates,

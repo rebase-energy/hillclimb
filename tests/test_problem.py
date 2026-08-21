@@ -11,7 +11,9 @@ def problem_dir(tmp_path: Path) -> Path:
     problem = tmp_path / "problems" / "my-problem"
     problem.mkdir(parents=True)
     (problem / "description.md").write_text("Optimize the thing.")
-    (problem / "verify.py").write_text('print("val_score: 1.0")\n')
+    verifier = problem / "verifier.sh"
+    verifier.write_text('#!/bin/sh\necho 1.0 > "$HILLCLIMB_RESULT"\n')
+    verifier.chmod(0o755)
     pd.DataFrame({"id": [0], "target": [0]}).to_csv(
         problem / "sample_submission.csv", index=False
     )
@@ -21,8 +23,6 @@ problem_id: my-problem
 metric: score
 lower_is_better: false
 description: description.md
-sample_submission: sample_submission.csv
-verifier: verify.py
 time_budget_s: 123
 """
     )
@@ -38,10 +38,10 @@ def test_load_problem_from_directory(problem_dir, config):
     assert spec.description == "Optimize the thing."
     assert spec.metric_name == "score"
     assert not spec.lower_is_better
-    assert spec.sample_submission == problem_dir / "sample_submission.csv"
-    assert spec.verifier == problem_dir / "verify.py"
+    assert spec.verifier_cmd == [str(problem_dir / "verifier.sh")]
+    assert spec.verifier_display == "./problem/verifier.sh"
     assert spec.time_budget_s == 123
-    assert spec.holdout is None
+    assert spec.holdout_cmd is None  # no `holdout: true`
     assert not spec.allow_network
 
 
@@ -54,26 +54,35 @@ problem_id: my-problem
 metric: nrmse
 lower_is_better: true
 description: description.md
-sample_submission: sample_submission.csv
-verifier: verify.py
 data_dir: data
 allow_network: true
-holdout:
-  strategy: time-tail
-  time_col: timestamp_utc
-  id_col: timestamp_utc
-  target_cols: [net_load_kwh]
-  fraction: 0.1
+holdout: true
 """
     )
     spec = load_problem(problem_dir, config)
     assert spec.data_dir == data_dir
     assert spec.allow_network
-    assert spec.holdout is not None
-    assert spec.holdout.strategy == "time-tail"
-    assert spec.holdout.id_col == "timestamp_utc"
-    assert spec.holdout.target_cols == ["net_load_kwh"]
-    assert spec.holdout.fraction == 0.1
+    # the hidden split is the same verifier, told which side to score
+    assert spec.holdout_cmd == [str(problem_dir / "verifier.sh"), "--holdout"]
+
+
+def test_verifier_must_exist_and_be_executable(problem_dir, config):
+    (problem_dir / "verifier.sh").chmod(0o644)
+    with pytest.raises(PermissionError, match="chmod \\+x"):
+        load_problem(problem_dir, config)
+
+    (problem_dir / "verifier.sh").unlink()
+    with pytest.raises(FileNotFoundError, match="verifier not found"):
+        load_problem(problem_dir, config)
+
+
+def test_kind_key_is_rejected(problem_dir, config):
+    (problem_dir / "problem.yaml").write_text(
+        "problem_id: my-problem\nmetric: score\nlower_is_better: false\n"
+        "description: description.md\nkind: evaluator\n"
+    )
+    with pytest.raises(ValueError, match="`kind:` is gone"):
+        load_problem(problem_dir, config)
 
 
 def test_suite_resolution_relative_to_suite_file(problem_dir, config):
@@ -97,19 +106,20 @@ problems:
 
 @pytest.fixture
 def evaluator_dir(tmp_path: Path) -> Path:
+    """A problem whose verifier drives solution.py itself."""
     problem = tmp_path / "problems" / "my-eval"
     problem.mkdir(parents=True)
     (problem / "description.md").write_text("Pack the bins.")
     (problem / "contract.md").write_text("solution.py must define pack(items, capacity).")
-    (problem / "evaluate.py").write_text('print("val_score: 1.0")\n')
+    verifier = problem / "verifier.sh"
+    verifier.write_text('#!/bin/sh\necho 1.0 > "$HILLCLIMB_RESULT"\n')
+    verifier.chmod(0o755)
     (problem / "problem.yaml").write_text(
         """
 problem_id: my-eval
-kind: evaluator
 metric: mean-bins
 lower_is_better: true
-eval: "{python} problem/evaluate.py"
-holdout_eval: "{python} problem/evaluate.py --holdout"
+holdout: true
 time_budget_s: 300
 """
     )
@@ -119,16 +129,14 @@ time_budget_s: 300
 def test_load_evaluator_problem(evaluator_dir, config):
     config.paths.problems_dir = evaluator_dir.parent
     spec = load_problem("my-eval", config)
-    assert spec.kind == "evaluator"
-    assert spec.eval_command == "{python} problem/evaluate.py"
-    assert spec.holdout_command == "{python} problem/evaluate.py --holdout"
-    assert spec.holdout_mode == "evaluator"
-    assert spec.sample_submission is None
-    assert spec.verifier is None
+    verifier = str(evaluator_dir / "verifier.sh")
+    assert spec.verifier_cmd == [verifier]
+    assert spec.holdout_cmd == [verifier, "--holdout"]
+    assert spec.report_trusted  # the verifier owns the score
     # contract.md picked up by default even without a `contract:` key
     assert "pack(items, capacity)" in spec.contract
     assert spec.requirements_file is None
-    assert spec.baseline_solution is None
+    assert spec.baseline_text is None
     assert spec.metric_name == "mean-bins" and spec.lower_is_better
 
 
@@ -137,46 +145,28 @@ def test_load_evaluator_optional_files(evaluator_dir, config):
     (evaluator_dir / "baseline.py").write_text("def pack(i, c): return [i]\n")
     (evaluator_dir / "problem.yaml").write_text(
         """
-kind: evaluator
 metric: mean-bins
 lower_is_better: true
-eval: "{python} problem/evaluate.py"
 requirements: requirements.txt
 baseline: baseline.py
 """
     )
     spec = load_problem(evaluator_dir, config)
     assert spec.requirements_file == evaluator_dir / "requirements.txt"
-    assert spec.baseline_solution == evaluator_dir / "baseline.py"
-    assert spec.holdout_command is None  # optional
+    assert spec.baseline_text == "def pack(i, c): return [i]\n"
+    assert spec.baseline_summary == "baseline: baseline.py"
+    assert spec.holdout_cmd is None  # holdout is opt-in
 
 
-def test_load_evaluator_validation_errors(evaluator_dir, config):
+def test_load_problem_validation_errors(evaluator_dir, config):
     yaml_path = evaluator_dir / "problem.yaml"
 
-    yaml_path.write_text("kind: evaluator\nmetric: m\nlower_is_better: true\n")
-    with pytest.raises(ValueError, match="non-empty `eval:`"):
-        load_problem(evaluator_dir, config)
-
-    yaml_path.write_text('kind: evaluator\nmetric: m\nlower_is_better: true\neval: "  "\n')
-    with pytest.raises(ValueError, match="non-empty `eval:`"):
-        load_problem(evaluator_dir, config)
-
-    yaml_path.write_text(
-        'kind: evaluator\nmetric: m\nlower_is_better: true\neval: "x"\n'
-        "holdout:\n  strategy: time-tail\n"
-    )
-    with pytest.raises(ValueError, match="does not apply to"):
-        load_problem(evaluator_dir, config)
-
-    yaml_path.write_text(
-        'kind: evaluator\nmetric: m\nlower_is_better: true\neval: "x"\nrequirements: nope.txt\n'
-    )
+    yaml_path.write_text("metric: m\nlower_is_better: true\nrequirements: nope.txt\n")
     with pytest.raises(FileNotFoundError, match="requirements file not found"):
         load_problem(evaluator_dir, config)
 
-    yaml_path.write_text('kind: mystery\nmetric: m\nlower_is_better: true\n')
-    with pytest.raises(ValueError, match="unknown problem kind"):
+    yaml_path.write_text("metric: m\nlower_is_better: true\nverifier: absent.sh\n")
+    with pytest.raises(FileNotFoundError, match="verifier not found"):
         load_problem(evaluator_dir, config)
 
 
@@ -186,17 +176,17 @@ def test_bin_packing_repo_problem_loads_and_scores(config, tmp_path):
     import sys
 
     from hillclimb.baseline import write_baseline
-    from hillclimb.command_executor import CommandExecutor
+    from hillclimb.executor import CommandExecutor
     from hillclimb.workspace import create_search_dir
 
     spec = load_problem("bin-packing", config)
-    assert spec.kind == "evaluator"
-    assert spec.holdout_command == "{python} problem/evaluate.py --holdout"
-    assert spec.baseline_solution is not None
+    assert spec.verifier_cmd[0].endswith("problems/bin-packing/verifier.sh")
+    assert spec.holdout_cmd == spec.verifier_cmd + ["--holdout"]
+    assert spec.baseline_text is not None
     assert "pack(items" in spec.contract
 
     search_dir = create_search_dir(tmp_path / "runs" / "r1", "bin-packing")
-    executor = CommandExecutor(Path(sys.executable), spec.eval_command)
+    executor = CommandExecutor(Path(sys.executable), spec.verifier_cmd)
     baseline = write_baseline(spec, search_dir, executor=executor, timeout_s=120)
     assert baseline.val_score is not None
     assert baseline.is_best

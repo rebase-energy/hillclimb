@@ -10,10 +10,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import typer
+import typer.rich_utils
 
 from hillclimb.api import (
-    build_holdout,
     create_search,
+    build_executor,
+    build_holdout_scorer,
     ensure_runtime_venv,
     execute_search,
     new_run_id,
@@ -24,7 +26,6 @@ from hillclimb.backends import get_backend
 from hillclimb.budget import BudgetManager
 from hillclimb.config import Config, RouteConfig
 from hillclimb.control import request_prune, request_stop
-from hillclimb.executor import LocalExecutor
 from hillclimb.journal import Journal
 from hillclimb.problem import (
     ProblemSpec,
@@ -46,7 +47,51 @@ from hillclimb.search import GreedySearcher
 from hillclimb.status import effective_state, read_status
 from hillclimb.workspace import create_run_dir
 
-app = typer.Typer(help="hillclimb: auto-hillclimbing for verifier-defined problems")
+# Typer's default rich theme paints "Usage:" and every `<...>` metavar yellow,
+# which clashes with the cyan command/option column. Repaint both in the same
+# cyan family so the help screen reads as one palette. These are module-level
+# globals that typer.rich_utils reads at render time, so assigning them here
+# (before any help is formatted) is enough.
+typer.rich_utils.STYLE_USAGE = "bold cyan"
+typer.rich_utils.STYLE_TYPES = "cyan"
+
+app = typer.Typer(
+    help="Hillclimbing on verifier-defined problems: a code-generation harness for model development with long-running agents.",
+    no_args_is_help=True,
+    # Subcommands inherit help_option_names from the parent click Context, so
+    # `-h` works on every command in the tree, not just the top level.
+    context_settings={"help_option_names": ["--help", "-h"]},
+)
+
+# ANSI-shadow "HILLCLIMB", printed above the command list on a bare `hillclimb`
+# and on `--help`, the way `rebase` fronts the toolkit CLI. Bold in the
+# terminal's own foreground rather than an explicit color: it reads white on a
+# dark background without turning invisible on a light one.
+BANNER_STYLE = "bold"
+BANNER_LINES = [
+    "██╗  ██╗ ██╗ ██╗      ██╗       ██████╗ ██╗      ██╗ ███╗   ███╗ ██████╗ ",
+    "██║  ██║ ██║ ██║      ██║      ██╔════╝ ██║      ██║ ████╗ ████║ ██╔══██╗",
+    "███████║ ██║ ██║      ██║      ██║      ██║      ██║ ██╔████╔██║ ██████╔╝",
+    "██╔══██║ ██║ ██║      ██║      ██║      ██║      ██║ ██║╚██╔╝██║ ██╔══██╗",
+    "██║  ██║ ██║ ███████╗ ███████╗ ╚██████╗ ███████╗ ██║ ██║ ╚═╝ ██║ ██████╔╝",
+    "╚═╝  ╚═╝ ╚═╝ ╚══════╝ ╚══════╝  ╚═════╝ ╚══════╝ ╚═╝ ╚═╝     ╚═╝ ╚═════╝ ",
+]
+BANNER_WIDTH = max(len(line) for line in BANNER_LINES)
+
+
+def print_banner() -> None:
+    """Print the wordmark, or a plain-text fallback in a terminal too narrow for it."""
+    from rich.console import Console
+
+    console = Console(highlight=False)
+    console.print()
+    if console.width < BANNER_WIDTH:
+        console.print("hillclimb", style=BANNER_STYLE)
+        console.print()
+        return
+    for line in BANNER_LINES:
+        console.print(line, style=BANNER_STYLE)
+    console.print()
 
 
 def load_config(**overrides) -> Config:
@@ -89,6 +134,49 @@ model: sonnet
 #   enabled: true        # inject eval breakdowns (per-zone/horizon/quantile) into improve prompts
 """
 
+INIT_PROBLEM_YAML = """\
+problem_id: example
+metric: score
+lower_is_better: false
+description: description.md
+time_budget_s: 900
+# verifier: verifier.sh   # the default; a problem IS its verifier
+# holdout: true           # engine also runs `verifier.sh --holdout`
+# baseline: baseline.py   # scored at t=0 as the floor to beat
+# requirements: requirements.txt
+"""
+
+INIT_PROBLEM_DESCRIPTION = """\
+# Example problem
+
+Replace this with what the solution has to do, what data it gets, and how it
+is judged. The agent reads this file verbatim.
+
+The toy objective below: write `solution.py` that prints a number. Bigger wins.
+"""
+
+INIT_PROBLEM_VERIFIER = """\
+#!/usr/bin/env bash
+# A problem is defined by this file. hillclimb runs it in the candidate's
+# working directory (./solution.py, ./problem/ and ./data/ are present) and
+# reads one thing back: the score.
+#
+#   exit 0                -> the candidate is valid
+#   $HILLCLIMB_RESULT     -> where the score goes: a bare number, or
+#                            {"score": <float>, "report": {...}}
+#
+# Also available: $HILLCLIMB_PYTHON (the managed venv interpreter — use it
+# instead of bare `python`), $HILLCLIMB_SOLUTION, $HILLCLIMB_SPLIT,
+# $HILLCLIMB_TRIAL_SEED. `--holdout` is passed when scoring the hidden split.
+set -euo pipefail
+
+"$HILLCLIMB_PYTHON" "$HILLCLIMB_SOLUTION" > solution_out.txt
+
+# Score whatever the solution produced. Do the real checking here: a verifier
+# that cannot fail is a verifier the search will learn to cheat.
+tail -n 1 solution_out.txt > "$HILLCLIMB_RESULT"
+"""
+
 INIT_SPEC_EXAMPLE = """\
 # Example run spec — committed run parameters (`hillclimb run hillclimb/specs/example.yaml`).
 # Single search:
@@ -129,6 +217,12 @@ def init(
         (folder / sub / ".gitkeep").touch()
     (folder / MARKER_FILE).write_text(INIT_CONFIG)
     (folder / "specs" / "example.yaml").write_text(INIT_SPEC_EXAMPLE)
+    example = folder / "problems" / "example"
+    example.mkdir(parents=True, exist_ok=True)
+    (example / "problem.yaml").write_text(INIT_PROBLEM_YAML)
+    (example / "description.md").write_text(INIT_PROBLEM_DESCRIPTION)
+    (example / "verifier.sh").write_text(INIT_PROBLEM_VERIFIER)
+    (example / "verifier.sh").chmod(0o755)
     gitignore = root / ".gitignore"
     ignore_line = f"{MARKER_DIR}/runs/"
     existing_ignore = gitignore.read_text() if gitignore.exists() else ""
@@ -136,10 +230,80 @@ def init(
         gitignore.write_text(existing_ignore.rstrip("\n") + ("\n" if existing_ignore else "") + ignore_line + "\n")
     typer.echo(f"Initialized hillclimb workspace at {root}")
     typer.echo(f"  {MARKER_DIR}/{MARKER_FILE}   — workspace config (edit defaults here)")
-    typer.echo(f"  {MARKER_DIR}/problems/      — problem definitions")
+    typer.echo(f"  {MARKER_DIR}/problems/      — problem definitions (example/ is a working one)")
     typer.echo(f"  {MARKER_DIR}/specs/         — committed run specs")
     typer.echo(f"  {MARKER_DIR}/runs/          — search artifacts (gitignored)")
-    typer.echo("Next: hillclimb run <problem-or-spec> --budget 30m")
+    typer.echo("Next: hillclimb verify example   (then: hillclimb run example --budget 30m)")
+
+
+@app.command()
+def verify(
+    target: str = typer.Argument(..., help="Problem folder/name to check"),
+    solution: Path = typer.Option(
+        None, "--solution", help="solution.py to score (default: the problem's baseline)"
+    ),
+    repeat: int = typer.Option(1, "--repeat", "-n", help="Score it N times to see the noise"),
+    holdout: bool = typer.Option(False, "--holdout", help="Also score the hidden split"),
+):
+    """Run a problem's verifier once, outside a search.
+
+    The fastest way to check a new `verifier.sh`: it reports the score the
+    engine would climb on, and with `--repeat` how much that score moves
+    between identical runs — an improvement smaller than that spread is noise,
+    not progress.
+    """
+    import statistics
+    import tempfile
+
+    from hillclimb.workspace import create_candidate_workspace
+
+    config = load_config()
+    problem = load_problem(target, config)
+    source = solution.read_text() if solution else problem.baseline_text
+    if source is None:
+        typer.echo(
+            f"{problem.problem_id} ships no baseline — pass --solution <file> to score one",
+            err=True,
+        )
+        raise typer.Exit(1)
+    executor = build_executor(config, problem)
+    scores: list[float] = []
+    with tempfile.TemporaryDirectory(prefix="hillclimb-verify-") as tmp:
+        root = Path(tmp)
+        typer.echo(f"{problem.problem_id}: {' '.join(problem.verifier_cmd)}")
+        for index in range(max(1, repeat)):
+            workspace = create_candidate_workspace(
+                root, f"v{index}", problem.data_dir, problem.problem_dir
+            )
+            script = workspace / "solution.py"
+            script.write_text(source)
+            result = executor.execute(script, workspace, config.budget.exec_timeout_s)
+            if not result.ok:
+                reason = "timed out" if result.timed_out else f"exit {result.returncode}"
+                if result.val_score is None and not result.timed_out:
+                    reason += "; no score in eval_result.json"
+                typer.echo(f"  run {index}: FAILED ({reason})", err=True)
+                typer.echo(f"  logs: {result.stdout_path}", err=True)
+                raise typer.Exit(1)
+            scores.append(result.val_score)
+            typer.echo(f"  run {index}: {problem.metric_name} = {result.val_score:.6g}")
+            if holdout:
+                scorer = build_holdout_scorer(config, problem, root)
+                if scorer is None:
+                    typer.echo("  holdout: not configured for this problem")
+                else:
+                    value, error = scorer.score(workspace)
+                    typer.echo(f"  holdout: {error if error else format(value, '.6g')}")
+    if len(scores) > 1:
+        spread = max(scores) - min(scores)
+        typer.echo(
+            f"\nnoise floor over {len(scores)} runs: spread {spread:.6g}, "
+            f"median {statistics.median(scores):.6g}"
+        )
+        typer.echo(
+            "an improvement smaller than the spread cannot be distinguished from noise"
+        )
+
 
 
 knowledge_app = typer.Typer(help="Cross-search learning: knowledge cards distilled from finished searches")
@@ -560,7 +724,9 @@ def _execute(
         )
     else:
         typer.echo("\nDone. No scored solution; best/ holds the baseline submission.")
-    artifact = "solution.py" if problem.kind in ("emflow", "evaluator") else "submission.csv"
+    # the solution is always the artifact; a submission file only exists
+    # where the problem's verifier asks for one
+    artifact = "solution.py"
     typer.echo(f"Best artifact: {search_dir / 'best' / artifact}")
     typer.echo(f"Inspect with: hillclimb status {ref}")
 
@@ -788,10 +954,6 @@ def resume(search: str = typer.Argument("latest")):
         raise typer.BadParameter(f"No valid search.yaml in {search_dir}")
     config = load_config(backend=meta.backend, model=meta.model)
     config.holdout.enabled = meta.holdout_enabled
-    if meta.holdout_seed is not None:
-        config.holdout.seed = meta.holdout_seed
-    if meta.holdout_fraction is not None:
-        config.holdout.fraction = meta.holdout_fraction
     # the search resumes under the policy/routing it started with, not
     # whatever the live config currently says
     config.search.policy = meta.policy
@@ -1096,11 +1258,11 @@ def smoke(
         config=config,
         journal=journal,
         backend=get_backend("claude-code"),
-        executor=LocalExecutor(ensure_runtime_venv(config)),
+        executor=build_executor(config, problem),
         budget=BudgetManager(1800, stop_margin_s=0),
         search_dir=search_dir,
         log=typer.echo,
-        holdout=build_holdout(config, problem, search_dir),
+        holdout_scorer=build_holdout_scorer(config, problem, search_dir),
     )
     candidate = searcher.run_operator("draft", None)
     trial = candidate.last_trial
@@ -1116,5 +1278,19 @@ def smoke(
         typer.echo("WARNING: session_id not parsed — check agent_raw.json for actual field names")
 
 
+def main(argv: list[str] | None = None) -> None:
+    """Console-script entry: front the help screen with the wordmark.
+
+    A bare `hillclimb` is a request to see what the tool can do, not a usage
+    error — so it prints the banner and the full command list instead of
+    typer's "Missing command".
+    """
+    args = list(sys.argv[1:] if argv is None else argv)
+    if not args or args in (["--help"], ["-h"]):
+        print_banner()
+        args = ["--help"]
+    app(args=args, prog_name="hillclimb")
+
+
 if __name__ == "__main__":
-    app()
+    main()

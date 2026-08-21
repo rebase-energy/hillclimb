@@ -10,7 +10,7 @@ import pytest
 
 from hillclimb.backends.fake import FakeBackend
 from hillclimb.budget import BudgetManager
-from hillclimb.executor import LocalExecutor
+from tests.conftest import local_executor
 from hillclimb.journal import Journal
 from hillclimb.search import GreedySearcher
 from hillclimb.workspace import create_search_dir
@@ -44,7 +44,7 @@ def make_searcher(task, config, backend, **kwargs):
         config=config,
         journal=journal,
         backend=backend,
-        executor=LocalExecutor(Path(sys.executable)),
+        executor=local_executor(),
         search_dir=search_dir,
         log=lambda *_: None,
         **kwargs,
@@ -107,25 +107,24 @@ class TestMultiSeedTrials:
 
 
 class TestHoldoutTopK:
-    def make_holdout_searcher(self, task_larger, config, backend, top_k):
-        from hillclimb.holdout import build_data_view
+    def make_holdout_searcher(self, task, config, backend, top_k):
+        from tests.test_search import FileHoldoutScorer
 
         config.holdout.top_k = top_k
         search_dir = create_search_dir(config.paths.runs_dir, "test-search")
-        info = build_data_view(
-            task_larger.data_dir, search_dir, task_larger.sample_submission, 0.3, 42
-        )
         journal = Journal(search_dir / "journal.jsonl")
         searcher = GreedySearcher(
-            problem=task_larger,
+            problem=task.model_copy(
+                update={"holdout_cmd": task.verifier_cmd + ["--holdout"]}
+            ),
             config=config,
             journal=journal,
             backend=backend,
-            executor=LocalExecutor(Path(sys.executable)),
+            executor=local_executor(),
             budget=BudgetManager(3600, stop_margin_s=1),
             search_dir=search_dir,
             log=lambda *_: None,
-            holdout=info,
+            holdout_scorer=FileHoldoutScorer(),
         )
         return searcher, journal
 
@@ -134,19 +133,16 @@ class TestHoldoutTopK:
 import pandas as pd
 sample = pd.read_csv("data/sample_submission.csv")
 sample.to_csv("submission.csv", index=False)
-hold = pd.read_csv("data/holdout.csv")
-truth = (hold["feature"] > 0)
-pd.DataFrame({{"id": hold["id"], "target": truth.astype(int)}}).to_csv(
-    "holdout_predictions.csv", index=False)
+open("holdout_predictions.csv", "w").write("{val}")
 print("val_score: {val}")
 '''
 
-    def test_gate_skips_holdout_below_top_k(self, task_larger, config):
+    def test_gate_skips_holdout_below_top_k(self, task, config):
         backend = FakeBackend()
         # two strong drafts fill top_k=2, then a weak one
         for val in (0.9, 0.8, 0.1):
             backend.queue(script=self.holdout_script(val), notes="d\n")
-        searcher, journal = self.make_holdout_searcher(task_larger, config, backend, top_k=2)
+        searcher, journal = self.make_holdout_searcher(task, config, backend, top_k=2)
         for _ in range(3):
             searcher.run_operator("draft", None)
 
@@ -156,20 +152,20 @@ print("val_score: {val}")
         assert weak.status == "ok"  # still climbs on val
         assert weak.holdout_score is None  # gated: no holdout query spent
 
-    def test_gate_disabled_scores_everyone(self, task_larger, config):
+    def test_gate_disabled_scores_everyone(self, task, config):
         backend = FakeBackend()
         for val in (0.9, 0.8, 0.1):
             backend.queue(script=self.holdout_script(val), notes="d\n")
-        searcher, journal = self.make_holdout_searcher(task_larger, config, backend, top_k=0)
+        searcher, journal = self.make_holdout_searcher(task, config, backend, top_k=0)
         for _ in range(3):
             searcher.run_operator("draft", None)
         assert all(journal.get(f"c00{i}").holdout_score is not None for i in (0, 1, 2))
 
-    def test_gated_candidate_not_selectable(self, task_larger, config):
+    def test_gated_candidate_not_selectable(self, task, config):
         backend = FakeBackend()
         for val in (0.9, 0.8, 0.1):
             backend.queue(script=self.holdout_script(val), notes="d\n")
-        searcher, journal = self.make_holdout_searcher(task_larger, config, backend, top_k=2)
+        searcher, journal = self.make_holdout_searcher(task, config, backend, top_k=2)
         for _ in range(3):
             searcher.run_operator("draft", None)
         selected = journal.selected_candidate(False, "rank-blend")
@@ -631,10 +627,34 @@ class TestIncumbentSeeding:
 
         resumed = GreedySearcher(
             problem=task, config=config, journal=Journal(search_dir / "journal.jsonl"),
-            backend=backend, executor=LocalExecutor(Path(sys.executable)),
+            backend=backend, executor=local_executor(),
             budget=BM(3600, stop_margin_s=1), search_dir=search_dir,
             log=lambda *_: None, seed_solution=seed, max_candidates=2,
         )
         resumed.run()
         seeds = [c for c in resumed.journal.candidates.values() if c.operator == "seed"]
         assert len(seeds) == 1
+
+
+def test_worker_crash_does_not_hang_the_scheduler(task, config):
+    """A worker that dies without reporting used to leave the candidate in
+    flight and the scheduler blocked on the done-queue forever."""
+    config.search.parallel_agents = 2
+    backend = FakeBackend()
+    backend.queue(script=ok_script(0.5), notes="d\n")
+    search_dir = create_search_dir(config.paths.runs_dir, "crash-search")
+    journal = Journal(search_dir / "journal.jsonl")
+
+    class ExplodingExecutor:
+        def execute(self, script, workspace, timeout_s, seed=None):
+            raise RuntimeError("executor blew up")
+
+    searcher = GreedySearcher(
+        problem=task, config=config, journal=journal, backend=backend,
+        executor=ExplodingExecutor(),
+        budget=BudgetManager(3600, stop_margin_s=1),
+        search_dir=search_dir, max_candidates=3, log=lambda *_: None,
+    )
+    searcher.run()  # terminates instead of deadlocking
+    assert all(c.status != "pending" for c in journal.candidates.values())
+    assert any("orchestrator error" in (c.summary or "") for c in journal.candidates.values())

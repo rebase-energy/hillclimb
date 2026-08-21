@@ -1,10 +1,13 @@
 """Official scorer for the heilbronn-11 problem.
 
-Reads ./submission.csv (id,x,y; 11 rows), validates, and prints the official
-`val_score:` line (minimum triangle area over all triples, 0.0 if invalid).
+Reads ./submission.csv (id,x,y; 11 rows), validates, and writes the
+score to $HILLCLIMB_RESULT (minimum triangle area over all triples, 0.0 if invalid).
 """
 
+import json
+import os
 import sys
+from pathlib import Path
 from itertools import combinations
 
 import numpy as np
@@ -12,6 +15,14 @@ import pandas as pd
 
 N = 11
 TOL = 1e-9
+
+
+def emit(score: float) -> None:
+    """hillclimb's verifier contract: the score is written to the result
+    file, not scraped from stdout (agent-authored code shares this stream)."""
+    path = Path(os.environ.get("HILLCLIMB_RESULT", "eval_result.json"))
+    path.write_text(json.dumps({"split": os.environ.get("HILLCLIMB_SPLIT", "validation"),
+                                "score": score}))
 
 
 def fail(reason: str) -> None:
@@ -44,6 +55,7 @@ def main() -> None:
         for i, j, k in combinations(range(N), 3)
     )
     print(f"valid layout; min triangle area = {min_area:.8f}")
+    emit(min_area)
     print(f"val_score: {min_area:.8f}")
 
 

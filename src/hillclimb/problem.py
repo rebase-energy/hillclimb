@@ -1,60 +1,67 @@
 from __future__ import annotations
 
-import shlex
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from hillclimb.config import Config
-from hillclimb.holdout import HoldoutOverride
 
 
 class ProblemSpec(BaseModel):
     """Portable problem definition.
 
-    kind="csv" (default): a directory with `problem.yaml`, `description.md`,
-    a baseline `sample_submission.csv`, and a verifier script. The generated
-    solution writes `submission.csv`; the orchestrator runs the verifier and
-    uses the final `val_score:` line as the validation score.
-
-    kind="emflow": an emflow registry problem (`emflow://<name>`); the
-    generated solution is a Predictor module driven by the emflow evaluator,
-    and holdout scoring is a second evaluator invocation (`holdout_mode=
-    "evaluator"`) rather than a hillclimb-built data view.
-
-    kind="evaluator": a directory whose problem.yaml supplies its own eval
-    command (`eval:`) — the only process that runs; it drives solution.py
-    itself, prints the final `val_score:` line, and writes `eval_result.json`
-    (the completion proof and report carrier). Optional `holdout_eval:` runs
-    the same way in a hidden dir with the full environment.
+    A problem is defined by its **verifier command**: the only process the
+    engine starts, which drives `solution.py` and writes the score to
+    `$HILLCLIMB_RESULT` (see `executor.py` for the contract). A directory
+    problem supplies it as `verifier.sh`; providers (`emflow://`,
+    `mlebench://`) supply their own argv for the same contract.
     """
 
-    kind: Literal["csv", "emflow", "evaluator"] = "csv"
     problem_id: str
     problem_dir: Path
     data_dir: Path
     description: str
     metric_name: str
     lower_is_better: bool
-    sample_submission: Path | None = None  # required for csv (loader enforces)
-    verifier: Path | None = None
     time_budget_s: int
-    holdout: HoldoutOverride | None = None
-    holdout_mode: Literal["data-view", "evaluator"] = "data-view"
     allow_network: bool = False
-    emflow_problem: str | None = None   # registry name, e.g. "gefcom2014:solar"
-    emflow_baseline: str | None = None  # module exposing get_model(), if any
-    emflow_quantiles: list[float] | None = None  # probabilistic problems only
-    # evaluator kind: raw command strings (shlex-split at execution;
-    # `{python}`/`{solution}` placeholders substituted per token)
-    eval_command: str | None = None
-    holdout_command: str | None = None
-    contract: str | None = None  # problem-authored solution-contract prompt section
+
+    # --- the verifier contract ---
+    # argv of the validation command; `{python}`/`{solution}`/`{result}`
+    # tokens are substituted per run (shell verifiers read the env instead)
+    verifier_cmd: list[str]
+    # same contract against the hidden split; None = this problem has no
+    # holdout and selection climbs on validation alone
+    holdout_cmd: list[str] | None = None
+    verifier_env: dict[str, str] = Field(default_factory=dict)  # extra env, validation runs only
+    verifier_display: str = "./problem/verifier.sh"  # prompt-facing form of the command
+    # True: the verifier computes the score (and any eval_result.json report)
+    # independently of the agent. False: the number is the solution's own
+    # claim (MLE-bench), so reports are stored labelled self-reported.
+    report_trusted: bool = True
+    holdout_needs_credentials: bool = False  # fail fast when the hidden split is gated
+    runtime: Literal["csv", "emflow"] = "csv"  # which shared runtime venv to build
     requirements_file: Path | None = None  # per-problem venv requirements
-    baseline_solution: Path | None = None  # floor solution scored as c000
+
+    # --- prompt assembly ---
+    contract_template: str = "contract_verifier"  # prompts/<name>.md
+    contract: str | None = None  # problem-authored solution-contract section
+
+    # --- t=0 floor ---
+    baseline_text: str | None = None  # solution.py source scored as c000
+    baseline_summary: str = "baseline"
+    # {name in the workspace: source file} copied into c000 and best/ when the
+    # problem has no scored baseline, so a search that never lands a working
+    # candidate still ships something gradeable (a sample submission)
+    baseline_files: dict[str, Path] = Field(default_factory=dict)
+
+    # --- provider extras ---
+    emflow_problem: str | None = None   # registry name, e.g. "gefcom2014:solar"
+    emflow_quantiles: list[float] | None = None  # probabilistic problems only
     # MLE-bench competition id; set only by the mlebench provider. Marks the
     # search for one official grade-sample run on the selected candidate
     # after the search finishes (never during — selection integrity).
@@ -178,31 +185,20 @@ def _optional_file(problem_dir: Path, meta: dict, key: str, default: str | None 
     return path
 
 
-def _load_evaluator_problem(meta: dict, problem_yaml: Path, problem_dir: Path, common: dict) -> ProblemSpec:
-    """kind: evaluator — the problem supplies its own eval (and optional
-    holdout) command; no sample_submission, no verifier, no data-view holdout."""
-    if meta.get("holdout"):
-        raise ValueError(
-            f"{problem_yaml}: `holdout:` (data-view override) does not apply to "
-            "kind: evaluator — supply a `holdout_eval:` command instead"
+def _verifier_argv(problem_yaml: Path, problem_dir: Path, meta: dict) -> list[str]:
+    """The problem's verifier, as argv. Absolute: a relative program path is
+    resolved against the ENGINE's cwd, not the workspace the command runs in
+    (subprocess does not search cwd for the executable)."""
+    name = str(meta.get("verifier", "verifier.sh"))
+    path = (problem_dir / name).resolve()
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{problem_yaml}: verifier not found: {path} — a problem is defined by its "
+            "verifier (see `hillclimb init` for a scaffold)"
         )
-    eval_command = str(meta.get("eval") or "").strip()
-    if not eval_command or not shlex.split(eval_command):
-        raise ValueError(f"{problem_yaml}: kind: evaluator requires a non-empty `eval:` command")
-    holdout_command = str(meta.get("holdout_eval") or "").strip() or None
-    if holdout_command:
-        shlex.split(holdout_command)  # a malformed command fails at load, not mid-search
-    contract_path = _optional_file(problem_dir, meta, "contract", default="contract.md")
-    return ProblemSpec(
-        kind="evaluator",
-        **common,
-        eval_command=eval_command,
-        holdout_command=holdout_command,
-        contract=contract_path.read_text() if contract_path else None,
-        requirements_file=_optional_file(problem_dir, meta, "requirements"),
-        baseline_solution=_optional_file(problem_dir, meta, "baseline"),
-        holdout_mode="evaluator",
-    )
+    if not os.access(path, os.X_OK):
+        raise PermissionError(f"{problem_yaml}: verifier is not executable: chmod +x {path}")
+    return [str(path)]
 
 
 def load_problem(target: str | Path, config: Config) -> ProblemSpec:
@@ -214,7 +210,11 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
     problem_dir = problem_yaml.parent
     meta = _read_yaml(problem_yaml)
 
-    kind = meta.get("kind", "csv")
+    if "kind" in meta:
+        raise ValueError(
+            f"{problem_yaml}: `kind:` is gone — every problem is now defined by a "
+            "verifier command (`verifier: verifier.sh`, the default)"
+        )
     problem_id = meta.get("problem_id") or problem_dir.name
     description_path = problem_dir / meta.get("description", "description.md")
     if not description_path.exists():
@@ -239,24 +239,22 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
         time_budget_s=meta.get("time_budget_s", config.budget.total_s),
         allow_network=bool(meta.get("allow_network", False)),
     )
-    if kind == "evaluator":
-        return _load_evaluator_problem(meta, problem_yaml, problem_dir, common)
-    if kind != "csv":
-        raise ValueError(f"{problem_yaml}: unknown problem kind {kind!r}")
-
-    sample_path = problem_dir / meta.get("sample_submission", "sample_submission.csv")
-    verifier_value = meta.get("verifier", "verify.py")
-    verifier_path = (problem_dir / verifier_value).resolve() if verifier_value else None
-    if verifier_path is not None and not verifier_path.exists():
-        raise FileNotFoundError(f"Verifier not found: {verifier_path}")
-    if not sample_path.exists():
-        raise FileNotFoundError(f"Sample submission not found: {sample_path}")
-
+    verifier_cmd = _verifier_argv(problem_yaml, problem_dir, meta)
+    contract_path = _optional_file(problem_dir, meta, "contract", default="contract.md")
+    baseline_path = _optional_file(problem_dir, meta, "baseline")
     return ProblemSpec(
         **common,
-        sample_submission=sample_path.resolve(),
-        verifier=verifier_path,
-        holdout=HoldoutOverride.model_validate(meta["holdout"]) if meta.get("holdout") else None,
+        verifier_cmd=verifier_cmd,
+        holdout_cmd=(verifier_cmd + ["--holdout"]) if meta.get("holdout") else None,
+        verifier_display=f"./problem/{Path(verifier_cmd[0]).name}",
+        contract=contract_path.read_text() if contract_path else None,
+        requirements_file=_optional_file(problem_dir, meta, "requirements"),
+        baseline_text=baseline_path.read_text() if baseline_path else None,
+        baseline_summary=f"baseline: {baseline_path.name}" if baseline_path else "baseline",
+        baseline_files={
+            dest: (problem_dir / src).resolve()
+            for dest, src in (meta.get("baseline_files") or {}).items()
+        },
     )
 
 

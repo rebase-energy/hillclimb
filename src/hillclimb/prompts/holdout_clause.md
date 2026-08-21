@@ -1,1 +1,9 @@
-3. `holdout_predictions.csv` — predictions for every row in `./data/holdout.csv`. It must contain the id column `{{holdout_id_col}}` (values copied EXACTLY from holdout.csv) plus your prediction column(s): {{holdout_target_cols}}. {{holdout_split_note}} Their labels are NOT available to you — do not guess them, predict them with your trained model, and never train on rows you cannot label.
+
+## Hidden holdout
+
+This problem has a holdout split you never see. After the validation run above, the
+orchestrator re-runs the verifier against hidden data in a directory you have no access
+to, and the selected solution is chosen with that score in the blend. Solutions that fit
+the validation split specifically — memorized answers, constants tuned to it, anything
+keyed to the exact instances — score well here and lose. Aim for a {{metric_name}} that
+generalizes.

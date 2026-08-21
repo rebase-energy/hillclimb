@@ -46,9 +46,6 @@ class SearchMeta(BaseModel):
     lower_is_better: bool = False
     budget_s: int = 0
     holdout_enabled: bool = False
-    holdout_seed: int | None = None
-    holdout_fraction: float | None = None
-    holdout_strategy: str = "random"
     seed_from: str | None = None  # incumbent solution the search was seeded with
     # whether cross-search memory was active — the grouping key for the
     # learning on/off A/B benchmark (bench.py)

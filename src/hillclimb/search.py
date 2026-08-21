@@ -8,23 +8,19 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-import pandas as pd
-
 from hillclimb.backends.base import OperatorBackend, OperatorRequest, OperatorResult
 from hillclimb.baseline import write_baseline
 from hillclimb.budget import BudgetManager
 from hillclimb.candidate import BackendInfo, Candidate, Trial, utcnow
 from hillclimb.config import Config
 from hillclimb.control import ControlCommand, apply_prune, read_commands, resync_best
-from hillclimb.executor import Executor
-from hillclimb.holdout import HoldoutInfo, HoldoutScorer
+from hillclimb.executor import Executor, HoldoutScorer
 from hillclimb.journal import Journal
 from hillclimb.policies.greedy import GreedyPolicy
 from hillclimb.policy import Action, BudgetView, InflightRef, SearchPolicy, SearchView
 from hillclimb.prompts.render import COMPLEXITY_CUES, render
 from hillclimb.routing import BackendPool, ResolvedRoute, Router
 from hillclimb.run import SEARCHES_DIRNAME
-from hillclimb.scoring import ScoringError, score
 from hillclimb.slots import MachineSlots
 from hillclimb.status import CandidateCounts, CurrentCandidate, ScoreRef, StatusWriter
 from hillclimb.problem import ProblemSpec
@@ -96,7 +92,6 @@ class GreedySearcher:
         search_dir: Path,
         max_candidates: int = 50,
         log=print,
-        holdout: HoldoutInfo | None = None,
         holdout_scorer: HoldoutScorer | None = None,
         status: StatusWriter | None = None,
         slots: MachineSlots | None = None,
@@ -119,7 +114,6 @@ class GreedySearcher:
         self.search_dir = search_dir
         self.max_candidates = max_candidates
         self.log = log
-        self.holdout = holdout
         self.holdout_scorer = holdout_scorer
         self.status = status
         self.slots = slots  # machine-wide agent-concurrency cap (optional)
@@ -163,7 +157,7 @@ class GreedySearcher:
 
     @property
     def data_dir(self) -> Path:
-        return self.holdout.data_view if self.holdout else self.problem.data_dir
+        return self.problem.data_dir
 
     def _view(self) -> SearchView:
         """Snapshot of search state for a policy call. Scheduler-thread only —
@@ -273,7 +267,18 @@ class GreedySearcher:
             + f" ({job.candidate.candidate_id})"
         )
         self._inflight[job.candidate.candidate_id] = job
-        pool.submit(lambda: self._done_q.put(self._execute_job(job)))
+
+        def work() -> None:
+            try:
+                outcome = self._execute_job(job)
+            except BaseException as exc:  # noqa: BLE001
+                # a worker that dies without reporting would leave the
+                # candidate in flight and the scheduler waiting forever
+                self.log(f"  worker for {job.candidate.candidate_id} crashed: {exc!r}")
+                outcome = OutcomeMsg(job=job, kind="worker_crashed")
+            self._done_q.put(outcome)
+
+        pool.submit(work)
 
     def _drain_aborted(self) -> None:
         """After abort: collect whatever workers return (they die within ~1s
@@ -725,6 +730,13 @@ class GreedySearcher:
                     self._record_result(candidate)
                     raise ParkedSearch(result.error_message)
 
+                if msg.kind == "worker_crashed":
+                    candidate.status = "abandoned"
+                    candidate.summary = "orchestrator error mid-operator (see log)"
+                    candidate.finished_at = utcnow()
+                    self._record_result(candidate)
+                    return candidate
+
                 if msg.kind == "aborted":
                     candidate.status = "abandoned"
                     candidate.summary = "stopped mid-operator (abort)"
@@ -839,9 +851,9 @@ class GreedySearcher:
             results = list(pool.map(run, range(n)))
         candidate.trials.extend(trial for trial, _ in results)
         # trial-0 artifacts surface at the workspace root so best/-sync,
-        # ensemble copies, and CSV holdout scoring stay untouched
+        # ensemble copies, and holdout scoring stay untouched
         t0 = workspace / "trials" / "t0"
-        for name in ("submission.csv", "holdout_predictions.csv", "eval_result.json"):
+        for name in ("submission.csv", "eval_result.json"):
             if (t0 / name).exists():
                 shutil.copy(t0 / name, workspace / name)
         return all(ok for _, ok in results)
@@ -850,13 +862,7 @@ class GreedySearcher:
         self, solution: Path, cwd: Path, exec_timeout: int, seed: int | None
     ) -> tuple[Trial, bool]:
         trial_started = utcnow()
-        exec_result = self.executor.execute(
-            solution,
-            cwd,
-            exec_timeout,
-            verifier=self.problem.verifier,
-            seed=seed,
-        )
+        exec_result = self.executor.execute(solution, cwd, exec_timeout, seed=seed)
         stdout_tail = tail(Path(exec_result.stdout_path)) if exec_result.stdout_path else ""
         if not exec_result.ok and not stdout_tail.strip():
             # a silent crash is undebuggable from the journal (the only state
@@ -900,11 +906,7 @@ class GreedySearcher:
             return None
         # provenance is stamped from problem configuration, not file contents:
         # an agent-authored file cannot claim evaluator trust
-        trusted = (
-            getattr(self.problem, "kind", "csv") in ("emflow", "evaluator")
-            or self.problem.verifier is not None
-        )
-        compact["source"] = "evaluator" if trusted else "agent"
+        compact["source"] = "evaluator" if self.problem.report_trusted else "agent"
         return compact
 
     def _holdout_threshold(self) -> float | None:
@@ -947,24 +949,11 @@ class GreedySearcher:
         self.log(f"  new selection: {selected.candidate_id} {scores}")
 
     def _score_holdout(self, workspace: Path) -> tuple[float | None, str | None]:
-        """Score holdout predictions; (score, None) on success, (None, reason)
-        on contract violation, (None, None) when holdout is disabled."""
-        if self.holdout_scorer is not None:
-            return self.holdout_scorer.score(workspace)
-        if self.holdout is None:
+        """Score the hidden split; (score, None) on success, (None, reason) on
+        contract violation, (None, None) when this search has no holdout."""
+        if self.holdout_scorer is None:
             return None, None
-        pred_path = workspace / "holdout_predictions.csv"
-        if not pred_path.exists():
-            return None, "`holdout_predictions.csv` was not written"
-        try:
-            predictions = pd.read_csv(pred_path)
-            answers = pd.read_csv(self.holdout.answers_path)
-            value = score(self.problem.metric_name, answers, predictions, self.holdout.id_col)
-        except ScoringError as e:
-            return None, f"holdout_predictions.csv could not be scored: {e}"
-        except Exception as e:
-            return None, f"holdout_predictions.csv is unreadable: {e}"
-        return value, None
+        return self.holdout_scorer.score(workspace)
 
     def _improves(self, score: float, best: float) -> bool:
         return score < best if self.problem.lower_is_better else score > best
@@ -981,44 +970,9 @@ class GreedySearcher:
         complexity: str | None,
         ensemble_inputs: list[Candidate] | None = None,
     ) -> str:
-        holdout_clause = ""
-        if self.holdout is not None:
-            if self.holdout.strategy == "time-tail":
-                if self.holdout.group_col:
-                    scope = f"the most recent rows of each `{self.holdout.group_col}` block"
-                elif self.holdout.time_cutoff:
-                    scope = f"all rows from {self.holdout.time_cutoff} onward"
-                else:
-                    scope = "the most recent rows"
-                split_note = (
-                    f"These rows are the chronological TAIL of the training data ({scope}), "
-                    "held out by the orchestrator. Treat them as a true forecast: do not "
-                    "train on them, and do not use any information from the holdout period."
-                )
-            else:
-                split_note = "These rows were held out at random from the training data."
-            # class-columns problems (target column holds class names, e.g.
-            # spooky's `author`): predictions must be per-class probability
-            # columns in submission format, NOT the raw target column — an
-            # agent following the literal column name writes hard labels the
-            # log-loss scorer can't grade
-            sample_cols = pd.read_csv(self.problem.sample_submission, nrows=0).columns
-            if set(self.holdout.target_cols) <= set(sample_cols):
-                target_cols_note = ", ".join(f"`{c}`" for c in self.holdout.target_cols)
-            else:
-                pred_cols = [c for c in sample_cols if c != sample_cols[0]]
-                shown = ", ".join(f"`{c}`" for c in pred_cols[:6])
-                if len(pred_cols) > 6:
-                    shown += f", … ({len(pred_cols)} columns)"
-                target_cols_note = (
-                    f"the same prediction columns as submission.csv: {shown}"
-                )
-            holdout_clause = render(
-                "holdout_clause",
-                holdout_id_col=self.holdout.id_col,
-                holdout_target_cols=target_cols_note,
-                holdout_split_note=split_note,
-            ).rstrip()
+        holdout_clause = render(
+            "holdout_clause", metric_name=self.problem.metric_name
+        ).rstrip() if self.problem.holdout_cmd is not None else ""
         network_note = (
             "Internet access IS available at execution time — this problem's rules "
             "permit fetching external data; cache downloads to files in the "
@@ -1026,10 +980,7 @@ class GreedySearcher:
             if self.problem.allow_network
             else "Assume no internet access at execution time."
         )
-        contract_template = {
-            "emflow": "contract_emflow",
-            "evaluator": "contract_evaluator",
-        }.get(self.problem.kind, "contract")
+        contract_template = self.problem.contract_template
         tools_clause = ""
         if self.config.operators.knowledge_tool and self.config.learning.enabled:
             import sys as _sys
@@ -1050,7 +1001,7 @@ class GreedySearcher:
             verifier_clause=self._verifier_clause(),
             emflow_problem=self.problem.emflow_problem or "",
             quantile_note=self._quantile_note(),
-            eval_command_display=self._eval_command_display(),
+            verifier_display=self.problem.verifier_display,
             problem_contract=self.problem.contract or "(see the problem description above)",
             tools_clause=tools_clause,
         )
@@ -1152,17 +1103,11 @@ class GreedySearcher:
         if trial.returncode not in (0, None):
             return f"The script crashed (exit code {trial.returncode})."
         problems = []
-        evaluator_scored = getattr(self.problem, "kind", "csv") in ("emflow", "evaluator")
-        if not trial.submission_ok:
-            problems.append(
-                "the evaluation produced no `eval_result.json` result artifact"
-                if evaluator_scored
-                else "`submission.csv` was not written"
-            )
         if trial.val_score is None:
             problems.append(
-                "the evaluator printed no final `val_score: <float>` line"
-                if evaluator_scored
+                "the verifier reported no score — it exited 0 but wrote no usable "
+                "`eval_result.json` (a `{\"score\": <float>}` object, or a bare number)"
+                if self.problem.report_trusted
                 else "no final `val_score: <float>` line was printed"
             )
         if trial.holdout_error:
@@ -1173,21 +1118,12 @@ class GreedySearcher:
 
     def _report_clause(self) -> str:
         """Tier-2 agent-report instructions, only where the agent's own script
-        computes val_score (no verifier, non-emflow/evaluator). On verifier
-        problems the executor discards agent-written eval_result.json, so
-        asking for one would be a contradiction."""
-        if (
-            getattr(self.problem, "kind", "csv") in ("emflow", "evaluator")
-            or self.problem.verifier is not None
-        ):
+        computes the score. Where the verifier owns scoring, the executor
+        takes the verifier's result file, so asking the agent for one would be
+        a contradiction."""
+        if self.problem.report_trusted:
             return ""
         return render("report_clause").rstrip()
-
-    def _eval_command_display(self) -> str:
-        """Prompt-facing form of the evaluator command: placeholders read as
-        what they mean, not as machine paths (the venv path is noise)."""
-        command = getattr(self.problem, "eval_command", None) or ""
-        return command.replace("{python}", "python").replace("{solution}", "solution.py")
 
     def _quantile_note(self) -> str:
         """Class-attribute stanza for the emflow contract's Predictor stub."""
@@ -1205,20 +1141,13 @@ class GreedySearcher:
         )
 
     def _verifier_clause(self) -> str:
-        if self.problem.verifier is None:
-            return (
-                "- prints exactly one line `val_score: <float>` "
-                f"(your validation {self.problem.metric_name}) as the FINAL line of stdout"
-            )
-        try:
-            verifier_name = self.problem.verifier.relative_to(self.problem.problem_dir)
-        except ValueError:
-            verifier_name = self.problem.verifier.name
+        """How the agent's script is expected to surface its score, for the
+        self-reported contract (the verifier-owned one says nothing)."""
+        if self.problem.report_trusted:
+            return ""
         return (
-            f"- writes `./submission.csv`; the orchestrator then runs "
-            f"`./problem/{verifier_name}` and uses the verifier's final "
-            "`val_score: <float>` line as the official validation score. "
-            "Do not print your own `val_score:` line."
+            "- prints exactly one line `val_score: <float>` "
+            f"(your validation {self.problem.metric_name}) as the FINAL line of stdout"
         )
 
     def _report_section(self, target: Candidate) -> str:

@@ -1,7 +1,38 @@
+"""Verifier-driven execution: the one way hillclimb scores a candidate.
+
+Every problem — hand-written, emflow, MLE-bench — is defined by a **verifier
+command**. It is the only process the engine starts. It drives `solution.py`
+itself (run it, import it, shell out to it), and reports the score by writing
+`$HILLCLIMB_RESULT`:
+
+    exit 0                 the candidate is valid
+    $HILLCLIMB_RESULT      `{"score": <float>, ...}` — or a bare number
+
+The result file is both the score carrier and the completion proof: the engine
+deletes it before every run, so a stale file can never masquerade as this
+run's result, and a candidate that exits 0 without writing one is a contract
+violation rather than a silent zero.
+
+Verifier environment:
+
+    $HILLCLIMB_PYTHON      the managed runtime venv's interpreter (bare
+                           `python` resolves via PATH inside the scrubbed
+                           env: wrong interpreter)
+    $HILLCLIMB_SOLUTION    the solution path for this run (trial-dir aware)
+    $HILLCLIMB_RESULT      where to write the score
+    $HILLCLIMB_SPLIT       `validation` or `holdout`
+    $HILLCLIMB_TRIAL_SEED  set when the engine runs repeated trials
+
+The command runs with cwd = the candidate workspace, where `./problem/` and
+`./data/` symlinks always exist (candidate workspaces and trial dirs by
+construction; the hidden holdout dir recreates them here).
+"""
+
 from __future__ import annotations
 
+import json
 import os
-import re
+import shutil
 import signal
 import subprocess
 import threading
@@ -11,7 +42,7 @@ from typing import IO, Protocol
 
 from pydantic import BaseModel
 
-VAL_SCORE_RE = re.compile(r"^val_score:\s*([-+0-9.eE]+)\s*$")
+RESULT_FILE = "eval_result.json"
 
 # Secrets must never reach agent-authored code. Deny-list (not allow-list):
 # solution subprocesses legitimately need PATH/HOME/venv/locale/thread-pool
@@ -43,6 +74,9 @@ class ExecResult(BaseModel):
     timed_out: bool = False
     stdout_path: str = ""
     stderr_path: str = ""
+    # journal field names predate the verifier contract and are schema v2 on
+    # disk (hillclimb-go reads them): val_score is the score the verifier
+    # reported, submission_ok is "the verifier wrote a usable result file".
     val_score: float | None = None
     submission_ok: bool = False
 
@@ -56,27 +90,81 @@ class ExecResult(BaseModel):
         )
 
 
+class HoldoutScorer(Protocol):
+    def score(self, workspace: Path) -> tuple[float | None, str | None]: ...
+
+
 class Executor(Protocol):
     def execute(
         self,
         script: Path,
         workspace: Path,
         timeout_s: int,
-        verifier: Path | None = None,
         seed: int | None = None,
     ) -> ExecResult: ...
 
 
-def parse_val_score(stdout_text: str) -> float | None:
-    """Last `val_score: <float>` line in stdout wins."""
-    for line in reversed(stdout_text.splitlines()):
-        match = VAL_SCORE_RE.match(line.strip())
-        if match:
-            try:
-                return float(match.group(1))
-            except ValueError:
-                return None
-    return None
+def read_result(path: Path) -> tuple[float | None, dict | None]:
+    """(score, payload) from a verifier's result file.
+
+    Accepts a JSON object carrying a numeric `score` (the full form, which
+    may also carry a `report` breakdown) or a bare number, so the simplest
+    possible verifier is `echo 12.3 > "$HILLCLIMB_RESULT"`. NaN is not a
+    score: an evaluation that silently found nothing to grade must read as a
+    contract violation, not as the worst possible result.
+    """
+    try:
+        text = path.read_text().strip()
+    except OSError:
+        return None, None
+    if not text:
+        return None, None
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        try:
+            value = float(text)
+        except ValueError:
+            return None, None
+        return (None if value != value else value), None
+    if isinstance(payload, dict):
+        score = payload.get("score")
+        if isinstance(score, bool) or not isinstance(score, (int, float)) or score != score:
+            return None, payload
+        return float(score), payload
+    if isinstance(payload, bool) or not isinstance(payload, (int, float)) or payload != payload:
+        return None, None
+    return float(payload), None
+
+
+def verifier_env(
+    python: Path,
+    solution: Path,
+    result: Path,
+    split: str,
+    seed: int | None = None,
+) -> dict[str, str]:
+    """The `$HILLCLIMB_*` contract a verifier command reads."""
+    env = {
+        "HILLCLIMB_PYTHON": str(python),
+        "HILLCLIMB_SOLUTION": str(solution),
+        "HILLCLIMB_RESULT": str(result),
+        "HILLCLIMB_SPLIT": split,
+    }
+    if seed is not None:
+        env["HILLCLIMB_TRIAL_SEED"] = str(seed)
+    return env
+
+
+def render_argv(argv: list[str], python: Path, solution: Path, result: Path) -> list[str]:
+    """Provider-supplied commands carry placeholders (a shell verifier reads
+    the env instead). Substituted per token so paths with spaces survive."""
+    return [
+        token.replace("{python}", str(python))
+        .replace("{solution}", str(solution))
+        .replace("{result}", str(result))
+        for token in argv
+    ]
 
 
 def _kill_group(proc: subprocess.Popen) -> None:
@@ -121,55 +209,110 @@ def run_logged(
                 return proc.returncode, True
 
 
-class LocalExecutor:
-    """Runs solution scripts as subprocesses of a dedicated runtime venv,
-    with credentials scrubbed from their environment."""
+class CommandExecutor:
+    """Executor-protocol impl: runs the problem's verifier command on the
+    validation split, in the candidate (or trial) workspace."""
 
-    def __init__(self, python: Path):
+    def __init__(self, python: Path, argv: list[str], env_extra: dict[str, str] | None = None):
         # absolute() not resolve(): a venv python must be invoked via its
         # symlink path or the interpreter escapes the venv's site-packages
         self.python = python.absolute()
+        self.argv = list(argv)
+        self.env_extra = dict(env_extra or {})
 
     def execute(
         self,
         script: Path,
         workspace: Path,
         timeout_s: int,
-        verifier: Path | None = None,
         seed: int | None = None,
     ) -> ExecResult:
         script = script.absolute()
         workspace = workspace.absolute()
-        verifier = verifier.absolute() if verifier is not None else None
         stdout_path = workspace / "exec_stdout.log"
         stderr_path = workspace / "exec_stderr.log"
-        # stale-result guard, mirroring the emflow executor: a leftover
-        # eval_result.json must never masquerade as this execution's report
-        (workspace / "eval_result.json").unlink(missing_ok=True)
-        env = scrubbed_env(**({"HILLCLIMB_TRIAL_SEED": str(seed)} if seed is not None else {}))
+        result_path = workspace / RESULT_FILE
+        result_path.unlink(missing_ok=True)  # staleness must never fake success
+        # agent-authored code runs inside the verifier process: credentials are
+        # scrubbed at run time (not snapshotted at construction) so a change to
+        # the orchestrator's environment can never leak into a later run
+        env = scrubbed_env(**self.env_extra)
+        env.update(verifier_env(self.python, script, result_path, "validation", seed))
         start = time.monotonic()
         with stdout_path.open("w") as out, stderr_path.open("w") as err:
             returncode, timed_out = run_logged(
-                [str(self.python), str(script)], workspace, timeout_s, out, err, env
+                render_argv(self.argv, self.python, script, result_path),
+                workspace, timeout_s, out, err, env,
             )
-            if not timed_out and returncode == 0 and verifier is not None:
-                # trust boundary: on verifier problems only the verifier may
-                # produce eval_result.json — discard anything the (agent-
-                # authored) solution wrote, exactly as its val_score line is
-                # overridden by the verifier's
-                (workspace / "eval_result.json").unlink(missing_ok=True)
-                remaining = max(1, int(timeout_s - (time.monotonic() - start)))
-                returncode, timed_out = run_logged(
-                    [str(self.python), str(verifier)], workspace, remaining, out, err, env
-                )
         duration = time.monotonic() - start
-        stdout_text = stdout_path.read_text()
+        score, _ = (None, None) if timed_out else read_result(result_path)
         return ExecResult(
             returncode=returncode,
             duration_s=duration,
             timed_out=timed_out,
             stdout_path=str(stdout_path),
             stderr_path=str(stderr_path),
-            val_score=None if timed_out else parse_val_score(stdout_text),
-            submission_ok=(workspace / "submission.csv").exists() and not timed_out,
+            val_score=score,
+            # completion proof: the verifier writes it only after scoring
+            submission_ok=score is not None,
         )
+
+
+class CommandHoldoutScorer:
+    """Hidden holdout scoring: runs the problem's holdout command against a
+    copy of the candidate's solution in a dir agents never see, with the full
+    environment (credentials flow — private holdout data may be gated)."""
+
+    def __init__(
+        self,
+        python: Path,
+        argv: list[str],
+        problem_dir: Path,
+        data_dir: Path,
+        work_root: Path,
+        timeout_s: int,
+    ):
+        self.python = python.absolute()
+        self.argv = list(argv)
+        self.problem_dir = problem_dir
+        self.data_dir = data_dir
+        self.work_root = work_root
+        self.timeout_s = timeout_s
+
+    def score(self, workspace: Path) -> tuple[float | None, str | None]:
+        workspace = workspace.absolute()
+        solution = workspace / "solution.py"
+        if not solution.exists():
+            return None, "solution.py missing at holdout time"
+        eval_dir = self.work_root.absolute() / workspace.name
+        eval_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy(solution, eval_dir / "solution.py")
+        # ensemble candidates import candidate_N modules from their workspace
+        for extra in workspace.glob("candidate_*.py"):
+            shutil.copy(extra, eval_dir / extra.name)
+        for name, target in (("problem", self.problem_dir), ("data", self.data_dir)):
+            link = eval_dir / name
+            if not link.exists():
+                link.symlink_to(Path(target).resolve(), target_is_directory=True)
+        result_path = eval_dir / RESULT_FILE
+        result_path.unlink(missing_ok=True)
+        env = dict(os.environ)  # full env: credentials flow
+        env.update(
+            verifier_env(self.python, eval_dir / "solution.py", result_path, "holdout")
+        )
+        stdout_path = eval_dir / "exec_stdout.log"
+        stderr_path = eval_dir / "exec_stderr.log"
+        with stdout_path.open("w") as out, stderr_path.open("w") as err:
+            returncode, timed_out = run_logged(
+                render_argv(self.argv, self.python, eval_dir / "solution.py", result_path),
+                eval_dir, self.timeout_s, out, err, env,
+            )
+        if timed_out:
+            return None, "holdout evaluation timed out"
+        if returncode != 0:
+            tail = stderr_path.read_text(errors="replace")[-300:].strip()
+            return None, f"holdout evaluation failed: {tail or f'exit {returncode}'}"
+        score, _ = read_result(result_path)
+        if score is None:
+            return None, "holdout evaluation produced no score"
+        return score, None

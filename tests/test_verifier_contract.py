@@ -1,5 +1,5 @@
-"""CommandExecutor + CommandHoldoutScorer against a tiny real evaluator
-(run with sys.executable — no venv build needed)."""
+"""The verifier contract end to end: CommandExecutor + CommandHoldoutScorer
+against a tiny real evaluator (run with sys.executable — no venv build)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import sys
 import textwrap
 from pathlib import Path
 
-from hillclimb.command_executor import CommandExecutor, CommandHoldoutScorer
+from hillclimb.executor import CommandExecutor, CommandHoldoutScorer
 
 EVALUATE = textwrap.dedent(
     """
@@ -46,7 +46,7 @@ def make_workspace(tmp_path: Path, problem_dir: Path, solution: str = "def answe
     return workspace
 
 
-COMMAND = "{python} problem/evaluate.py"
+COMMAND = ["{python}", "problem/evaluate.py"]
 
 
 def test_happy_path_scores_and_result_json(tmp_path):
@@ -71,21 +71,36 @@ def test_seed_env_and_placeholder_substitution(tmp_path):
                          "solution = importlib.util.module_from_spec(spec)\n"
                          "spec.loader.exec_module(solution)")
     )
-    executor = CommandExecutor(Path(sys.executable), "{python} problem/evaluate.py {solution}")
+    executor = CommandExecutor(Path(sys.executable), ["{python}", "problem/evaluate.py", "{solution}"])
     result = executor.execute(workspace / "solution.py", workspace, timeout_s=60, seed=3)
     assert result.ok
     assert result.val_score == 0.503  # seed propagated via HILLCLIMB_TRIAL_SEED
 
 
-def test_missing_result_json_fails_submission_ok(tmp_path):
+def test_no_result_file_is_a_contract_violation(tmp_path):
+    """Exit 0 without a result file is not a zero — the printed line is a log,
+    not a score (agent code shares that stream)."""
     problem_dir = make_problem(tmp_path)
-    (problem_dir / "evaluate.py").write_text('print("val_score: 1.0")\n')  # no eval_result.json
+    (problem_dir / "evaluate.py").write_text('print("val_score: 1.0")\n')
     workspace = make_workspace(tmp_path, problem_dir)
     executor = CommandExecutor(Path(sys.executable), COMMAND)
     result = executor.execute(workspace / "solution.py", workspace, timeout_s=60)
-    assert result.val_score == 1.0
+    assert result.val_score is None
     assert not result.submission_ok
     assert not result.ok
+
+
+def test_bare_number_result_file(tmp_path):
+    """The simplest possible verifier: echo a number into $HILLCLIMB_RESULT."""
+    problem_dir = make_problem(tmp_path)
+    (problem_dir / "evaluate.py").write_text(
+        'import os\nopen(os.environ["HILLCLIMB_RESULT"], "w").write(" 12.5\\n")\n'
+    )
+    workspace = make_workspace(tmp_path, problem_dir)
+    executor = CommandExecutor(Path(sys.executable), COMMAND)
+    result = executor.execute(workspace / "solution.py", workspace, timeout_s=60)
+    assert result.ok
+    assert result.val_score == 12.5
 
 
 def test_stale_result_json_scrubbed_and_crash_not_ok(tmp_path):
@@ -117,7 +132,7 @@ def test_holdout_scorer_hidden_dir_full_env(tmp_path, monkeypatch):
     workspace = make_workspace(tmp_path, problem_dir)
     (workspace / "candidate_1.py").write_text("# ensemble input\n")
     scorer = CommandHoldoutScorer(
-        Path(sys.executable), COMMAND + " --holdout",
+        Path(sys.executable), COMMAND + ["--holdout"],
         problem_dir=problem_dir, data_dir=problem_dir,
         work_root=tmp_path / "holdout-eval", timeout_s=60,
     )
@@ -150,7 +165,7 @@ def test_holdout_scorer_failure_mapping(tmp_path):
     assert "holdout evaluation failed" in error
 
     scorer_no_score = CommandHoldoutScorer(
-        Path(sys.executable), '{python} -c "print(42)"',
+        Path(sys.executable), ["{python}", "-c", "print(42)"],
         problem_dir=problem_dir, data_dir=problem_dir,
         work_root=tmp_path / "holdout-eval-2", timeout_s=60,
     )

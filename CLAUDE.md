@@ -1,12 +1,21 @@
 # hillclimb
 
-Auto-hillclimbing for ML tasks: a greedy search engine that spawns headless
-Claude Code agents as operators (draft/debug/improve/ensemble), executes each
-candidate, and keeps the best submission per search.
+Hillclimbing on verifier-defined problems: a greedy search engine that spawns
+headless Claude Code agents as operators (draft/debug/improve/ensemble),
+scores each candidate through the problem's verifier, and keeps the best
+solution per search.
 
 Hierarchy: **Run** (one invocation, `runs/<run-id>/`) → **Search** (one engine
 process per problem, `searches/<search-id>/`) → **Candidate** (immutable code
 artifact) → **Trial** (one execution).
+
+A problem **is its verifier**: `problems/<id>/verifier.sh` is the only process
+the engine starts. It drives `solution.py` and writes the score to
+`$HILLCLIMB_RESULT` (a `{"score": …}` object or a bare number); exit 0 means
+valid. `holdout: true` in `problem.yaml` makes the engine run the same script
+with `--holdout` in a directory agents never see. Providers (`emflow://`,
+`mlebench://`) supply their own argv for the same contract. Never read a score
+off stdout — agent code shares that stream.
 
 - Workspaces: all data lives in a `hillclimb/` folder (config.yaml marker,
   problems/, specs/, runs/) found by upward search; this repo overrides
@@ -14,6 +23,9 @@ artifact) → **Trial** (one execution).
   Machine-scoped state (shared venvs, emflow cache, agent slots) lives in
   `~/.cache/hillclimb/`.
 - Tests: `uv run pytest`
+- New problem: `hillclimb init` scaffolds `problems/example/`; check a
+  verifier with `hillclimb verify <problem> --repeat 5` (the spread it prints
+  is the noise floor — improvements below it are not real)
 - CLI: `uv run hillclimb --help` (engine); `uv run hillclimb watch` (live TUI)
 - Driving runs from chat: use the `hillclimb` skill (`.claude/skills/hillclimb/SKILL.md`)
 

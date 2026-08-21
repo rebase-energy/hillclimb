@@ -124,7 +124,7 @@ class TestCollect:
         problem = ProblemSpec(
             problem_id="p", problem_dir=tmp_path, data_dir=tmp_path,
             description="", metric_name="accuracy", lower_is_better=False,
-            sample_submission=tmp_path / "s.csv", time_budget_s=60,
+            verifier_cmd=["./verifier.sh"], time_budget_s=60,
         )
         run_dir = create_run_dir(tmp_path / "runs", "r1")
         search_dir = create_search(config, problem, run_dir, "r1", 60)

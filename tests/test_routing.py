@@ -10,7 +10,7 @@ from pathlib import Path
 from hillclimb.backends.fake import FakeBackend
 from hillclimb.budget import BudgetManager
 from hillclimb.config import Config, RouteConfig
-from hillclimb.executor import LocalExecutor
+from tests.conftest import local_executor
 from hillclimb.journal import Journal
 from hillclimb.policy import Route
 from hillclimb.routing import BackendPool, ResolvedRoute, Router
@@ -82,7 +82,7 @@ def test_search_routes_operators_to_distinct_backends(task, config):
         config=config,
         journal=journal,
         backend=draft_backend,
-        executor=LocalExecutor(Path(sys.executable)),
+        executor=local_executor(),
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir,
         max_candidates=5,  # baseline + 3 drafts + 1 improve
@@ -117,7 +117,7 @@ def test_no_routing_matches_default_backend_and_model(task, config):
         config=config,
         journal=Journal(search_dir / "journal.jsonl"),
         backend=backend,
-        executor=LocalExecutor(Path(sys.executable)),
+        executor=local_executor(),
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir,
         log=lambda *_: None,

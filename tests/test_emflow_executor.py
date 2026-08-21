@@ -1,4 +1,4 @@
-"""EmflowLocalExecutor + EmflowHoldoutScorer against swedish-temperatures:ar
+"""The emflow provider's verifier commands against swedish-temperatures:ar
 (packaged data; the dev venv has emflow, so sys.executable can run the
 evaluator directly)."""
 
@@ -13,10 +13,8 @@ import pytest
 
 pytest.importorskip("emflow")
 
-from hillclimb.integrations.emflow.executor import (  # noqa: E402
-    EmflowHoldoutScorer,
-    EmflowLocalExecutor,
-)
+from hillclimb.executor import CommandExecutor, CommandHoldoutScorer  # noqa: E402
+from hillclimb.problem import load_problem  # noqa: E402
 
 PROBLEM = "swedish-temperatures:ar"
 
@@ -48,8 +46,13 @@ def workspace(tmp_path):
 
 
 @pytest.fixture
-def executor():
-    return EmflowLocalExecutor(Path(sys.executable), PROBLEM)
+def spec(config):
+    return load_problem(f"emflow://{PROBLEM}", config)
+
+
+@pytest.fixture
+def executor(spec):
+    return CommandExecutor(Path(sys.executable), spec.verifier_cmd, spec.verifier_env)
 
 
 @pytest.mark.slow
@@ -95,9 +98,10 @@ def test_broken_solution_is_not_ok(executor, workspace):
 
 
 @pytest.mark.slow
-def test_holdout_scorer_hidden_dir(workspace, tmp_path):
-    scorer = EmflowHoldoutScorer(
-        Path(sys.executable), PROBLEM, tmp_path / "holdout-eval", timeout_s=300
+def test_holdout_scorer_hidden_dir(spec, workspace, tmp_path):
+    scorer = CommandHoldoutScorer(
+        Path(sys.executable), spec.holdout_cmd, problem_dir=spec.problem_dir,
+        data_dir=spec.data_dir, work_root=tmp_path / "holdout-eval", timeout_s=300,
     )
     score, error = scorer.score(workspace)
     assert error is None
@@ -112,10 +116,11 @@ def test_holdout_scorer_hidden_dir(workspace, tmp_path):
 
 
 @pytest.mark.slow
-def test_holdout_scorer_maps_failure_to_error(workspace, tmp_path):
+def test_holdout_scorer_maps_failure_to_error(spec, workspace, tmp_path):
     (workspace / "solution.py").write_text("raise RuntimeError('nope')\n")
-    scorer = EmflowHoldoutScorer(
-        Path(sys.executable), PROBLEM, tmp_path / "holdout-eval", timeout_s=120
+    scorer = CommandHoldoutScorer(
+        Path(sys.executable), spec.holdout_cmd, problem_dir=spec.problem_dir,
+        data_dir=spec.data_dir, work_root=tmp_path / "holdout-eval", timeout_s=120,
     )
     score, error = scorer.score(workspace)
     assert score is None

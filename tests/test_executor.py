@@ -1,17 +1,29 @@
+"""Execution primitives: how a score is read back, and the self-reported
+verifier (`run_solution.py`) that MLE-bench problems and the test fixtures
+share."""
+
+import json
 import sys
 from pathlib import Path
 
 import pytest
 
-from hillclimb.executor import LocalExecutor, parse_val_score, scrubbed_env
+from hillclimb.executor import (
+    RESULT_FILE,
+    read_result,
+    render_argv,
+    scrubbed_env,
+    verifier_env,
+)
+from tests.conftest import local_executor
 
 
 @pytest.fixture
-def executor() -> LocalExecutor:
-    return LocalExecutor(Path(sys.executable))
+def executor():
+    return local_executor()
 
 
-def run_script(executor: LocalExecutor, tmp_path: Path, code: str, timeout: int = 30):
+def run_script(executor, tmp_path: Path, code: str, timeout: int = 30):
     script = tmp_path / "solution.py"
     script.write_text(code)
     return executor.execute(script, tmp_path, timeout)
@@ -23,19 +35,22 @@ def test_ok_script(executor, tmp_path):
     assert result.ok
     assert result.val_score == 0.75
     assert result.submission_ok
+    payload = json.loads((tmp_path / RESULT_FILE).read_text())
+    assert payload["source"] == "agent"  # self-reported, and labelled as such
 
 
-def test_verifier_scores_submission(executor, tmp_path):
-    script = tmp_path / "solution.py"
-    script.write_text('open("submission.csv", "w").write("id\\n")\n')
-    verifier = tmp_path / "verify.py"
-    verifier.write_text('print("checked")\nprint("val_score: 0.42")\n')
-
-    result = executor.execute(script, tmp_path, timeout_s=30, verifier=verifier)
-
+def test_solution_written_result_wins(executor, tmp_path):
+    """A solution that writes its own report keeps it (the report carries the
+    breakdown the improve prompt renders)."""
+    code = (
+        'import json, os\n'
+        'open("submission.csv", "w").write("id\\n")\n'
+        'json.dump({"score": 0.9, "report": {"version": 1}},'
+        ' open(os.environ["HILLCLIMB_RESULT"], "w"))\n'
+    )
+    result = run_script(executor, tmp_path, code)
     assert result.ok
-    assert result.val_score == 0.42
-    assert "checked" in Path(result.stdout_path).read_text()
+    assert result.val_score == 0.9
 
 
 def test_crash(executor, tmp_path):
@@ -56,13 +71,22 @@ def test_no_score(executor, tmp_path):
     result = run_script(executor, tmp_path, 'open("submission.csv", "w").write("id\\n")')
     assert not result.ok
     assert result.val_score is None
-    assert result.submission_ok
 
 
 def test_no_submission(executor, tmp_path):
+    """--require: a solution that scores itself but ships no submission is a
+    failure, not a win (MLE-bench grades the file afterwards)."""
     result = run_script(executor, tmp_path, 'print("val_score: 0.5")')
     assert not result.ok
     assert not result.submission_ok
+
+
+def test_stale_result_never_counts(executor, tmp_path):
+    (tmp_path / RESULT_FILE).write_text('{"score": 9.9}')
+    result = run_script(executor, tmp_path, 'raise RuntimeError("boom")')
+    assert not result.ok
+    assert result.val_score is None
+    assert not (tmp_path / RESULT_FILE).exists()
 
 
 def test_solution_env_is_scrubbed(executor, tmp_path, monkeypatch):
@@ -110,9 +134,47 @@ def test_claude_oauth_token_scrubbed_but_kept_for_agent(monkeypatch):
     assert api_env.get("ANTHROPIC_API_KEY") == "sk-ant"
 
 
-def test_parse_val_score():
-    assert parse_val_score("noise\nval_score: 0.5\n") == 0.5
-    assert parse_val_score("val_score: 0.1\nval_score: 0.2\n") == 0.2  # last wins
-    assert parse_val_score("val_score: 1e-3\n") == 0.001
-    assert parse_val_score("val_score: abc\n") is None
-    assert parse_val_score("score 0.5\n") is None
+def test_read_result_forms(tmp_path):
+    path = tmp_path / RESULT_FILE
+    path.write_text('{"score": 0.5, "report": {"version": 1}}')
+    score, payload = read_result(path)
+    assert score == 0.5
+    assert payload["report"]["version"] == 1
+
+    path.write_text(" 12.5\n")  # bare number: the one-line verifier
+    assert read_result(path) == (12.5, None)
+
+    path.write_text("42")
+    assert read_result(path)[0] == 42.0
+
+    path.write_text('{"score": NaN}')  # nothing was graded: not a worst score
+    assert read_result(path)[0] is None
+
+    path.write_text('{"report": {}}')
+    assert read_result(path)[0] is None
+
+    path.write_text("not a score")
+    assert read_result(path) == (None, None)
+
+    path.write_text("")
+    assert read_result(path) == (None, None)
+
+    assert read_result(tmp_path / "absent.json") == (None, None)
+
+
+def test_verifier_env_and_render(tmp_path):
+    env = verifier_env(Path("/venv/bin/python"), tmp_path / "solution.py",
+                       tmp_path / RESULT_FILE, "holdout", seed=3)
+    assert env["HILLCLIMB_SPLIT"] == "holdout"
+    assert env["HILLCLIMB_TRIAL_SEED"] == "3"
+    assert env["HILLCLIMB_PYTHON"] == "/venv/bin/python"
+    assert "HILLCLIMB_TRIAL_SEED" not in verifier_env(
+        Path(sys.executable), tmp_path / "s.py", tmp_path / RESULT_FILE, "validation"
+    )
+
+    argv = render_argv(
+        ["{python}", "eval.py", "{solution}", "--out", "{result}"],
+        Path("/venv/bin/python"), Path("/w/solution.py"), Path("/w/eval_result.json"),
+    )
+    assert argv == ["/venv/bin/python", "eval.py", "/w/solution.py",
+                    "--out", "/w/eval_result.json"]

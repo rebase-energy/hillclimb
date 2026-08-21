@@ -1,13 +1,15 @@
 """Official scorer for the circle-packing problem.
 
-Reads ./submission.csv (id,x,y,r; 26 rows), validates the packing, and prints
-the official `val_score:` line (sum of radii, 0.0 if invalid). Also writes
-`eval_result.json` with a report block — hillclimb's evaluator report
+Reads ./submission.csv (id,x,y,r; 26 rows), validates the packing, and writes
+the score to $HILLCLIMB_RESULT (sum of radii, 0.0 if invalid), together with
+a report block — hillclimb's evaluator report
 contract — so improve operators see WHERE the packing is weakest (smallest
 circles and their growth headroom) instead of just the total.
 """
 
 import json
+import os
+from pathlib import Path
 import sys
 
 import numpy as np
@@ -31,8 +33,8 @@ def write_report(overall_score: float, report_error=None, zones=None) -> None:
     if zones:
         report["zones"] = zones
     payload = {"split": "validation", "score": overall_score, "report": report}
-    with open("eval_result.json", "w") as fh:
-        json.dump(payload, fh, indent=2)
+    result = Path(os.environ.get("HILLCLIMB_RESULT", "eval_result.json"))
+    result.write_text(json.dumps(payload, indent=2))
 
 
 def fail(reason: str) -> None:
