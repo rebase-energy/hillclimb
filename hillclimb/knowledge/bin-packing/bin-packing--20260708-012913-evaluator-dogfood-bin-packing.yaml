@@ -3,7 +3,7 @@ problem_id: bin-packing
 family: bin-packing
 target: ''
 metric: mean-bins
-lower_is_better: true
+higher_is_better: false
 run_ref: 20260708-012913-evaluator-dogfood/bin-packing
 finished_at: '2026-07-07T23:34:31.419900+00:00'
 budget_s: 600

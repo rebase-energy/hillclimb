@@ -23,8 +23,8 @@ Verifier environment:
     $HILLCLIMB_SPLIT       `validation` or `holdout`
     $HILLCLIMB_TRIAL_SEED  set when the engine runs repeated trials
 
-The command runs with cwd = the candidate workspace, where `./problem/` and
-`./data/` symlinks always exist (candidate workspaces and trial dirs by
+The command runs with cwd = the candidate candidate_dir, where `./problem/` and
+`./data/` symlinks always exist (candidate candidate dirs and trial dirs by
 construction; the hidden holdout dir recreates them here).
 """
 
@@ -91,14 +91,14 @@ class ExecResult(BaseModel):
 
 
 class HoldoutScorer(Protocol):
-    def score(self, workspace: Path) -> tuple[float | None, str | None]: ...
+    def score(self, candidate_dir: Path) -> tuple[float | None, str | None]: ...
 
 
 class Executor(Protocol):
     def execute(
         self,
         script: Path,
-        workspace: Path,
+        candidate_dir: Path,
         timeout_s: int,
         seed: int | None = None,
     ) -> ExecResult: ...
@@ -177,7 +177,7 @@ def _kill_group(proc: subprocess.Popen) -> None:
 
 def run_logged(
     cmd: list[str],
-    workspace: Path,
+    candidate_dir: Path,
     timeout_s: int,
     out: IO,
     err: IO,
@@ -189,7 +189,7 @@ def run_logged(
     (returncode, timed_out) — an abort reports as timed_out."""
     proc = subprocess.Popen(
         cmd,
-        cwd=workspace,
+        cwd=candidate_dir,
         stdout=out,
         stderr=err,
         env=env,
@@ -211,7 +211,7 @@ def run_logged(
 
 class CommandExecutor:
     """Executor-protocol impl: runs the problem's verifier command on the
-    validation split, in the candidate (or trial) workspace."""
+    validation split, in the candidate (or trial) candidate_dir."""
 
     def __init__(self, python: Path, argv: list[str], env_extra: dict[str, str] | None = None):
         # absolute() not resolve(): a venv python must be invoked via its
@@ -223,15 +223,15 @@ class CommandExecutor:
     def execute(
         self,
         script: Path,
-        workspace: Path,
+        candidate_dir: Path,
         timeout_s: int,
         seed: int | None = None,
     ) -> ExecResult:
         script = script.absolute()
-        workspace = workspace.absolute()
-        stdout_path = workspace / "exec_stdout.log"
-        stderr_path = workspace / "exec_stderr.log"
-        result_path = workspace / RESULT_FILE
+        candidate_dir = candidate_dir.absolute()
+        stdout_path = candidate_dir / "exec_stdout.log"
+        stderr_path = candidate_dir / "exec_stderr.log"
+        result_path = candidate_dir / RESULT_FILE
         result_path.unlink(missing_ok=True)  # staleness must never fake success
         # agent-authored code runs inside the verifier process: credentials are
         # scrubbed at run time (not snapshotted at construction) so a change to
@@ -242,7 +242,7 @@ class CommandExecutor:
         with stdout_path.open("w") as out, stderr_path.open("w") as err:
             returncode, timed_out = run_logged(
                 render_argv(self.argv, self.python, script, result_path),
-                workspace, timeout_s, out, err, env,
+                candidate_dir, timeout_s, out, err, env,
             )
         duration = time.monotonic() - start
         score, _ = (None, None) if timed_out else read_result(result_path)
@@ -279,16 +279,16 @@ class CommandHoldoutScorer:
         self.work_root = work_root
         self.timeout_s = timeout_s
 
-    def score(self, workspace: Path) -> tuple[float | None, str | None]:
-        workspace = workspace.absolute()
-        solution = workspace / "solution.py"
+    def score(self, candidate_dir: Path) -> tuple[float | None, str | None]:
+        candidate_dir = candidate_dir.absolute()
+        solution = candidate_dir / "solution.py"
         if not solution.exists():
             return None, "solution.py missing at holdout time"
-        eval_dir = self.work_root.absolute() / workspace.name
+        eval_dir = self.work_root.absolute() / candidate_dir.name
         eval_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy(solution, eval_dir / "solution.py")
-        # ensemble candidates import candidate_N modules from their workspace
-        for extra in workspace.glob("candidate_*.py"):
+        # ensemble candidates import candidate_N modules from their candidate_dir
+        for extra in candidate_dir.glob("candidate_*.py"):
             shutil.copy(extra, eval_dir / extra.name)
         for name, target in (("problem", self.problem_dir), ("data", self.data_dir)):
             link = eval_dir / name

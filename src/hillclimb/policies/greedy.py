@@ -42,9 +42,10 @@ class GreedyPolicy:
         busy_targets = {
             ref.parent_id for ref in view.inflight if ref.operator == "improve"
         }
-        direction = 1 if view.lower_is_better else -1
+        direction = -1 if view.higher_is_better else 1
         ranked = sorted(
-            view.journal.scored_candidates(), key=lambda c: direction * c.val_score
+            (c for c in view.journal.scored_candidates() if _improvable(c)),
+            key=lambda c: direction * c.val_score,
         )
         if not ranked:
             return self._draft_action(view)
@@ -147,13 +148,13 @@ class GreedyPolicy:
         """Top-k scored non-ensemble candidates by the selection rule, deduped
         by script content so near-identical improves don't fill the slots."""
         ranked = view.journal.ranked_candidates(
-            view.lower_is_better, view.config.holdout.selection
+            view.higher_is_better, view.config.holdout.selection
         )
         picked, seen_hashes = [], set()
         for candidate in ranked:
             if candidate.operator == "ensemble":
                 continue
-            solution = Path(candidate.workspace) / "solution.py"
+            solution = Path(candidate.candidate_dir) / "solution.py"
             if not solution.exists():
                 continue
             digest = hashlib.md5(solution.read_bytes()).hexdigest()
@@ -168,3 +169,11 @@ class GreedyPolicy:
     def draft_complexity(self, view: SearchView) -> str:
         index = len(view.journal.drafts()) + self.complexity_start
         return "minimal" if index == 0 else "moderate" if index == 1 else "advanced"
+
+
+def _improvable(candidate: Candidate) -> bool:
+    """A declared floor (`baseline: 0.5`) is scored but has no code to
+    improve; everything else that scored is fair game."""
+    if candidate.operator != "baseline":
+        return True
+    return (Path(candidate.candidate_dir) / "solution.py").exists()

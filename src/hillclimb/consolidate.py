@@ -235,19 +235,19 @@ def write_concept_playbook(
         claims_digest=_concept_digest(concept, nodes),
         max_chars=PLAYBOOK_MAX_CHARS,
     )
-    workspace = knowledge_dir / ".consolidate" / concept
+    work_dir = knowledge_dir / ".consolidate" / concept
     result = invoke_knowledge_agent(
         config,
         operator="consolidate",
         prompt=prompt,
-        workspace=workspace,
+        work_dir=work_dir,
         timeout_s=CONSOLIDATE_TIMEOUT_S,
         default_model=DEFAULT_CONSOLIDATE_MODEL,
     )
     if not result.ok:
         log(f"consolidate: playbook agent failed for {concept} ({result.error_kind})")
         return None
-    body_path = workspace / "playbook.md"
+    body_path = work_dir / "playbook.md"
     if not body_path.exists() or not body_path.read_text().strip():
         log(f"consolidate: agent wrote no playbook for {concept}")
         return None

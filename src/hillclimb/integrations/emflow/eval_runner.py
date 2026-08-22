@@ -248,12 +248,12 @@ def _quantile_entries(breakdown: BreakdownAnalyzer, coverage: dict) -> list[dict
 def build_report(result, breakdown: BreakdownAnalyzer) -> dict:
     """Assemble the versioned report block from the finished Result and the
     analyzer's accumulated state. Pure dict math — unit-testable without a run."""
-    lower = bool(result.lower_is_better)
+    lower = bool(result.lower_is_better)  # legacy-key: emflow's own field
     report = {
         "version": REPORT_VERSION,
         "split": result.split,
         "objective": result.objective,
-        "lower_is_better": lower,
+        "higher_is_better": not lower,
         "source": "evaluator",
         "overall": {
             "score": _round(result.score),

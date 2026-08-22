@@ -3,7 +3,7 @@ problem_id: gefcom2014-wind
 family: gefcom2014
 target: emflow://gefcom2014:wind
 metric: PinballLoss
-lower_is_better: true
+higher_is_better: false
 run_ref: 20260705-170021-gefcom2014-v1/gefcom2014-wind
 finished_at: '2026-07-07T14:29:28.921954+00:00'
 budget_s: 7200

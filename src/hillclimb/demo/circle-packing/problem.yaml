@@ -1,11 +1,8 @@
 problem_id: circle-packing
 metric: sum-radii
-lower_is_better: false
+higher_is_better: true
 description: description.md
-# scored floor at t=0: one circle, sum of radii 0.5
-baseline: baseline.py
-# valid-by-construction fallback: best/ always holds something
-baseline_files: {submission.csv: sample_submission.csv}
+baseline: 0.5  # one big circle
 # lean runtime venv (numpy/scipy/pandas) so the demo starts in seconds
 requirements: requirements.txt
 time_budget_s: 600

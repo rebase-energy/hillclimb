@@ -3,7 +3,7 @@ problem_id: circle-packing
 family: circle-packing
 target: ''
 metric: sum-radii
-lower_is_better: false
+higher_is_better: true
 run_ref: 20260710-115250-memory-graph-demo/circle-packing
 finished_at: '2026-07-10T10:00:19.936496+00:00'
 budget_s: 480

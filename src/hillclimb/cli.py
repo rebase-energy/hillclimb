@@ -46,7 +46,7 @@ from hillclimb.run import (
 )
 from hillclimb.search import GreedySearcher
 from hillclimb.status import effective_state, read_status
-from hillclimb.workspace import create_run_dir
+from hillclimb.dirs import create_run_dir
 
 # Typer's default rich theme paints "Usage:" and every `<...>` metavar yellow,
 # which clashes with the cyan command/option column. Repaint both in the same
@@ -168,12 +168,12 @@ model: sonnet
 INIT_PROBLEM_YAML = """\
 problem_id: example
 metric: score
-lower_is_better: false
+higher_is_better: true
 description: description.md
 time_budget_s: 900
 # verifier: verifier.sh   # the default; a problem IS its verifier
 # holdout: true           # engine also runs `verifier.sh --holdout`
-# baseline: baseline.py   # scored at t=0 as the floor to beat
+# baseline: baseline.py   # scored at t=0 as the floor to beat (or a number, e.g. 0.5)
 # requirements: requirements.txt
 """
 
@@ -300,7 +300,7 @@ def verify(
     import statistics
     import tempfile
 
-    from hillclimb.workspace import create_candidate_workspace
+    from hillclimb.dirs import create_candidate_dir
 
     config = load_config()
     problem = load_problem(target, config)
@@ -317,15 +317,15 @@ def verify(
         root = Path(tmp)
         typer.echo(f"{problem.problem_id}: {' '.join(problem.verifier_cmd)}")
         for index in range(max(1, repeat)):
-            workspace = create_candidate_workspace(
+            candidate_dir = create_candidate_dir(
                 root, f"v{index}", problem.data_dir, problem.problem_dir
             )
-            script = workspace / "solution.py"
+            script = candidate_dir / "solution.py"
             script.write_text(source)
             # distinct seeds, exactly as the engine's repeated trials run, so
             # the floor reported here is the one the search will face
             result = executor.execute(
-                script, workspace, config.budget.exec_timeout_s,
+                script, candidate_dir, config.budget.exec_timeout_s,
                 seed=index if repeat > 1 else None,
             )
             if not result.ok:
@@ -342,7 +342,7 @@ def verify(
                 if scorer is None:
                     typer.echo("  holdout: not configured for this problem")
                 else:
-                    value, error = scorer.score(workspace)
+                    value, error = scorer.score(candidate_dir)
                     typer.echo(f"  holdout: {error if error else format(value, '.6g')}")
     if len(scores) > 1:
         centre = statistics.median(scores)
@@ -401,7 +401,7 @@ def knowledge_backfill():
             problem = SimpleNamespace(
                 problem_id=meta.problem_id,
                 metric_name=meta.metric,
-                lower_is_better=meta.lower_is_better,
+                higher_is_better=meta.higher_is_better,
             )
             target = meta.problem if meta.problem.startswith("emflow://") else ""
             card = distill_card(
@@ -511,9 +511,9 @@ def knowledge_distill(
                 card = KnowledgeCard.model_validate(data)
             except Exception:  # noqa: BLE001
                 continue
-            workspace = knowledge_dir / ".distill" / path.stem
+            work_dir = knowledge_dir / ".distill" / path.stem
             card.claims = distill_claims_from_card(
-                card, workspace=workspace, knowledge_dir=knowledge_dir,
+                card, work_dir=work_dir, knowledge_dir=knowledge_dir,
                 config=config, log=typer.echo,
             )
             if card.claims:
@@ -541,7 +541,7 @@ def knowledge_distill(
     problem = SimpleNamespace(
         problem_id=meta.problem_id,
         metric_name=meta.metric,
-        lower_is_better=meta.lower_is_better,
+        higher_is_better=meta.higher_is_better,
     )
     target = meta.problem if meta.problem.startswith("emflow://") else ""
     card = distill_card(
@@ -806,7 +806,7 @@ def _execute(
             scores += f", holdout={selected.holdout_score:.5g}"
         typer.echo(
             f"\nDone. Selected candidate {selected.candidate_id}: {scores} "
-            f"({problem.metric_name}, {'lower' if problem.lower_is_better else 'higher'} is better)"
+            f"({problem.metric_name}, {'higher' if problem.higher_is_better else 'lower'} is better)"
         )
     else:
         typer.echo("\nDone. No scored solution; best/ holds the t=0 baseline.")
@@ -1115,12 +1115,12 @@ def prune(
     config = load_config()
     search_dir = resolve_search_dir(config, search)
     meta = load_search_meta(search_dir)
-    lower = bool(meta.lower_is_better) if meta else False
+    higher = bool(meta.higher_is_better) if meta else True
     try:
         outcome = request_prune(
             search_dir,
             candidate_id,
-            lower_is_better=lower,
+            higher_is_better=higher,
             selection_mode=config.holdout.selection,
             reason=reason,
             source="cli",
@@ -1242,7 +1242,7 @@ def show(
         )
     meta = load_search_meta(search_dir)
     metric = meta.metric if meta else "score"
-    lower = bool(meta.lower_is_better) if meta else False
+    higher = bool(meta.higher_is_better) if meta else True
     parent = journal.candidates.get(cand.parent_id) if cand.parent_id else None
 
     marks = [
@@ -1287,7 +1287,7 @@ def show(
     scores = f"val_score={cand.val_score}"
     if cand.holdout_score is not None:
         scores += f"  holdout={cand.holdout_score:.5g}"
-    typer.echo(f"{scores}  ({metric}, {'lower' if lower else 'higher'} is better)")
+    typer.echo(f"{scores}  ({metric}, {'higher' if higher else 'lower'} is better)")
 
     report = candidate_report(cand)
     typer.echo("\n# Evaluation breakdown (validation split)\n")
@@ -1295,18 +1295,18 @@ def show(
         render_report(report, metric)
         or "(no evaluation report — pre-feature candidate or non-emflow problem)"
     )
-    delta = render_delta(candidate_report(parent), report, lower)
+    delta = render_delta(candidate_report(parent), report, higher)
     if delta:
         typer.echo(f"\n# Where it moved vs parent {parent.candidate_id}\n")
         typer.echo(delta)
 
-    workspace = Path(cand.workspace) if cand.workspace else None
-    solution = workspace / "solution.py" if workspace else None
+    candidate_dir = Path(cand.candidate_dir) if cand.candidate_dir else None
+    solution = candidate_dir / "solution.py" if candidate_dir else None
     if parent is not None:
         typer.echo(f"\n# solution.py diff vs {parent.candidate_id}\n")
-        parent_solution = Path(parent.workspace) / "solution.py" if parent.workspace else None
+        parent_solution = Path(parent.candidate_dir) / "solution.py" if parent.candidate_dir else None
         if solution is None or not solution.exists() or parent_solution is None or not parent_solution.exists():
-            typer.echo("(workspace not available on this machine)")
+            typer.echo("(candidate_dir not available on this machine)")
         else:
             diff = "".join(
                 difflib.unified_diff(
@@ -1317,12 +1317,12 @@ def show(
                 )
             )
             typer.echo(diff.rstrip() or "(identical)")
-    if workspace is not None and (workspace / "notes.md").exists():
+    if candidate_dir is not None and (candidate_dir / "notes.md").exists():
         typer.echo("\n# notes.md\n")
-        typer.echo((workspace / "notes.md").read_text().rstrip())
-    if workspace is not None and (workspace / "exec_stdout.log").exists():
+        typer.echo((candidate_dir / "notes.md").read_text().rstrip())
+    if candidate_dir is not None and (candidate_dir / "exec_stdout.log").exists():
         typer.echo("\n# stdout (tail)\n")
-        typer.echo(tail(workspace / "exec_stdout.log").rstrip())
+        typer.echo(tail(candidate_dir / "exec_stdout.log").rstrip())
 
 
 @app.command()
@@ -1344,14 +1344,14 @@ def tree(
     config = load_config()
     search_dir = resolve_search_dir(config, search)
     meta = load_search_meta(search_dir)
-    lower = bool(meta.lower_is_better) if meta else False
+    higher = bool(meta.higher_is_better) if meta else True
     journal = Journal(search_dir / "journal.jsonl")
     out_path = out or (search_dir / "tree.png")
     if meta is not None:
         title = f"{meta.problem_id}  ({meta.model}, budget {meta.budget_s}s)"
     else:
         title = search_dir.name
-    render_tree(journal, lower, out_path, title)
+    render_tree(journal, higher, out_path, title)
     typer.echo(f"Wrote {out_path} ({len(journal.candidates)} candidates)")
 
 
@@ -1600,7 +1600,7 @@ def smoke(
     typer.echo(f"cost_usd:    {candidate.backend.cost_usd}")
     typer.echo(f"num_turns:   {candidate.backend.num_turns}")
     typer.echo(f"error_kind:  {candidate.backend.error_kind}")
-    typer.echo(f"raw output:  {Path(candidate.workspace) / 'agent_raw.json'}")
+    typer.echo(f"raw output:  {Path(candidate.candidate_dir) / 'agent_raw.json'}")
     if candidate.backend.session_id is None and candidate.backend.error_kind is None:
         typer.echo("WARNING: session_id not parsed — check agent_raw.json for actual field names")
 

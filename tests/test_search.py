@@ -11,7 +11,7 @@ from hillclimb.control import ControlCommand, write_command
 from tests.conftest import executor_for, local_executor
 from hillclimb.journal import Journal
 from hillclimb.search import GreedySearcher, ParkedSearch, StopRequested
-from hillclimb.workspace import create_search_dir
+from hillclimb.dirs import create_search_dir
 from tests.conftest import CRASH_SCRIPT, ok_script
 
 
@@ -239,7 +239,7 @@ def test_prune_scored_branch_makes_engine_redraft(task, config):
 
     assert searcher.decide() == ("draft", None)  # only 2 scored branches remain
     # selection repointed away from the pruned branch
-    assert journal.selected_candidate(False).candidate_id == "c000"
+    assert journal.selected_candidate(True).candidate_id == "c000"
     assert (search_dir / "best" / "submission.csv").exists()
 
 
@@ -267,8 +267,8 @@ class FileHoldoutScorer:
     """Stand-in for a problem's `verifier.sh --holdout`: scores the candidate
     out of sight and reports (score, error) the same way."""
 
-    def score(self, workspace):
-        path = Path(workspace) / "holdout_predictions.csv"
+    def score(self, candidate_dir):
+        path = Path(candidate_dir) / "holdout_predictions.csv"
         if not path.exists():
             return None, "`holdout_predictions.csv` was not written"
         return float(path.read_text()), None
@@ -306,7 +306,7 @@ def test_selection_by_holdout_not_val(task, config):
     assert selected.candidate_id in ("c001", "c003")
     # best/ holds the selected node's submission, not the val-best's
     assert (search_dir / "best" / "solution.py").read_text() == (
-        Path(selected.workspace) / "solution.py").read_text()
+        Path(selected.candidate_dir) / "solution.py").read_text()
 
 
 def test_failed_holdout_evaluation_is_buggy(task, config):
@@ -341,7 +341,7 @@ def test_no_holdout_falls_back_to_val_selection(task, config):
     searcher, journal, _ = make_searcher(task, config, backend, max_candidates=4)
     selected = searcher.run()
     assert selected.val_score == 0.9
-    assert journal.selected_candidate(False).candidate_id == selected.candidate_id
+    assert journal.selected_candidate(True).candidate_id == selected.candidate_id
 
 
 def make_ensemble_searcher(task, config, backend, spent_frac=0.0, max_candidates=12):
@@ -380,8 +380,8 @@ def test_ensemble_triggers_in_reserve_window(task, config):
     node = searcher.run_operator(op, tgt)
     assert node.operator == "ensemble"
     assert node.status == "ok"
-    # candidates were seeded into the workspace
-    ws = Path(node.workspace)
+    # candidates were seeded into the candidate_dir
+    ws = Path(node.candidate_dir)
     assert (ws / "candidate_1.py").exists() and (ws / "candidate_2.py").exists()
     # prompt contains the table and the instruction
     prompt = backend.requests[-1].prompt
@@ -441,7 +441,7 @@ def test_stale_pending_node_recovered_on_resume(task, config):
 
     search_dir = create_search_dir(config.paths.runs_dir, "crash-test")
     journal = Journal(search_dir / "journal.jsonl")
-    journal.candidate_created(Candidate(candidate_id="c001", operator="draft", workspace=str(search_dir)))
+    journal.candidate_created(Candidate(candidate_id="c001", operator="draft", candidate_dir=str(search_dir)))
     assert journal.get("c001").status == "pending"
 
     backend = FakeBackend()
@@ -468,7 +468,7 @@ def report_script(score, split="validation", zones=None, body="json-report"):
         "n_origins": 2, "n_scored": 4, "model": "m",
         "report": {
             "version": 1, "split": split, "objective": "accuracy",
-            "lower_is_better": False,
+            "higher_is_better": True,
             "overall": {"score": score, "n_origins": 2, "n_scored": 4},
             "zones": zones or [
                 {"zone": "z1", "score": 0.4, "n_origins": 1, "n_scored": 2},
@@ -574,7 +574,7 @@ def test_improve_prompt_carries_delta_vs_parent(task, config):
 VERIFIER_WITH_REPORT = """\
 import json, os
 report = {"version": 1, "split": "validation", "objective": "accuracy",
-          "lower_is_better": False, "segment_label": "class",
+          "higher_is_better": True, "segment_label": "class",
           "overall": {"score": 0.66, "n_origins": 2, "n_scored": 4},
           "zones": [{"zone": "cat", "score": 0.4, "n_scored": 2},
                     {"zone": "dog", "score": 0.9, "n_scored": 2}]}
@@ -596,7 +596,7 @@ AGENT_FAKED_REPORT = (
     "import json, shutil\n"
     'shutil.copy("data/sample_submission.csv", "submission.csv")\n'
     "json.dump({'split': 'validation', 'report': {'version': 1, 'objective': 'accuracy',"
-    " 'lower_is_better': False, 'overall': {'score': 0.99, 'n_origins': 1, 'n_scored': 1}}},"
+    " 'higher_is_better': True, 'overall': {'score': 0.99, 'n_origins': 1, 'n_scored': 1}}},"
     " open('eval_result.json', 'w'))\n"
     'print("val_score: 0.99")\n'
 )
@@ -700,7 +700,7 @@ score = float(solution.answer())
 if os.environ.get("HILLCLIMB_TRIAL_SEED"):
     score += 0.001 * int(os.environ["HILLCLIMB_TRIAL_SEED"])
 report = {"version": 1, "split": "validation", "objective": "score",
-          "lower_is_better": False,
+          "higher_is_better": True,
           "overall": {"score": score, "n_origins": 2, "n_scored": 2},
           "zones": [{"zone": "easy", "score": score + 0.1, "n_scored": 1},
                     {"zone": "hard", "score": score - 0.1, "n_scored": 1}]}
@@ -723,7 +723,7 @@ def make_evaluator_searcher(config, tmp_path, backend, evaluate_py=EVALUATOR_EVA
         data_dir=problem_dir,
         description="Maximize answer().",
         metric_name="score",
-        lower_is_better=False,
+        higher_is_better=True,
         time_budget_s=3600,
         verifier_cmd=["{python}", "problem/evaluate.py"],
         verifier_display="./problem/evaluate.py",

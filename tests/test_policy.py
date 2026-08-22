@@ -17,7 +17,7 @@ from hillclimb.policies import get_policy
 from hillclimb.policies.greedy import GreedyPolicy
 from hillclimb.policy import Action, BudgetView, InflightRef, SearchView
 from hillclimb.search import GreedySearcher
-from hillclimb.workspace import create_search_dir
+from hillclimb.dirs import create_search_dir
 from tests.conftest import ok_script
 
 
@@ -28,7 +28,7 @@ def make_view(
     remaining_s: float = 3600.0,
     total_s: int = 3600,
     stop_margin_s: int = 1,
-    lower_is_better: bool = False,
+    higher_is_better: bool = True,
 ) -> SearchView:
     return SearchView(
         journal=journal,
@@ -37,7 +37,7 @@ def make_view(
             remaining_s=remaining_s, total_s=total_s, stop_margin_s=stop_margin_s
         ),
         config=config,
-        lower_is_better=lower_is_better,
+        higher_is_better=higher_is_better,
     )
 
 
@@ -48,7 +48,7 @@ def add_candidate(
     status: str = "ok",
     val_score: float | None = None,
     parent_id: str | None = None,
-    workspace: str = "",
+    candidate_dir: str = "",
     solution: str | None = None,
     tmp_path: Path | None = None,
 ) -> Candidate:
@@ -56,7 +56,7 @@ def add_candidate(
         ws = tmp_path / candidate_id
         ws.mkdir(parents=True, exist_ok=True)
         (ws / "solution.py").write_text(solution)
-        workspace = str(ws)
+        candidate_dir = str(ws)
     trials = (
         [Trial(val_score=val_score, submission_ok=True)] if val_score is not None else []
     )
@@ -65,7 +65,7 @@ def add_candidate(
         operator=operator,
         status=status,
         parent_id=parent_id,
-        workspace=workspace,
+        candidate_dir=candidate_dir,
         trials=trials,
     )
     journal.candidate_result(candidate)
@@ -145,7 +145,7 @@ def test_propose_ensemble_in_final_window_with_drain(journal, config, tmp_path):
 
     # identical scripts dedupe below the 2-candidate minimum -> no ensemble
     for cid in ("c001", "c002", "c003"):
-        Path(journal.get(cid).workspace, "solution.py").write_text("same\n")
+        Path(journal.get(cid).candidate_dir, "solution.py").write_text("same\n")
     action = policy.propose(make_view(journal, config, **in_window))
     assert action.operator != "ensemble"
 
@@ -207,7 +207,7 @@ def test_custom_policy_drives_search(task, config):
     assert [r.operator for r in backend.requests] == ["draft", "draft"]
     draft = searcher.journal.get("c001")
     assert draft.policy_meta == {"proposal": 1}
-    prompt = Path(draft.workspace, "prompt.md").read_text()
+    prompt = Path(draft.candidate_dir, "prompt.md").read_text()
     assert "# Additional context from the search strategy" in prompt
     assert "Try simulated annealing." in prompt
     # the policy saw every terminal result (baseline + both drafts)

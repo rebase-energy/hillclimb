@@ -21,7 +21,7 @@ from hillclimb.skills import (
 class Problem:
     problem_id = "comp-a"
     metric_name = "accuracy"
-    lower_is_better = False
+    higher_is_better = True
 
 
 def make_journal(tmp_path, entries) -> Journal:
@@ -36,7 +36,7 @@ def winner_journal(tmp_path, val=0.8, operator="improve", code="import sklearn\n
     ws.mkdir(parents=True, exist_ok=True)
     (ws / "solution.py").write_text(code)
     return make_journal(tmp_path, [dict(
-        candidate_id="c001", operator=operator, status="ok", workspace=str(ws),
+        candidate_id="c001", operator=operator, status="ok", candidate_dir=str(ws),
         summary="gradient boosting", trials=[Trial(val_score=val)],
     )])
 
@@ -116,18 +116,18 @@ class TestSelect:
     def test_same_family_best_score(self, tmp_path):
         kdir = self._seed(tmp_path)
         match = select_skill(kdir, family="comp-a", concepts=["tabular"],
-                             lower_is_better=False)
+                             higher_is_better=True)
         assert match is not None and match[0].score == 0.9
 
     def test_concept_fallback_and_no_match(self, tmp_path):
         kdir = self._seed(tmp_path)
         # different family, shared concept -> newest sibling
         match = select_skill(kdir, family="other", concepts=["tabular"],
-                             lower_is_better=False)
+                             higher_is_better=True)
         assert match is not None and match[0].family == "comp-a"
         # no concept overlap -> nothing
         assert select_skill(kdir, family="other", concepts=["image"],
-                            lower_is_better=False) is None
+                            higher_is_better=True) is None
 
 
 class TestInjection:
@@ -138,7 +138,7 @@ class TestInjection:
         from hillclimb.backends.fake import FakeBackend
         from hillclimb.budget import BudgetManager
         from hillclimb.search import GreedySearcher
-        from hillclimb.workspace import create_run_dir
+        from hillclimb.dirs import create_run_dir
         from tests.conftest import ok_script
 
         config.learning.dir = tmp_path / "knowledge"

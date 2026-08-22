@@ -20,7 +20,7 @@ from hillclimb.status import (
     read_status,
     write_status,
 )
-from hillclimb.workspace import create_search_dir
+from hillclimb.dirs import create_search_dir
 from tests.conftest import ok_script
 
 DEAD_PID = 2**22  # above macOS/Linux pid ranges

@@ -82,7 +82,7 @@ def test_build_tree_marks_best_and_edges(tmp_path):
     journal.candidate_result(Candidate(candidate_id="c003", operator="improve", parent_id="c001",
                                        status="ok", trials=[Trial(val_score=0.8)],
                                        summary="one change"))
-    graph = build_tree(journal, lower_is_better=False)
+    graph = build_tree(journal, higher_is_better=True)
     unq = lambda s: str(s).strip('"')
     nodes = {unq(n.get_name()): n for n in graph.get_nodes()}
     assert unq(nodes["c003"].get("fillcolor")) == "#fff59d"  # best = gold

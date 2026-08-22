@@ -31,7 +31,9 @@ def test_run_search_end_to_end(config):
     assert load_run_meta(outcome.run_dir) is not None
     assert load_search_meta(outcome.search_dir).budget_s == 10
     assert (outcome.search_dir / "journal.jsonl").exists()
-    assert (outcome.search_dir / "best" / "submission.csv").exists()
+    # declared floor (`baseline: 0.5`): c000 is scored but ships no files, so
+    # best/ fills only once an agent candidate lands
+    assert any("baseline: 0.5 (declared)" in line for line in logs)
     assert any("Search " in line for line in logs)
     assert outcome.selected is None or outcome.selected.val_score is not None
 
@@ -104,7 +106,7 @@ def make_evaluator_problem(tmp_path, **overrides):
         data_dir=problem_dir,
         description="score the answer",
         metric_name="score",
-        lower_is_better=False,
+        higher_is_better=True,
         time_budget_s=600,
         verifier_cmd=["{python}", "problem/evaluate.py"],
     )
@@ -149,7 +151,7 @@ def test_evaluator_baseline_placeholder_and_scored(config, tmp_path):
 
     from hillclimb.baseline import write_baseline
     from hillclimb.executor import CommandExecutor
-    from hillclimb.workspace import create_search_dir
+    from hillclimb.dirs import create_search_dir
 
     problem = make_evaluator_problem(tmp_path)
     search_dir = create_search_dir(tmp_path / "runs" / "r1", "eval-problem")

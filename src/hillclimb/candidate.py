@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from statistics import median
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 OPERATORS = ("baseline", "draft", "debug", "improve", "ensemble")
 STATUSES = ("pending", "ok", "buggy", "parked", "abandoned")
@@ -66,7 +66,7 @@ class Candidate(BaseModel):
     status: str = "pending"  # one of STATUSES
     complexity: str | None = None  # minimal | moderate | advanced (drafts only)
     debug_depth: int = 0
-    workspace: str = ""
+    candidate_dir: str = ""
     backend: BackendInfo = Field(default_factory=BackendInfo)
     trials: list[Trial] = Field(default_factory=list)
     is_best: bool = False       # best by agent-reported val_score (climbing signal)
@@ -79,6 +79,17 @@ class Candidate(BaseModel):
     summary: str = ""
     created_at: str = Field(default_factory=utcnow)
     finished_at: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_workspace_key(cls, data):
+        """Journals written before the rename carry `workspace`; map it onto
+        `candidate_dir` so old runs replay (extra="forbid" would reject it)."""
+        if isinstance(data, dict) and "workspace" in data:
+            data = dict(data)
+            data.setdefault("candidate_dir", data.pop("workspace"))
+            data.pop("workspace", None)
+        return data
 
     @property
     def last_trial(self) -> Trial | None:

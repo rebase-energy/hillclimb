@@ -91,19 +91,19 @@ class DummyBackend:
 
     def invoke(self, request: OperatorRequest) -> OperatorResult:
         self.calls += 1
-        if not (request.workspace / "problem" / "sample_submission.csv").exists():
+        if not (request.candidate_dir / "problem" / "sample_submission.csv").exists():
             # problems whose verifier drives solution.py directly have no
             # sample_submission to mimic
-            (request.workspace / "solution.py").write_text(BARE_TEMPLATE)
-            (request.workspace / "notes.md").write_text(
+            (request.candidate_dir / "solution.py").write_text(BARE_TEMPLATE)
+            (request.candidate_dir / "notes.md").write_text(
                 "dummy: prints a number for the problem's verifier to score\n"
             )
             return OperatorResult(ok=True, session_id=f"dummy-{self.calls}", duration_s=0.0)
-        if not (request.workspace / "data" / "train.csv").exists():
+        if not (request.candidate_dir / "data" / "train.csv").exists():
             script = VERIFIER_PROBLEM_TEMPLATE
             note = "baseline copy for verifier-defined problem"
-            (request.workspace / "solution.py").write_text(script)
-            (request.workspace / "notes.md").write_text(note + "\n")
+            (request.candidate_dir / "solution.py").write_text(script)
+            (request.candidate_dir / "notes.md").write_text(note + "\n")
             return OperatorResult(ok=True, session_id=f"dummy-{self.calls}", duration_s=0.0)
         if request.operator == "draft" and self.calls == 1:
             script = SOLVER_TEMPLATE.format(max_iter=50, bug=BUGGY_LINE)
@@ -120,6 +120,6 @@ class DummyBackend:
         else:
             script = SOLVER_TEMPLATE.format(max_iter=100, bug="")
             note = f"draft #{self.calls} (HistGradientBoosting, 100 iters)"
-        (request.workspace / "solution.py").write_text(script)
-        (request.workspace / "notes.md").write_text(note + "\n")
+        (request.candidate_dir / "solution.py").write_text(script)
+        (request.candidate_dir / "notes.md").write_text(note + "\n")
         return OperatorResult(ok=True, session_id=f"dummy-{self.calls}", duration_s=0.0)

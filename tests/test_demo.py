@@ -29,12 +29,12 @@ def test_bundled_problem_loads_and_mirrors_repo_problem(tmp_path, config):
     config.paths.problems_dir = tmp_path / "problems"
     install_demo_problem(config.paths.problems_dir)
     spec = load_problem(DEMO_PROBLEM_ID, config)
-    assert spec.metric_name == "sum-radii" and not spec.lower_is_better
+    assert spec.metric_name == "sum-radii" and spec.higher_is_better
     assert spec.requirements_file is not None
     # the bundled verifier is the repo's verifier — the two must not drift
     repo = Path("problems") / DEMO_PROBLEM_ID
     bundled = Path("src/hillclimb/demo") / DEMO_PROBLEM_ID
-    for name in ("verifier.sh", "verify.py", "baseline.py", "description.md", "sample_submission.csv"):
+    for name in ("verifier.sh", "verify.py", "description.md", "sample_submission.csv"):
         assert (bundled / name).read_text() == (repo / name).read_text(), name
 
 
@@ -45,7 +45,7 @@ def _search(runs_dir: Path, run_id: str, name: str, scores: list[tuple[str, floa
     search_dir.mkdir(parents=True)
     write_search_meta(search_dir, SearchMeta(
         search_id="p", run_id=run_id, problem="p", problem_id="p", backend="dummy",
-        model="m", metric="score", lower_is_better=lower, started_at="2026-08-22T10:00:00+00:00",
+        model="m", metric="score", higher_is_better=not lower, started_at="2026-08-22T10:00:00+00:00",
     ))
     journal = Journal(search_dir / "journal.jsonl")
     for index, (finished, score) in enumerate(scores):
@@ -119,7 +119,7 @@ def test_demo_launches_parallel_detached_searches(tmp_path, monkeypatch):
         cli_main(["demo", "--budget", "5m", "--parallel", "2", "--backend", "dummy", "--model", "haiku"])
     assert exc.value.code == 0
     assert (tmp_path / "hillclimb" / "config.yaml").exists()
-    assert (tmp_path / "hillclimb" / "problems" / DEMO_PROBLEM_ID / "baseline.py").exists()
+    assert (tmp_path / "hillclimb" / "problems" / DEMO_PROBLEM_ID / "verifier.sh").exists()
     assert len(launched) == 2
     for index, (cmd, kwargs) in enumerate(launched, 1):
         assert cmd[1:] == [

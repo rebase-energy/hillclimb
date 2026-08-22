@@ -48,11 +48,11 @@ class FakeBackend:
             self.requests.append(request)
             response = self._pop_response(request)
         if response.get("script") is not None:
-            (request.workspace / "solution.py").write_text(response["script"])
+            (request.candidate_dir / "solution.py").write_text(response["script"])
         if response.get("notes"):
-            (request.workspace / "notes.md").write_text(response["notes"])
+            (request.candidate_dir / "notes.md").write_text(response["notes"])
         for name, content in (response.get("files") or {}).items():
-            path = request.workspace / name
+            path = request.candidate_dir / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
         return OperatorResult(**{"ok": True, **response.get("result", {})})

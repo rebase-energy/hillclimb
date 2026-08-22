@@ -3,7 +3,7 @@ problem_id: gefcom2014-load
 family: gefcom2014
 target: emflow://gefcom2014:load
 metric: PinballLoss
-lower_is_better: true
+higher_is_better: false
 run_ref: 20260705-171452-gefcom2014-v2/gefcom2014-load
 finished_at: '2026-07-07T14:29:28.896968+00:00'
 budget_s: 7200

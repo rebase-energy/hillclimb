@@ -120,8 +120,8 @@ class LearningConfig(BaseModel):
     search and inject prior experience into draft prompts."""
 
     enabled: bool = True
-    # default: <workspace>/hillclimb/knowledge (git-versionable); explicit
-    # path overrides; None + no workspace = learning off
+    # default: <hillclimb dir>/knowledge (git-versionable); explicit
+    # path overrides; None + no hillclimb dir = learning off
     dir: Path | None = None
     max_cards: int = 3  # cards rendered into the prompt
     # live sharing: republish this search's card after every executed

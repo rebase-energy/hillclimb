@@ -38,12 +38,12 @@ def make_problem(tmp_path: Path) -> Path:
 
 
 def make_workspace(tmp_path: Path, problem_dir: Path, solution: str = "def answer():\n    return 0.5\n") -> Path:
-    workspace = tmp_path / "candidates" / "c001"
-    workspace.mkdir(parents=True)
-    (workspace / "solution.py").write_text(solution)
-    (workspace / "problem").symlink_to(problem_dir, target_is_directory=True)
-    (workspace / "data").symlink_to(problem_dir, target_is_directory=True)
-    return workspace
+    candidate_dir = tmp_path / "candidates" / "c001"
+    candidate_dir.mkdir(parents=True)
+    (candidate_dir / "solution.py").write_text(solution)
+    (candidate_dir / "problem").symlink_to(problem_dir, target_is_directory=True)
+    (candidate_dir / "data").symlink_to(problem_dir, target_is_directory=True)
+    return candidate_dir
 
 
 COMMAND = ["{python}", "problem/evaluate.py"]
@@ -51,19 +51,19 @@ COMMAND = ["{python}", "problem/evaluate.py"]
 
 def test_happy_path_scores_and_result_json(tmp_path):
     problem_dir = make_problem(tmp_path)
-    workspace = make_workspace(tmp_path, problem_dir)
+    candidate_dir = make_workspace(tmp_path, problem_dir)
     executor = CommandExecutor(Path(sys.executable), COMMAND)
-    result = executor.execute(workspace / "solution.py", workspace, timeout_s=60)
+    result = executor.execute(candidate_dir / "solution.py", candidate_dir, timeout_s=60)
     assert result.ok, Path(result.stderr_path).read_text()[-300:]
     assert result.val_score == 0.5
-    payload = json.loads((workspace / "eval_result.json").read_text())
+    payload = json.loads((candidate_dir / "eval_result.json").read_text())
     assert payload["split"] == "validation"
     assert payload["report"]["overall"]["score"] == 0.5
 
 
 def test_seed_env_and_placeholder_substitution(tmp_path):
     problem_dir = make_problem(tmp_path)
-    workspace = make_workspace(tmp_path, problem_dir)
+    candidate_dir = make_workspace(tmp_path, problem_dir)
     # {solution} placeholder: evaluator receives the explicit path
     (problem_dir / "evaluate.py").write_text(
         EVALUATE.replace("import solution", "import importlib.util\n"
@@ -72,7 +72,7 @@ def test_seed_env_and_placeholder_substitution(tmp_path):
                          "spec.loader.exec_module(solution)")
     )
     executor = CommandExecutor(Path(sys.executable), ["{python}", "problem/evaluate.py", "{solution}"])
-    result = executor.execute(workspace / "solution.py", workspace, timeout_s=60, seed=3)
+    result = executor.execute(candidate_dir / "solution.py", candidate_dir, timeout_s=60, seed=3)
     assert result.ok
     assert result.val_score == 0.503  # seed propagated via HILLCLIMB_TRIAL_SEED
 
@@ -82,9 +82,9 @@ def test_no_result_file_is_a_contract_violation(tmp_path):
     not a score (agent code shares that stream)."""
     problem_dir = make_problem(tmp_path)
     (problem_dir / "evaluate.py").write_text('print("val_score: 1.0")\n')
-    workspace = make_workspace(tmp_path, problem_dir)
+    candidate_dir = make_workspace(tmp_path, problem_dir)
     executor = CommandExecutor(Path(sys.executable), COMMAND)
-    result = executor.execute(workspace / "solution.py", workspace, timeout_s=60)
+    result = executor.execute(candidate_dir / "solution.py", candidate_dir, timeout_s=60)
     assert result.val_score is None
     assert not result.submission_ok
     assert not result.ok
@@ -96,9 +96,9 @@ def test_bare_number_result_file(tmp_path):
     (problem_dir / "evaluate.py").write_text(
         'import os\nopen(os.environ["HILLCLIMB_RESULT"], "w").write(" 12.5\\n")\n'
     )
-    workspace = make_workspace(tmp_path, problem_dir)
+    candidate_dir = make_workspace(tmp_path, problem_dir)
     executor = CommandExecutor(Path(sys.executable), COMMAND)
-    result = executor.execute(workspace / "solution.py", workspace, timeout_s=60)
+    result = executor.execute(candidate_dir / "solution.py", candidate_dir, timeout_s=60)
     assert result.ok
     assert result.val_score == 12.5
 
@@ -106,37 +106,37 @@ def test_bare_number_result_file(tmp_path):
 def test_stale_result_json_scrubbed_and_crash_not_ok(tmp_path):
     problem_dir = make_problem(tmp_path)
     (problem_dir / "evaluate.py").write_text('raise RuntimeError("evaluator boom")\n')
-    workspace = make_workspace(tmp_path, problem_dir)
-    (workspace / "eval_result.json").write_text('{"split": "validation", "score": 9}')
+    candidate_dir = make_workspace(tmp_path, problem_dir)
+    (candidate_dir / "eval_result.json").write_text('{"split": "validation", "score": 9}')
     executor = CommandExecutor(Path(sys.executable), COMMAND)
-    result = executor.execute(workspace / "solution.py", workspace, timeout_s=60)
+    result = executor.execute(candidate_dir / "solution.py", candidate_dir, timeout_s=60)
     assert result.returncode != 0
     assert not result.submission_ok  # the stale file was unlinked pre-run
-    assert not (workspace / "eval_result.json").exists()
+    assert not (candidate_dir / "eval_result.json").exists()
 
 
 def test_validation_env_scrubbed(tmp_path, monkeypatch):
     monkeypatch.setenv("X_SECRET_TOKEN", "sk-123")
     problem_dir = make_problem(tmp_path)
-    workspace = make_workspace(tmp_path, problem_dir)
+    candidate_dir = make_workspace(tmp_path, problem_dir)
     executor = CommandExecutor(Path(sys.executable), COMMAND)
-    result = executor.execute(workspace / "solution.py", workspace, timeout_s=60)
+    result = executor.execute(candidate_dir / "solution.py", candidate_dir, timeout_s=60)
     assert result.ok
-    payload = json.loads((workspace / "eval_result.json").read_text())
+    payload = json.loads((candidate_dir / "eval_result.json").read_text())
     assert "saw_token" not in payload["report"]  # *_TOKEN scrubbed
 
 
 def test_holdout_scorer_hidden_dir_full_env(tmp_path, monkeypatch):
     monkeypatch.setenv("X_SECRET_TOKEN", "sk-123")
     problem_dir = make_problem(tmp_path)
-    workspace = make_workspace(tmp_path, problem_dir)
-    (workspace / "candidate_1.py").write_text("# ensemble input\n")
+    candidate_dir = make_workspace(tmp_path, problem_dir)
+    (candidate_dir / "candidate_1.py").write_text("# ensemble input\n")
     scorer = CommandHoldoutScorer(
         Path(sys.executable), COMMAND + ["--holdout"],
         problem_dir=problem_dir, data_dir=problem_dir,
         work_root=tmp_path / "holdout-eval", timeout_s=60,
     )
-    score, error = scorer.score(workspace)
+    score, error = scorer.score(candidate_dir)
     assert error is None
     assert score == 0.5
     eval_dir = tmp_path / "holdout-eval" / "c001"
@@ -147,20 +147,20 @@ def test_holdout_scorer_hidden_dir_full_env(tmp_path, monkeypatch):
     payload = json.loads((eval_dir / "eval_result.json").read_text())
     assert payload["split"] == "holdout"
     assert payload["report"].get("saw_token") is True  # full env: credentials flow
-    # agent-visible workspace untouched by the holdout run
-    assert not (workspace / "eval_result.json").exists()
+    # agent-visible candidate_dir untouched by the holdout run
+    assert not (candidate_dir / "eval_result.json").exists()
 
 
 def test_holdout_scorer_failure_mapping(tmp_path):
     problem_dir = make_problem(tmp_path)
-    workspace = make_workspace(
+    candidate_dir = make_workspace(
         tmp_path, problem_dir, solution="def answer():\n    raise ValueError('nope')\n"
     )
     scorer = CommandHoldoutScorer(
         Path(sys.executable), COMMAND, problem_dir=problem_dir, data_dir=problem_dir,
         work_root=tmp_path / "holdout-eval", timeout_s=60,
     )
-    score, error = scorer.score(workspace)
+    score, error = scorer.score(candidate_dir)
     assert score is None
     assert "holdout evaluation failed" in error
 
@@ -169,6 +169,6 @@ def test_holdout_scorer_failure_mapping(tmp_path):
         problem_dir=problem_dir, data_dir=problem_dir,
         work_root=tmp_path / "holdout-eval-2", timeout_s=60,
     )
-    score, error = scorer_no_score.score(workspace)
+    score, error = scorer_no_score.score(candidate_dir)
     assert score is None
     assert "produced no score" in error

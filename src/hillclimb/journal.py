@@ -7,9 +7,9 @@ from statistics import median
 from hillclimb.candidate import Candidate, utcnow
 
 
-def _ranks(values: list[float], lower_is_better: bool) -> list[float]:
+def _ranks(values: list[float], higher_is_better: bool) -> list[float]:
     """Average-tie ranks, 1 = best."""
-    order = sorted(values, reverse=not lower_is_better)
+    order = sorted(values, reverse=higher_is_better)
     return [
         (order.index(v) + 1 + len(order) - 1 - order[::-1].index(v) + 1) / 2 for v in values
     ]
@@ -113,13 +113,13 @@ class Journal:
     def scored_candidates(self) -> list[Candidate]:
         return [c for c in self.candidates.values() if c.is_scored and not c.pruned]
 
-    def best_candidate(self, lower_is_better: bool) -> Candidate | None:
+    def best_candidate(self, higher_is_better: bool) -> Candidate | None:
         scored = self.scored_candidates()
         if not scored:
             return None
-        return min(scored, key=lambda c: c.val_score if lower_is_better else -c.val_score)
+        return min(scored, key=lambda c: -c.val_score if higher_is_better else c.val_score)
 
-    def selected_candidate(self, lower_is_better: bool, mode: str = "rank-blend") -> Candidate | None:
+    def selected_candidate(self, higher_is_better: bool, mode: str = "rank-blend") -> Candidate | None:
         """Candidate whose submission ships. Falls back to val_score when no
         candidate has a holdout score (holdout disabled).
 
@@ -128,19 +128,19 @@ class Journal:
         rank, a noisy holdout outlier is vetoed by its val rank. `holdout` and
         `val` select by a single signal.
         """
-        ranked = self.ranked_candidates(lower_is_better, mode)
+        ranked = self.ranked_candidates(higher_is_better, mode)
         return ranked[0] if ranked else None
 
-    def ranked_candidates(self, lower_is_better: bool, mode: str = "rank-blend") -> list[Candidate]:
+    def ranked_candidates(self, higher_is_better: bool, mode: str = "rank-blend") -> list[Candidate]:
         """Scored candidates ordered best-first by the selection rule."""
-        direction = 1 if lower_is_better else -1
+        direction = -1 if higher_is_better else 1
         with_holdout = [c for c in self.scored_candidates() if c.holdout_score is not None]
         if not with_holdout or mode == "val":
             return sorted(self.scored_candidates(), key=lambda c: direction * c.val_score)
         if mode == "holdout":
             return sorted(with_holdout, key=lambda c: direction * c.holdout_score)
-        val_rank = _ranks([c.val_score for c in with_holdout], lower_is_better)
-        hold_rank = _ranks([c.holdout_score for c in with_holdout], lower_is_better)
+        val_rank = _ranks([c.val_score for c in with_holdout], higher_is_better)
+        hold_rank = _ranks([c.holdout_score for c in with_holdout], higher_is_better)
         return [
             t[0]
             for t in sorted(

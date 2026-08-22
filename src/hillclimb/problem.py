@@ -9,6 +9,7 @@ import yaml
 from pydantic import BaseModel, Field, field_validator
 
 from hillclimb.config import Config
+from hillclimb.direction import legacy_direction_key
 
 
 class ProblemSpec(BaseModel):
@@ -26,7 +27,7 @@ class ProblemSpec(BaseModel):
     data_dir: Path
     description: str
     metric_name: str
-    lower_is_better: bool
+    higher_is_better: bool
     time_budget_s: int
     allow_network: bool = False
 
@@ -53,8 +54,12 @@ class ProblemSpec(BaseModel):
 
     # --- t=0 floor ---
     baseline_text: str | None = None  # solution.py source scored as c000
+    # declared floor (`baseline: 0.5` in problem.yaml): c000 carries this
+    # score without running anything — for problems whose trivial solution is
+    # obvious (one big circle) but not worth shipping as code
+    baseline_score: float | None = None
     baseline_summary: str = "baseline"
-    # {name in the workspace: source file} copied into c000 and best/ when the
+    # {name in the candidate_dir: source file} copied into c000 and best/ when the
     # problem has no scored baseline, so a search that never lands a working
     # candidate still ships something gradeable (a sample submission)
     baseline_files: dict[str, Path] = Field(default_factory=dict)
@@ -187,7 +192,7 @@ def _optional_file(problem_dir: Path, meta: dict, key: str, default: str | None 
 
 def _verifier_argv(problem_yaml: Path, problem_dir: Path, meta: dict) -> list[str]:
     """The problem's verifier, as argv. Absolute: a relative program path is
-    resolved against the ENGINE's cwd, not the workspace the command runs in
+    resolved against the ENGINE's cwd, not the candidate dir the command runs in
     (subprocess does not search cwd for the executable)."""
     name = str(meta.get("verifier", "verifier.sh"))
     path = (problem_dir / name).resolve()
@@ -235,13 +240,21 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
         data_dir=data_dir,
         description=description_path.read_text(),
         metric_name=meta["metric"],
-        lower_is_better=bool(meta["lower_is_better"]),
+        higher_is_better=bool(legacy_direction_key(meta)["higher_is_better"]),
         time_budget_s=meta.get("time_budget_s", config.budget.total_s),
         allow_network=bool(meta.get("allow_network", False)),
     )
     verifier_cmd = _verifier_argv(problem_yaml, problem_dir, meta)
     contract_path = _optional_file(problem_dir, meta, "contract", default="contract.md")
-    baseline_path = _optional_file(problem_dir, meta, "baseline")
+    baseline_raw = meta.get("baseline")
+    baseline_score = float(baseline_raw) if isinstance(baseline_raw, (int, float)) and not isinstance(baseline_raw, bool) else None
+    baseline_path = None if baseline_score is not None else _optional_file(problem_dir, meta, "baseline")
+    if baseline_score is not None:
+        baseline_summary = f"baseline: {baseline_score:g} (declared)"
+    elif baseline_path:
+        baseline_summary = f"baseline: {baseline_path.name}"
+    else:
+        baseline_summary = "baseline"
     return ProblemSpec(
         **common,
         verifier_cmd=verifier_cmd,
@@ -250,7 +263,8 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
         contract=contract_path.read_text() if contract_path else None,
         requirements_file=_optional_file(problem_dir, meta, "requirements"),
         baseline_text=baseline_path.read_text() if baseline_path else None,
-        baseline_summary=f"baseline: {baseline_path.name}" if baseline_path else "baseline",
+        baseline_score=baseline_score,
+        baseline_summary=baseline_summary,
         baseline_files={
             dest: (problem_dir / src).resolve()
             for dest, src in (meta.get("baseline_files") or {}).items()

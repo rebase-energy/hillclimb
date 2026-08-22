@@ -11,7 +11,7 @@ from hillclimb.budget import BudgetManager
 from tests.conftest import local_executor
 from hillclimb.journal import Journal
 from hillclimb.search import GreedySearcher
-from hillclimb.workspace import create_search_dir
+from hillclimb.dirs import create_search_dir
 from tests.conftest import ok_script
 
 
@@ -92,7 +92,7 @@ def test_improve_prompt_reuses_sibling_ablation(task, config):
     searcher, _, target = scored_target(task, config, backend)
     backend.queue(script=ok_script(0.7), notes="model: swap to gbm\n")
     child = searcher.run_operator("improve", target)
-    Path(child.workspace, "ablation.md").write_text(
+    Path(child.candidate_dir, "ablation.md").write_text(
         "- features: +0.04\n- model: +0.01\n- target: features\n"
     )
     prompt = searcher.build_prompt("improve", target, None)
@@ -108,6 +108,6 @@ def test_prior_ablations_empty_without_files_or_when_gated(task, config):
     assert searcher._prior_ablations(target) == ""
     backend.queue(script=ok_script(0.7), notes="tweak\n")
     child = searcher.run_operator("improve", target)
-    Path(child.workspace, "ablation.md").write_text("- model: +0.02\n")
+    Path(child.candidate_dir, "ablation.md").write_text("- model: +0.02\n")
     config.operators.improve_ablation = False
     assert searcher._prior_ablations(target) == ""

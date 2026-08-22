@@ -27,7 +27,7 @@ hillclimb demo     # agents climb the circle-packing problem, right here
 ```
 
 `hillclimb demo` creates a `hillclimb/` dir in the current folder, installs
-the bundled circle-packing problem (with a one-circle baseline, sum of radii
+the bundled circle-packing problem (with a declared one-circle baseline, sum of radii
 0.5, scored at t=0), and starts **six 10-minute searches in parallel, in the
 background** — your prompt comes straight back. It prints the commands worth
 running right there while they climb:
@@ -164,7 +164,7 @@ working directory, return the agent's JSON result — and is selected with
 
 *What to try next* is the search engine, and it is a seam of its own:
 `src/hillclimb/policy.py` defines it, `src/hillclimb/policies/` holds the
-implementations. Everything else — workspaces, prompts, agent calls, trials,
+implementations. Everything else — candidate dirs, prompts, agent calls, trials,
 holdout, journaling, `best/` — is harness, and a policy never touches it.
 
 | policy | what it does |
@@ -192,11 +192,11 @@ makes `hillclimb resume` work.
 Three rules the harness relies on, spelled out in `policy.py`:
 
 - `propose`/`observe` run only on the scheduler thread, under the search's
-  state lock. A policy may read candidate workspaces; it must never write.
+  state lock. A policy may read candidate dirs; it must never write.
 - Every decision must be derivable from replayed journal state — compute it
   from the `SearchView`, or rebuild your caches in `observe`.
 - Ensemble-style actions must carry their inputs in `inspiration_ids`; the
-  harness copies those solutions into the new workspace.
+  harness copies those solutions into the new candidate dir.
 
 To add one: implement the protocol, register it in the `_POLICIES` dict in
 `policies/__init__.py`, and select it with `hillclimb run --policy <name>`
@@ -264,7 +264,7 @@ Minimum `problem.yaml`:
 ```yaml
 problem_id: my-problem
 metric: my-score
-lower_is_better: false
+higher_is_better: true
 description: description.md
 time_budget_s: 900
 ```
@@ -275,7 +275,7 @@ Everything else is optional:
 verifier: verifier.sh            # the default
 holdout: true                    # engine also runs `verifier.sh --holdout`
 contract: contract.md            # what solution.py must be/do (prompt section)
-baseline: baseline.py            # scored at t=0 as the floor candidate
+baseline: baseline.py            # scored at t=0 as the floor candidate (or a number: a declared floor)
 requirements: requirements.txt   # per-problem venv (default: shared csv venv)
 data_dir: data
 allow_network: false

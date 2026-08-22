@@ -29,7 +29,7 @@ from hillclimb.problem import ProblemSpec, load_problem
 from hillclimb.run import RunMeta, SearchMeta, write_run_meta, write_search_meta
 from hillclimb.search import GreedySearcher, ParkedSearch, StopRequested
 from hillclimb.status import SearchStatus, StatusWriter
-from hillclimb.workspace import create_run_dir, create_search_dir
+from hillclimb.dirs import create_run_dir, create_search_dir
 
 Log = Callable[[str], None]
 
@@ -248,7 +248,7 @@ def create_search(
                 for op, route in config.routing.items()
             },
             metric=problem.metric_name,
-            lower_is_better=problem.lower_is_better,
+            higher_is_better=problem.higher_is_better,
             budget_s=total_s,
             holdout_enabled=config.holdout.enabled and problem.holdout_cmd is not None,
             seed_from=str(seed_from) if seed_from else None,
@@ -528,7 +528,7 @@ def execute_search(
                     _kdir,
                     family=problem_family(problem.problem_id, target),
                     concepts=problem_concepts(kind, problem.metric_name),
-                    lower_is_better=problem.lower_is_better,
+                    higher_is_better=problem.higher_is_better,
                 )
                 if match is not None:
                     skill, skill_dir = match
@@ -620,7 +620,7 @@ def _official_verify(
         official_verify(
             python,
             problem.emflow_problem,
-            Path(selected.workspace),
+            Path(selected.candidate_dir),
             search_dir / "holdout-eval" / "official",
             name=search_ref(search_dir),
             n_trials=len(journal.candidates),
@@ -648,7 +648,7 @@ def _mlebench_grade(
     from hillclimb.grading import grade_submission
 
     try:
-        submission = Path(selected.workspace) / "submission.csv"
+        submission = Path(selected.candidate_dir) / "submission.csv"
         if not submission.exists():
             raise FileNotFoundError(f"selected candidate has no submission.csv: {submission}")
         report = grade_submission(submission, problem.mlebench_comp_id, config)

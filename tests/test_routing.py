@@ -15,7 +15,7 @@ from hillclimb.journal import Journal
 from hillclimb.policy import Route
 from hillclimb.routing import BackendPool, ResolvedRoute, Router
 from hillclimb.search import GreedySearcher
-from hillclimb.workspace import create_search_dir
+from hillclimb.dirs import create_search_dir
 from tests.conftest import ok_script
 
 

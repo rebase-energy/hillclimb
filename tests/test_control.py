@@ -32,11 +32,11 @@ def make_search(tmp_path: Path) -> tuple[Path, Journal]:
 
 
 def add_candidate(journal: Journal, search_dir: Path, candidate_id: str, **kwargs) -> Candidate:
-    workspace = search_dir / "candidates" / candidate_id
-    workspace.mkdir(parents=True, exist_ok=True)
-    (workspace / "submission.csv").write_text(f"id,target\n1,{candidate_id}\n")
-    (workspace / "solution.py").write_text(f"# {candidate_id}\n")
-    candidate = make_candidate(candidate_id, workspace=str(workspace), **kwargs)
+    candidate_dir = search_dir / "candidates" / candidate_id
+    candidate_dir.mkdir(parents=True, exist_ok=True)
+    (candidate_dir / "submission.csv").write_text(f"id,target\n1,{candidate_id}\n")
+    (candidate_dir / "solution.py").write_text(f"# {candidate_id}\n")
+    candidate = make_candidate(candidate_id, candidate_dir=str(candidate_dir), **kwargs)
     journal.candidate_result(candidate)
     return candidate
 
@@ -108,11 +108,11 @@ def test_resync_best_repoints_after_pruning_selected(tmp_path: Path):
     add_candidate(journal, search_dir, "c001", status="ok", val_score=0.5)
     winner = add_candidate(journal, search_dir, "c002", status="ok", val_score=0.9, is_selected=True)
     (search_dir / "best" / "submission.csv").write_text(
-        (Path(winner.workspace) / "submission.csv").read_text()
+        (Path(winner.candidate_dir) / "submission.csv").read_text()
     )
 
     apply_prune(journal, "c002")
-    selected = resync_best(search_dir, journal, lower_is_better=False, selection_mode="rank-blend")
+    selected = resync_best(search_dir, journal, higher_is_better=True, selection_mode="rank-blend")
 
     assert selected == "c001"
     assert "c001" in (search_dir / "best" / "submission.csv").read_text()
@@ -126,7 +126,7 @@ def test_resync_best_falls_back_to_baseline(tmp_path: Path):
     add_candidate(journal, search_dir, "c001", status="ok", val_score=0.5)
 
     apply_prune(journal, "c001")
-    selected = resync_best(search_dir, journal, lower_is_better=False, selection_mode="rank-blend")
+    selected = resync_best(search_dir, journal, higher_is_better=True, selection_mode="rank-blend")
 
     assert selected is None
     assert "c000" in (search_dir / "best" / "submission.csv").read_text()
@@ -138,7 +138,7 @@ def test_request_prune_offline_applies_directly(tmp_path: Path):
     add_candidate(journal, search_dir, "c001", status="ok", val_score=0.5)
 
     outcome = request_prune(
-        search_dir, "c001", lower_is_better=False, selection_mode="rank-blend", source="cli"
+        search_dir, "c001", higher_is_better=True, selection_mode="rank-blend", source="cli"
     )
 
     assert "pruned c001" in outcome
@@ -152,7 +152,7 @@ def test_request_prune_queues_when_running(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("hillclimb.control.effective_state", lambda _: "running")
 
     outcome = request_prune(
-        search_dir, "c001", lower_is_better=False, selection_mode="rank-blend", source="tui"
+        search_dir, "c001", higher_is_better=True, selection_mode="rank-blend", source="tui"
     )
 
     assert "queued" in outcome

@@ -70,10 +70,10 @@ def make_stub(tmp_path: Path, body: str) -> str:
 
 
 def make_request(tmp_path: Path, timeout_s: int = 30) -> OperatorRequest:
-    workspace = tmp_path / "ws"
-    workspace.mkdir(exist_ok=True)
+    candidate_dir = tmp_path / "ws"
+    candidate_dir.mkdir(exist_ok=True)
     return OperatorRequest(
-        operator="draft", prompt="write code", workspace=workspace, timeout_s=timeout_s
+        operator="draft", prompt="write code", candidate_dir=candidate_dir, timeout_s=timeout_s
     )
 
 
@@ -87,11 +87,11 @@ def test_success_parses_result_and_streams(tmp_path: Path):
     assert result.cost_usd == 0.42
     assert result.num_turns == 7
     assert result.total_tokens == 10 + 8209 + 29297 + 199902
-    stream = (request.workspace / "agent_stream.jsonl").read_text().splitlines()
+    stream = (request.candidate_dir / "agent_stream.jsonl").read_text().splitlines()
     assert len(stream) == 3  # init + assistant + result, all captured
     assert json.loads(stream[-1])["type"] == "result"
-    assert not (request.workspace / "agent.pid").exists()  # cleaned up
-    raw = json.loads((request.workspace / "agent_raw.json").read_text())
+    assert not (request.candidate_dir / "agent.pid").exists()  # cleaned up
+    raw = json.loads((request.candidate_dir / "agent_raw.json").read_text())
     assert raw["result"]["session_id"] == "sess-123"
 
 
@@ -112,7 +112,7 @@ def test_timeout_kills_and_cleans_pid(tmp_path: Path):
 
     assert not result.ok
     assert result.error_kind == "timeout"
-    assert not (request.workspace / "agent.pid").exists()
+    assert not (request.candidate_dir / "agent.pid").exists()
 
 
 def test_nonzero_exit_is_error(tmp_path: Path):

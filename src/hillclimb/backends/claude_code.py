@@ -87,12 +87,12 @@ def _kill_group(proc: subprocess.Popen) -> None:
 
 class ClaudeCodeBackend:
     """One operator call = one headless Claude Code invocation, cwd-scoped to
-    the node workspace. Auth comes from the interactive `claude` login (Max
+    the node candidate_dir. Auth comes from the interactive `claude` login (Max
     subscription) or CLAUDE_CODE_OAUTH_TOKEN in the environment.
 
     Runs with `--output-format stream-json` so the transcript lands
-    incrementally in <workspace>/agent_stream.jsonl, and exposes the child
-    pid in <workspace>/agent.pid while the call is in flight."""
+    incrementally in <candidate_dir>/agent_stream.jsonl, and exposes the child
+    pid in <candidate_dir>/agent.pid while the call is in flight."""
 
     name = "claude-code"
 
@@ -121,10 +121,10 @@ class ClaudeCodeBackend:
         if request.resume_session_id:
             cmd += ["--resume", request.resume_session_id]
 
-        workspace = Path(request.workspace)
-        stream_path = workspace / STREAM_FILE
-        pid_path = workspace / PID_FILE
-        stderr_path = workspace / "agent_stderr.log"
+        candidate_dir = Path(request.candidate_dir)
+        stream_path = candidate_dir / STREAM_FILE
+        pid_path = candidate_dir / PID_FILE
+        stderr_path = candidate_dir / "agent_stderr.log"
         start = time.monotonic()
         timed_out = False
         aborted = False
@@ -138,7 +138,7 @@ class ClaudeCodeBackend:
                     stdout=subprocess.PIPE,
                     stderr=stderr_sink,
                     text=True,
-                    cwd=request.workspace,
+                    cwd=request.candidate_dir,
                     env=subscription_env(self.auth),
                     start_new_session=True,  # own process group → killable as a unit
                 )
@@ -175,7 +175,7 @@ class ClaudeCodeBackend:
         payload = reader.result_payload or {}
         stderr_text = stderr_path.read_text(errors="replace") if stderr_path.exists() else ""
 
-        raw_path = workspace / "agent_raw.json"
+        raw_path = candidate_dir / "agent_raw.json"
         raw_path.write_text(
             json.dumps(
                 {

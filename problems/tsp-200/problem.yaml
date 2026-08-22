@@ -1,6 +1,6 @@
 problem_id: tsp-200
 metric: tour-length
-lower_is_better: true
+higher_is_better: false
 description: description.md
 data_dir: data
 # valid-by-construction floor: best/ always holds something

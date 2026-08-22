@@ -28,12 +28,12 @@ from hillclimb.knowledge import KnowledgeCard
 class Problem:
     problem_id = "spaceship-titanic"
     metric_name = "accuracy"
-    lower_is_better = False
+    higher_is_better = True
 
 
 class ProblemLower(Problem):
     problem_id = "gefcom2014-load"
-    lower_is_better = True
+    higher_is_better = False
 
 
 def make_journal(tmp_path, entries) -> Journal:
@@ -45,7 +45,7 @@ def make_journal(tmp_path, entries) -> Journal:
 
 def cand(cid, op, val, status="ok"):
     trials = [Trial(val_score=val)] if val is not None else []
-    return dict(candidate_id=cid, operator=op, status=status, workspace="w", trials=trials)
+    return dict(candidate_id=cid, operator=op, status=status, candidate_dir="w", trials=trials)
 
 
 def prior(problem_id, val):

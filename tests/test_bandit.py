@@ -15,7 +15,7 @@ from tests.conftest import local_executor
 from hillclimb.journal import Journal
 from hillclimb.routing import Router
 from hillclimb.search import GreedySearcher
-from hillclimb.workspace import create_search_dir
+from hillclimb.dirs import create_search_dir
 from tests.conftest import ok_script
 
 
@@ -63,21 +63,21 @@ def test_ucb1_ignores_unknown_arm():
 
 def test_reward_improvement_over_parent():
     parent = cand("c001", val=0.6)
-    assert candidate_reward(cand("c002", parent="c001", val=0.7), parent, False) == 1.0
-    assert candidate_reward(cand("c002", parent="c001", val=0.5), parent, False) == 0.25
+    assert candidate_reward(cand("c002", parent="c001", val=0.7), parent, True) == 1.0
+    assert candidate_reward(cand("c002", parent="c001", val=0.5), parent, True) == 0.25
     # direction respected
-    assert candidate_reward(cand("c002", parent="c001", val=0.5), parent, True) == 1.0
+    assert candidate_reward(cand("c002", parent="c001", val=0.5), parent, False) == 1.0
 
 
 def test_reward_edges():
     assert candidate_reward(cand("c1", status="buggy"), None, False) == 0.0
     assert candidate_reward(cand("c1", status="abandoned"), None, False) is None
     assert candidate_reward(cand("c1", val=0.5, model=None), None, False) is None
-    assert candidate_reward(cand("c1", val=0.5, best=True), None, False) == 1.0
-    assert candidate_reward(cand("c1", val=0.5, best=False), None, False) == 0.25
+    assert candidate_reward(cand("c1", val=0.5, best=True), None, True) == 1.0
+    assert candidate_reward(cand("c1", val=0.5, best=False), None, True) == 0.25
     # debug that fixed a buggy (unscored) parent counts as best-or-ok
     buggy_parent = cand("c001", status="buggy")
-    assert candidate_reward(cand("c2", parent="c001", val=0.4, best=True), buggy_parent, False) == 1.0
+    assert candidate_reward(cand("c2", parent="c001", val=0.4, best=True), buggy_parent, True) == 1.0
 
 
 # --- Router pool precedence ---

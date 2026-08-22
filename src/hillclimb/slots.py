@@ -38,7 +38,7 @@ class SlotHandle:
 class MachineSlots:
     """Acquire one of `limit` machine-wide slots; limit=0 disables the cap.
     `root` is the slot-file directory — pass the machine cache's agent-slots
-    dir so the cap spans every workspace on the machine."""
+    dir so the cap spans every search on the machine."""
 
     def __init__(self, root: Path, limit: int):
         self.limit = limit

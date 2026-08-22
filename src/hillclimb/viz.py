@@ -24,7 +24,7 @@ EDGE_STYLE = {
 }
 
 
-def _label(candidate, lower_is_better: bool) -> str:
+def _label(candidate, higher_is_better: bool) -> str:
     parts = [f"{candidate.candidate_id}  [{candidate.operator}"]
     if candidate.complexity:
         parts[0] += f"/{candidate.complexity}"
@@ -55,7 +55,7 @@ def _label(candidate, lower_is_better: bool) -> str:
     return "\n".join(parts)
 
 
-def build_tree(journal: Journal, lower_is_better: bool, title: str = "") -> pydot.Dot:
+def build_tree(journal: Journal, higher_is_better: bool, title: str = "") -> pydot.Dot:
     """Render the journal as an exploration tree.
 
     Reading the graph: green = scored, red = failed attempt, gray = abandoned,
@@ -71,7 +71,7 @@ def build_tree(journal: Journal, lower_is_better: bool, title: str = "") -> pydo
         fontsize=16,
         fontname="Helvetica",
     )
-    selected = journal.selected_candidate(lower_is_better)
+    selected = journal.selected_candidate(higher_is_better)
     best_id = selected.candidate_id if selected else None
 
     for candidate in journal.candidates.values():
@@ -83,7 +83,7 @@ def build_tree(journal: Journal, lower_is_better: bool, title: str = "") -> pydo
         graph.add_node(
             pydot.Node(
                 candidate.candidate_id,
-                label=_label(candidate, lower_is_better),
+                label=_label(candidate, higher_is_better),
                 shape="box",
                 style=style,
                 fillcolor=fill,
@@ -115,8 +115,8 @@ def build_tree(journal: Journal, lower_is_better: bool, title: str = "") -> pydo
     return graph
 
 
-def render_tree(journal: Journal, lower_is_better: bool, out_path: Path, title: str = "") -> Path:
-    graph = build_tree(journal, lower_is_better, title)
+def render_tree(journal: Journal, higher_is_better: bool, out_path: Path, title: str = "") -> Path:
+    graph = build_tree(journal, higher_is_better, title)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     suffix = out_path.suffix.lstrip(".") or "png"
     graph.write(str(out_path), format=suffix)

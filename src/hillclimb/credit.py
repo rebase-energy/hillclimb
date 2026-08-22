@@ -69,8 +69,8 @@ def search_reward(
 ) -> tuple[float, str]:
     """(reward, basis) for a finished search. `prior_cards` must already
     exclude this search's own card."""
-    direction = 1 if problem.lower_is_better else -1
-    selected = journal.selected_candidate(problem.lower_is_better, selection)
+    direction = -1 if problem.higher_is_better else 1
+    selected = journal.selected_candidate(problem.higher_is_better, selection)
     val = selected.val_score if selected is not None else None
     if val is None:
         return 0.0, "none-scored"

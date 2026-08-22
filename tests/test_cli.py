@@ -23,7 +23,7 @@ def write_problem(root, name):
         f"""
 problem_id: {name}
 metric: score
-lower_is_better: false
+higher_is_better: true
 description: description.md
 """
     )
@@ -205,7 +205,7 @@ def test_create_search_persists_policy_and_routing(task, config, tmp_path):
 
 def test_resume_restores_policy_and_routing(config, tmp_path, monkeypatch):
     """A search resumes under the policy/routing it started with, regardless
-    of what the live workspace config says."""
+    of what the live candidate_dir config says."""
     from hillclimb.cli import resume
 
     config.paths.runs_dir = tmp_path / "runs"
@@ -321,7 +321,7 @@ def test_resolve_search_dir_unknown_refs(config, tmp_path):
 def test_knowledge_live_renders_run_cards(config, tmp_path, monkeypatch, capsys):
     from hillclimb.cli import knowledge_live
     from hillclimb.knowledge import KnowledgeCard, write_live_card
-    from hillclimb.workspace import create_run_dir
+    from hillclimb.dirs import create_run_dir
 
     config.paths.runs_dir = tmp_path / "runs"
     run_dir = create_run_dir(config.paths.runs_dir, "r1")
@@ -367,7 +367,7 @@ def test_show_renders_report_diff_and_notes(config, tmp_path, monkeypatch, capsy
 
     report = {
         "version": 1, "split": "validation", "objective": "score",
-        "lower_is_better": False,
+        "higher_is_better": True,
         "overall": {"score": 0.7, "n_origins": 3, "n_scored": 30},
         "zones": [
             {"zone": "z1", "score": 0.6, "n_origins": 1, "n_scored": 10},
@@ -377,11 +377,11 @@ def test_show_renders_report_diff_and_notes(config, tmp_path, monkeypatch, capsy
     journal = Journal(search_dir / "journal.jsonl")
     journal.candidate_result(
         Candidate(candidate_id="c001", operator="draft", status="ok",
-                  workspace=str(parent_ws), trials=[Trial(val_score=0.6)])
+                  candidate_dir=str(parent_ws), trials=[Trial(val_score=0.6)])
     )
     journal.candidate_result(
         Candidate(candidate_id="c002", operator="improve", parent_id="c001", status="ok",
-                  workspace=str(child_ws), summary="added lag features",
+                  candidate_dir=str(child_ws), summary="added lag features",
                   trials=[Trial(val_score=0.7, report=report)])
     )
     monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)

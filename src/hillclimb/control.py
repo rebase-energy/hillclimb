@@ -86,21 +86,21 @@ def apply_prune(journal: Journal, candidate_id: str, reason: str = "", source: s
     return pruned
 
 
-def resync_best(search_dir: Path, journal: Journal, lower_is_better: bool, selection_mode: str) -> str | None:
+def resync_best(search_dir: Path, journal: Journal, higher_is_better: bool, selection_mode: str) -> str | None:
     """Repoint best/ at the current selection (used after prune). Falls back
     to the baseline submission when no scored candidate remains. Returns the
     newly selected candidate id, or None on baseline fallback."""
-    selected = journal.selected_candidate(lower_is_better, selection_mode)
+    selected = journal.selected_candidate(higher_is_better, selection_mode)
     best_dir = search_dir / "best"
     if selected is None:
         baseline = journal.candidates.get("c000")
         if baseline is not None:
-            submission = Path(baseline.workspace) / "submission.csv"
+            submission = Path(baseline.candidate_dir) / "submission.csv"
             if submission.exists():
                 shutil.copy(submission, best_dir / "submission.csv")
         (best_dir / "solution.py").unlink(missing_ok=True)
         return None
-    src = Path(selected.workspace)
+    src = Path(selected.candidate_dir)
     if (src / "submission.csv").exists():
         shutil.copy(src / "submission.csv", best_dir / "submission.csv")
     if (src / "solution.py").exists():
@@ -114,7 +114,7 @@ def resync_best(search_dir: Path, journal: Journal, lower_is_better: bool, selec
 def request_prune(
     search_dir: Path,
     candidate_id: str,
-    lower_is_better: bool,
+    higher_is_better: bool,
     selection_mode: str,
     reason: str = "",
     source: str = "cli",
@@ -132,7 +132,7 @@ def request_prune(
     pruned = apply_prune(journal, candidate_id, reason, source)
     if not pruned:
         return f"{candidate_id} (and its subtree) was already pruned"
-    selected = resync_best(search_dir, journal, lower_is_better, selection_mode)
+    selected = resync_best(search_dir, journal, higher_is_better, selection_mode)
     outcome = f"pruned {', '.join(pruned)}"
     outcome += f"; best/ now {selected}" if selected else "; best/ reverted to baseline"
     return outcome

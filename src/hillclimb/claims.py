@@ -368,15 +368,15 @@ def _search_digest(journal: Journal, problem, card: KnowledgeCard, max_lines: in
 
 
 def _solution_excerpt(journal: Journal, problem, config: Config) -> str:
-    selected = journal.selected_candidate(problem.lower_is_better, config.holdout.selection)
+    selected = journal.selected_candidate(problem.higher_is_better, config.holdout.selection)
     if selected is None:
         return "(no selected candidate)"
     parts: list[str] = [f"Selected candidate {selected.candidate_id} ({selected.operator}):"]
-    workspace = Path(selected.workspace)
-    solution = workspace / "solution.py"
+    candidate_dir = Path(selected.candidate_dir)
+    solution = candidate_dir / "solution.py"
     if solution.exists():
         parts.append("```python\n" + solution.read_text()[:4000] + "\n```")
-    notes = workspace / "notes.md"
+    notes = candidate_dir / "notes.md"
     if notes.exists():
         parts.append("Agent notes:\n" + notes.read_text()[:2000])
     return "\n".join(parts)
@@ -418,15 +418,15 @@ def invoke_knowledge_agent(
     *,
     operator: str,
     prompt: str,
-    workspace: Path,
+    work_dir: Path,
     timeout_s: int,
     default_model: str,
 ):
     """One headless agent call for a knowledge pass; the agent communicates
-    by writing files into `workspace` (prompt.md stays there for
+    by writing files into `work_dir` (prompt.md stays there for
     inspection). Resolved through the api seam tests patch."""
-    workspace.mkdir(parents=True, exist_ok=True)
-    (workspace / "prompt.md").write_text(prompt)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    (work_dir / "prompt.md").write_text(prompt)
     backend_name, model, auth = resolve_pass_route(config, operator, default_model)
     # resolve through the api namespace — the seam tests patch to keep every
     # agent call fake; lazy import avoids the module cycle
@@ -435,7 +435,7 @@ def invoke_knowledge_agent(
     backend = get_backend(backend_name, auth=auth)
     return backend.invoke(
         OperatorRequest(
-            operator=operator, prompt=prompt, workspace=workspace,
+            operator=operator, prompt=prompt, candidate_dir=work_dir,
             timeout_s=timeout_s, model=model,
         )
     )
@@ -446,14 +446,14 @@ def _distill(
     card: KnowledgeCard,
     digest: str,
     excerpt: str,
-    workspace: Path,
+    work_dir: Path,
     knowledge_dir: Path,
     config: Config,
     log,
 ) -> list[Claim]:
     concepts = ensure_concepts(knowledge_dir)
     entities = load_entities(knowledge_dir)
-    direction = "lower is better" if card.lower_is_better else "higher is better"
+    direction = "higher is better" if card.higher_is_better else "lower is better"
     prompt = render(
         "distill",
         problem_id=card.problem_id,
@@ -472,7 +472,7 @@ def _distill(
         config,
         operator="distill",
         prompt=prompt,
-        workspace=workspace,
+        work_dir=work_dir,
         timeout_s=config.learning.claims_timeout_s,
         default_model=DEFAULT_DISTILL_MODEL,
     )
@@ -480,7 +480,7 @@ def _distill(
         log(f"learning: distill agent failed ({result.error_kind}): {result.error_message}")
         return []
     claims, new_entities, proposed = parse_claims_file(
-        workspace / CLAIMS_FILENAME,
+        work_dir / CLAIMS_FILENAME,
         run_ref=card.run_ref,
         family=card.family,
         problem_id=card.problem_id,
@@ -517,7 +517,7 @@ def distill_claims(
         card=card,
         digest=_search_digest(journal, problem, card),
         excerpt=_solution_excerpt(journal, problem, config),
-        workspace=search_dir / "distill",
+        work_dir=search_dir / "distill",
         knowledge_dir=knowledge_dir,
         config=config,
         log=log,
@@ -527,7 +527,7 @@ def distill_claims(
 def distill_claims_from_card(
     card: KnowledgeCard,
     *,
-    workspace: Path,
+    work_dir: Path,
     knowledge_dir: Path,
     config: Config,
     log,
@@ -541,7 +541,7 @@ def distill_claims_from_card(
         card=card,
         digest=digest,
         excerpt="(search artifacts unavailable — card data only)",
-        workspace=workspace,
+        work_dir=work_dir,
         knowledge_dir=knowledge_dir,
         config=config,
         log=log,

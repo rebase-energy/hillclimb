@@ -34,7 +34,7 @@ class BenchRow:
     state: str
     holdout: float | None
     val: float | None
-    lower_is_better: bool
+    higher_is_better: bool
     started_at: str
 
     @property
@@ -89,15 +89,15 @@ def collect_bench_results(
                 state=state,
                 holdout=selected.holdout_score if selected else None,
                 val=selected.val_score if selected else None,
-                lower_is_better=meta.lower_is_better,
+                higher_is_better=meta.higher_is_better,
                 started_at=meta.started_at,
             ))
     rows.sort(key=lambda r: r.started_at)
     return rows
 
 
-def _better(a: float, b: float, lower_is_better: bool) -> bool:
-    return a < b if lower_is_better else a > b
+def _better(a: float, b: float, higher_is_better: bool) -> bool:
+    return a > b if higher_is_better else a < b
 
 
 def pair_and_summarize(rows: list[BenchRow]) -> list[BenchSummary]:
@@ -116,9 +116,9 @@ def pair_and_summarize(rows: list[BenchRow]) -> list[BenchSummary]:
         for off, on in pairs:
             if off.score is None or on.score is None:
                 ties += 1
-            elif _better(on.score, off.score, on.lower_is_better):
+            elif _better(on.score, off.score, on.higher_is_better):
                 on_wins += 1
-            elif _better(off.score, on.score, on.lower_is_better):
+            elif _better(off.score, on.score, on.higher_is_better):
                 off_wins += 1
             else:
                 ties += 1
@@ -144,9 +144,9 @@ def render_bench_report(summaries: list[BenchSummary]) -> str:
     lines: list[str] = []
     for summary in summaries:
         direction = (
-            "lower is better" if (summary.pairs and summary.pairs[0][0].lower_is_better)
-            or (summary.unpaired and summary.unpaired[0].lower_is_better)
-            else "higher is better"
+            "higher is better" if (summary.pairs and summary.pairs[0][0].higher_is_better)
+            or (summary.unpaired and summary.unpaired[0].higher_is_better)
+            else "lower is better"
         )
         lines.append(f"## {summary.problem_id} ({direction})")
         lines.append("")
@@ -155,9 +155,9 @@ def render_bench_report(summaries: list[BenchSummary]) -> str:
         for index, (off, on) in enumerate(summary.pairs, 1):
             if off.score is None or on.score is None:
                 winner = "-"
-            elif _better(on.score, off.score, on.lower_is_better):
+            elif _better(on.score, off.score, on.higher_is_better):
                 winner = "on"
-            elif _better(off.score, on.score, on.lower_is_better):
+            elif _better(off.score, on.score, on.higher_is_better):
                 winner = "off"
             else:
                 winner = "tie"

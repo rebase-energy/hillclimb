@@ -36,14 +36,14 @@ def test_best_candidate_direction(tmp_path: Path):
     journal.candidate_result(make_candidate("c001", status="ok", val_score=0.5))
     journal.candidate_result(make_candidate("c002", status="ok", val_score=0.9))
     journal.candidate_result(make_candidate("c003", status="buggy"))
-    assert journal.best_candidate(lower_is_better=False).candidate_id == "c002"
-    assert journal.best_candidate(lower_is_better=True).candidate_id == "c001"
+    assert journal.best_candidate(higher_is_better=True).candidate_id == "c002"
+    assert journal.best_candidate(higher_is_better=False).candidate_id == "c001"
 
 
 def test_best_candidate_ignores_unscored_baseline(tmp_path: Path):
     journal = Journal(tmp_path / "j.jsonl")
     journal.candidate_result(make_candidate("c000", operator="baseline", status="ok"))
-    assert journal.best_candidate(lower_is_better=False) is None
+    assert journal.best_candidate(higher_is_better=True) is None
 
 
 def test_debug_chain_and_siblings(tmp_path: Path):
@@ -68,27 +68,27 @@ def test_next_candidate_id(tmp_path: Path):
 
 def test_rank_blend_selection_robust_to_holdout_outlier(tmp_path):
     """The leaf-classification failure: a lucky-holdout early candidate must
-    not beat one that ranks well on BOTH signals (lower_is_better metric)."""
+    not beat one that ranks well on BOTH signals (higher_is_better metric)."""
     journal = Journal(tmp_path / "j.jsonl")
     journal.candidate_result(make_candidate("cA", status="ok", val_score=0.046, holdout_score=0.093))
     journal.candidate_result(make_candidate("cB", status="ok", val_score=0.138, holdout_score=0.084))
     journal.candidate_result(make_candidate("cC", status="ok", val_score=0.054, holdout_score=0.099))
-    assert journal.selected_candidate(True).candidate_id == "cA"           # rank-blend
-    assert journal.selected_candidate(True, "holdout").candidate_id == "cB"  # naive argmax
-    assert journal.selected_candidate(True, "val").candidate_id == "cA"
+    assert journal.selected_candidate(False).candidate_id == "cA"           # rank-blend
+    assert journal.selected_candidate(False, "holdout").candidate_id == "cB"  # naive argmax
+    assert journal.selected_candidate(False, "val").candidate_id == "cA"
 
 
 def test_rank_blend_vetoes_val_overfit(tmp_path):
     journal = Journal(tmp_path / "j.jsonl")
     journal.candidate_result(make_candidate("honest", status="ok", val_score=0.80, holdout_score=0.85))
     journal.candidate_result(make_candidate("overfit", status="ok", val_score=0.99, holdout_score=0.40))
-    assert journal.selected_candidate(False).candidate_id == "honest"
+    assert journal.selected_candidate(True).candidate_id == "honest"
 
 
 def test_rank_blend_ties_and_missing_holdout(tmp_path):
     journal = Journal(tmp_path / "j.jsonl")
     journal.candidate_result(make_candidate("c1", status="ok", val_score=0.5))
-    assert journal.selected_candidate(False).candidate_id == "c1"  # no holdout anywhere → val
+    assert journal.selected_candidate(True).candidate_id == "c1"  # no holdout anywhere → val
 
 
 def test_replay_skips_non_candidate_events(tmp_path: Path):
@@ -133,7 +133,7 @@ def test_queries_exclude_pruned(tmp_path: Path):
 
     assert [c.candidate_id for c in journal.scored_candidates()] == ["c001"]
     assert [c.candidate_id for c in journal.drafts()] == ["c001"]
-    assert journal.best_candidate(lower_is_better=False).candidate_id == "c001"
+    assert journal.best_candidate(higher_is_better=True).candidate_id == "c001"
     assert journal.children("c001") == []
     assert [c.candidate_id for c in journal.children("c001", include_pruned=True)] == ["c003"]
 

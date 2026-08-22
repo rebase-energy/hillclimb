@@ -9,7 +9,7 @@ from pydantic import BaseModel
 class OperatorRequest(BaseModel):
     operator: str  # draft | debug | improve
     prompt: str
-    workspace: Path
+    candidate_dir: Path
     timeout_s: int
     model: str = "sonnet"
     resume_session_id: str | None = None  # set within a debug chain

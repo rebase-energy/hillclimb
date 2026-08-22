@@ -5,7 +5,7 @@ candidate is a real winner (non-baseline, scored), its `solution.py` is
 copied verbatim into `knowledge/skills/<family>--<run-ref>/` with a metadata
 card — no model calls. The next search on the family (or, failing that, a
 concept-sibling problem) gets the best skill copied into its FIRST draft's
-workspace as `reference_solution.py`, with a prompt cue to adapt rather than
+candidate dir as `reference_solution.py`, with a prompt cue to adapt rather than
 resubmit. Later drafts stay reference-free so the search still explores.
 
 Kept deliberately small: at most SKILLS_PER_FAMILY skills per family,
@@ -20,9 +20,10 @@ import shutil
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from hillclimb.candidate import utcnow
+from hillclimb.direction import legacy_direction_key
 from hillclimb.knowledge import extract_libraries
 
 SKILLS_DIRNAME = "skills"
@@ -38,7 +39,12 @@ class Skill(BaseModel):
     family: str
     concepts: list[str] = Field(default_factory=list)
     metric: str = ""
-    lower_is_better: bool = False
+    higher_is_better: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_direction_key(cls, data):
+        return legacy_direction_key(data)
     score: float | None = None
     holdout: float | None = None
     libraries: list[str] = Field(default_factory=list)
@@ -74,8 +80,8 @@ def load_skills(knowledge_dir: Path, *, family: str = "") -> list[tuple[Skill, P
     return skills
 
 
-def _better(a: float, b: float, lower_is_better: bool) -> bool:
-    return a < b if lower_is_better else a > b
+def _better(a: float, b: float, higher_is_better: bool) -> bool:
+    return a > b if higher_is_better else a < b
 
 
 def harvest_skill(
@@ -90,10 +96,10 @@ def harvest_skill(
     """Post-search harvest (mechanical). Quality gate: only a scored,
     non-baseline winner enters the library; within a family the library
     keeps the SKILLS_PER_FAMILY best by validation score."""
-    selected = journal.selected_candidate(problem.lower_is_better, selection)
+    selected = journal.selected_candidate(problem.higher_is_better, selection)
     if selected is None or selected.operator == "baseline" or selected.val_score is None:
         return None
-    solution = Path(selected.workspace) / "solution.py"
+    solution = Path(selected.candidate_dir) / "solution.py"
     if not solution.exists():
         return None
     existing = load_skills(knowledge_dir, family=card.family)
@@ -102,9 +108,9 @@ def harvest_skill(
         # direction-normalized score: smaller is better, so the worst is max
         worst_skill, worst_dir = max(
             scored,
-            key=lambda pair: (1 if problem.lower_is_better else -1) * pair[0].score,
+            key=lambda pair: (-1 if problem.higher_is_better else 1) * pair[0].score,
         )
-        if not _better(selected.val_score, worst_skill.score, problem.lower_is_better):
+        if not _better(selected.val_score, worst_skill.score, problem.higher_is_better):
             return None
         shutil.rmtree(worst_dir, ignore_errors=True)
     from hillclimb.claims import problem_concepts
@@ -115,7 +121,7 @@ def harvest_skill(
         family=card.family,
         concepts=problem_concepts(kind, card.metric),
         metric=card.metric,
-        lower_is_better=card.lower_is_better,
+        higher_is_better=card.higher_is_better,
         score=selected.val_score,
         holdout=selected.holdout_score,
         libraries=extract_libraries(solution),
@@ -136,7 +142,7 @@ def select_skill(
     *,
     family: str,
     concepts: list[str],
-    lower_is_better: bool,
+    higher_is_better: bool,
 ) -> tuple[Skill, Path] | None:
     """Same-family skills compete on score (comparable metric); across
     families scores don't compare, so concept-overlapping skills fall back
@@ -147,7 +153,7 @@ def select_skill(
     if same_family:
         return min(
             same_family,
-            key=lambda pair: (1 if lower_is_better else -1) * pair[0].score,
+            key=lambda pair: (-1 if higher_is_better else 1) * pair[0].score,
         )
     wanted = set(concepts)
     siblings = [

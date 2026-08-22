@@ -61,7 +61,7 @@ def make_run_with_search(
             backend="claude-code",
             model="sonnet",
             metric="score",
-            lower_is_better=False,
+            higher_is_better=True,
             budget_s=3600,
         ),
     )
@@ -196,7 +196,7 @@ def test_search_row_counts_in_flight_tokens(tmp_path: Path):
     status = SearchStatus(
         search_id="circle-packing", run_id="20260701-run", state="running",
         current=[CurrentCandidate(candidate_id="c003", operator="improve", phase="agent",
-                                  workspace=str(live))],
+                                  candidate_dir=str(live))],
     )
     from hillclimb.status import write_status
     write_status(search_dir, status)
@@ -238,12 +238,12 @@ def test_candidate_rows_tree_order_and_pruned(tmp_path: Path):
 
 def test_candidate_detail_lines_include_scores_lineage_and_notes(tmp_path: Path):
     search_dir = make_run_with_search(tmp_path / "runs", "r")
-    workspace = search_dir / "candidates" / "c001"
-    workspace.mkdir(parents=True, exist_ok=True)
-    (workspace / "notes.md").write_text("tried nearest-neighbor seed\nkept deterministic order\n")
-    (workspace / "exec_stdout.log").write_text("val_score: 0.7\n")
-    (workspace / "exec_stderr.log").write_text("warning: local search plateau\n")
-    (workspace / "agent_stream.jsonl").write_text(
+    candidate_dir = search_dir / "candidates" / "c001"
+    candidate_dir.mkdir(parents=True, exist_ok=True)
+    (candidate_dir / "notes.md").write_text("tried nearest-neighbor seed\nkept deterministic order\n")
+    (candidate_dir / "exec_stdout.log").write_text("val_score: 0.7\n")
+    (candidate_dir / "exec_stderr.log").write_text("warning: local search plateau\n")
+    (candidate_dir / "agent_stream.jsonl").write_text(
         json.dumps({"type": "assistant", "message": {"content": [
             {"type": "text", "text": "I will try a constructive heuristic."},
         ]}})
@@ -283,11 +283,11 @@ def test_candidate_detail_renderables_are_sectioned(tmp_path: Path):
     from rich.console import Console
 
     search_dir = make_run_with_search(tmp_path / "runs", "r")
-    workspace = search_dir / "candidates" / "c001"
-    workspace.mkdir(parents=True, exist_ok=True)
-    (workspace / "notes.md").write_text("tried nearest-neighbor seed\n")
-    (workspace / "exec_stdout.log").write_text("val_score: 0.7\n")
-    (workspace / "exec_stderr.log").write_text("warning: local search plateau\n")
+    candidate_dir = search_dir / "candidates" / "c001"
+    candidate_dir.mkdir(parents=True, exist_ok=True)
+    (candidate_dir / "notes.md").write_text("tried nearest-neighbor seed\n")
+    (candidate_dir / "exec_stdout.log").write_text("val_score: 0.7\n")
+    (candidate_dir / "exec_stderr.log").write_text("warning: local search plateau\n")
 
     renderables = candidate_detail_renderables(
         search_dir,

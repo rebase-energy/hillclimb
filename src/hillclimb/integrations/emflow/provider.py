@@ -40,13 +40,13 @@ def _find_baseline(name: str) -> str | None:
 
 def materialize_problem_dir(problem, name: str, cache_root: Path) -> Path:
     """Write a small on-disk problem dir (description + API crib) so the
-    engine's workspace symlinks and data listing work untouched."""
+    engine's candidate_dir symlinks and data listing work untouched."""
     problem_dir = cache_root / PROBLEM_CACHE_DIRNAME / _slug(name)
     problem_dir.mkdir(parents=True, exist_ok=True)
 
     env = problem.env("validation")
     quantiles = getattr(env, "quantiles", None)
-    direction = "lower is better" if problem.objective.lower_is_better else "higher is better"
+    direction = "lower is better" if problem.objective.lower_is_better else "higher is better"  # legacy-key: emflow's own field
     n_val = len(problem.origins("validation"))
     n_hold = len(problem.origins("holdout"))
 
@@ -111,7 +111,7 @@ def load_emflow_problem(name: str, config: Config) -> ProblemSpec:
         data_dir=problem_dir.resolve(),
         description=(problem_dir / "description.md").read_text(),
         metric_name=problem.objective.name,
-        lower_is_better=problem.objective.lower_is_better,
+        higher_is_better=not problem.objective.lower_is_better,  # legacy-key: emflow's own field
         time_budget_s=config.budget.total_s,
         verifier_cmd=verifier_cmd,
         holdout_cmd=holdout_cmd,

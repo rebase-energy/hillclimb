@@ -54,7 +54,7 @@ def test_load_mlebench_problem(mb_config):
     assert not problem.report_trusted  # the agent reports its own score
     assert problem.mlebench_comp_id == "fake-comp"
     assert problem.metric_name == "accuracy"
-    assert problem.lower_is_better is False  # leaderboard best-first, 0.99 on top
+    assert problem.higher_is_better is True  # leaderboard best-first, 0.99 on top
     assert problem.verifier_cmd[-2:] == ["--require", "submission.csv"]
     assert problem.data_dir.name == "public"
     assert "Predict the thing" in problem.description
@@ -65,7 +65,7 @@ def test_direction_inferred_lower_better(tmp_path, config):
     config.paths.mlebench_python = repo / ".venv" / "bin" / "python"
     config.paths.mlebench_data_dir = prepare_data(tmp_path, comp_id="rmse-comp")
     problem = load_problem("mlebench://rmse-comp", config)
-    assert problem.lower_is_better is True
+    assert problem.higher_is_better is False
 
 
 def test_unprepared_competition_names_the_fix(mb_config, tmp_path):
@@ -110,10 +110,10 @@ def test_search_meta_records_resumable_target(mb_config, tmp_path):
 
 def test_post_search_grading_writes_report(mb_config, tmp_path, monkeypatch):
     problem = load_problem("mlebench://fake-comp", mb_config)
-    workspace = tmp_path / "ws"
-    workspace.mkdir()
-    (workspace / "submission.csv").write_text("id,target\n1,1\n")
-    selected = Candidate(candidate_id="c003", operator="improve", workspace=str(workspace))
+    candidate_dir = tmp_path / "ws"
+    candidate_dir.mkdir()
+    (candidate_dir / "submission.csv").write_text("id,target\n1,1\n")
+    selected = Candidate(candidate_id="c003", operator="improve", candidate_dir=str(candidate_dir))
     search_dir = tmp_path / "search"
     search_dir.mkdir()
 
@@ -127,7 +127,7 @@ def test_post_search_grading_writes_report(mb_config, tmp_path, monkeypatch):
     logs = []
     api._mlebench_grade(mb_config, problem, search_dir, selected, logs.append)
 
-    assert graded["args"] == (workspace / "submission.csv", "fake-comp")
+    assert graded["args"] == (candidate_dir / "submission.csv", "fake-comp")
     report = json.loads((search_dir / "mlebench-grade.json").read_text())
     assert report["score"] == 0.91
     assert any("medal=silver" in line for line in logs)
@@ -136,7 +136,7 @@ def test_post_search_grading_writes_report(mb_config, tmp_path, monkeypatch):
 def test_grading_failure_never_raises(mb_config, tmp_path):
     problem = load_problem("mlebench://fake-comp", mb_config)
     selected = Candidate(
-        candidate_id="c003", operator="improve", workspace=str(tmp_path / "missing")
+        candidate_id="c003", operator="improve", candidate_dir=str(tmp_path / "missing")
     )
     logs = []
     api._mlebench_grade(mb_config, problem, tmp_path, selected, logs.append)

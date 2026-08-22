@@ -69,7 +69,7 @@ def main() -> None:
         "version": 1,
         "split": split,
         "objective": "mean-bins",
-        "lower_is_better": True,
+        "higher_is_better": False,
         "source": "evaluator",
         "segment_label": "instance",
         "overall": {"score": score, "n_origins": len(results), "n_scored": len(results)},

@@ -159,7 +159,7 @@ class TestInjectionReplaceRule:
         from types import SimpleNamespace
 
         return SimpleNamespace(problem_id="comp-a", metric_name="accuracy",
-                               lower_is_better=False, kind="csv")
+                               higher_is_better=True, kind="csv")
 
     def test_playbook_replaces_claims_and_carries_source_credit(self, knowledge_dir):
         from hillclimb.api import build_knowledge_context

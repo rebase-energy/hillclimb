@@ -5,28 +5,48 @@ from pathlib import Path
 
 from hillclimb.candidate import Candidate, Trial, utcnow
 from hillclimb.problem import ProblemSpec
-from hillclimb.workspace import create_candidate_workspace
+from hillclimb.dirs import create_candidate_dir
 
 
 def unscored_placeholder(search_dir: Path, files: dict[str, Path] | None = None) -> Candidate:
     """c000 when the problem ships no runnable baseline: keeps the tree
     rooted (the engine requires c000) without pretending to a score. Any
-    `files` maps a workspace name to a valid-by-construction source (a sample
+    `files` maps a file name (inside the candidate dir) to a valid-by-construction source (a sample
     submission copied in as `submission.csv`) so the search always has
     something to ship."""
-    workspace = search_dir / "candidates" / "c000"
-    workspace.mkdir(parents=True, exist_ok=True)
+    candidate_dir = search_dir / "candidates" / "c000"
+    candidate_dir.mkdir(parents=True, exist_ok=True)
     for name, source in (files or {}).items():
-        shutil.copy(source, workspace / name)
+        shutil.copy(source, candidate_dir / name)
         (search_dir / "best").mkdir(parents=True, exist_ok=True)
         shutil.copy(source, search_dir / "best" / name)
     return Candidate(
         candidate_id="c000",
         operator="baseline",
         status="ok",
-        workspace=str(workspace),
+        candidate_dir=str(candidate_dir),
         summary="baseline: none shipped with this problem (unscored placeholder)",
         finished_at=utcnow(),
+    )
+
+
+def declared_floor(search_dir: Path, score: float, summary: str) -> Candidate:
+    """c000 for a problem that declares its floor as a number (`baseline: 0.5`):
+    a scored candidate with no code, so drafts must beat it to become best but
+    nothing is ever improved or ensembled from it."""
+    candidate_dir = search_dir / "candidates" / "c000"
+    candidate_dir.mkdir(parents=True, exist_ok=True)
+    (candidate_dir / "notes.md").write_text(summary + "\n")
+    now = utcnow()
+    return Candidate(
+        candidate_id="c000",
+        operator="baseline",
+        status="ok",
+        candidate_dir=str(candidate_dir),
+        summary=summary,
+        trials=[Trial(returncode=0, duration_s=0.0, submission_ok=True, val_score=score, finished_at=now)],
+        is_best=True,
+        finished_at=now,
     )
 
 
@@ -43,21 +63,21 @@ def run_scored_baseline(
     beat. Shared by the emflow and evaluator kinds; degrades to the
     unscored-placeholder semantics when the eval fails (keeps the search
     alive)."""
-    workspace = create_candidate_workspace(
+    candidate_dir = create_candidate_dir(
         search_dir, "c000", problem.data_dir, problem.problem_dir
     )
     candidate = Candidate(
         candidate_id="c000",
         operator="baseline",
         status="ok",
-        workspace=str(workspace),
+        candidate_dir=str(candidate_dir),
         summary=summary,
     )
-    solution = workspace / "solution.py"
+    solution = candidate_dir / "solution.py"
     solution.write_text(solution_text)
-    (workspace / "notes.md").write_text(summary + "\n")
+    (candidate_dir / "notes.md").write_text(summary + "\n")
 
-    exec_result = executor.execute(solution, workspace, timeout_s)
+    exec_result = executor.execute(solution, candidate_dir, timeout_s)
     trial = Trial(
         returncode=exec_result.returncode,
         duration_s=exec_result.duration_s,
@@ -67,7 +87,7 @@ def run_scored_baseline(
     )
     if exec_result.ok:
         if holdout_scorer is not None:
-            trial.holdout_score, trial.holdout_error = holdout_scorer.score(workspace)
+            trial.holdout_score, trial.holdout_error = holdout_scorer.score(candidate_dir)
         trial.finished_at = utcnow()
         candidate.trials.append(trial)
         candidate.is_best = True
@@ -76,8 +96,8 @@ def run_scored_baseline(
         # the artifacts the baseline produced (e.g. submission.csv) ship
         # alongside it, so best/ is complete from t=0
         for name in problem.baseline_files:
-            if (workspace / name).exists():
-                shutil.copy(workspace / name, search_dir / "best" / name)
+            if (candidate_dir / name).exists():
+                shutil.copy(candidate_dir / name, search_dir / "best" / name)
     else:
         candidate.summary += " (baseline eval failed; unscored)"
         for name, source in problem.baseline_files.items():
@@ -97,6 +117,8 @@ def write_baseline(
     """t=0 scored floor: the problem's baseline solution evaluated for real,
     so agent drafts must beat something honest to become best. Problems that
     ship no baseline get the unscored placeholder."""
+    if problem.baseline_score is not None:
+        return declared_floor(search_dir, problem.baseline_score, problem.baseline_summary)
     if problem.baseline_text is None or executor is None:
         return unscored_placeholder(search_dir, problem.baseline_files)
     return run_scored_baseline(

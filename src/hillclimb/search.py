@@ -23,7 +23,7 @@ from hillclimb.run import SEARCHES_DIRNAME
 from hillclimb.slots import MachineSlots
 from hillclimb.status import CandidateCounts, CurrentCandidate, ScoreRef, StatusWriter
 from hillclimb.problem import ProblemSpec
-from hillclimb.workspace import create_candidate_workspace
+from hillclimb.dirs import create_candidate_dir
 
 TAIL_CHARS = 2000
 
@@ -36,7 +36,7 @@ class Job:
 
     candidate: Candidate
     request: OperatorRequest | None  # None for the agent-less seed candidate
-    workspace: Path
+    candidate_dir: Path
     ensemble_inputs: "list[Candidate] | None" = None
     holdout_threshold: float | None = None  # k-th best val at prepare time; None = no gate
     backend: OperatorBackend | None = None  # routed instance; None = harness default
@@ -120,7 +120,7 @@ class GreedySearcher:
         self.seed_solution = seed_solution  # incumbent model: scored as a floor candidate
         self.knowledge_context = knowledge_context  # prior-experience prompt section
         # skill library: a proven prior solution copied into the FIRST
-        # draft's workspace as reference_solution.py (later drafts explore)
+        # draft's candidate dir as reference_solution.py (later drafts explore)
         self.reference_solution = reference_solution
         self.reference_note = reference_note
         self.complexity_start = complexity_start  # learned draft-complexity offset
@@ -144,7 +144,7 @@ class GreedySearcher:
             stale.finished_at = utcnow()
             journal.candidate_result(stale)
             log(f"  recovered stale pending candidate {stale.candidate_id} -> abandoned")
-        existing = journal.selected_candidate(problem.lower_is_better, config.holdout.selection)
+        existing = journal.selected_candidate(problem.higher_is_better, config.holdout.selection)
         self._selection_id = existing.candidate_id if existing else None  # resume-safe
         # resume contract: stateful policies (and the routing bandit) rebuild
         # their caches from the replayed journal (in journal order, after
@@ -177,7 +177,7 @@ class GreedySearcher:
                 stop_margin_s=self.budget.stop_margin_s,
             ),
             config=self.config,
-            lower_is_better=self.problem.lower_is_better,
+            higher_is_better=self.problem.higher_is_better,
         )
 
     # --- main loop ---
@@ -256,7 +256,7 @@ class GreedySearcher:
         finally:
             pool.shutdown(wait=True)
         return self.journal.selected_candidate(
-            self.problem.lower_is_better, self.config.holdout.selection
+            self.problem.higher_is_better, self.config.holdout.selection
         )
 
     def _submit(self, pool: ThreadPoolExecutor, job: Job) -> None:
@@ -407,13 +407,13 @@ class GreedySearcher:
                 pruned=sum(1 for c in candidates if c.pruned),
             ),
         )
-        best = self.journal.best_candidate(self.problem.lower_is_better)
+        best = self.journal.best_candidate(self.problem.higher_is_better)
         if best is not None:
             fields.setdefault(
                 "best", ScoreRef(candidate_id=best.candidate_id, val_score=best.val_score)
             )
         selected = self.journal.selected_candidate(
-            self.problem.lower_is_better, self.config.holdout.selection
+            self.problem.higher_is_better, self.config.holdout.selection
         )
         if selected is not None:
             fields.setdefault(
@@ -448,7 +448,7 @@ class GreedySearcher:
                     self._selection_id = resync_best(
                         self.search_dir,
                         self.journal,
-                        self.problem.lower_is_better,
+                        self.problem.higher_is_better,
                         self.config.holdout.selection,
                     )
         if stop is not None:
@@ -487,7 +487,7 @@ class GreedySearcher:
         if not seed.exists():
             raise FileNotFoundError(f"seed solution not found: {seed}")
         candidate_id = self.journal.next_candidate_id()
-        workspace = create_candidate_workspace(
+        candidate_dir = create_candidate_dir(
             self.search_dir,
             candidate_id,
             self.data_dir,
@@ -497,18 +497,18 @@ class GreedySearcher:
         candidate = Candidate(
             candidate_id=candidate_id,
             operator="seed",
-            workspace=str(workspace),
+            candidate_dir=str(candidate_dir),
             summary=f"incumbent model seeded from {seed.name}",
         )
         self.journal.candidate_created(candidate)
         self.log(f"seeding incumbent {seed.name} as {candidate_id}")
         exec_timeout = self.config.budget.exec_timeout_s
-        all_ok = self._run_trials(candidate, workspace / "solution.py", workspace, exec_timeout)
+        all_ok = self._run_trials(candidate, candidate_dir / "solution.py", candidate_dir, exec_timeout)
         holdout_score = holdout_error = None
         if all_ok:
-            holdout_score, holdout_error = self._score_holdout(workspace)
+            holdout_score, holdout_error = self._score_holdout(candidate_dir)
         msg = OutcomeMsg(
-            job=Job(candidate=candidate, request=None, workspace=workspace),
+            job=Job(candidate=candidate, request=None, candidate_dir=candidate_dir),
             kind="executed",
             all_ok=all_ok,
             holdout_score=holdout_score,
@@ -538,16 +538,16 @@ class GreedySearcher:
         return Action(operator=operator, target_id=target_id)
 
     def _prepare(self, action: Action) -> Job:
-        """Scheduler-side setup: id, workspace, prompt, journal `created`."""
+        """Scheduler-side setup: id, candidate_dir, prompt, journal `created`."""
         operator = action.operator
         target = self.journal.candidates.get(action.target_id) if action.target_id else None
         candidate_id = self.journal.next_candidate_id()
         parent_solution = (
-            Path(target.workspace) / "solution.py"
+            Path(target.candidate_dir) / "solution.py"
             if target is not None and operator in ("debug", "improve")
             else None
         )
-        workspace = create_candidate_workspace(
+        candidate_dir = create_candidate_dir(
             self.search_dir,
             candidate_id,
             self.data_dir,
@@ -555,12 +555,12 @@ class GreedySearcher:
             parent_solution,
         )
         if self._wants_reference(operator):
-            shutil.copy(self.reference_solution, workspace / "reference_solution.py")
+            shutil.copy(self.reference_solution, candidate_dir / "reference_solution.py")
         ensemble_inputs = None
         if action.inspiration_ids:
             ensemble_inputs = [self.journal.candidates[i] for i in action.inspiration_ids]
             for i, cand in enumerate(ensemble_inputs, 1):
-                shutil.copy(Path(cand.workspace) / "solution.py", workspace / f"candidate_{i}.py")
+                shutil.copy(Path(cand.candidate_dir) / "solution.py", candidate_dir / f"candidate_{i}.py")
         complexity = action.complexity
         prompt = self.build_prompt(operator, target, complexity, ensemble_inputs)
         if action.extra_prompt_context:
@@ -568,11 +568,11 @@ class GreedySearcher:
                 "\n\n# Additional context from the search strategy\n\n"
                 f"{action.extra_prompt_context}\n"
             )
-        (workspace / "prompt.md").write_text(prompt)
+        (candidate_dir / "prompt.md").write_text(prompt)
 
         # NOTE: no session resume across candidates — Claude Code scopes
-        # sessions to the cwd, and every candidate has its own workspace, so
-        # --resume can't find a sibling workspace's session. The debug prompt
+        # sessions to the cwd, and every candidate has its own candidate_dir, so
+        # --resume can't find a sibling candidate dir's session. The debug prompt
         # carries the chain's failed-fix history from the journal instead.
         candidate = Candidate(
             candidate_id=candidate_id,
@@ -584,7 +584,7 @@ class GreedySearcher:
                 if operator == "debug" and target
                 else 0
             ),
-            workspace=str(workspace),
+            candidate_dir=str(candidate_dir),
             policy_meta=dict(action.policy_meta),
         )
         self.journal.candidate_created(candidate)
@@ -593,7 +593,7 @@ class GreedySearcher:
         request = OperatorRequest(
             operator=operator,
             prompt=prompt,
-            workspace=workspace,
+            candidate_dir=candidate_dir,
             timeout_s=min(
                 self.config.budget.agent_timeout_s, max(60, int(self.budget.remaining()))
             ),
@@ -605,14 +605,14 @@ class GreedySearcher:
                     candidate_id=candidate_id,
                     operator=operator,
                     phase="agent",
-                    workspace=str(workspace),
+                    candidate_dir=str(candidate_dir),
                 )
             )
             self._status()
         return Job(
             candidate=candidate,
             request=request,
-            workspace=workspace,
+            candidate_dir=candidate_dir,
             ensemble_inputs=ensemble_inputs,
             holdout_threshold=self._holdout_threshold(),
             backend=(
@@ -644,7 +644,7 @@ class GreedySearcher:
 
     def _execute_job(self, job: Job) -> OutcomeMsg:
         """Worker-side: agent call + trials + holdout. Lock-free — touches
-        only the job's own candidate/workspace, never the journal."""
+        only the job's own candidate/candidate_dir, never the journal."""
         candidate = job.candidate
         backend = job.backend if job.backend is not None else self.backend
 
@@ -683,12 +683,12 @@ class GreedySearcher:
             # copy — executing it would silently re-score the parent
             return OutcomeMsg(job=job, kind="agent_failed", result=result)
 
-        notes = job.workspace / "notes.md"
+        notes = job.candidate_dir / "notes.md"
         if notes.exists():
             lines = notes.read_text().strip().splitlines()
             candidate.summary = lines[0] if lines else ""
 
-        solution = job.workspace / "solution.py"
+        solution = job.candidate_dir / "solution.py"
         if not solution.exists():
             return OutcomeMsg(job=job, kind="no_solution", result=result)
 
@@ -696,14 +696,14 @@ class GreedySearcher:
             self.config.budget.exec_timeout_s, max(60, int(self.budget.remaining() - 30))
         )
         self._set_phase(candidate.candidate_id, "exec")
-        all_ok = self._run_trials(candidate, solution, job.workspace, exec_timeout)
+        all_ok = self._run_trials(candidate, solution, job.candidate_dir, exec_timeout)
 
         holdout_score = holdout_error = None
         gated = False
         if all_ok:
             if self._gate_passes(candidate.val_score, job.holdout_threshold):
                 self._set_phase(candidate.candidate_id, "holdout")
-                holdout_score, holdout_error = self._score_holdout(job.workspace)
+                holdout_score, holdout_error = self._score_holdout(job.candidate_dir)
             else:
                 gated = True  # climbs on val; not selectable via holdout
         return OutcomeMsg(
@@ -780,7 +780,7 @@ class GreedySearcher:
                         if not msg.holdout_gated:
                             last.holdout_score = msg.holdout_score
                     if candidate.status == "ok":
-                        previous_best = self.journal.best_candidate(self.problem.lower_is_better)
+                        previous_best = self.journal.best_candidate(self.problem.higher_is_better)
                         if previous_best is None:
                             candidate.is_best = True
                         elif self._improves(candidate.val_score, previous_best.val_score):
@@ -828,7 +828,7 @@ class GreedySearcher:
             self.journal.candidates.get(candidate.parent_id) if candidate.parent_id else None
         )
         reward = candidate_reward(
-            candidate, parent, self.problem.lower_is_better, band=self.accept_band()
+            candidate, parent, self.problem.higher_is_better, band=self.accept_band()
         )
         if reward is not None:
             self.router.observe(candidate.operator, candidate.backend.model, reward)
@@ -838,7 +838,7 @@ class GreedySearcher:
             self.status.update_current(candidate_id, phase=phase)
 
     def _run_trials(
-        self, candidate: Candidate, solution: Path, workspace: Path, exec_timeout: int
+        self, candidate: Candidate, solution: Path, candidate_dir: Path, exec_timeout: int
     ) -> bool:
         """Run n_trials validation evaluations (each in its own trial dir with
         a distinct seed) and append the Trials in index order. Returns True
@@ -850,16 +850,16 @@ class GreedySearcher:
         measure each other."""
         n = max(1, self.config.search.n_trials)
         if n == 1:
-            trial, ok = self._execute_one_trial(solution, workspace, exec_timeout, seed=None)
+            trial, ok = self._execute_one_trial(solution, candidate_dir, exec_timeout, seed=None)
             candidate.trials.append(trial)
             return ok
 
         from concurrent.futures import ThreadPoolExecutor
 
-        from hillclimb.workspace import create_trial_dir
+        from hillclimb.dirs import create_trial_dir
 
         def run(index: int) -> tuple[Trial, bool]:
-            trial_dir = create_trial_dir(workspace, index)
+            trial_dir = create_trial_dir(candidate_dir, index)
             return self._execute_one_trial(
                 trial_dir / solution.name, trial_dir, exec_timeout, seed=index
             )
@@ -870,12 +870,12 @@ class GreedySearcher:
             with ThreadPoolExecutor(max_workers=n, thread_name_prefix="trial") as pool:
                 results = list(pool.map(run, range(n)))
         candidate.trials.extend(trial for trial, _ in results)
-        # trial-0 artifacts surface at the workspace root so best/-sync,
+        # trial-0 artifacts surface at the candidate-dir root so best/-sync,
         # ensemble copies, and holdout scoring stay untouched
-        t0 = workspace / "trials" / "t0"
+        t0 = candidate_dir / "trials" / "t0"
         for name in ("submission.csv", "eval_result.json"):
             if (t0 / name).exists():
-                shutil.copy(t0 / name, workspace / name)
+                shutil.copy(t0 / name, candidate_dir / name)
         return all(ok for _, ok in results)
 
     def _execute_one_trial(
@@ -941,7 +941,7 @@ class GreedySearcher:
             return None
         scored = sorted(
             (c.val_score for c in self.journal.scored_candidates() if c.val_score is not None),
-            reverse=not self.problem.lower_is_better,
+            reverse=self.problem.higher_is_better,
         )
         if len(scored) < top_k:
             return None
@@ -957,24 +957,24 @@ class GreedySearcher:
         is recomputed over the whole tree because rank-blend can shift between
         existing candidates when a new one lands."""
         selected = self.journal.selected_candidate(
-            self.problem.lower_is_better, self.config.holdout.selection
+            self.problem.higher_is_better, self.config.holdout.selection
         )
         if selected is None or selected.candidate_id == self._selection_id:
             return
         self._selection_id = resync_best(
-            self.search_dir, self.journal, self.problem.lower_is_better, self.config.holdout.selection
+            self.search_dir, self.journal, self.problem.higher_is_better, self.config.holdout.selection
         )
         scores = f"val_score={selected.val_score}"
         if selected.holdout_score is not None:
             scores += f" holdout={selected.holdout_score:.5g}"
         self.log(f"  new selection: {selected.candidate_id} {scores}")
 
-    def _score_holdout(self, workspace: Path) -> tuple[float | None, str | None]:
+    def _score_holdout(self, candidate_dir: Path) -> tuple[float | None, str | None]:
         """Score the hidden split; (score, None) on success, (None, reason) on
         contract violation, (None, None) when this search has no holdout."""
         if self.holdout_scorer is None:
             return None, None
-        return self.holdout_scorer.score(workspace)
+        return self.holdout_scorer.score(candidate_dir)
 
     def accept_band(self) -> float:
         """How much better a candidate must be before the engine believes it.
@@ -993,7 +993,7 @@ class GreedySearcher:
         """Strictly better by more than the accept band. Pass band=0.0 for a
         raw comparison (ranking and gating, where a near-tie should still be
         evaluated rather than dropped)."""
-        delta = (best - score) if self.problem.lower_is_better else (score - best)
+        delta = (score - best) if self.problem.higher_is_better else (best - score)
         return delta > (self.accept_band() if band is None else band)
 
     def _draft_complexity(self) -> str:
@@ -1043,7 +1043,7 @@ class GreedySearcher:
             problem_contract=self.problem.contract or "(see the problem description above)",
             tools_clause=tools_clause,
         )
-        direction = "lower is better" if self.problem.lower_is_better else "higher is better"
+        direction = "higher is better" if self.problem.higher_is_better else "lower is better"
         if operator == "draft":
             live = self._live_experience()
             prior = self.knowledge_context or ""
@@ -1084,7 +1084,7 @@ class GreedySearcher:
                 "debug",
                 parent_summary=root.summary or "(no summary)",
                 failure_reason=self._failure_reason(target),
-                stderr_tail=tail(Path(target.workspace) / "exec_stderr.log"),
+                stderr_tail=tail(Path(target.candidate_dir) / "exec_stderr.log"),
                 stdout_tail=last_trial.stdout_tail if last_trial else "",
                 debug_history=self._candidate_summaries(attempts) or "(none — this is the first fix attempt)",
                 contract=contract,
@@ -1203,7 +1203,7 @@ class GreedySearcher:
         section = f"# Evaluation breakdown (validation split)\n\n{body}\n"
         parent = self.journal.candidates.get(target.parent_id) if target.parent_id else None
         delta = render_delta(
-            candidate_report(parent), target_report, self.problem.lower_is_better
+            candidate_report(parent), target_report, self.problem.higher_is_better
         )
         if delta:
             section += (
@@ -1220,7 +1220,7 @@ class GreedySearcher:
         if not self.config.operators.improve_ablation:
             return ""
         for child in reversed(self.journal.children(target.candidate_id, include_pruned=True)):
-            path = Path(child.workspace) / "ablation.md"
+            path = Path(child.candidate_dir) / "ablation.md"
             if not path.exists():
                 continue
             try:

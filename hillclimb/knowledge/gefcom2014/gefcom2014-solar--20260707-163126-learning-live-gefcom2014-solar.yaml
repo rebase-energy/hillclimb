@@ -3,7 +3,7 @@ problem_id: gefcom2014-solar
 family: gefcom2014
 target: ''
 metric: PinballLoss
-lower_is_better: true
+higher_is_better: false
 run_ref: 20260707-163126-learning-live/gefcom2014-solar
 finished_at: '2026-07-07T14:48:35.316479+00:00'
 budget_s: 900

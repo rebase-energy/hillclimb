@@ -70,7 +70,7 @@ def make_result(analyzer_records, *, lower=True, aggregate="mean", analysis=None
     return SimpleNamespace(
         split="validation",
         objective="mae",
-        lower_is_better=lower,
+        lower_is_better=lower,  # emflow's own field
         score=score,
         n_origins=len(analyzer_records),
         n_scored=sum(int(r.actuals.notna().sum()) for r in analyzer_records),

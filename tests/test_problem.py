@@ -21,7 +21,7 @@ def problem_dir(tmp_path: Path) -> Path:
         """
 problem_id: my-problem
 metric: score
-lower_is_better: false
+higher_is_better: true
 description: description.md
 time_budget_s: 123
 """
@@ -37,7 +37,7 @@ def test_load_problem_from_directory(problem_dir, config):
     assert spec.data_dir == problem_dir
     assert spec.description == "Optimize the thing."
     assert spec.metric_name == "score"
-    assert not spec.lower_is_better
+    assert spec.higher_is_better
     assert spec.verifier_cmd == [str(problem_dir / "verifier.sh")]
     assert spec.verifier_display == "./problem/verifier.sh"
     assert spec.time_budget_s == 123
@@ -52,7 +52,7 @@ def test_load_problem_with_data_dir_and_holdout(problem_dir, config):
         """
 problem_id: my-problem
 metric: nrmse
-lower_is_better: true
+higher_is_better: false
 description: description.md
 data_dir: data
 allow_network: true
@@ -78,7 +78,7 @@ def test_verifier_must_exist_and_be_executable(problem_dir, config):
 
 def test_kind_key_is_rejected(problem_dir, config):
     (problem_dir / "problem.yaml").write_text(
-        "problem_id: my-problem\nmetric: score\nlower_is_better: false\n"
+        "problem_id: my-problem\nmetric: score\nhigher_is_better: true\n"
         "description: description.md\nkind: evaluator\n"
     )
     with pytest.raises(ValueError, match="`kind:` is gone"):
@@ -118,7 +118,7 @@ def evaluator_dir(tmp_path: Path) -> Path:
         """
 problem_id: my-eval
 metric: mean-bins
-lower_is_better: true
+higher_is_better: false
 holdout: true
 time_budget_s: 300
 """
@@ -137,7 +137,7 @@ def test_load_evaluator_problem(evaluator_dir, config):
     assert "pack(items, capacity)" in spec.contract
     assert spec.requirements_file is None
     assert spec.baseline_text is None
-    assert spec.metric_name == "mean-bins" and spec.lower_is_better
+    assert spec.metric_name == "mean-bins" and not spec.higher_is_better
 
 
 def test_load_evaluator_optional_files(evaluator_dir, config):
@@ -146,7 +146,7 @@ def test_load_evaluator_optional_files(evaluator_dir, config):
     (evaluator_dir / "problem.yaml").write_text(
         """
 metric: mean-bins
-lower_is_better: true
+higher_is_better: false
 requirements: requirements.txt
 baseline: baseline.py
 """
@@ -161,11 +161,11 @@ baseline: baseline.py
 def test_load_problem_validation_errors(evaluator_dir, config):
     yaml_path = evaluator_dir / "problem.yaml"
 
-    yaml_path.write_text("metric: m\nlower_is_better: true\nrequirements: nope.txt\n")
+    yaml_path.write_text("metric: m\nhigher_is_better: false\nrequirements: nope.txt\n")
     with pytest.raises(FileNotFoundError, match="requirements file not found"):
         load_problem(evaluator_dir, config)
 
-    yaml_path.write_text("metric: m\nlower_is_better: true\nverifier: absent.sh\n")
+    yaml_path.write_text("metric: m\nhigher_is_better: false\nverifier: absent.sh\n")
     with pytest.raises(FileNotFoundError, match="verifier not found"):
         load_problem(evaluator_dir, config)
 
@@ -177,7 +177,7 @@ def test_bin_packing_repo_problem_loads_and_scores(config, tmp_path):
 
     from hillclimb.baseline import write_baseline
     from hillclimb.executor import CommandExecutor
-    from hillclimb.workspace import create_search_dir
+    from hillclimb.dirs import create_search_dir
 
     spec = load_problem("bin-packing", config)
     assert spec.verifier_cmd[0].endswith("problems/bin-packing/verifier.sh")
@@ -193,3 +193,27 @@ def test_bin_packing_repo_problem_loads_and_scores(config, tmp_path):
     # FFD lands close to the ceil(sum/capacity) floor on these instances
     assert 40 < baseline.val_score < 60
     assert (search_dir / "best" / "solution.py").exists()
+
+
+def test_load_scalar_baseline(evaluator_dir, config):
+    """`baseline: 0.5` declares the floor as a number instead of a script."""
+    (evaluator_dir / "problem.yaml").write_text(
+        "metric: sum-radii\nhigher_is_better: true\nbaseline: 0.5  # one big circle\n"
+    )
+    spec = load_problem(evaluator_dir, config)
+    assert spec.baseline_score == 0.5
+    assert spec.baseline_text is None
+    assert spec.baseline_summary == "baseline: 0.5 (declared)"
+
+
+def test_declared_floor_is_scored_but_has_no_code(evaluator_dir, config, tmp_path):
+    from hillclimb.baseline import write_baseline
+
+    (evaluator_dir / "problem.yaml").write_text(
+        "metric: sum-radii\nhigher_is_better: true\nbaseline: 0.5\n"
+    )
+    spec = load_problem(evaluator_dir, config)
+    c000 = write_baseline(spec, tmp_path / "search")
+    assert c000.candidate_id == "c000" and c000.is_best
+    assert c000.val_score == 0.5
+    assert not (tmp_path / "search" / "candidates" / "c000" / "solution.py").exists()

@@ -265,7 +265,7 @@ def build_graph(knowledge_dir: Path, previous: KnowledgeGraph | None = None) -> 
         add_node(GraphNode(
             id=problem_id, type="problem", label=card.problem_id,
             concepts=p_concepts, first_seen=t,
-            data={"metric": card.metric, "lower_is_better": card.lower_is_better},
+            data={"metric": card.metric, "higher_is_better": card.higher_is_better},
         ))
         for concept in p_concepts:
             add_edge(problem_id, f"concept:{concept}", "has_concept", first_seen=t)

@@ -35,13 +35,13 @@ def make_journal(tmp_path, entries) -> Journal:
 class FakeProblem:
     problem_id = "gefcom2014-solar"
     metric_name = "PinballLoss"
-    lower_is_better = True
+    higher_is_better = False
 
 
-def scored(cid, op, val, summary="", complexity=None, workspace="w", holdout=None):
+def scored(cid, op, val, summary="", complexity=None, candidate_dir="w", holdout=None):
     return dict(
         candidate_id=cid, operator=op, status="ok", complexity=complexity,
-        workspace=workspace, summary=summary,
+        candidate_dir=candidate_dir, summary=summary,
         trials=[Trial(val_score=val, holdout_score=holdout)],
     )
 
@@ -52,10 +52,10 @@ class TestDistill:
         ws.mkdir()
         (ws / "solution.py").write_text("import lightgbm\nfrom scipy.stats import beta\n")
         journal = make_journal(tmp_path, [
-            dict(candidate_id="c000", operator="baseline", status="ok", workspace="w"),
+            dict(candidate_id="c000", operator="baseline", status="ok", candidate_dir="w"),
             scored("c001", "draft", 0.02, "GBM with lag features", "minimal", str(ws)),
             scored("c002", "improve", 0.015, "added clearsky ratio", "minimal", str(ws), holdout=0.016),
-            dict(candidate_id="c003", operator="draft", status="buggy", workspace="w",
+            dict(candidate_id="c003", operator="draft", status="buggy", candidate_dir="w",
                  trials=[Trial(returncode=1, stdout_tail="ValueError: bad shape")]),
         ])
         card = distill_card(
@@ -75,7 +75,7 @@ class TestDistill:
 
     def test_write_load_roundtrip(self, tmp_path):
         ws = tmp_path / "ws"; ws.mkdir()
-        journal = make_journal(tmp_path, [scored("c001", "draft", 0.5, "x", workspace=str(ws))])
+        journal = make_journal(tmp_path, [scored("c001", "draft", 0.5, "x", candidate_dir=str(ws))])
         card = distill_card(journal, problem=FakeProblem(), run_ref="r/s",
                             target="emflow://gefcom2014:solar")
         kdir = tmp_path / "knowledge"
@@ -182,7 +182,7 @@ class TestLiveSharing:
         from hillclimb.api import create_search, execute_search
         from hillclimb.budget import BudgetManager
         from hillclimb.search import GreedySearcher
-        from hillclimb.workspace import create_run_dir
+        from hillclimb.dirs import create_run_dir
         import sys
 
         config.learning.dir = tmp_path / "knowledge"
@@ -233,7 +233,7 @@ class TestEndToEnd:
     def test_search_writes_card_and_next_search_reads_it(self, task, config, tmp_path, monkeypatch):
         from hillclimb.api import execute_search, create_search
         from hillclimb.budget import BudgetManager
-        from hillclimb.workspace import create_run_dir
+        from hillclimb.dirs import create_run_dir
         import sys
 
         from hillclimb.search import GreedySearcher

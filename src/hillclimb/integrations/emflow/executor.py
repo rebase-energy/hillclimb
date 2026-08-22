@@ -18,7 +18,7 @@ EVAL_RUNNER = Path(__file__).parent / "eval_runner.py"
 def official_verify(
     python: Path,
     problem_name: str,
-    workspace: Path,
+    candidate_dir: Path,
     out_dir: Path,
     name: str,
     n_trials: int,
@@ -26,19 +26,19 @@ def official_verify(
     log=print,
 ) -> float | None:
     """One official Verifier run (scorecard + emflow leaderboard row) on a
-    candidate workspace's solution.py, with n_trials recorded for selection
+    candidate candidate_dir's solution.py, with n_trials recorded for selection
     honesty. Returns the holdout score, or None on failure."""
     import json
 
-    workspace = workspace.absolute()
+    candidate_dir = candidate_dir.absolute()
     out_dir = out_dir.absolute()
-    solution = workspace / "solution.py"
+    solution = candidate_dir / "solution.py"
     if not solution.exists():
         log("official verify skipped: solution.py missing")
         return None
     out_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy(solution, out_dir / "solution.py")
-    for extra in workspace.glob("candidate_*.py"):
+    for extra in candidate_dir.glob("candidate_*.py"):
         shutil.copy(extra, out_dir / extra.name)
     stdout_path = out_dir / "verify_stdout.log"
     stderr_path = out_dir / "verify_stderr.log"

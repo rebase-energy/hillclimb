@@ -40,12 +40,12 @@ def make_journal(tmp_path, entries) -> Journal:
 class FakeProblem:
     problem_id = "spaceship-titanic"
     metric_name = "accuracy"
-    lower_is_better = False
+    higher_is_better = True
 
 
-def scored(cid, op, val, summary="", workspace="w"):
+def scored(cid, op, val, summary="", candidate_dir="w"):
     return dict(
-        candidate_id=cid, operator=op, status="ok", workspace=workspace,
+        candidate_id=cid, operator=op, status="ok", candidate_dir=candidate_dir,
         summary=summary, trials=[Trial(val_score=val)],
     )
 
@@ -245,7 +245,7 @@ class TestDistillPass:
         backend.queue(operator="distill", files={"claims.yaml": CLAIMS_YAML})
         monkeypatch.setattr("hillclimb.api.get_backend", lambda *a, **k: backend)
         claims = distill_claims_from_card(
-            card, workspace=tmp_path / "w", knowledge_dir=tmp_path / "k",
+            card, work_dir=tmp_path / "w", knowledge_dir=tmp_path / "k",
             config=Config(), log=lambda m: None,
         )
         assert len(claims) == 2

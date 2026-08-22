@@ -64,13 +64,13 @@ def mlebench_data_dir(config: Config) -> Path:
     )
 
 
-def _lower_is_better(leaderboard_csv: Path) -> bool:
+def _higher_is_better(leaderboard_csv: Path) -> bool:
     """Score direction the way mlebench's Grader defines it: the leaderboard
-    is ranked best-first, so top < bottom means lower is better."""
+    is ranked best-first, so top > bottom means higher is better."""
     scores = pd.read_csv(leaderboard_csv)["score"].dropna()
     if len(scores) < 2:
         raise ValueError(f"leaderboard too small to infer score direction: {leaderboard_csv}")
-    return bool(scores.iloc[0] < scores.iloc[-1])
+    return bool(scores.iloc[0] > scores.iloc[-1])
 
 
 def load_mlebench_problem(comp_id: str, config: Config) -> ProblemSpec:
@@ -93,11 +93,11 @@ def load_mlebench_problem(comp_id: str, config: Config) -> ProblemSpec:
 
     return ProblemSpec(
         problem_id=comp_id,
-        problem_dir=public,  # data listing + workspace ./problem both serve the public split
+        problem_dir=public,  # data listing + candidate_dir ./problem both serve the public split
         data_dir=public,
         description=(comp_dir / "description.md").read_text(),
         metric_name=meta["grader"]["name"],
-        lower_is_better=_lower_is_better(comp_dir / "leaderboard.csv"),
+        higher_is_better=_higher_is_better(comp_dir / "leaderboard.csv"),
         time_budget_s=config.budget.total_s,
         # the competition ships no runnable validator: the agent splits the
         # public data and reports its own score; official grading is one

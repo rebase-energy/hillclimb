@@ -13,6 +13,7 @@ missing, foreign-version, or error-only reports.
 from __future__ import annotations
 
 from hillclimb.candidate import Candidate
+from hillclimb.direction import legacy_direction_key
 
 KNOWN_VERSION = 1
 COMPACT_WORST_ZONES = 8  # plus the single best zone as contrast
@@ -37,10 +38,12 @@ def candidate_report(candidate: Candidate | None) -> dict | None:
 def compact_report(report: dict) -> dict:
     """Journal-bound subset (~<=2 KB): the journal dumps the whole candidate
     on every event, so the stored report keeps only what rendering uses."""
+    report = legacy_direction_key(report)
+    report = legacy_direction_key(report)
     compact = {
         key: report[key]
         for key in (
-            "version", "split", "objective", "lower_is_better", "overall",
+            "version", "split", "objective", "higher_is_better", "overall",
             "source", "segment_label",
         )
         if key in report
@@ -173,7 +176,7 @@ def _keyed(entries: list[dict], key: str) -> dict:
     return {e[key]: e for e in entries if key in e and e.get("score") is not None}
 
 
-def render_delta(parent: dict | None, child: dict | None, lower_is_better: bool) -> str:
+def render_delta(parent: dict | None, child: dict | None, higher_is_better: bool) -> str:
     """Where the child's score moved relative to its parent. "" unless both
     sides carry a usable report."""
     if not (_usable(parent) and _usable(child)):
@@ -182,7 +185,7 @@ def render_delta(parent: dict | None, child: dict | None, lower_is_better: bool)
     p_score, c_score = parent["overall"].get("score"), child["overall"].get("score")
     if p_score is not None and c_score is not None:
         delta = c_score - p_score
-        improved = delta < 0 if lower_is_better else delta > 0
+        improved = delta > 0 if higher_is_better else delta < 0
         word = "improved" if improved else ("regressed" if delta != 0 else "unchanged")
         lines.append(f"Overall: {_fmt(p_score)} -> {_fmt(c_score)} ({word}, {delta:+g}).")
     for section, key, label in (("zones", "zone", "zone"), ("horizons", "bucket", "horizon")):
@@ -195,7 +198,7 @@ def render_delta(parent: dict | None, child: dict | None, lower_is_better: bool)
         deltas = [(name, d) for name, d in deltas if d != 0]
         if not deltas:
             continue
-        sign = -1 if lower_is_better else 1
+        sign = 1 if higher_is_better else -1
         improved = sorted((d for d in deltas if sign * d[1] > 0), key=lambda d: abs(d[1]), reverse=True)
         regressed = sorted((d for d in deltas if sign * d[1] < 0), key=lambda d: abs(d[1]), reverse=True)
         parts = []

@@ -38,7 +38,7 @@ PERSISTENCE_SOLUTION = textwrap.dedent(
 
 
 @pytest.fixture
-def workspace(tmp_path):
+def candidate_dir(tmp_path):
     ws = tmp_path / "candidates" / "c001"
     ws.mkdir(parents=True)
     (ws / "solution.py").write_text(PERSISTENCE_SOLUTION)
@@ -56,23 +56,23 @@ def executor(spec):
 
 
 @pytest.mark.slow
-def test_validation_execution(executor, workspace):
-    result = executor.execute(workspace / "solution.py", workspace, timeout_s=300)
+def test_validation_execution(executor, candidate_dir):
+    result = executor.execute(candidate_dir / "solution.py", candidate_dir, timeout_s=300)
     assert result.ok, Path(result.stderr_path).read_text()[-500:]
     assert result.val_score is not None
-    payload = json.loads((workspace / "eval_result.json").read_text())
+    payload = json.loads((candidate_dir / "eval_result.json").read_text())
     assert payload["split"] == "validation"
     assert payload["score"] == pytest.approx(result.val_score)
     assert payload["n_scored"] > 0
 
 
 @pytest.mark.slow
-def test_validation_report_block(executor, workspace):
+def test_validation_report_block(executor, candidate_dir):
     """A real eval embeds the breakdown report — and keeps the default
     analyzers alive (concatenation regression guard)."""
-    result = executor.execute(workspace / "solution.py", workspace, timeout_s=300)
+    result = executor.execute(candidate_dir / "solution.py", candidate_dir, timeout_s=300)
     assert result.ok, Path(result.stderr_path).read_text()[-500:]
-    payload = json.loads((workspace / "eval_result.json").read_text())
+    payload = json.loads((candidate_dir / "eval_result.json").read_text())
     report = payload["report"]
     assert report["version"] == 1
     assert report["split"] == "validation"
@@ -89,39 +89,39 @@ def test_validation_report_block(executor, workspace):
 
 
 @pytest.mark.slow
-def test_broken_solution_is_not_ok(executor, workspace):
-    (workspace / "solution.py").write_text("raise RuntimeError('boom')\n")
-    result = executor.execute(workspace / "solution.py", workspace, timeout_s=120)
+def test_broken_solution_is_not_ok(executor, candidate_dir):
+    (candidate_dir / "solution.py").write_text("raise RuntimeError('boom')\n")
+    result = executor.execute(candidate_dir / "solution.py", candidate_dir, timeout_s=120)
     assert not result.ok
     assert result.returncode != 0
-    assert not (workspace / "eval_result.json").exists()
+    assert not (candidate_dir / "eval_result.json").exists()
 
 
 @pytest.mark.slow
-def test_holdout_scorer_hidden_dir(spec, workspace, tmp_path):
+def test_holdout_scorer_hidden_dir(spec, candidate_dir, tmp_path):
     scorer = CommandHoldoutScorer(
         Path(sys.executable), spec.holdout_cmd, problem_dir=spec.problem_dir,
         data_dir=spec.data_dir, work_root=tmp_path / "holdout-eval", timeout_s=300,
     )
-    score, error = scorer.score(workspace)
+    score, error = scorer.score(candidate_dir)
     assert error is None
     assert isinstance(score, float)
-    # evaluation ran outside the agent-visible workspace
+    # evaluation ran outside the agent-visible candidate_dir
     eval_dir = tmp_path / "holdout-eval" / "c001"
     assert (eval_dir / "eval_result.json").exists()
     holdout_payload = json.loads((eval_dir / "eval_result.json").read_text())
     assert holdout_payload["split"] == "holdout"
     assert "report" not in holdout_payload  # leakage guard: no holdout breakdowns
-    assert not (workspace / "eval_result.json").exists() or True  # workspace untouched by scorer
+    assert not (candidate_dir / "eval_result.json").exists() or True  # candidate_dir untouched by scorer
 
 
 @pytest.mark.slow
-def test_holdout_scorer_maps_failure_to_error(spec, workspace, tmp_path):
-    (workspace / "solution.py").write_text("raise RuntimeError('nope')\n")
+def test_holdout_scorer_maps_failure_to_error(spec, candidate_dir, tmp_path):
+    (candidate_dir / "solution.py").write_text("raise RuntimeError('nope')\n")
     scorer = CommandHoldoutScorer(
         Path(sys.executable), spec.holdout_cmd, problem_dir=spec.problem_dir,
         data_dir=spec.data_dir, work_root=tmp_path / "holdout-eval", timeout_s=120,
     )
-    score, error = scorer.score(workspace)
+    score, error = scorer.score(candidate_dir)
     assert score is None
     assert "holdout evaluation failed" in error

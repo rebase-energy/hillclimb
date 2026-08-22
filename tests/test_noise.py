@@ -11,7 +11,7 @@ from hillclimb.budget import BudgetManager
 from hillclimb.candidate import Candidate, Trial
 from hillclimb.journal import Journal
 from hillclimb.search import GreedySearcher
-from hillclimb.workspace import create_search_dir
+from hillclimb.dirs import create_search_dir
 from tests.conftest import executor_for, ok_script
 
 
@@ -21,7 +21,7 @@ def candidate(cid: str, *scores: float, parent: str | None = None) -> Candidate:
         operator="draft",
         parent_id=parent,
         status="ok",
-        workspace="/tmp",
+        candidate_dir="/tmp",
         trials=[Trial(val_score=value, submission_ok=True) for value in scores],
     )
 
@@ -104,7 +104,7 @@ def test_band_from_measured_noise(task, config):
 
 def test_band_respects_direction(task, config):
     config.search.min_improvement = 0.01
-    task = task.model_copy(update={"lower_is_better": True})
+    task = task.model_copy(update={"higher_is_better": False})
     searcher, _, _ = make_searcher(task, config)
     assert searcher._improves(0.9, 1.0)
     assert not searcher._improves(0.995, 1.0)
@@ -137,9 +137,9 @@ def test_bandit_reward_ignores_gains_inside_the_band():
     parent = candidate("c1", 0.60)
     child = candidate("c2", 0.61, parent="c1")
     child.backend.model = "sonnet"
-    assert candidate_reward(child, parent, lower_is_better=False) == 1.0
+    assert candidate_reward(child, parent, higher_is_better=True) == 1.0
     assert candidate_reward(
-        child, parent, lower_is_better=False, band=0.05
+        child, parent, higher_is_better=True, band=0.05
     ) == REWARD_OK_NO_GAIN
 
 
@@ -182,7 +182,7 @@ def test_serial_trials_do_not_share_the_machine(task, config):
 
     assert len(node.trials) == 3
     assert node.trials[0].seed == 0 and node.trials[2].seed == 2
-    assert overlaps(Path(node.workspace) / "overlap.log") == 0
+    assert overlaps(Path(node.candidate_dir) / "overlap.log") == 0
 
 
 def test_parallel_trials_run_concurrently(task, config):
@@ -194,4 +194,4 @@ def test_parallel_trials_run_concurrently(task, config):
     node = searcher.run_operator("draft", None)
 
     assert len(node.trials) == 3
-    assert overlaps(Path(node.workspace) / "overlap.log") > 0
+    assert overlaps(Path(node.candidate_dir) / "overlap.log") > 0

@@ -56,7 +56,7 @@ def climb_curve(search_dir: Path, label: str | None = None) -> Curve:
     candidate at the minute it finished; the y value only ever moves in the
     metric's good direction, so the line is the staircase the search climbed."""
     meta = load_search_meta(search_dir)
-    lower = bool(meta.lower_is_better) if meta else False
+    higher = bool(meta.higher_is_better) if meta else True
     start = _parse_ts(meta.started_at) if meta else None
     journal = Journal(search_dir / "journal.jsonl")
     curve = Curve(
@@ -78,7 +78,7 @@ def climb_curve(search_dir: Path, label: str | None = None) -> Curve:
     origin = start or scored[0][0]
     best: float | None = None
     for when, score in scored:
-        if best is None or (score < best if lower else score > best):
+        if best is None or (score > best if higher else score < best):
             best = score
         curve.xs.append(max(0.0, (when - origin).total_seconds() / 60.0))
         curve.ys.append(best)
@@ -189,7 +189,7 @@ class ChartScreen(Screen):
         curves = climb_curves(self.config.paths.runs_dir, problem_id)
         meta = load_search_meta(anchor)
         metric = meta.metric if meta else "score"
-        direction = "lower" if meta and meta.lower_is_better else "higher"
+        direction = "higher" if meta is None or meta.higher_is_better else "lower"
         parts = [f"[bold]{problem_id}[/]  {metric} ({direction} is better)"]
         for curve in curves:
             style = STATE_STYLE.get(curve.state, "")

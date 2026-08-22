@@ -23,7 +23,7 @@ def test_load_emflow_problem(econfig):
     assert spec.problem_id == "swedish-temperatures-ar"
     assert spec.emflow_problem == "swedish-temperatures:ar"
     assert spec.metric_name == "MeanAbsoluteError"
-    assert spec.lower_is_better is True
+    assert spec.higher_is_better is False
     # the provider supplies the verifier: the emflow evaluator, one command
     # per split
     assert spec.verifier_cmd[1].endswith("eval_runner.py")
@@ -34,7 +34,7 @@ def test_load_emflow_problem(econfig):
     assert spec.runtime == "emflow"
     assert spec.holdout_needs_credentials
     assert spec.contract_template == "contract_emflow"
-    # materialized problem dir feeds prompts and workspace symlinks
+    # materialized problem dir feeds prompts and candidate_dir symlinks
     assert spec.problem_dir.is_dir()
     assert "MeanAbsoluteError" in spec.description
     assert "Holdout split" in spec.description
@@ -125,7 +125,7 @@ def test_quantile_note_literal():
     note = GreedySearcher._quantile_note
     spec = ProblemSpec(
         problem_id="q", problem_dir=Path("."), data_dir=Path("."),
-        description="", metric_name="pinball", lower_is_better=True,
+        description="", metric_name="pinball", higher_is_better=False,
         time_budget_s=600, emflow_problem="x", verifier_cmd=["eval"],
         emflow_quantiles=[i / 100 for i in range(1, 100)],
     )

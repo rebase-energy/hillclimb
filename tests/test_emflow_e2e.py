@@ -98,10 +98,10 @@ def test_full_emflow_search(config, tmp_path):
     assert selected.is_selected
     assert (search_dir / "best" / "solution.py").exists()
 
-    # holdout evaluation stayed outside agent-visible workspaces
+    # holdout evaluation stayed outside agent-visible candidate dirs
     assert (search_dir / "holdout-eval").is_dir()
     for candidate in scored:
-        assert not (Path(candidate.workspace) / "holdout_predictions.csv").exists()
+        assert not (Path(candidate.candidate_dir) / "holdout_predictions.csv").exists()
 
     # the improve prompt carried the emflow contract, not the CSV one
     improve_prompts = [r.prompt for r in backend.requests if r.operator == "improve"]

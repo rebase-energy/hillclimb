@@ -2,23 +2,23 @@
 else is the harness.
 
 A `SearchPolicy` proposes `Action`s over a read-only `SearchView`; the
-harness (`GreedySearcher`) materializes each action into a workspace, prompt,
+harness (`GreedySearcher`) materializes each action into a candidate dir, prompt,
 and agent call, executes it, and journals the outcome.
 
 Contracts every policy must honor:
 
 - `propose()`/`observe()` run only on the scheduler thread, under the
   searcher's state lock — the same discipline as the harness's own journal
-  access. Policies may read candidate workspaces from disk (greedy hashes
+  access. Policies may read candidate candidate dirs from disk (greedy hashes
   solution.py to dedupe ensemble inputs) but must never write.
 - Decisions must be derivable from replayed journal state: either compute
   every proposal from the `SearchView` alone, or rebuild internal caches via
   `observe()` — on construction the harness replays every existing candidate
   through `observe()` in journal order, so `hillclimb resume` works.
 - Ensemble-style actions must carry their inputs in `inspiration_ids`; the
-  harness copies those candidates' solutions into the new workspace.
+  harness copies those candidates' solutions into the new candidate_dir.
 
-Harness-owned, NOT policy: workspace creation, journal writes, prompt
+Harness-owned, NOT policy: candidate-dir creation, journal writes, prompt
 assembly, `OperatorRequest` construction, trials, holdout gating and scoring
 (`_holdout_threshold` is query-budget hygiene, not strategy), `is_best`/
 selection syncing into `best/`, the control queue, and the cost ceiling.
@@ -53,7 +53,7 @@ class Action:
 
     operator: str  # draft | debug | improve | ensemble
     target_id: str | None = None  # parent candidate
-    inspiration_ids: tuple[str, ...] = ()  # extra candidates as prompt/workspace context
+    inspiration_ids: tuple[str, ...] = ()  # extra candidates as prompt/candidate-dir context
     complexity: str | None = None  # draft complexity cue (minimal | moderate | advanced)
     route: Route | None = None  # rare per-action override; routing config is the norm
     extra_prompt_context: str = ""  # rendered as an appended prompt section
@@ -88,7 +88,7 @@ class SearchView:
     inflight: tuple[InflightRef, ...]
     budget: BudgetView
     config: Config
-    lower_is_better: bool
+    higher_is_better: bool
 
 
 class SearchPolicy(Protocol):

@@ -6,7 +6,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from hillclimb.budget import BudgetManager
 from hillclimb.candidate import utcnow
@@ -44,9 +44,19 @@ class CurrentCandidate(BaseModel):
     candidate_id: str
     operator: str
     phase: str  # agent | exec
-    workspace: str
+    candidate_dir: str
     agent_pid: int | None = None
     started_at: str = Field(default_factory=utcnow)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_workspace_key(cls, data):
+        """status.json written before the rename carries `workspace`."""
+        if isinstance(data, dict) and "workspace" in data:
+            data = dict(data)
+            data.setdefault("candidate_dir", data.pop("workspace"))
+            data.pop("workspace", None)
+        return data
 
 
 class ScoreRef(BaseModel):
@@ -191,7 +201,7 @@ class StatusWriter:
     def _refresh_agent_pid(self) -> None:
         """Pick up the operator backends' child pids by filesystem convention."""
         for current in self.status.current:
-            pid_file = Path(current.workspace) / "agent.pid"
+            pid_file = Path(current.candidate_dir) / "agent.pid"
             try:
                 current.agent_pid = int(pid_file.read_text().strip()) if pid_file.exists() else None
             except (ValueError, OSError):

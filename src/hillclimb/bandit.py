@@ -29,7 +29,7 @@ REWARD_OK_NO_GAIN = 0.25
 def candidate_reward(
     candidate: Candidate,
     parent: Candidate | None,
-    lower_is_better: bool,
+    higher_is_better: bool,
     band: float = 0.0,
 ) -> float | None:
     """Journal-derivable reward for the model arm that authored `candidate`;
@@ -47,7 +47,7 @@ def candidate_reward(
     if parent_val is not None:
         # `band`: an arm gets full credit only for a gain the search can
         # actually measure, so noise does not train the router
-        delta = (parent_val - val) if lower_is_better else (val - parent_val)
+        delta = (val - parent_val) if higher_is_better else (parent_val - val)
         return 1.0 if delta > band else REWARD_OK_NO_GAIN
     return 1.0 if candidate.is_best else REWARD_OK_NO_GAIN
 

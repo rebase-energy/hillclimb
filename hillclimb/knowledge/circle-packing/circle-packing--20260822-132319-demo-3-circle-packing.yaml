@@ -1,0 +1,85 @@
+schema_version: 1
+problem_id: circle-packing
+family: circle-packing
+target: ''
+metric: sum-radii
+higher_is_better: true
+run_ref: 20260822-132319-demo-3/circle-packing
+finished_at: '2026-08-22T11:52:50.462204+00:00'
+budget_s: 1800
+cost_usd: 1.3388
+n_candidates: 3
+n_ok: 2
+n_buggy: 1
+selected_val: 2.635983
+selected_operator: draft
+operator_stats:
+  draft:
+    attempts: 2
+    ok: 2
+    best_val: 2.635983
+  ensemble:
+    attempts: 1
+    ok: 0
+top_approaches:
+- candidate_id: c001
+  operator: draft
+  val_score: 2.635983
+  complexity: minimal
+  summary: "Monotonic basin hopping over multiple structured/random initial layouts,\
+    \ where each candidate center configuration is scored by solving an exact linear\
+    \ program for optimal radii (fixed centers \u2192 sum-of-radii LP), then polished\
+    \ with a joint "
+  libraries:
+  - scipy
+- candidate_id: c002
+  operator: draft
+  val_score: 2.619708
+  complexity: moderate
+  summary: Joint nonlinear optimization of all 78 (x, y, r) variables directly via
+    scipy's `trust-constr` (interior-point trust-region), from diverse structured/random
+    starting layouts, refined by a simulated-annealing perturbation loop instead of
+    a s
+  libraries:
+  - csv
+  - scipy
+failure_modes:
+- execution timed out (x1)
+claims:
+- claim_id: da87a4dfcdca
+  subject: lp-exact-radii-for-fixed-centers
+  relation: helps
+  object: ''
+  scope:
+    family: circle-packing
+    problem_id: circle-packing
+    budget_s: 1800
+  confidence: 0.85
+  evidence:
+  - c001
+  observed_at: '2026-08-22T11:54:44.316039+00:00'
+- claim_id: 0c6cb5763a80
+  subject: monotonic-basin-hopping
+  relation: helps
+  object: ''
+  scope:
+    family: circle-packing
+    problem_id: circle-packing
+    budget_s: 1800
+  confidence: 0.8
+  evidence:
+  - c001
+  observed_at: '2026-08-22T11:54:44.316861+00:00'
+- claim_id: 4750660b0a28
+  subject: lp-exact-radii-for-fixed-centers
+  relation: outperforms
+  object: joint-nonlinear-optimization
+  scope:
+    family: circle-packing
+    problem_id: circle-packing
+    budget_s: 1800
+  confidence: 0.75
+  evidence:
+  - c001
+  - c002
+  observed_at: '2026-08-22T11:54:44.316894+00:00'

@@ -3,9 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from hillclimb.candidate import utcnow
+from hillclimb.direction import legacy_direction_key
 
 SCHEMA_VERSION = 2
 SEARCHES_DIRNAME = "searches"
@@ -21,7 +22,7 @@ class RunMeta(BaseModel):
     name: str
     kind: str = "problem"  # problem | suite
     target: str
-    spec: str | None = None  # workspace-relative run-spec file, when launched from one
+    spec: str | None = None  # hillclimb-dir-relative run-spec file, when launched from one
     problem_ids: list[str] = Field(default_factory=list)
     started_at: str = Field(default_factory=utcnow)
 
@@ -43,7 +44,12 @@ class SearchMeta(BaseModel):
     policy_params: dict = Field(default_factory=dict)
     routing: dict = Field(default_factory=dict)  # RouteConfig dumps by operator
     metric: str
-    lower_is_better: bool = False
+    higher_is_better: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_direction_key(cls, data):
+        return legacy_direction_key(data)
     budget_s: int = 0
     holdout_enabled: bool = False
     seed_from: str | None = None  # incumbent solution the search was seeded with

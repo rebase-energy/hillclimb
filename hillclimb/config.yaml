@@ -1,9 +1,9 @@
-# hillclimb workspace config (also the workspace marker, found by upward
+# hillclimb dir config (also the hillclimb-dir marker, found by upward
 # search). Precedence: CLI flags > this file > ~/.config/hillclimb/config.yaml
 # > built-in defaults.
 #
 # This repo predates the hillclimb/ folder convention, so runs/ and problems/
-# stay at the repo root via the overrides below. New workspaces created with
+# stay at the repo root via the overrides below. New hillclimb dirs created with
 # `hillclimb init` keep everything under hillclimb/.
 paths:
   runs_dir: runs

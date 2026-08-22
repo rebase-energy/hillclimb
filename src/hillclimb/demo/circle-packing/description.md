@@ -1,6 +1,6 @@
 # Circle packing: maximize the sum of radii
 
-Place **exactly 26 circles inside the unit square** `[0, 1] x [0, 1]` so that the
+Place **exactly 50 circles inside the unit square** `[0, 1] x [0, 1]` so that the
 **sum of all radii is as large as possible**.
 
 Constraints (all verified programmatically):
@@ -9,18 +9,19 @@ Constraints (all verified programmatically):
   `r <= y <= 1 - r`
 - no two circles overlap: `dist(center_i, center_j) >= r_i + r_j`
 - all radii are non-negative
-- exactly 26 rows
+- exactly 50 rows
 
-This is a hard continuous optimization problem. The best known sum for 26
-circles is about **2.635** (AlphaEvolve, 2025). A naive uniform grid reaches
-about 1.3. Good approaches combine constructive patterns (hexagonal/greedy
+This is a hard continuous optimization problem. For reference, the best
+known sums are about **2.635** for 26 circles and **2.937** for 32
+(AlphaEvolve, 2025); for 50 circles a naive 7x7 grid plus one spare reaches
+about 3.5, and good packings go well beyond that. Good approaches combine constructive patterns (hexagonal/greedy
 layouts, unequal radii), local optimization (e.g. SLSQP / projected gradient /
 physics-style relaxation), and restarts. `numpy` and `scipy` are available.
 
 ## Submission format
 
 Write `submission.csv` in the working directory with the header `id,x,y,r` and
-26 rows (`id` = 0..25), like `sample_submission.csv` (which is a weak valid
+50 rows (`id` = 0..49), like `sample_submission.csv` (which is a weak valid
 baseline).
 
 ## Scoring

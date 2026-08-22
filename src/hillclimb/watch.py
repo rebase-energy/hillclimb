@@ -119,14 +119,14 @@ _USAGE_KEYS = (
 )
 
 
-def _stream_tokens(workspace: Path) -> int:
+def _stream_tokens(candidate_dir: Path) -> int:
     """Tokens burned so far by an in-flight operator, read from its live
     `agent_stream.jsonl`. Each turn streams twice (partial then final) under
     one message id, so turns are deduped by id, newest kept; a `result`
     message, if the call has just finished, is authoritative. Output is only a
     running estimate mid-call — the stream carries partial output counts — but
     cache tokens (the bulk) reconcile exactly with the final total."""
-    path = workspace / "agent_stream.jsonl"
+    path = candidate_dir / "agent_stream.jsonl"
     if not path.exists():
         return 0
     per_turn: dict[str, dict] = {}
@@ -174,7 +174,7 @@ def _search_row(search_dir: Path) -> SearchRow:
     if status is not None:
         # in-flight operators are not in the journal yet: read their live
         # streams so the count climbs while the tokens are being burned
-        tokens += sum(_stream_tokens(Path(c.workspace)) for c in status.current)
+        tokens += sum(_stream_tokens(Path(c.candidate_dir)) for c in status.current)
         best_val = _fmt(status.best.val_score) if status.best else "-"
         selected = (
             f"{status.selected.candidate_id} "
@@ -320,8 +320,8 @@ def render_stream_line(raw: str) -> str | None:
     return None
 
 
-def stream_tail(workspace: Path, max_lines: int = 200) -> list[str]:
-    path = workspace / "agent_stream.jsonl"
+def stream_tail(candidate_dir: Path, max_lines: int = 200) -> list[str]:
+    path = candidate_dir / "agent_stream.jsonl"
     if not path.exists():
         return []
     rendered = []
@@ -339,9 +339,9 @@ def _tail_text(path: Path, max_chars: int = 4000) -> str:
     return text[-max_chars:].strip()
 
 
-def _candidate_workspace(search_dir: Path, candidate: Candidate) -> Path:
-    if candidate.workspace:
-        return Path(candidate.workspace)
+def _candidate_dir(search_dir: Path, candidate: Candidate) -> Path:
+    if candidate.candidate_dir:
+        return Path(candidate.candidate_dir)
     return search_dir / "candidates" / candidate.candidate_id
 
 
@@ -371,9 +371,9 @@ def _ancestry(journal: Journal, candidate: Candidate) -> list[str]:
 
 def _metric_context(search_dir: Path) -> tuple[str, str]:
     meta = load_search_meta(search_dir)
-    lower = bool(meta.lower_is_better) if meta else False
+    higher = bool(meta.higher_is_better) if meta else True
     metric = meta.metric if meta else "score"
-    direction = "lower is better" if lower else "higher is better"
+    direction = "higher is better" if higher else "lower is better"
     return metric, direction
 
 
@@ -384,7 +384,7 @@ def candidate_detail_lines(search_dir: Path, journal: Journal, candidate_id: str
 
     metric, direction = _metric_context(search_dir)
     operator = candidate.operator + (f"/{candidate.complexity}" if candidate.complexity else "")
-    workspace = _candidate_workspace(search_dir, candidate)
+    candidate_dir = _candidate_dir(search_dir, candidate)
     children = journal.children(candidate.candidate_id, include_pruned=True)
     parent = candidate.parent_id if candidate.parent_id else "root"
     trial = candidate.last_trial
@@ -433,18 +433,18 @@ def candidate_detail_lines(search_dir: Path, journal: Journal, candidate_id: str
         if len(children) > 12:
             lines.append(f"  ... {len(children) - 12} more")
 
-    notes = _tail_text(workspace / "notes.md", max_chars=3000) or candidate.summary.strip()
+    notes = _tail_text(candidate_dir / "notes.md", max_chars=3000) or candidate.summary.strip()
     if notes:
         lines += ["", "Notes:", notes]
 
-    stderr = _tail_text(workspace / "exec_stderr.log", max_chars=3000)
-    stdout = _tail_text(workspace / "exec_stdout.log", max_chars=3000)
+    stderr = _tail_text(candidate_dir / "exec_stderr.log", max_chars=3000)
+    stdout = _tail_text(candidate_dir / "exec_stdout.log", max_chars=3000)
     if stderr:
         lines += ["", "Stderr:", stderr]
     if stdout:
         lines += ["", "Stdout:", stdout]
 
-    stream = stream_tail(workspace, max_lines=80)
+    stream = stream_tail(candidate_dir, max_lines=80)
     if stream:
         lines += ["", "Agent stream:"]
         lines.extend(stream)
@@ -485,7 +485,7 @@ def candidate_detail_renderables(search_dir: Path, journal: Journal, candidate_i
 
     metric, direction = _metric_context(search_dir)
     operator = candidate.operator + (f"/{candidate.complexity}" if candidate.complexity else "")
-    workspace = _candidate_workspace(search_dir, candidate)
+    candidate_dir = _candidate_dir(search_dir, candidate)
     children = journal.children(candidate.candidate_id, include_pruned=True)
     parent = candidate.parent_id if candidate.parent_id else "root"
     trial = candidate.last_trial
@@ -577,7 +577,7 @@ def candidate_detail_renderables(search_dir: Path, journal: Journal, candidate_i
             child_table.add_row(f"... {len(children) - 12} more", "", "", "", "", style="dim")
         renderables.append(child_table)
 
-    notes = _tail_text(workspace / "notes.md", max_chars=3000) or candidate.summary.strip()
+    notes = _tail_text(candidate_dir / "notes.md", max_chars=3000) or candidate.summary.strip()
     if notes:
         renderables.append(
             Panel(Text(notes), title="Notes", title_align="left", border_style="dim cyan")
@@ -596,8 +596,8 @@ def candidate_detail_renderables(search_dir: Path, journal: Journal, candidate_i
             )
         )
 
-    stderr = _tail_text(workspace / "exec_stderr.log", max_chars=3000)
-    stdout = _tail_text(workspace / "exec_stdout.log", max_chars=3000)
+    stderr = _tail_text(candidate_dir / "exec_stderr.log", max_chars=3000)
+    stdout = _tail_text(candidate_dir / "exec_stdout.log", max_chars=3000)
     if stderr:
         renderables.append(
             Panel(Text(stderr, style="red"), title="Stderr", title_align="left", border_style="red")
@@ -607,7 +607,7 @@ def candidate_detail_renderables(search_dir: Path, journal: Journal, candidate_i
             Panel(Text(stdout), title="Stdout", title_align="left", border_style="dim cyan")
         )
 
-    stream = stream_tail(workspace, max_lines=80)
+    stream = stream_tail(candidate_dir, max_lines=80)
     if stream:
         renderables.append(
             Panel(
@@ -621,9 +621,9 @@ def candidate_detail_renderables(search_dir: Path, journal: Journal, candidate_i
     return renderables
 
 
-def _lower_is_better(config: Config, search_dir: Path) -> bool:
+def _higher_is_better(config: Config, search_dir: Path) -> bool:
     meta = load_search_meta(search_dir)
-    return bool(meta.lower_is_better) if meta else False
+    return bool(meta.higher_is_better) if meta else True
 
 
 def _search_ref(search_dir: Path) -> str:
@@ -1088,7 +1088,7 @@ class CandidateScreen(Screen):
                 outcome = request_prune(
                     self.search_dir,
                     candidate_id,
-                    lower_is_better=_lower_is_better(self.config, self.search_dir),
+                    higher_is_better=_higher_is_better(self.config, self.search_dir),
                     selection_mode=self.config.holdout.selection,
                     source="tui",
                 )

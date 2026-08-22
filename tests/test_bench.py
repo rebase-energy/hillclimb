@@ -15,13 +15,13 @@ from hillclimb.bench import (
 )
 from hillclimb.run import RunMeta, SearchMeta, write_run_meta, write_search_meta
 from hillclimb.status import SearchStatus, ScoreRef, write_status
-from hillclimb.workspace import create_run_dir, create_search_dir
+from hillclimb.dirs import create_run_dir, create_search_dir
 
 
 def row(problem="p", learning=True, holdout=None, val=None, lower=False, started="2026-07-01"):
     return BenchRow(
         run_id="r", run_name="bench-p", problem_id=problem, learning=learning,
-        state="done", holdout=holdout, val=val, lower_is_better=lower,
+        state="done", holdout=holdout, val=val, higher_is_better=not lower,
         started_at=started,
     )
 
@@ -123,7 +123,7 @@ class TestCollect:
         config.learning.enabled = False
         problem = ProblemSpec(
             problem_id="p", problem_dir=tmp_path, data_dir=tmp_path,
-            description="", metric_name="accuracy", lower_is_better=False,
+            description="", metric_name="accuracy", higher_is_better=True,
             verifier_cmd=["./verifier.sh"], time_budget_s=60,
         )
         run_dir = create_run_dir(tmp_path / "runs", "r1")

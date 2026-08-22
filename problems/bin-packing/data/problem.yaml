@@ -1,7 +1,7 @@
 problem_id: bin-packing
 kind: evaluator
 metric: mean-bins
-lower_is_better: true
+higher_is_better: false
 description: description.md
 contract: contract.md
 eval: "{python} problem/evaluate.py"

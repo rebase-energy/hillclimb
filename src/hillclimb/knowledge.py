@@ -1,7 +1,7 @@
 """Cross-search learning: knowledge cards distilled from finished searches.
 
 Every completed search writes a compact, human-readable card — what won, what
-failed, what it cost — into the workspace's `hillclimb/knowledge/` folder
+failed, what it cost — into the candidate_dir's `hillclimb/knowledge/` folder
 (git-versionable: the repo accumulates learning). New searches on the same
 problem or problem family retrieve recent cards and inject a "prior
 experience" section into draft prompts, so agents start from what already
@@ -26,9 +26,10 @@ from collections import Counter
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from hillclimb.candidate import utcnow
+from hillclimb.direction import legacy_direction_key
 from hillclimb.claims import Claim
 
 SCHEMA_VERSION = 1
@@ -66,7 +67,12 @@ class KnowledgeCard(BaseModel):
     family: str
     target: str = ""
     metric: str = ""
-    lower_is_better: bool = False
+    higher_is_better: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_direction_key(cls, data):
+        return legacy_direction_key(data)
     run_ref: str = ""
     finished_at: str = Field(default_factory=utcnow)
     budget_s: int = 0
@@ -147,7 +153,7 @@ def distill_card(
 ) -> KnowledgeCard:
     candidates = [c for c in journal.candidates.values() if c.operator != "baseline"]
     stats: dict[str, OperatorStat] = {}
-    direction = 1 if problem.lower_is_better else -1
+    direction = -1 if problem.higher_is_better else 1
     for c in candidates:
         stat = stats.setdefault(c.operator, OperatorStat())
         stat.attempts += 1
@@ -177,7 +183,7 @@ def distill_card(
                 holdout_score=c.holdout_score,
                 complexity=c.complexity,
                 summary=(c.summary or "").strip()[:240],
-                libraries=extract_libraries(Path(c.workspace) / "solution.py"),
+                libraries=extract_libraries(Path(c.candidate_dir) / "solution.py"),
             )
         )
         if len(top) >= top_n:
@@ -186,13 +192,13 @@ def distill_card(
     failures = Counter(
         phrase for c in candidates if c.status == "buggy" and (phrase := _failure_phrase(c))
     )
-    selected = journal.selected_candidate(problem.lower_is_better, selection)
+    selected = journal.selected_candidate(problem.higher_is_better, selection)
     return KnowledgeCard(
         problem_id=problem.problem_id,
         family=problem_family(problem.problem_id, target),
         target=target,
         metric=problem.metric_name,
-        lower_is_better=problem.lower_is_better,
+        higher_is_better=problem.higher_is_better,
         run_ref=run_ref,
         budget_s=budget_s,
         cost_usd=round(cost_usd, 4),

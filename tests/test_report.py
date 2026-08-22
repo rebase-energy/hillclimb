@@ -18,7 +18,7 @@ def make_report(**overrides) -> dict:
         "version": 1,
         "split": "validation",
         "objective": "PinballLoss",
-        "lower_is_better": True,
+        "higher_is_better": False,
         "overall": {"score": 0.02, "n_origins": 100, "n_scored": 2400},
         "zones": [
             {"zone": "z3", "score": 0.03, "n_origins": 50, "n_scored": 1200, "share": 0.6},
@@ -103,23 +103,23 @@ class TestRenderDelta:
                 {"zone": "z1", "score": 0.012, "n_origins": 50, "n_scored": 1200},
             ],
         )
-        text = render_delta(parent, child, lower_is_better=True)
+        text = render_delta(parent, child, higher_is_better=False)
         assert "improved" in text.splitlines()[0]
         assert "improved z3" in text
         assert "regressed z1" in text
 
     def test_delta_signs_higher_is_better(self):
         parent = make_report(
-            lower_is_better=False,
+            higher_is_better=True,
             overall={"score": 0.8, "n_origins": 10, "n_scored": 100},
             zones=[{"zone": "a", "score": 0.7, "n_origins": 5, "n_scored": 50}],
         )
         child = make_report(
-            lower_is_better=False,
+            higher_is_better=True,
             overall={"score": 0.7, "n_origins": 10, "n_scored": 100},
             zones=[{"zone": "a", "score": 0.9, "n_origins": 5, "n_scored": 50}],
         )
-        text = render_delta(parent, child, lower_is_better=False)
+        text = render_delta(parent, child, higher_is_better=True)
         assert "regressed" in text.splitlines()[0]  # overall dropped
         assert "improved a" in text  # zone rose
 
@@ -128,7 +128,7 @@ class TestRenderDelta:
         child = make_report(
             quantiles=[{"q": 0.9, "pinball": 0.01, "coverage": 0.85, "share": 0.5}]
         )
-        text = render_delta(parent, child, lower_is_better=True)
+        text = render_delta(parent, child, higher_is_better=False)
         assert "q90 -10%" in text
 
     def test_missing_side_renders_empty(self):

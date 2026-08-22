@@ -1,6 +1,6 @@
 """Official scorer for the circle-packing problem.
 
-Reads ./submission.csv (id,x,y,r; 26 rows), validates the packing, and writes
+Reads ./submission.csv (id,x,y,r; 50 rows), validates the packing, and writes
 the score to $HILLCLIMB_RESULT (sum of radii, 0.0 if invalid), together with
 a report block — hillclimb's evaluator report
 contract — so improve operators see WHERE the packing is weakest (smallest
@@ -15,7 +15,7 @@ import sys
 import numpy as np
 import pandas as pd
 
-N = 26
+N = 50
 TOL = 1e-9  # numerical slack on containment/overlap
 
 
@@ -24,7 +24,7 @@ def write_report(overall_score: float, report_error=None, zones=None) -> None:
         "version": 1,
         "split": "validation",
         "objective": "sum-radii",
-        "lower_is_better": False,
+        "higher_is_better": True,
         "source": "evaluator",
         "segment_label": "circle",
         "overall": {"score": overall_score, "n_origins": N, "n_scored": N},

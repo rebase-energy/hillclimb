@@ -18,9 +18,13 @@ with `--holdout` in a directory agents never see. Providers (`emflow://`,
 off stdout — agent code shares that stream.
 
 - The hillclimb dir: all data lives in a `hillclimb/` folder (config.yaml
-  marker, problems/, specs/, runs/) found by upward search — never call it a
-  "workspace", that word means a candidate's working dir; this repo overrides
+  marker, problems/, specs/, runs/) found by upward search; this repo overrides
   runs/problems to its legacy top-level dirs in `hillclimb/config.yaml`.
+- Directory vocabulary: every level is `<level>_dir` — `run_dir`,
+  `search_dir`, `candidate_dir` (`searches/<id>/candidates/<cid>/`, where the
+  agent works), `trial_dir`. The word "workspace" is banned (`tests/test_vocabulary.py`
+  enforces it); old journals/status files that still carry a `workspace` key
+  are mapped to `candidate_dir` on load.
   Machine-scoped state (shared venvs, emflow cache, agent slots) lives in
   `~/.cache/hillclimb/`.
 - Tests: `uv run pytest`

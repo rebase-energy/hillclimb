@@ -13,7 +13,7 @@ from hillclimb.budget import BudgetManager
 from tests.conftest import local_executor
 from hillclimb.journal import Journal
 from hillclimb.search import GreedySearcher
-from hillclimb.workspace import create_search_dir
+from hillclimb.dirs import create_search_dir
 from tests.conftest import ok_script
 
 SEEDED_SCRIPT = """\
@@ -75,10 +75,10 @@ class TestMultiSeedTrials:
 
         candidate = searcher.run_operator("draft", None)
 
-        workspace = Path(candidate.workspace)
-        assert (workspace / "submission.csv").exists()
-        assert (workspace / "trials" / "t0" / "solution.py").exists()
-        assert (workspace / "trials" / "t1" / "solution.py").exists()
+        candidate_dir = Path(candidate.candidate_dir)
+        assert (candidate_dir / "submission.csv").exists()
+        assert (candidate_dir / "trials" / "t0" / "solution.py").exists()
+        assert (candidate_dir / "trials" / "t1" / "solution.py").exists()
 
     def test_seed_flaky_candidate_is_buggy(self, task, config):
         config.search.n_trials = 2
@@ -103,7 +103,7 @@ class TestMultiSeedTrials:
         assert len(candidate.trials) == 1
         assert candidate.trials[0].seed is None
         assert candidate.val_score == 0.7
-        assert not (Path(candidate.workspace) / "trials").exists()
+        assert not (Path(candidate.candidate_dir) / "trials").exists()
 
 
 class TestHoldoutTopK:
@@ -168,7 +168,7 @@ print("val_score: {val}")
         searcher, journal = self.make_holdout_searcher(task, config, backend, top_k=2)
         for _ in range(3):
             searcher.run_operator("draft", None)
-        selected = journal.selected_candidate(False, "rank-blend")
+        selected = journal.selected_candidate(True, "rank-blend")
         assert selected.candidate_id != "c002"
 
 
@@ -336,7 +336,7 @@ class TestWorkerPool:
         pending = [c for c in journal.candidates.values() if c.status == "pending"]
         assert len(pending) == 3
         assert len({c.candidate_id for c in pending}) == 3
-        assert len({c.workspace for c in pending}) == 3
+        assert len({c.candidate_dir for c in pending}) == 3
         backend.release_all()
         runner.join(timeout=30)
         assert not runner.is_alive()
@@ -446,7 +446,7 @@ class TestWorkerPool:
         assert created <= terminal  # every created candidate reached a terminal record
         reloaded = Journal(search_dir / "journal.jsonl")
         assert len(reloaded.candidates) == 8
-        assert len({c.workspace for c in reloaded.candidates.values()}) == 8
+        assert len({c.candidate_dir for c in reloaded.candidates.values()}) == 8
 
 
 class TestDecideNextPolicy:
@@ -455,7 +455,7 @@ class TestDecideNextPolicy:
         searcher, journal, _ = pool_searcher(task, config, backend, n=2)
         from hillclimb.candidate import Candidate
 
-        journal.candidate_created(Candidate(candidate_id="c000", operator="draft", workspace="w"))
+        journal.candidate_created(Candidate(candidate_id="c000", operator="draft", candidate_dir="w"))
         assert searcher._prospective_branches() == 1  # pending draft counts
 
     def test_debuggable_tip_skips_active_child_and_depth(self, task, config):
@@ -463,11 +463,11 @@ class TestDecideNextPolicy:
         searcher, journal, _ = pool_searcher(task, config, backend, n=2)
         from hillclimb.candidate import Candidate
 
-        journal.candidate_result(Candidate(candidate_id="c000", operator="draft", status="buggy", workspace="w"))
+        journal.candidate_result(Candidate(candidate_id="c000", operator="draft", status="buggy", candidate_dir="w"))
         assert searcher._debuggable_tip().candidate_id == "c000"
         # pending debug child blocks the tip
         journal.candidate_created(
-            Candidate(candidate_id="c001", operator="debug", parent_id="c000", status="pending", workspace="w")
+            Candidate(candidate_id="c001", operator="debug", parent_id="c000", status="pending", candidate_dir="w")
         )
         assert searcher._debuggable_tip() is None
 
@@ -594,7 +594,7 @@ class TestIncumbentSeeding:
         assert seeds[0].status == "ok"
         assert seeds[0].val_score == 0.8
         # the weaker draft cannot displace the incumbent floor
-        best = journal.best_candidate(task.lower_is_better)
+        best = journal.best_candidate(task.higher_is_better)
         assert best.candidate_id == seeds[0].candidate_id
 
     def test_improve_targets_the_seed(self, task, config, tmp_path):
@@ -646,7 +646,7 @@ def test_worker_crash_does_not_hang_the_scheduler(task, config):
     journal = Journal(search_dir / "journal.jsonl")
 
     class ExplodingExecutor:
-        def execute(self, script, workspace, timeout_s, seed=None):
+        def execute(self, script, candidate_dir, timeout_s, seed=None):
             raise RuntimeError("executor blew up")
 
     searcher = GreedySearcher(

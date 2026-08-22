@@ -3,7 +3,7 @@ problem_id: circle-packing
 family: circle-packing
 target: ''
 metric: sum-radii
-lower_is_better: false
+higher_is_better: true
 run_ref: 20260705-152633-v2-single/circle-packing
 finished_at: '2026-07-07T14:29:28.925346+00:00'
 budget_s: 330
