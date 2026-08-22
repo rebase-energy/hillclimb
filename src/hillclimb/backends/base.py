@@ -20,6 +20,10 @@ class OperatorResult(BaseModel):
     session_id: str | None = None
     cost_usd: float | None = None
     num_turns: int | None = None
+    # tokens the agent call consumed, summed across its turns: input + output
+    # + cache creation + cache reads. Cache reads dominate and are cheap, but
+    # the total is the honest "how much did this call move" number.
+    total_tokens: int | None = None
     duration_s: float = 0.0
     raw_output_path: str | None = None
     # rate_limited | timeout | error — None when ok

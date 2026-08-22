@@ -64,7 +64,7 @@ def search_ref(search_dir: Path) -> str:
 def default_venv_python(config: Config, kind: str, requirements: Path | None = None) -> Path:
     """Shared machine venv path, keyed by a hash of the requirement set (and
     the emflow source, whose changes must also rebuild): built once per
-    machine, shared by every workspace, new key = automatic rebuild.
+    machine, shared by every hillclimb dir, new key = automatic rebuild.
 
     A problem-supplied `requirements` file keys on its CONTENT instead —
     editing the file rebuilds automatically, and problems with identical
@@ -263,8 +263,8 @@ def resolve_knowledge_dir(config: Config) -> Path | None:
         return None
     if config.learning.dir is not None:
         return Path(config.learning.dir).absolute()
-    if config.workspace_root is not None:
-        return config.workspace_root / "hillclimb" / "knowledge"
+    if config.hillclimb_dir is not None:
+        return config.hillclimb_dir / "knowledge"
     return None
 
 
@@ -272,7 +272,7 @@ def build_knowledge_context(
     config: Config, problem: ProblemSpec, target: str, log: Log
 ) -> tuple[str | None, int, list[str]]:
     """(prior-experience prompt section, draft-complexity offset, injected
-    claim ids) from the workspace knowledge cards. The claim ids feed credit
+    claim ids) from the hillclimb dir's knowledge cards. The claim ids feed credit
     assignment: whoever gets quoted in the prompt answers for the outcome."""
     from hillclimb.knowledge import (
         complexity_offset,

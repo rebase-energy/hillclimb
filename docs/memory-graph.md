@@ -16,7 +16,14 @@ the design rationale; the shipped surface is:
   replaced the original braille canvas 2026-07-10).
   Drag rotates, shift-drag pans, scroll zooms with semantic zoom into
   concept supernodes; node detail panel, time scrubber over search-finish
-  events, concept sidebar (filter + color-by). Positions come from a 3D
+  events, concept sidebar (filter + color-by), per-type marker shapes
+  (`NODE_SHAPES` → plotui `node_shapes`: rings/triangles/squares/diamonds,
+  same table as hillclimb.sh) with a legend drawn top-left *on* the canvas
+  through plotui's text overlay (`legend_spans`, no widget, no column lost)
+  whose entries toggle a type off (click or keys 1–8, `filter_types`),
+  and a `?` panel (`GraphKeys`: the plotui pointer gestures, which are not
+  Textual bindings, listed above every `GraphScreen` binding — so most
+  bindings are `show=False` and the footer stays legible). Positions come from a 3D
   spring layout cached in graph.json (`pos3`, schema v2; the 2D `pos`
   stays for hillclimb-go). Screenshot: `graph-tui.png`.
 - Config: `learning.claims`, `learning.claims_timeout_s`,

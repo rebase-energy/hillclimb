@@ -17,8 +17,8 @@ The hierarchy: a **Run** (one invocation) contains **Searches** (one engine
 process per problem), each exploring a tree of **Candidates** (immutable code
 artifacts), each executed as a **Trial**.
 
-All commands: `uv run hillclimb <command>` from anywhere inside a workspace
-(found by upward search for `hillclimb/config.yaml`). Search-addressing
+All commands: `uv run hillclimb <command>` from anywhere inside a hillclimb
+dir (found by upward search for `hillclimb/config.yaml`). Search-addressing
 commands accept `<run-id>/<search-id>`, a bare `<run-id>` (when the run has one
 search), or `latest` (the default).
 
@@ -102,7 +102,10 @@ concept ontology), all folded into a derived temporal graph index.
 
 ```bash
 uv run hillclimb knowledge graph --stats        # text summary of the graph
-uv run hillclimb knowledge graph                # interactive TUI (zoom/pan/click/scrub) — don't run headless
+uv run hillclimb knowledge graph                # interactive TUI (zoom/pan/click/scrub) — don't run headless (alias: hillclimb graph)
+uv run hillclimb watch candidates [search]      # TUI straight on a search's candidates — don't run headless
+uv run hillclimb stop --all                     # stop every running search (e.g. a demo)
+uv run hillclimb chart                          # live hillclimb curve TUI (best score vs time) — don't run headless
 uv run hillclimb knowledge rebuild              # regenerate the derived graph.json
 uv run hillclimb knowledge distill [search]     # claims pass for one search (--backfill: all cards)
 uv run hillclimb knowledge consolidate          # sleep phase: generalize claims + rewrite playbooks (agent calls)

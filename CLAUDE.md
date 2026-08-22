@@ -17,8 +17,9 @@ with `--holdout` in a directory agents never see. Providers (`emflow://`,
 `mlebench://`) supply their own argv for the same contract. Never read a score
 off stdout — agent code shares that stream.
 
-- Workspaces: all data lives in a `hillclimb/` folder (config.yaml marker,
-  problems/, specs/, runs/) found by upward search; this repo overrides
+- The hillclimb dir: all data lives in a `hillclimb/` folder (config.yaml
+  marker, problems/, specs/, runs/) found by upward search — never call it a
+  "workspace", that word means a candidate's working dir; this repo overrides
   runs/problems to its legacy top-level dirs in `hillclimb/config.yaml`.
   Machine-scoped state (shared venvs, emflow cache, agent slots) lives in
   `~/.cache/hillclimb/`.
@@ -31,7 +32,11 @@ off stdout — agent code shares that stream.
   search cannot climb noise, and `trial_mode: serial` is mandatory when the
   metric measures the machine (time/throughput/memory) — parallel trials
   measure each other
-- CLI: `uv run hillclimb --help` (engine); `uv run hillclimb watch` (live TUI)
+- CLI: `uv run hillclimb --help` (engine); live TUIs: `watch` (agents; `watch candidates` jumps to a search),
+  `chart` (best score vs time per search), `graph` (knowledge graph)
+- `hillclimb demo`: zero-setup demo (N parallel detached `hillclimb run`s, `stop --all` ends it) — bundled circle-packing problem in
+  `src/hillclimb/demo/` (package data, a copy of `problems/circle-packing`
+  with a lean `requirements.txt`); keep the two in sync
 - Driving runs from chat: use the `hillclimb` skill (`.claude/skills/hillclimb/SKILL.md`)
 
 ## Run-state rules

@@ -1,0 +1,179 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+
+from hillclimb.candidate import Candidate, Trial
+from hillclimb.chart import climb_curve, climb_curves
+from hillclimb.cli import main as cli_main
+from hillclimb.demo import DEMO_PROBLEM_ID, install_demo_problem
+from hillclimb.journal import Journal
+from hillclimb.problem import load_problem
+from hillclimb.run import RunMeta, SearchMeta, write_run_meta, write_search_meta
+
+
+def test_install_demo_problem_copies_once(tmp_path):
+    problems = tmp_path / "problems"
+    problem_dir, created = install_demo_problem(problems)
+    assert created and problem_dir == problems / DEMO_PROBLEM_ID
+    assert (problem_dir / "verifier.sh").exists()
+    assert os.access(problem_dir / "verifier.sh", os.X_OK)
+    (problem_dir / "description.md").write_text("edited")
+    again, created = install_demo_problem(problems)
+    assert not created and (again / "description.md").read_text() == "edited"
+
+
+def test_bundled_problem_loads_and_mirrors_repo_problem(tmp_path, config):
+    config.paths.problems_dir = tmp_path / "problems"
+    install_demo_problem(config.paths.problems_dir)
+    spec = load_problem(DEMO_PROBLEM_ID, config)
+    assert spec.metric_name == "sum-radii" and not spec.lower_is_better
+    assert spec.requirements_file is not None
+    # the bundled verifier is the repo's verifier — the two must not drift
+    repo = Path("problems") / DEMO_PROBLEM_ID
+    bundled = Path("src/hillclimb/demo") / DEMO_PROBLEM_ID
+    for name in ("verifier.sh", "verify.py", "baseline.py", "description.md", "sample_submission.csv"):
+        assert (bundled / name).read_text() == (repo / name).read_text(), name
+
+
+def _search(runs_dir: Path, run_id: str, name: str, scores: list[tuple[str, float]], lower=False):
+    run_dir = runs_dir / run_id
+    write_run_meta(run_dir, RunMeta(run_id=run_id, name=name, kind="problem", target="p", problem_ids=["p"]))
+    search_dir = run_dir / "searches" / "p"
+    search_dir.mkdir(parents=True)
+    write_search_meta(search_dir, SearchMeta(
+        search_id="p", run_id=run_id, problem="p", problem_id="p", backend="dummy",
+        model="m", metric="score", lower_is_better=lower, started_at="2026-08-22T10:00:00+00:00",
+    ))
+    journal = Journal(search_dir / "journal.jsonl")
+    for index, (finished, score) in enumerate(scores):
+        journal.candidate_result(Candidate(
+            candidate_id=f"c{index:03d}", operator="draft", status="ok",
+            trials=[Trial(val_score=score)], finished_at=finished,
+        ))
+    return search_dir
+
+
+def test_climb_curve_is_best_so_far_in_minutes(tmp_path):
+    search_dir = _search(tmp_path / "runs", "r1", "one", [
+        ("2026-08-22T10:02:00+00:00", 1.0),
+        ("2026-08-22T10:01:00+00:00", 0.5),  # out of order on disk
+        ("2026-08-22T10:05:00+00:00", 0.8),  # worse: the curve stays flat
+        ("2026-08-22T10:06:00+00:00", 1.4),
+    ])
+    curve = climb_curve(search_dir, "one")
+    assert curve.xs == [1.0, 2.0, 5.0, 6.0]
+    assert curve.ys == [0.5, 1.0, 1.0, 1.4]
+    assert curve.best == 1.4
+
+
+def test_climb_curve_respects_lower_is_better_and_skips_unscored(tmp_path):
+    search_dir = _search(tmp_path / "runs", "r1", "one", [
+        ("2026-08-22T10:01:00+00:00", 3.0),
+        ("2026-08-22T10:02:00+00:00", 2.0),
+    ], lower=True)
+    journal = Journal(search_dir / "journal.jsonl")
+    journal.candidate_result(Candidate(candidate_id="c999", operator="debug", status="buggy"))
+    assert climb_curve(search_dir).ys == [3.0, 2.0]
+
+
+def test_climb_curves_groups_by_problem_oldest_first(tmp_path):
+    runs = tmp_path / "runs"
+    _search(runs, "r2", "demo-2", [("2026-08-22T10:01:00+00:00", 2.0)])
+    _search(runs, "r1", "demo-1", [("2026-08-22T10:01:00+00:00", 1.0)])
+    # same started_at: sort is stable on the (started_at, dir) key -> r1 then r2
+    curves = climb_curves(runs, "p")
+    assert [c.label for c in curves] == ["demo-1", "demo-2"]
+    assert climb_curves(runs, "other") == []
+
+
+def test_demo_preflight_names_the_missing_tool(monkeypatch):
+    from hillclimb.cli import _demo_preflight
+    import typer
+
+    monkeypatch.setattr("shutil.which", lambda name: None if name == "claude" else "/usr/bin/x")
+    with pytest.raises(typer.Exit):
+        _demo_preflight("claude-code")
+    _demo_preflight("dummy")
+
+
+def test_demo_launches_parallel_detached_searches(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
+    monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
+    launched = []
+
+    class FakeProc:
+        pid = 4242
+
+    def fake_popen(cmd, **kwargs):
+        launched.append((cmd, kwargs))
+        return FakeProc()
+
+    monkeypatch.setattr("hillclimb.cli._demo_preflight", lambda backend: None)
+    monkeypatch.setattr("hillclimb.cli.ensure_runtime_venv", lambda *a, **k: Path("/py"))
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+    with pytest.raises(SystemExit) as exc:
+        cli_main(["demo", "--budget", "5m", "--parallel", "2", "--backend", "dummy", "--model", "haiku"])
+    assert exc.value.code == 0
+    assert (tmp_path / "hillclimb" / "config.yaml").exists()
+    assert (tmp_path / "hillclimb" / "problems" / DEMO_PROBLEM_ID / "baseline.py").exists()
+    assert len(launched) == 2
+    for index, (cmd, kwargs) in enumerate(launched, 1):
+        assert cmd[1:] == [
+            "-m", "hillclimb.cli", "run", DEMO_PROBLEM_ID, "--name", f"demo-{index}",
+            "--budget", "5m", "--stop-margin-s", "30", "--model", "haiku", "--backend", "dummy",
+        ]
+        assert kwargs["start_new_session"] is True
+        assert kwargs["env"]["HILLCLIMB_DIR"] == str(tmp_path / "hillclimb")
+        assert kwargs["cwd"] == tmp_path
+    assert len(list((tmp_path / "hillclimb" / "runs").glob("demo-*.log"))) == 2
+
+
+def test_run_accepts_hidden_stop_margin(tmp_path, config, monkeypatch):
+    seen = {}
+    monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
+    monkeypatch.setattr(
+        "hillclimb.cli._run_problem",
+        lambda target, cfg, budget, **kw: seen.setdefault("margin", cfg.budget.stop_margin_s),
+    )
+    with pytest.raises(SystemExit):
+        cli_main(["run", "circle-packing", "--budget", "5m", "--stop-margin-s", "42"])
+    assert seen["margin"] == 42
+
+
+def test_stop_all_reaches_every_running_search(tmp_path, config, monkeypatch):
+    from hillclimb.control import read_commands
+    from hillclimb.status import SearchStatus, write_status
+
+    runs = config.paths.runs_dir
+    a = _search(runs, "r1", "demo-1", [])
+    b = _search(runs, "r2", "demo-2", [])
+    for s in (a, b):
+        write_status(s, SearchStatus(search_id="p", state="running", pid=os.getpid()))
+    monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
+    with pytest.raises(SystemExit) as exc:
+        cli_main(["stop", "--all"])
+    assert exc.value.code == 0
+    assert [c.action for _, c in read_commands(a)] == ["stop"]
+    assert [c.action for _, c in read_commands(b)] == ["stop"]
+
+
+@pytest.mark.asyncio
+async def test_watch_candidates_opens_on_the_search(tmp_path, config):
+    from hillclimb.watch import CandidateScreen, WatchApp
+
+    search_dir = _search(config.paths.runs_dir, "r1", "demo-1", [("2026-08-22T10:01:00+00:00", 1.0)])
+    app = WatchApp(config, search_dir=search_dir)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.3)
+        assert isinstance(app.screen, CandidateScreen)
+        assert app.screen.search_dir == search_dir
+        assert [type(s).__name__ for s in app.screen_stack[1:]] == [
+            "RunsScreen", "SearchesScreen", "CandidateScreen",
+        ]
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+        assert type(app.screen).__name__ == "SearchesScreen"

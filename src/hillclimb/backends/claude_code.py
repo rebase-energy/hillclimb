@@ -229,11 +229,18 @@ class ClaudeCodeBackend:
                 error_kind="error",
                 error_message="agent exited 0 but emitted no result message",
             )
+        usage = payload.get("usage") or {}
+        token_keys = (
+            "input_tokens", "output_tokens",
+            "cache_creation_input_tokens", "cache_read_input_tokens",
+        )
+        total_tokens = sum(usage.get(k) or 0 for k in token_keys) or None
         return OperatorResult(
             ok=True,
             session_id=payload.get("session_id"),
             cost_usd=payload.get("total_cost_usd"),
             num_turns=payload.get("num_turns"),
+            total_tokens=total_tokens,
             duration_s=duration,
             raw_output_path=str(raw_path),
         )

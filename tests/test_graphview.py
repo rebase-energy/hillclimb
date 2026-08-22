@@ -117,6 +117,18 @@ class TestAdapter:
         huge = VNode(id="h", type="supernode", label="h", x=0, y=0, count=500)
         assert NODE_SIZE < node_size(small) < node_size(huge) <= SUPERNODE_SIZE_CAP
 
+    def test_node_shape_follows_type(self):
+        from plotui import Plot
+
+        from hillclimb.graphview import NODE_SHAPES, node_shape
+
+        for type_, shape in NODE_SHAPES.items():
+            assert node_shape(VNode(id=type_, type=type_, label="", x=0, y=0)) == shape
+        assert node_shape(VNode(id="x", type="mystery", label="", x=0, y=0)) == "disc"
+        # every shape the table names is one plotui accepts
+        for shape in set(NODE_SHAPES.values()):
+            Plot().add_graph3d([0.0], [0.0], [0.0], edges=[], node_shapes=[shape])
+
     def test_build_plot_maps_ids_and_survives_rendering(self):
         from hillclimb.graphview import VEdge
 
@@ -213,6 +225,45 @@ class TestFilter:
 
 
 class TestSearchAndScrub:
+    def test_filter_types(self):
+        from hillclimb.graphview import filter_types
+
+        graph = KnowledgeGraph(nodes=[
+            GraphNode(id="s", type="search", label="s"),
+            GraphNode(id="p", type="problem", label="p"),
+            GraphNode(id="c", type="concept", label="c"),
+        ], edges=[GraphEdge(src="s", dst="p", type="ran_on"), GraphEdge(src="p", dst="c", type="has_concept")])
+        out = filter_types(graph, frozenset({"concept"}))
+        assert [n.id for n in out.nodes] == ["s", "p"]
+        assert [(e.src, e.dst) for e in out.edges] == [("s", "p")]  # dangling edge dropped
+        assert filter_types(graph, frozenset()) is graph
+
+    def test_legend_spans_and_hit_test(self):
+        from hillclimb.graphview import (
+            LEGEND_COL, LEGEND_ROW, LEGEND_TYPES, LEGEND_WIDTH, legend_entry_at, legend_spans,
+        )
+
+        def lines(hidden):
+            out = {}
+            for row, col, text, _style in legend_spans(hidden):
+                out[row] = out.get(row, "") + text
+            return [out[r] for r in sorted(out)]
+
+        plain = lines(frozenset())
+        assert plain[0] == "1 ◇ claim" and plain[2] == "3 ◉ family" and plain[6] == "7 ▲ search"
+        assert len(plain) == len(LEGEND_TYPES)
+        assert max(len(line) for line in plain) <= LEGEND_WIDTH
+        # each line's cells hit its entry; around the legend is nothing
+        for index, type_ in enumerate(LEGEND_TYPES):
+            assert legend_entry_at(LEGEND_COL, LEGEND_ROW + index) == type_
+            assert legend_entry_at(LEGEND_COL + LEGEND_WIDTH - 1, LEGEND_ROW + index) == type_
+        assert legend_entry_at(LEGEND_COL + LEGEND_WIDTH, LEGEND_ROW) is None
+        assert legend_entry_at(LEGEND_COL, LEGEND_ROW + len(LEGEND_TYPES)) is None
+        assert legend_entry_at(LEGEND_COL, LEGEND_ROW - 1) is None
+        # a hidden type keeps its line and hotkey but loses its glyph
+        hidden = lines(frozenset({"search"}))
+        assert hidden[6] == "7   search" and len(hidden) == len(LEGEND_TYPES)
+
     def test_fuzzy_match(self):
         nodes = [
             GraphNode(id="entity:histgradientboosting", type="technique",
@@ -234,10 +285,23 @@ class TestSearchAndScrub:
         assert snap_to_event([], 0.5) == 0
 
     def test_render_scrubber(self):
-        live = render_scrubber(["t1", "t2"], None, 40).plain
-        assert "◉" in live and "(live)" in live
-        historical = render_scrubber(["t1", "t2"], 0, 40).plain
-        assert "as of t1" in historical
+        track, label = render_scrubber(["t1", "t2"], None, 60).plain.split("\n")
+        assert len(track) == 60 and track.endswith("●") and track[0] == "┿"
+        assert "━" in track and "─" not in track, "live: the whole track is elapsed"
+        assert label.startswith("live · 2 searches") and label.endswith("end live")
+        # too narrow for the hint: the label alone, never a wrapped second line
+        narrow = render_scrubber(["t1", "t2"], None, 40).plain.split("\n")[1]
+        assert narrow == "live · 2 searches"
+        track, label = render_scrubber(["t1", "t2"], 0, 40).plain.split("\n")
+        assert track[0] == "●" and track[-1] == "┼" and "━" not in track
+        assert label.startswith("as of t1 · search 1 of 2")  # non-ISO stamps pass through
+        assert render_scrubber([], None, 40).plain.endswith("no finished searches yet")
+
+    def test_event_stamp_is_local_and_minute_precise(self):
+        from hillclimb.graphview import event_stamp
+
+        assert len(event_stamp("2026-08-22T07:55:38.777516+00:00")) == len("2026-08-22 09:55")
+        assert event_stamp("not a date") == "not a date"
 
 
 class TestDetail:
@@ -395,6 +459,34 @@ async def test_scrubber_steps_and_refresh_keeps_state(graph_workspace):
 
 
 @pytest.mark.asyncio
+async def test_scrubber_drag_rewinds_without_selecting_text(graph_workspace):
+    from hillclimb.graphview import GraphApp, GraphPlotWidget, TimeScrubber
+
+    app = GraphApp(graph_workspace)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        scrubber = app.screen.query_one("#time-scrubber", TimeScrubber)
+        canvas = app.screen.query_one("#graph-canvas", GraphPlotWidget)
+        assert scrubber.index is None and len(scrubber.events_list) >= 2
+        live_nodes = len(canvas._graph.nodes)
+
+        # grab the cursor at the live end and drag it to the far left
+        await pilot.mouse_down("#time-scrubber", offset=(118, 0))
+        await pilot.hover("#time-scrubber", offset=(60, 0))
+        await pilot.hover("#time-scrubber", offset=(2, 0))
+        await pilot.mouse_up("#time-scrubber", offset=(2, 0))
+        await pilot.pause()
+        assert scrubber.index == 0, "dragged to the first search"
+        assert len(canvas._graph.nodes) < live_nodes, "the graph rewound"
+        assert "as of" in scrubber.render().plain
+        assert not app.screen.selections, "a scrub must not select the track's text"
+
+        await pilot.press("end")
+        await pilot.pause()
+        assert scrubber.index is None and len(canvas._graph.nodes) == live_nodes
+
+
+@pytest.mark.asyncio
 async def test_zoom_out_collapses_and_members_expand(graph_workspace):
     from hillclimb.graphview import GraphApp, GraphPlotWidget
 
@@ -416,6 +508,40 @@ async def test_zoom_out_collapses_and_members_expand(graph_workspace):
 
 
 @pytest.mark.asyncio
+async def test_legend_toggles_node_types_by_key_and_click(graph_workspace):
+    from hillclimb.graphview import LEGEND_COL, LEGEND_ROW, GraphApp, GraphPlotWidget
+
+    app = GraphApp(graph_workspace)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        canvas = app.screen.query_one("#graph-canvas", GraphPlotWidget)
+        types = lambda: {n.type for n in canvas._graph.nodes}
+        overlay_text = lambda: "".join(t for spans in canvas._overlay.values() for _c, t, _s in spans)
+        assert "search" in types() and canvas.hidden_types == frozenset()
+        assert "▲ search" in overlay_text(), "the legend is drawn on the canvas overlay"
+
+        await pilot.press("7")  # search is the 7th legend entry
+        await pilot.pause()
+        assert "search" not in types()
+        assert canvas.hidden_types == frozenset({"search"})
+        assert "▲ search" not in overlay_text() and "  search" in overlay_text()
+
+        # clicking the entry's line on the canvas brings it back
+        await pilot.click("#graph-canvas", offset=(LEGEND_COL + 3, LEGEND_ROW + 6))
+        await pilot.pause()
+        assert "search" in types() and canvas.hidden_types == frozenset()
+
+        # the `?` panel lists the hotkeys once, not eight times
+        from hillclimb.graphview import GraphKeys
+
+        await pilot.press("question_mark")
+        await pilot.pause()
+        rows = dict(app.screen.query_one(GraphKeys).rows())
+        assert rows["1-8"] == "hide/show a type" and "2" not in rows
+        assert rows["click legend"] == "hide a type"
+
+
+@pytest.mark.asyncio
 async def test_watch_g_opens_graph_screen(graph_workspace):
     from hillclimb.graphview import GraphScreen
     from hillclimb.watch import WatchApp
@@ -430,3 +556,49 @@ async def test_watch_g_opens_graph_screen(graph_workspace):
         await pilot.press("escape")
         await pilot.pause()
         assert not isinstance(app.screen, GraphScreen)
+
+
+@pytest.mark.asyncio
+async def test_help_panel_toggles_and_lists_every_command(graph_workspace):
+    from hillclimb.graphview import GraphApp, GraphKeys, GraphPlotWidget
+
+    app = GraphApp(graph_workspace)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        canvas = app.screen.query_one("#graph-canvas", GraphPlotWidget)
+        width = canvas.size.width
+        assert not app.screen.query(GraphKeys)
+
+        await pilot.press("question_mark")
+        await pilot.pause()
+        panel = app.screen.query_one(GraphKeys)
+        # the panel splits the screen: the canvas gives up its column
+        assert canvas.size.width < width
+
+        rows = dict(panel.rows())
+        # camera gestures plotui handles, which are not Textual bindings
+        assert rows["shift-drag"] == "pan"
+        assert rows["scroll"] == "zoom"
+        # ...listed beside every key, including those hidden from the footer
+        assert {"+ =", "f 0", "[", "esc", "q"} <= set(rows)
+        assert all(len(keys) <= 12 for keys in rows), "a key cap would wrap"
+
+        await pilot.press("question_mark")
+        await pilot.pause()
+        assert not app.screen.query(GraphKeys)
+        assert canvas.size.width == width
+
+
+@pytest.mark.asyncio
+async def test_apps_use_the_cyan_theme(graph_workspace):
+    from hillclimb.graphview import GraphApp
+    from hillclimb.theme import HILLCLIMB_THEME
+
+    app = GraphApp(graph_workspace)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert app.theme == HILLCLIMB_THEME.name
+        variables = app.get_css_variables()
+        # chrome follows the theme: footer keys, borders and cursors are cyan
+        assert variables["footer-key-foreground"].upper() == HILLCLIMB_THEME.accent.upper()
+        assert variables["border"].upper() == HILLCLIMB_THEME.primary.upper()

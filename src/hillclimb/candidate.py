@@ -22,6 +22,7 @@ class BackendInfo(BaseModel):
     session_id: str | None = None
     cost_usd: float | None = None
     num_turns: int | None = None
+    total_tokens: int | None = None
     agent_duration_s: float | None = None
     error_kind: str | None = None
 

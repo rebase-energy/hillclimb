@@ -71,9 +71,18 @@ def run_scored_baseline(
         trial.finished_at = utcnow()
         candidate.trials.append(trial)
         candidate.is_best = True
+        (search_dir / "best").mkdir(parents=True, exist_ok=True)
         shutil.copy(solution, search_dir / "best" / "solution.py")
+        # the artifacts the baseline produced (e.g. submission.csv) ship
+        # alongside it, so best/ is complete from t=0
+        for name in problem.baseline_files:
+            if (workspace / name).exists():
+                shutil.copy(workspace / name, search_dir / "best" / name)
     else:
         candidate.summary += " (baseline eval failed; unscored)"
+        for name, source in problem.baseline_files.items():
+            (search_dir / "best").mkdir(parents=True, exist_ok=True)
+            shutil.copy(source, search_dir / "best" / name)
     candidate.finished_at = utcnow()
     return candidate
 

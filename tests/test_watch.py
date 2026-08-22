@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb.candidate import Candidate, Trial
+from hillclimb.candidate import BackendInfo, Candidate, Trial
 from hillclimb.config import Config
 from hillclimb.control import read_commands
 from hillclimb.journal import Journal
@@ -67,10 +67,12 @@ def make_run_with_search(
     )
     journal = Journal(search_dir / "journal.jsonl")
     journal.candidate_result(make_candidate("c000", operator="baseline", status="ok"))
-    journal.candidate_result(make_candidate("c001", operator="draft", status="ok", val_score=0.7))
-    journal.candidate_result(
-        make_candidate("c002", operator="improve", parent_id="c001", status="buggy", pruned=True)
-    )
+    c001 = make_candidate("c001", operator="draft", status="ok", val_score=0.7)
+    c001.backend = BackendInfo(name="claude-code", total_tokens=240_000)
+    journal.candidate_result(c001)
+    c002 = make_candidate("c002", operator="improve", parent_id="c001", status="buggy", pruned=True)
+    c002.backend = BackendInfo(name="claude-code", total_tokens=1_000_000)
+    journal.candidate_result(c002)
     if status is not None:
         write_status(search_dir, status)
     return search_dir
@@ -128,6 +130,79 @@ def test_scan_runs_and_searches_with_status(tmp_path: Path):
     assert len(search_rows) == 1
     assert search_rows[0].problem == "circle-packing"
     assert search_rows[0].candidates == "3 (2 ok)"
+    assert search_rows[0].tokens == "1.24M"  # 240k + 1.0M, summed across candidates
+
+
+def test_fmt_tokens():
+    from hillclimb.watch import _fmt_tokens
+
+    assert _fmt_tokens(None) == "-"
+    assert _fmt_tokens(0) == "-"
+    assert _fmt_tokens(812) == "812"
+    assert _fmt_tokens(24_500) == "24.5k"
+    assert _fmt_tokens(1_240_000) == "1.24M"
+
+
+def test_stream_tokens_live_and_final(tmp_path: Path):
+    import json
+
+    from hillclimb.watch import _stream_tokens
+
+    ws = tmp_path / "cand"
+    ws.mkdir()
+    assert _stream_tokens(ws) == 0  # no stream yet
+
+    def turn(mid, out, cc, cr):
+        return json.dumps({"type": "assistant", "message": {"id": mid, "usage": {
+            "input_tokens": 1, "output_tokens": out,
+            "cache_creation_input_tokens": cc, "cache_read_input_tokens": cr}}})
+
+    # each turn streams twice under one id (partial then final) -> deduped
+    lines = [turn("m1", 2, 100, 500), turn("m1", 2, 100, 500), turn("m2", 3, 50, 900)]
+    (ws / "agent_stream.jsonl").write_text("\n".join(lines) + "\n")
+    # unique turns: (1+2+100+500) + (1+3+50+900)
+    assert _stream_tokens(ws) == 603 + 954
+
+    # once the result lands it is authoritative, replacing the per-turn estimate
+    result = json.dumps({"type": "result", "usage": {
+        "input_tokens": 10, "output_tokens": 8209,
+        "cache_creation_input_tokens": 29297, "cache_read_input_tokens": 199902}})
+    (ws / "agent_stream.jsonl").write_text("\n".join(lines + [result]) + "\n")
+    assert _stream_tokens(ws) == 10 + 8209 + 29297 + 199902
+
+    # a half-written trailing line (agent still streaming) is ignored
+    (ws / "agent_stream.jsonl").write_text("\n".join(lines) + "\n{\"type\": \"assis")
+    assert _stream_tokens(ws) == 603 + 954
+
+
+def test_search_row_counts_in_flight_tokens(tmp_path: Path):
+    import json
+
+    from hillclimb.status import CurrentCandidate, SearchStatus
+    from hillclimb.watch import _search_row
+
+    runs_dir = tmp_path / "runs"
+    make_run_with_search(
+        runs_dir, "20260701-run",
+        SearchStatus(search_id="circle-packing", run_id="20260701-run", state="running"),
+    )
+    search_dir = runs_dir / "20260701-run" / "searches" / "circle-packing"
+    # an in-flight candidate the journal does not know about yet
+    live = search_dir / "candidates" / "c003"
+    live.mkdir(parents=True)
+    (live / "agent_stream.jsonl").write_text(json.dumps({"type": "result", "usage": {
+        "input_tokens": 0, "output_tokens": 0,
+        "cache_creation_input_tokens": 0, "cache_read_input_tokens": 500_000}}) + "\n")
+    status = SearchStatus(
+        search_id="circle-packing", run_id="20260701-run", state="running",
+        current=[CurrentCandidate(candidate_id="c003", operator="improve", phase="agent",
+                                  workspace=str(live))],
+    )
+    from hillclimb.status import write_status
+    write_status(search_dir, status)
+    row = _search_row(search_dir)
+    # 240k + 1.0M finished (from make_run_with_search) + 500k in-flight = 1.74M
+    assert row.tokens == "1.74M"
 
 
 def test_scan_searches_detects_crash(tmp_path: Path):
@@ -584,3 +659,26 @@ async def test_candidate_table_scrollbar_switches_resize_then_scroll_in_one_drag
         assert table.scroll_x > initial_scroll
 
         await pilot.mouse_up(offset=(hbar.region.x + 12, hbar.region.y - 3))
+
+
+def test_budget_left_shows_seconds():
+    from hillclimb.watch import _format_budget_left
+
+    assert _format_budget_left(None) == "-"
+    assert _format_budget_left(247.9) == "4m 07s"
+    assert _format_budget_left(3727) == "1h 02m 07s"
+    assert _format_budget_left(-5) == "0m 00s"
+
+
+def test_live_remaining_counts_down_between_heartbeats():
+    from datetime import datetime, timedelta, timezone
+
+    from hillclimb.status import BudgetStatus, SearchStatus, live_remaining_s
+
+    written = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
+    status = SearchStatus(search_id="p", state="running", budget=BudgetStatus(remaining_s=100), updated_at=written)
+    assert 89 <= live_remaining_s(status, "running") <= 91
+    # a finished search's clock stopped at the last write
+    assert live_remaining_s(status, "done") == 100
+    status.budget.remaining_s = 3
+    assert live_remaining_s(status, "running") == 0.0

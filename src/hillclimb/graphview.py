@@ -6,8 +6,8 @@ filter and color by concept. The graph renders as a true-3D scene through
 plotui (Rust rasterizer → Kitty pixel graphics: placeholder placement in
 kitty/Ghostty, direct placement in iTerm2 ≥ 3.5/WezTerm/Konsole, a support
 notice elsewhere); node positions come from the 3D spring layout cached in
-graph.json (`pos3`). The pure functions at the top carry LOD, color, and
-label geometry so they stay testable without driving Textual; the widgets
+graph.json (`pos3`). The pure functions at the top carry LOD, color, marker
+shape, and label geometry so they stay testable without driving Textual; the widgets
 below are thin shells in the style of watch.py.
 
 Zoom drives semantic LOD: below COLLAPSE_ENTER the concept-bearing nodes fold
@@ -26,11 +26,13 @@ from pathlib import Path
 from typing import Sequence
 
 from rich.color import Color as RichColor
+from rich.table import Table
 from rich.style import Style
 from rich.text import Text
 
 from hillclimb.config import Config
 from hillclimb.graph import GraphNode, KnowledgeGraph, fuzzy_match, graph_at
+from hillclimb.theme import HILLCLIMB_CSS, apply_theme
 
 # --- pure data layer ---
 
@@ -54,6 +56,25 @@ EDGE_COLORS = {
     "about": "dim green", "derived_from": "dim green", "applies_to": "dim green",
     "supersedes": "dim red", "has_concept": "dim magenta", "is_a": "dim magenta",
     "generalizes": "dim green",
+}
+# A marker silhouette per node type (the plotui `node_shapes` names), so the
+# type reads at a glance without matching a colour against a legend. Same
+# table as the hillclimb.sh graph; anchors (family/problem) are rings,
+# searches point, libraries are blocks, claims are the open twin of the
+# technique they are about, operators recede to dots.
+NODE_SHAPES = {
+    "family": "ring", "problem": "ring", "search": "triangle", "library": "square",
+    "concept": "disc", "technique": "diamond", "claim": "diamond-open", "operator": "dot",
+    "supernode": "disc",
+}
+# The legend row, in the website's order. Each entry toggles its type off and
+# on; the glyph is the closest text stand-in for the plotui marker.
+LEGEND_TYPES = (
+    "claim", "concept", "family", "library", "operator", "problem", "search", "technique",
+)
+LEGEND_GLYPHS = {
+    "disc": "●", "ring": "◉", "square": "■", "triangle": "▲",
+    "diamond": "◆", "diamond-open": "◇", "dot": "•",
 }
 # fixed 8-color pool for concept coloring — theme-safe, no RGB gradients
 CONCEPT_COLOR_POOL = (
@@ -128,6 +149,53 @@ def filter_concepts(graph: KnowledgeGraph, enabled: frozenset[str] | None) -> Kn
         schema_version=graph.schema_version, built_at=graph.built_at,
         events=graph.events, nodes=nodes, edges=edges,
     )
+
+
+def filter_types(graph: KnowledgeGraph, hidden: frozenset[str]) -> KnowledgeGraph:
+    """Legend filter: drop every node of a hidden type, and the edges that
+    touched one. Runs before LOD, so hiding `concept` also empties the
+    supernodes' labels but leaves the entities grouped under them."""
+    if not hidden:
+        return graph
+    nodes = [n for n in graph.nodes if n.type not in hidden]
+    ids = {n.id for n in nodes}
+    edges = [e for e in graph.edges if e.src in ids and e.dst in ids]
+    return KnowledgeGraph(
+        schema_version=graph.schema_version, built_at=graph.built_at,
+        events=graph.events, nodes=nodes, edges=edges,
+    )
+
+
+LEGEND_ROW, LEGEND_COL = 1, 1  # where the legend's first line sits on the canvas
+LEGEND_WIDTH = 2 + 2 + max(len(t) for t in LEGEND_TYPES)  # "1 " + glyph + " " + name
+
+
+def legend_spans(hidden: frozenset[str]) -> list[tuple[int, int, str, str]]:
+    """The legend as text-overlay spans `(row, col, text, style)` — one line
+    per type from LEGEND_ROW down, drawn over the plot the same way node
+    labels are, so it costs the canvas no columns. Entries carry their hotkey
+    (1-8) and render in the truecolor the plot paints the type with; hidden
+    types go dim and lose their glyph, so the legend itself shows what the
+    canvas is not drawing."""
+    spans: list[tuple[int, int, str, str]] = []
+    for index, type_ in enumerate(LEGEND_TYPES):
+        row = LEGEND_ROW + index
+        spans.append((row, LEGEND_COL, f"{index + 1} ", "dim"))
+        if type_ in hidden:
+            spans.append((row, LEGEND_COL + 2, f"  {type_}", "dim strike"))
+        else:
+            r, g, b = style_to_rgb(NODE_COLORS.get(type_, "white"))
+            glyph = LEGEND_GLYPHS[NODE_SHAPES.get(type_, "disc")]
+            spans.append((row, LEGEND_COL + 2, f"{glyph} {type_}", f"rgb({r},{g},{b})"))
+    return spans
+
+
+def legend_entry_at(col: int, row: int) -> str | None:
+    """The legend type under canvas cell `(col, row)`, or None off the legend."""
+    index = row - LEGEND_ROW
+    if 0 <= index < len(LEGEND_TYPES) and LEGEND_COL <= col < LEGEND_COL + LEGEND_WIDTH:
+        return LEGEND_TYPES[index]
+    return None
 
 
 def lod_collapsed(zoom: float, was_collapsed: bool) -> bool:
@@ -252,6 +320,11 @@ def style_to_rgb(style: str) -> tuple[int, int, int]:
     return tuple(min(255, round(c * factor)) for c in rgb)
 
 
+def node_shape(node: VNode) -> str:
+    """The marker silhouette for a node's type; anything unmapped is a disc."""
+    return NODE_SHAPES.get(node.type, "disc")
+
+
 def node_size(node: VNode) -> float:
     """Supernodes grow with member count (log-scaled, capped); everything
     else renders at the base radius."""
@@ -282,6 +355,7 @@ def build_plot(vg: VisibleGraph, *, color_by: str = "type", selected: str | None
             size=NODE_SIZE,
             node_sizes=[node_size(n) for n in vg.nodes],
             edge_colors=[style_to_rgb(EDGE_COLORS.get(e.type, "dim white")) for e in edges],
+            node_shapes=[node_shape(n) for n in vg.nodes],
         )
         if selected in index_of:
             plot.set_selected(index_of[selected])
@@ -345,23 +419,62 @@ def snap_to_event(events: list[str], fraction: float) -> int:
     return min(max(round(fraction * (len(events) - 1)), 0), len(events) - 1)
 
 
-def render_scrubber(events: list[str], index: int | None, width: int) -> Text:
-    """Two rows: a tick-per-event track with the cursor, then the label."""
-    track = ["─"] * max(width, 10)
-    for i in range(len(events)):
-        pos = 0 if len(events) == 1 else round(i / (len(events) - 1) * (len(track) - 1))
-        track[pos] = "┬"
-    if events:
-        cursor = len(track) - 1 if index is None else (
-            0 if len(events) == 1 else round(index / (len(events) - 1) * (len(track) - 1))
-        )
-        track[cursor] = "◉"
+def event_stamp(event: str) -> str:
+    """A search-finish timestamp for people: local time, to the minute. Not
+    an ISO stamp? Shown as is."""
+    from datetime import datetime
+
+    try:
+        return datetime.fromisoformat(event).astimezone().strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return event
+
+
+SCRUBBER_STYLES = {  # component class -> fallback Rich style (outside Textual)
+    "scrubber--elapsed": "bold cyan",
+    "scrubber--remaining": "dim",
+    "scrubber--cursor": "bold cyan",
+    "scrubber--label": "bold",
+    "scrubber--hint": "dim",
+}
+
+
+def render_scrubber(
+    events: list[str], index: int | None, width: int,
+    styles: dict[str, str | Style] | None = None,
+) -> Text:
+    """Two rows. A media-player track: the stretch up to the cursor is drawn
+    solid in the accent, the rest thin and dim, one tick per finished search
+    and `●` at the cursor (the right end is live). Under it, what the cursor
+    means — the search it rests on and its position in the sequence — with
+    the key hints right-aligned and muted."""
+    st = {**SCRUBBER_STYLES, **(styles or {})}
+    width = max(width, 12)
+    n = len(events)
+    cursor = width - 1 if index is None else (0 if n <= 1 else round(index / (n - 1) * (width - 1)))
+    ticks = {0 if n <= 1 else round(i / (n - 1) * (width - 1)) for i in range(n)}
+    text = Text()
+    for col in range(width):
+        if col == cursor and n:
+            text.append("●", st["scrubber--cursor"])
+        elif col <= cursor:
+            text.append("┿" if col in ticks else "━", st["scrubber--elapsed"])
+        else:
+            text.append("┼" if col in ticks else "─", st["scrubber--remaining"])
+    text.append("\n")
+    if not n:
+        text.append("no finished searches yet", st["scrubber--hint"])
+        return text
     if index is None:
-        label = f"(live) {len(events)} search event(s)   [ / ] scrub, end = live"
+        label = f"live · {n} search{'es' if n != 1 else ''}"
     else:
-        label = f"as of {events[index]}  (event {index + 1}/{len(events)})"
-    text = Text("".join(track) + "\n")
-    text.append(label, style="bold" if index is not None else "dim")
+        label = f"as of {event_stamp(events[index])} · search {index + 1} of {n}"
+    hint = "drag · [ ] step · end live"
+    text.append(label, st["scrubber--label"])
+    gap = width - len(label) - len(hint)
+    if gap >= 2:
+        text.append(" " * gap)
+        text.append(hint, st["scrubber--hint"])
     return text
 
 
@@ -452,9 +565,17 @@ class GraphPlotWidget(PlotWidget):
             super().__init__()
             self.node_id = node_id
 
+    class TypeToggled(Message):
+        """A legend entry was clicked."""
+
+        def __init__(self, type_: str):
+            super().__init__()
+            self.type_ = type_
+
     def __init__(self, **kwargs):
         super().__init__(Plot(), **kwargs)
         self.color_by = "type"
+        self.hidden_types: frozenset[str] = frozenset()
         self.selected: str | None = None
         self._graph: KnowledgeGraph | None = None
         self._visible: VisibleGraph | None = None
@@ -516,10 +637,13 @@ class GraphPlotWidget(PlotWidget):
     def _refresh_overlay(self) -> None:
         if self._mode == "unsupported":
             return  # the widget shows its terminal-support notice instead
+        legend = legend_spans(self.hidden_types)
         if self._visible is None or not self._ids or self.size.width <= 0:
-            self.set_overlay([])
+            self.set_overlay([(r, c, t, Style.parse(st)) for r, c, t, st in legend])
             return
-        spans = place_labels(
+        # legend first: set_overlay keeps the first span where two overlap,
+        # so a node label never paints over a legend line
+        spans = legend + place_labels(
             self._visible.nodes,
             self._plot.project_nodes(*self._px_dims()),
             cols=self.size.width,
@@ -563,7 +687,17 @@ class GraphPlotWidget(PlotWidget):
         super().apply_reset()
         self._lod_check()
 
+    def set_hidden_types(self, hidden: frozenset[str]) -> None:
+        self.hidden_types = hidden
+        self._refresh_overlay()
+
     def on_click_at(self, event: events.MouseUp) -> None:
+        type_ = legend_entry_at(
+            _mouse_event_x(event) - self.region.x, _mouse_event_y(event) - self.region.y
+        )
+        if type_ is not None:
+            self.post_message(self.TypeToggled(type_))
+            return
         node_id = self._node_at(event)
         if node_id != self.selected:
             self.selected = node_id
@@ -657,6 +791,20 @@ class TimeScrubber(Static):
     """Discrete scrubber over search-finish events; state IS an event index
     (None = live)."""
 
+    # A drag here moves the cursor; without this Textual would also start a
+    # text selection on mouse-down and paint it over the track as you drag.
+    ALLOW_SELECT = False
+
+    COMPONENT_CLASSES = set(SCRUBBER_STYLES)
+
+    DEFAULT_CSS = """
+    TimeScrubber > .scrubber--elapsed { color: $accent; }
+    TimeScrubber > .scrubber--remaining { color: $foreground 30%; }
+    TimeScrubber > .scrubber--cursor { color: $accent; text-style: bold; }
+    TimeScrubber > .scrubber--label { color: $foreground; }
+    TimeScrubber > .scrubber--hint { color: $text-muted; }
+    """
+
     class TimeChanged(Message):
         def __init__(self, index: int | None):
             super().__init__()
@@ -681,15 +829,16 @@ class TimeScrubber(Static):
         self._refresh_scrubber()
 
     def _refresh_scrubber(self) -> None:
-        width = self.size.width or 60
-        self.update(render_scrubber(self.events_list, self.index, width))
+        width = self.content_size.width or 60
+        styles = {name: self.get_component_rich_style(name) for name in SCRUBBER_STYLES}
+        self.update(render_scrubber(self.events_list, self.index, width, styles))
 
     def on_resize(self, event: events.Resize) -> None:
         self._refresh_scrubber()
 
     def _index_from_event(self, event: events.MouseEvent) -> int:
-        x = _mouse_event_x(event) - self.region.x
-        width = max(self.size.width - 1, 1)
+        x = _mouse_event_x(event) - self.content_region.x
+        width = max(self.content_size.width - 1, 1)
         return snap_to_event(self.events_list, x / width)
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
@@ -783,21 +932,107 @@ class ConceptSidebar(Vertical):
         event.stop()
 
 
+class GraphKeys(Static):
+    """The `?` panel: every graph command in one list.
+
+    Textual's own HelpPanel can only list Bindings, and the camera gestures
+    live inside plotui's PlotWidget rather than in Textual — which is why they
+    are spelled out in POINTER here. Everything else is read off the host
+    screen's BINDINGS at render time, so the list cannot drift from the keys
+    that actually work.
+    """
+
+    COMPONENT_CLASSES = {"graph-keys--key", "graph-keys--description"}
+
+    DEFAULT_CSS = """
+    GraphKeys {
+        split: right;
+        width: 30;
+        height: 1fr;
+        padding: 1 2 0 1;
+        border-left: vkey $foreground 30%;
+        background: $surface;
+    }
+    GraphKeys > .graph-keys--key { color: $text-accent; text-style: bold; }
+    GraphKeys > .graph-keys--description { color: $text-muted; }
+    """
+
+    # Camera gestures, in the order they are worth discovering.
+    POINTER = [
+        ("drag", "rotate"),
+        ("shift-drag", "pan"),
+        ("scroll", "zoom"),
+        ("arrows", "rotate"),
+        ("shift+arrows", "pan"),
+        ("r", "reset view"),
+        ("click", "select"),
+        ("click again", "open"),
+        ("click legend", "hide a type"),
+    ]
+    # Textual key names that read badly on a key cap.
+    KEY_NAMES = {
+        "escape": "esc",
+        "slash": "/",
+        "question_mark": "?",
+        "left_square_bracket": "[",
+        "right_square_bracket": "]",
+    }
+
+    def rows(self) -> list[tuple[str, str]]:
+        """(keys, what it does) for the whole screen — gestures, then keys."""
+        rows = list(self.POINTER)
+        for binding in getattr(self.screen, "BINDINGS", []):
+            if not isinstance(binding, Binding) or not binding.description:
+                continue
+            keys = binding.key_display or " ".join(
+                self.KEY_NAMES.get(k, k) for k in binding.key.split(",")
+            )
+            rows.append((keys, binding.description))
+        return rows
+
+    def render(self) -> Table:
+        key_style = self.get_component_rich_style("graph-keys--key")
+        text_style = self.get_component_rich_style("graph-keys--description")
+        table = Table(box=None, show_header=False, padding=(0, 1, 0, 0))
+        table.add_column(justify="right")
+        table.add_column()
+        for index, (keys, description) in enumerate(self.rows()):
+            if index == len(self.POINTER):  # gestures above, keys below
+                table.add_row("", "")
+            table.add_row(Text(keys, style=key_style), Text(description, style=text_style))
+        return table
+
+
 class GraphScreen(Screen):
     """The knowledge graph: canvas + concept sidebar + node detail + time
-    scrubber. Reached via `g` in watch or `hillclimb knowledge graph`."""
+    scrubber. Reached via `g` in watch or `hillclimb knowledge graph`.
 
+    `?` splits out GraphKeys — every command in one list — so the footer only
+    has to carry a few keys."""
+
+    # Only the handful worth a permanent slot stay in the footer; everything
+    # else is show=False and lives in the `?` panel, which lists every active
+    # binding regardless of `show`.
+    BINDING_GROUP_TITLE = "graph"
     BINDINGS = [
         Binding("escape", "dismiss_or_back", "back"),
-        Binding("enter", "activate", "open", priority=True),
-        Binding("+,=", "zoom_in", "zoom in"),
-        Binding("-", "zoom_out", "zoom out"),
-        Binding("f,0", "fit", "fit"),
+        Binding("enter", "activate", "open", show=False, priority=True),
+        Binding("+,=", "zoom_in", "zoom in", show=False),
+        Binding("-", "zoom_out", "zoom out", show=False),
+        Binding("f,0", "fit", "fit", show=False, tooltip="frame the whole graph"),
         Binding("slash", "search", "search"),
-        Binding("left_square_bracket", "scrub_back", "back in time"),
-        Binding("right_square_bracket", "scrub_forward", "forward"),
-        Binding("end", "scrub_live", "live"),
+        Binding(
+            "left_square_bracket", "scrub_back", "back in time", show=False,
+            tooltip="one tick per finished search",
+        ),
+        Binding("right_square_bracket", "scrub_forward", "forward", show=False),
+        Binding("end", "scrub_live", "live", show=False, tooltip="jump to now"),
         Binding("c", "toggle_sidebar", "concepts"),
+        # One binding per legend slot; only the first is described, so the
+        # `?` panel shows a single "1-8" row for the lot.
+        Binding("1", "toggle_type(0)", "hide/show a type", show=False, key_display="1-8"),
+        *(Binding(str(i + 1), f"toggle_type({i})", show=False) for i in range(1, len(LEGEND_TYPES))),
+        Binding("question_mark", "toggle_help", "keys"),
         Binding("q", "app.quit", "quit"),
     ]
 
@@ -805,7 +1040,8 @@ class GraphScreen(Screen):
     GraphScreen #concept-sidebar { dock: left; width: 26; display: none; background: $surface; }
     GraphScreen #concept-filters { height: auto; max-height: 70%; }
     GraphScreen #node-detail { dock: right; width: 42; display: none; padding: 0 1; }
-    GraphScreen #time-scrubber { dock: bottom; height: 2; background: $surface; padding: 0 1; }
+    GraphScreen #graph-stage { width: 1fr; height: 1fr; }
+    GraphScreen #time-scrubber { height: 2; background: $surface; padding: 0 1; }
     GraphScreen #graph-search { dock: top; display: none; }
     GraphScreen #graph-search-results { dock: top; display: none; max-height: 10; }
     GraphScreen #graph-canvas { width: 1fr; height: 1fr; }
@@ -817,6 +1053,7 @@ class GraphScreen(Screen):
         self._graph: KnowledgeGraph | None = None
         self._graph_mtime = 0.0
         self._filters: frozenset[str] | None = None
+        self._hidden_types: frozenset[str] = frozenset()
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -824,8 +1061,12 @@ class GraphScreen(Screen):
         yield OptionList(id="graph-search-results")
         yield ConceptSidebar(id="concept-sidebar")
         yield RichLog(id="node-detail", wrap=True, markup=False, auto_scroll=False)
-        yield TimeScrubber(id="time-scrubber")
-        yield GraphPlotWidget(id="graph-canvas")
+        # Not docks: bottom docks overlap each other at the edge (the footer
+        # would cover the scrubber's label row), so the canvas and scrubber
+        # stack in a column of their own.
+        with Vertical(id="graph-stage"):
+            yield GraphPlotWidget(id="graph-canvas")
+            yield TimeScrubber(id="time-scrubber")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -869,6 +1110,7 @@ class GraphScreen(Screen):
             t = scrubber.events_list[scrubber.index]
         view = graph_at(self._graph, t)
         view = filter_concepts(view, self._filters)
+        view = filter_types(view, self._hidden_types)
         self.query_one("#graph-canvas", GraphPlotWidget).set_graph(view)
 
     # -- messages --
@@ -894,6 +1136,18 @@ class GraphScreen(Screen):
         self._activate(message.node_id)
 
     def on_time_scrubber_time_changed(self, message: TimeScrubber.TimeChanged) -> None:
+        self._apply_view()
+
+    def on_graph_plot_widget_type_toggled(self, message: GraphPlotWidget.TypeToggled) -> None:
+        self._toggle_type(message.type_)
+
+    def action_toggle_type(self, index: int) -> None:
+        if 0 <= index < len(LEGEND_TYPES):
+            self._toggle_type(LEGEND_TYPES[index])
+
+    def _toggle_type(self, type_: str) -> None:
+        self._hidden_types = self._hidden_types ^ {type_}
+        self._canvas().set_hidden_types(self._hidden_types)
         self._apply_view()
 
     def on_concept_sidebar_filters_changed(self, message: ConceptSidebar.FiltersChanged) -> None:
@@ -958,6 +1212,16 @@ class GraphScreen(Screen):
         scrubber.set_index(None)
         self._apply_view()
 
+    def action_toggle_help(self) -> None:
+        # GraphKeys is `split: right`, so it reserves its column instead of
+        # overlaying — the canvas shrinks and repaints, which a kitty-graphics
+        # plot needs.
+        panel = self.query(GraphKeys)
+        if panel:
+            panel.remove()
+        else:
+            self.mount(GraphKeys())
+
     def action_toggle_sidebar(self) -> None:
         sidebar = self.query_one("#concept-sidebar", ConceptSidebar)
         shown = sidebar.styles.display != "none"
@@ -1013,6 +1277,7 @@ class GraphApp(App):
     """Standalone shell for `hillclimb knowledge graph` — same screen the
     watch TUI reaches via `g`."""
 
+    CSS = HILLCLIMB_CSS
     TITLE = "hillclimb knowledge graph"
 
     def __init__(self, config: Config | None = None):
@@ -1020,4 +1285,5 @@ class GraphApp(App):
         self.config = config or Config.load()
 
     def on_mount(self) -> None:
+        apply_theme(self)
         self.push_screen(GraphScreen(self.config))

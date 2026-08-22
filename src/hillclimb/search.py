@@ -669,6 +669,7 @@ class GreedySearcher:
             session_id=result.session_id,
             cost_usd=result.cost_usd,
             num_turns=result.num_turns,
+            total_tokens=result.total_tokens,
             agent_duration_s=result.duration_s,
             error_kind=result.error_kind,
         )

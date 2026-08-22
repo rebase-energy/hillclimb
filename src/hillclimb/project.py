@@ -1,13 +1,13 @@
-"""Workspace discovery and machine-scoped directories.
+"""Finding the hillclimb dir, and the machine-scoped directories beside it.
 
-A hillclimb *workspace* is any directory containing a `hillclimb/` folder
-with a `config.yaml` inside — all hillclimb data (config, problems, specs,
-runs) lives in that one folder, so it never mingles with the rest of the
-repo. Commands find the workspace by upward search from the CWD, like git.
+The **hillclimb dir** is a folder named `hillclimb/` with a `config.yaml`
+inside — config, problems, specs and runs all live in that one folder, so
+hillclimb data never mingles with the rest of a repo. Commands find it by
+upward search from the CWD, like git finding `.git/`.
 
 Machine-scoped state (shared runtime venvs, the emflow problem cache, the
 agent-concurrency semaphore) lives under XDG-style user directories, shared
-by every workspace on the machine.
+by every hillclimb dir on the machine.
 """
 
 from __future__ import annotations
@@ -19,41 +19,43 @@ MARKER_DIR = "hillclimb"
 MARKER_FILE = "config.yaml"
 
 
-class WorkspaceNotFound(Exception):
+class HillclimbDirNotFound(Exception):
     def __init__(self, start: Path):
         super().__init__(
-            f"No hillclimb workspace found from {start} upward.\n"
+            f"No hillclimb/ dir found from {start} upward.\n"
             f"Run `hillclimb init` to create one (makes ./{MARKER_DIR}/{MARKER_FILE}), "
-            "or set HILLCLIMB_WORKSPACE to an existing workspace root."
+            "or set HILLCLIMB_DIR to an existing one."
         )
         self.start = start
 
 
-def marker_path(root: Path) -> Path:
-    return root / MARKER_DIR / MARKER_FILE
+def find_hillclimb_dir(start: Path | None = None) -> Path | None:
+    """The nearest `hillclimb/` dir at or above `start` (default CWD).
 
-
-def find_workspace_root(start: Path | None = None) -> Path | None:
-    """Workspace root for `start` (default CWD): the nearest ancestor holding
-    `hillclimb/config.yaml`. Running from inside the hillclimb/ folder itself
-    also resolves. `HILLCLIMB_WORKSPACE` pins the root and skips the search."""
-    pinned = os.environ.get("HILLCLIMB_WORKSPACE")
+    Standing inside the hillclimb/ folder itself also resolves. `HILLCLIMB_DIR`
+    pins it and skips the search; `HILLCLIMB_WORKSPACE` is the pre-rename name
+    for the folder's *parent* and is still honored.
+    """
+    pinned = os.environ.get("HILLCLIMB_DIR")
     if pinned:
         return Path(pinned).expanduser().resolve()
+    legacy = os.environ.get("HILLCLIMB_WORKSPACE")
+    if legacy:
+        return Path(legacy).expanduser().resolve() / MARKER_DIR
     current = (start or Path.cwd()).resolve()
     for ancestor in (current, *current.parents):
-        if marker_path(ancestor).is_file():
-            return ancestor
+        if (ancestor / MARKER_DIR / MARKER_FILE).is_file():
+            return ancestor / MARKER_DIR
         if ancestor.name == MARKER_DIR and (ancestor / MARKER_FILE).is_file():
-            return ancestor.parent
+            return ancestor
     return None
 
 
-def require_workspace_root(start: Path | None = None) -> Path:
-    root = find_workspace_root(start)
-    if root is None:
-        raise WorkspaceNotFound((start or Path.cwd()).resolve())
-    return root
+def require_hillclimb_dir(start: Path | None = None) -> Path:
+    found = find_hillclimb_dir(start)
+    if found is None:
+        raise HillclimbDirNotFound((start or Path.cwd()).resolve())
+    return found
 
 
 def machine_cache_dir() -> Path:

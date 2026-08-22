@@ -18,11 +18,42 @@ The design is deliberately three-layered:
    detail panel for notes, scores, lineage, output, and agent stream when present.
    Drag the divider or use `+` / `-` to resize the detail panel.
 
-## Install
+## Try it in one command
+
+```bash
+pip install hillclimb
+claude login       # agents run through the Claude Code CLI and bill your subscription
+hillclimb demo     # agents climb the circle-packing problem, right here
+```
+
+`hillclimb demo` creates a `hillclimb/` dir in the current folder, installs
+the bundled circle-packing problem (with a one-circle baseline, sum of radii
+0.5, scored at t=0), and starts **six 10-minute searches in parallel, in the
+background** — your prompt comes straight back. It prints the commands worth
+running right there while they climb:
+
+```bash
+hillclimb watch candidates   # one search's candidates: drafting, debugging, improving
+hillclimb watch              # all the searches side by side
+hillclimb chart              # the hillclimb curves: best score vs time, one line per search
+hillclimb graph              # the knowledge graph growing as searches finish
+```
+
+`hillclimb stop --all` ends the demo (the best solutions stay in `runs/`);
+`--parallel N` and `--budget 5m` size it, and each search's engine log is
+`hillclimb/runs/demo-<timestamp>-<n>.log`.
+
+## Install (from source)
 
 ```bash
 uv sync
 claude login   # operator calls bill your Claude subscription
+```
+
+Optional — shell tab-completion for commands, subcommands, and options:
+
+```bash
+hillclimb --install-completion   # writes into your shell config; restart the shell
 ```
 
 ## Quickstart
@@ -35,7 +66,7 @@ uv run hillclimb status                                 # or: plain-text status 
 
 Try the engine without spending agent calls: `--backend dummy`.
 
-## Workspaces
+## The hillclimb dir
 
 All hillclimb data lives in one `hillclimb/` folder inside your project, so it
 never mingles with the rest of the repo. `hillclimb init` creates it:
@@ -43,24 +74,24 @@ never mingles with the rest of the repo. `hillclimb init` creates it:
 ```
 my-project/
 └── hillclimb/
-    ├── config.yaml     # workspace defaults + the workspace marker
+    ├── config.yaml     # defaults, and the marker that makes this the hillclimb dir
     ├── problems/       # problem definitions
     ├── specs/          # committed run specs (versioned run parameters)
     └── runs/           # search artifacts (gitignored by init)
 ```
 
-Commands work from any subdirectory — the workspace is found by upward search
-for `hillclimb/config.yaml` (like git). Without one, commands error and point
-you at `hillclimb init`; `HILLCLIMB_WORKSPACE` pins the root explicitly.
+Commands work from any subdirectory — the hillclimb dir is found by upward
+search for `hillclimb/config.yaml` (like git). Without one, commands error and
+point you at `hillclimb init`; `HILLCLIMB_DIR` pins it explicitly.
 
-Config precedence, highest first: CLI flags → workspace `hillclimb/config.yaml`
-→ user `~/.config/hillclimb/config.yaml` → built-in defaults.
+Config precedence, highest first: CLI flags → the hillclimb dir's
+`config.yaml` → user `~/.config/hillclimb/config.yaml` → built-in defaults.
 
-Machine-scoped state is shared across workspaces under `~/.cache/hillclimb/`
+Machine-scoped state is shared across hillclimb dirs under `~/.cache/hillclimb/`
 (honors `XDG_CACHE_HOME`; `HILLCLIMB_CACHE_DIR` overrides): solution-runtime
 venvs keyed by a hash of their requirements (rebuilt automatically when
 requirements change), the emflow problem cache, and the cross-search agent
-semaphore. Pre-workspace checkouts left `.runtime-venv*/` and `cache/` in the
+semaphore. Checkouts predating this layout left `.runtime-venv*/` and `cache/` in the
 project dir — safe to delete.
 
 ### Run specs: versioned run parameters
@@ -88,7 +119,7 @@ uv run hillclimb run hillclimb/specs/gefcom.yaml --model sonnet   # ad-hoc overr
 A spec with a single top-level `target:` (plus the same parameter keys) runs
 one search. `run.yaml` records which spec launched the run.
 
-## Semantics
+## Concepts
 
 The UI and on-disk metadata use this hierarchy, coarse to fine:
 
@@ -112,6 +143,67 @@ Run
 
 `hillclimb watch` opens on the Runs screen. Metadata carries
 `schema_version: 2`; directories from the pre-v2 flat layout are ignored.
+
+## Supported agents
+
+Operators are headless coding-agent processes, one per operator call, behind
+the backend seam in `src/hillclimb/backends/`:
+
+| backend | what it is |
+|---|---|
+| `claude-code` | Claude Code in headless mode — the production backend; bills your Claude subscription |
+| `dummy` | no model calls: a scripted operator for exercising the engine, TUIs and run layout |
+| `fake` | deterministic canned operator for the test suite |
+
+Other agents (Codex, Pi, OpenCode, …) plug in at the same seam: a backend
+implements the `OperatorBackend` protocol in `backends/base.py` — take a prompt plus a
+working directory, return the agent's JSON result — and is selected with
+`--backend <name>`.
+
+## Search policies
+
+*What to try next* is the search engine, and it is a seam of its own:
+`src/hillclimb/policy.py` defines it, `src/hillclimb/policies/` holds the
+implementations. Everything else — workspaces, prompts, agent calls, trials,
+holdout, journaling, `best/` — is harness, and a policy never touches it.
+
+| policy | what it does |
+|---|---|
+| `greedy` | debug the newest buggy tip > ensemble in the final budget window > draft until `num_drafts` branches are scored > improve the best |
+
+A policy is two methods over a read-only `SearchView`:
+
+```python
+class SearchPolicy(Protocol):
+    name: str
+    params: dict   # persisted into SearchMeta, so `resume` restores them
+
+    def propose(self, view: SearchView) -> Action | None: ...
+    def observe(self, view: SearchView, candidate: Candidate) -> None: ...
+```
+
+`propose` returns one `Action` — an operator (`draft`/`debug`/`improve`/
+`ensemble`), the candidate to target, optional `inspiration_ids`, and
+optional per-action routing — or `None` to hold the slot until an in-flight
+result lands. `observe` is called after every terminal result, and replayed
+over every existing candidate when the policy is constructed, which is what
+makes `hillclimb resume` work.
+
+Three rules the harness relies on, spelled out in `policy.py`:
+
+- `propose`/`observe` run only on the scheduler thread, under the search's
+  state lock. A policy may read candidate workspaces; it must never write.
+- Every decision must be derivable from replayed journal state — compute it
+  from the `SearchView`, or rebuild your caches in `observe`.
+- Ensemble-style actions must carry their inputs in `inspiration_ids`; the
+  harness copies those solutions into the new workspace.
+
+To add one: implement the protocol, register it in the `_POLICIES` dict in
+`policies/__init__.py`, and select it with `hillclimb run --policy <name>`
+(constructor arguments come from `search.policy_params` in config.yaml).
+`policies/greedy.py` is 170 lines and is the reference. Beam search, MCTS,
+evolutionary populations, novelty search and bandits over operators all fit
+this shape — greedy is just the one that ships.
 
 ## emflow problems (optional extra)
 
@@ -219,7 +311,7 @@ without one is a contract violation rather than a silent zero. Reading the
 score from a file rather than stdout is what keeps it honest — agent-authored
 code runs inside the verifier and shares its stdout.
 
-The command runs with cwd = the candidate workspace (`solution.py`, plus
+The command runs with cwd = the candidate's working dir (`solution.py`, plus
 `./problem/` and `./data/` symlinks). Validation runs get a
 credential-scrubbed environment; `--holdout` runs in a directory agents never
 see, with the full environment (private holdout data may be gated).
@@ -345,7 +437,7 @@ routing:
 ## Cross-search memory: the knowledge graph
 
 hillclimb learns across searches, and the memory is file-based and
-git-versionable — it lives in your workspace's `hillclimb/knowledge/`:
+git-versionable — it lives in your hillclimb dir, under `knowledge/`:
 
 - **Cards** (`knowledge/<family>/*.yaml`) — every finished search distills a
   statistical card (operator stats, top approaches, failure modes; no model
@@ -396,10 +488,16 @@ Explore it interactively with `hillclimb knowledge graph` (or `g` inside
 rasterizer; full-pixel Kitty graphics — kitty, Ghostty, iTerm2 ≥ 3.5, and
 WezTerm are supported). Drag rotates, shift-drag pans, scroll zooms — and zoom
 doubles as semantic level-of-detail: zoom out and entities fold into concept
-supernodes. Click a node for the detail panel (re-click or Enter opens a
+supernodes. Every node type has its own marker (rings for problems and
+families, triangles for searches, squares for libraries, diamonds for
+techniques, open diamonds for claims) — the legend in the top-left corner
+is the key, and each entry is a toggle: click it or press its number (1–8)
+to hide that type. Click a node for the detail panel (re-click or Enter opens a
 search's candidates), scrub through time search by search, filter and
-color by concept from the sidebar. Node positions come from a 3D spring
-layout cached in graph.json (`pos3`; the 2D `pos` stays for hillclimb-go).
+color by concept from the sidebar. `?` slides out a panel with every key and
+gesture — the footer carries only the few worth a permanent slot. Node
+positions come from a 3D spring layout cached in graph.json (`pos3`; the 2D
+`pos` stays for hillclimb-go).
 
 ![knowledge graph TUI](docs/graph-tui.png)
 
@@ -431,10 +529,16 @@ the run has a single search), or `latest` (the default).
 
 | command | what it does |
 |---|---|
+| `demo [--budget 10m] [--searches 3]` | try hillclimb in one command: agents climb the bundled circle-packing problem |
+| `init [dir]` | create the `hillclimb/` dir (config, problems/, specs/, runs/) with an example problem |
+| `verify <problem> [--repeat N] [--holdout]` | run a problem's verifier once, outside a search; `--repeat` measures the noise floor |
 | `run <target> [--name ...] [--budget 2h] [--backend ...] [--model ...]` | start a run for one problem or a suite YAML |
 | `resume [search]` | continue a parked / stopped / crashed search |
 | `status [search]` | search state + candidate tree (text) |
 | `watch` | live TUI over runs, searches, and candidates |
+| `chart` | live chart: best score vs minutes into the search, one line per search |
+| `graph` | the knowledge-graph TUI (same screen as `knowledge graph`) |
+| `show [search] <candidate-id>` | everything about one candidate: scores, evaluation breakdown, diff vs parent, output |
 | `stop [search]` | graceful stop: finish current operator, then park |
 | `kill [search]` | SIGTERM the engine now (state finalized, resumable) |
 | `prune <search> <candidate-id>` | cut a candidate and its subtree from the search |
@@ -464,7 +568,7 @@ runs/
         ├── journal.jsonl            # append-only event log — the source of truth
         ├── control/                 # command queue (stop/prune) polled by the engine
         ├── best/                    # current selected submission (+ solution.py)
-        └── candidates/<candidate-id>/  # one workspace per operator call
+        └── candidates/<candidate-id>/  # one working dir per operator call
             ├── prompt.md
             ├── agent_stream.jsonl
             ├── solution.py

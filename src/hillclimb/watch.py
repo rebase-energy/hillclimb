@@ -23,7 +23,8 @@ from hillclimb.run import (
     load_run_meta,
     load_search_meta,
 )
-from hillclimb.status import effective_state, read_status
+from hillclimb.status import effective_state, live_remaining_s, read_status
+from hillclimb.theme import HILLCLIMB_CSS, apply_theme
 
 STATE_STYLE = {
     "running": "bold green",
@@ -63,6 +64,7 @@ class SearchRow:
     search_id: str
     problem: str
     model: str
+    tokens: str  # summed agent tokens across the search's candidates
     state: str
     candidates: str  # "7 (5 ok)"
     best_val: str
@@ -87,11 +89,68 @@ def _fmt(value: float | None) -> str:
     return f"{value:.5g}" if value is not None else "-"
 
 
+def _fmt_tokens(total: int | None) -> str:
+    """Compact token count: 812 -> "812", 24_500 -> "24.5k", 1_240_000 -> "1.24M"."""
+    if not total:
+        return "-"
+    if total < 1000:
+        return str(total)
+    if total < 1_000_000:
+        return f"{total / 1000:.1f}k"
+    return f"{total / 1_000_000:.2f}M"
+
+
 def _format_budget_left(seconds: float | None) -> str:
+    """`4m 07s`, or `1h 02m 07s` past the hour — seconds always shown, so a
+    live search visibly counts down."""
     if seconds is None:
         return "-"
-    minutes = max(0, int(seconds // 60))
-    return f"{minutes // 60}h {minutes % 60:02d}m" if minutes >= 60 else f"{minutes}m"
+    total = max(0, int(seconds))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m {secs:02d}s"
+    return f"{minutes}m {secs:02d}s"
+
+
+_USAGE_KEYS = (
+    "input_tokens", "output_tokens",
+    "cache_creation_input_tokens", "cache_read_input_tokens",
+)
+
+
+def _stream_tokens(workspace: Path) -> int:
+    """Tokens burned so far by an in-flight operator, read from its live
+    `agent_stream.jsonl`. Each turn streams twice (partial then final) under
+    one message id, so turns are deduped by id, newest kept; a `result`
+    message, if the call has just finished, is authoritative. Output is only a
+    running estimate mid-call — the stream carries partial output counts — but
+    cache tokens (the bulk) reconcile exactly with the final total."""
+    path = workspace / "agent_stream.jsonl"
+    if not path.exists():
+        return 0
+    per_turn: dict[str, dict] = {}
+    final: dict | None = None
+    try:
+        for line in path.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # a half-written trailing line while the agent streams
+            if msg.get("type") == "result" and msg.get("usage"):
+                final = msg["usage"]
+            elif msg.get("type") == "assistant":
+                body = msg.get("message") or {}
+                usage = body.get("usage")
+                if usage and body.get("id"):
+                    per_turn[body["id"]] = usage
+    except OSError:
+        return 0
+    if final is not None:
+        return sum(final.get(k) or 0 for k in _USAGE_KEYS)
+    return sum(u.get(k) or 0 for u in per_turn.values() for k in _USAGE_KEYS)
 
 
 def _state_summary(states: list[str]) -> str:
@@ -108,9 +167,14 @@ def _state_summary(states: list[str]) -> str:
 def _search_row(search_dir: Path) -> SearchRow:
     meta = load_search_meta(search_dir)
     status = read_status(search_dir)
+    state = effective_state(search_dir)
     journal = Journal(search_dir / "journal.jsonl")
     n_ok = sum(1 for c in journal.candidates.values() if c.status == "ok")
+    tokens = sum(c.backend.total_tokens or 0 for c in journal.candidates.values())
     if status is not None:
+        # in-flight operators are not in the journal yet: read their live
+        # streams so the count climbs while the tokens are being burned
+        tokens += sum(_stream_tokens(Path(c.workspace)) for c in status.current)
         best_val = _fmt(status.best.val_score) if status.best else "-"
         selected = (
             f"{status.selected.candidate_id} "
@@ -118,14 +182,15 @@ def _search_row(search_dir: Path) -> SearchRow:
             if status.selected
             else "-"
         )
-        budget_left = _format_budget_left(status.budget.remaining_s)
+        budget_left = _format_budget_left(live_remaining_s(status, state))
     else:
         best_val, selected, budget_left = "-", "-", "-"
     return SearchRow(
         search_id=search_dir.name,
         problem=meta.problem_id if meta else search_dir.name,
         model=meta.model if meta else "?",
-        state=effective_state(search_dir),
+        tokens=_fmt_tokens(tokens),
+        state=state,
         candidates=f"{len(journal.candidates)} ({n_ok} ok)",
         best_val=best_val,
         selected=selected,
@@ -145,7 +210,7 @@ def _run_row(run_dir: Path) -> RunRow:
     selected_count = 0
     remaining_s = 0.0
     has_budget = False
-    for search_dir in search_dirs:
+    for search_dir, state in zip(search_dirs, states):
         journal = Journal(search_dir / "journal.jsonl")
         candidate_total += len(journal.candidates)
         status = read_status(search_dir)
@@ -153,7 +218,7 @@ def _run_row(run_dir: Path) -> RunRow:
             continue
         if status.selected is not None:
             selected_count += 1
-        remaining_s += status.budget.remaining_s
+        remaining_s += live_remaining_s(status, state)
         has_budget = True
     running = sum(1 for state in states if state == "running")
     searches = f"{len(search_dirs)}" + (f" ({running} running)" if running else "")
@@ -352,6 +417,7 @@ def candidate_detail_lines(search_dir: Path, journal: Journal, candidate_id: str
             f"{candidate.backend.name or '-'}  "
             f"session={candidate.backend.session_id or '-'}  "
             f"turns={candidate.backend.num_turns if candidate.backend.num_turns is not None else '-'}  "
+            f"tokens={_fmt_tokens(candidate.backend.total_tokens)}  "
             f"cost={cost}  "
             f"error={candidate.backend.error_kind or '-'}"
         )
@@ -476,6 +542,7 @@ def candidate_detail_renderables(search_dir: Path, journal: Journal, candidate_i
         backend = (
             f"{candidate.backend.name or '-'}  session={candidate.backend.session_id or '-'}  "
             f"turns={candidate.backend.num_turns if candidate.backend.num_turns is not None else '-'}  "
+            f"tokens={_fmt_tokens(candidate.backend.total_tokens)}  "
             f"cost={cost}  error={candidate.backend.error_kind or '-'}"
         )
         overview.add_row("backend", Text(backend), "", "")
@@ -513,7 +580,7 @@ def candidate_detail_renderables(search_dir: Path, journal: Journal, candidate_i
     notes = _tail_text(workspace / "notes.md", max_chars=3000) or candidate.summary.strip()
     if notes:
         renderables.append(
-            Panel(Text(notes), title="Notes", title_align="left", border_style="green")
+            Panel(Text(notes), title="Notes", title_align="left", border_style="dim cyan")
         )
 
     from hillclimb.report import candidate_report, render_report
@@ -525,7 +592,7 @@ def candidate_detail_renderables(search_dir: Path, journal: Journal, candidate_i
                 Text(report_text),
                 title="Evaluation breakdown",
                 title_align="left",
-                border_style="cyan",
+                border_style="dim cyan",
             )
         )
 
@@ -537,7 +604,7 @@ def candidate_detail_renderables(search_dir: Path, journal: Journal, candidate_i
         )
     if stdout:
         renderables.append(
-            Panel(Text(stdout), title="Stdout", title_align="left", border_style="blue")
+            Panel(Text(stdout), title="Stdout", title_align="left", border_style="dim cyan")
         )
 
     stream = stream_tail(workspace, max_lines=80)
@@ -547,7 +614,7 @@ def candidate_detail_renderables(search_dir: Path, journal: Journal, candidate_i
                 Group(*(_plain_text(line) for line in stream)),
                 title="Agent stream",
                 title_align="left",
-                border_style="magenta",
+                border_style="dim cyan",
             )
         )
 
@@ -572,7 +639,8 @@ from textual.scrollbar import ScrollBar  # noqa: E402
 from textual.screen import ModalScreen, Screen  # noqa: E402
 from textual.widgets import DataTable, Footer, Header, Label, RichLog, Static  # noqa: E402
 
-REFRESH_S = 2.0
+# one tick per second: the budget countdown and agent stream should read as live
+REFRESH_S = 1.0
 DETAIL_DEFAULT_HEIGHT = 10
 DETAIL_MIN_HEIGHT = 6
 DETAIL_STEP = 2
@@ -891,8 +959,7 @@ class CandidateScreen(Screen):
         state = effective_state(self.search_dir)
         line = f"{_search_ref(self.search_dir)}  [{STATE_STYLE.get(state, '')}]{state}[/]"
         if status is not None:
-            minutes = int(status.budget.remaining_s // 60)
-            line += f"  budget left: {minutes}m"
+            line += f"  budget left: {_format_budget_left(live_remaining_s(status, state))}"
             if status.current:
                 active = " · ".join(
                     f"{c.candidate_id}({c.operator}/{c.phase})" for c in status.current[:3]
@@ -1070,9 +1137,10 @@ class SearchesScreen(Screen):
     def on_mount(self) -> None:
         table = self.query_one("#searches", DataTable)
         table.add_columns(
-            "problem",
             "search",
+            "problem",
             "model",
+            "tokens",
             "state",
             "candidates",
             "best val",
@@ -1092,7 +1160,7 @@ class SearchesScreen(Screen):
         for row in scan_searches(self.run_dir):
             state = Text(row.state, style=STATE_STYLE.get(row.state, ""))
             table.add_row(
-                row.problem, row.search_id, row.model, state, row.candidates,
+                row.search_id, row.problem, row.model, row.tokens, state, row.candidates,
                 row.best_val, row.selected, row.budget_left, key=row.search_id,
             )
         _restore_table(table, snapshot)
@@ -1212,11 +1280,22 @@ class WatchApp(App):
     """Read-mostly dashboard over runs/; control actions go through the
     same command queue as the CLI."""
 
+    CSS = HILLCLIMB_CSS
     TITLE = "hillclimb watch"
 
-    def __init__(self, config: Config | None = None):
+    def __init__(self, config: Config | None = None, search_dir: Path | None = None):
         super().__init__()
         self.config = config or Config.load()
+        # open straight on this search's candidates, with the run list and
+        # its searches underneath so esc walks back the usual way
+        self.search_dir = search_dir
 
     def on_mount(self) -> None:
+        apply_theme(self)
         self.push_screen(RunsScreen(self.config))
+        if self.search_dir is not None:
+            run_dir = self.search_dir.parents[1]
+            run_meta = load_run_meta(run_dir)
+            run_name = run_meta.name if run_meta and run_meta.name else run_dir.name
+            self.push_screen(SearchesScreen(self.config, run_dir, run_name))
+            self.push_screen(CandidateScreen(self.config, self.search_dir))

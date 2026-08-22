@@ -91,6 +91,17 @@ def read_status(search_dir: Path) -> SearchStatus | None:
         return None
 
 
+def live_remaining_s(status: "SearchStatus", state: str) -> float:
+    """Budget left right now. The engine writes `remaining_s` at each
+    heartbeat; for a running search the clock has kept ticking since, so
+    subtract the heartbeat's age — that is what makes a seconds display
+    move between writes."""
+    remaining = status.budget.remaining_s
+    if state == "running":
+        remaining -= _age_s(status.updated_at)
+    return max(0.0, remaining)
+
+
 def pid_alive(pid: int | None) -> bool:
     if not pid:
         return False

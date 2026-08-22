@@ -1,4 +1,4 @@
-"""Workspace discovery, machine dirs, config precedence, init, run specs."""
+"""hillclimb-dir discovery, machine dirs, config precedence, init, run specs."""
 
 from __future__ import annotations
 
@@ -10,16 +10,16 @@ from typer.testing import CliRunner
 
 from hillclimb.config import Config
 from hillclimb.project import (
-    WorkspaceNotFound,
-    find_workspace_root,
+    HillclimbDirNotFound,
+    find_hillclimb_dir,
     machine_cache_dir,
-    marker_path,
     user_config_path,
 )
 
 
-def make_workspace(root: Path, config: dict | None = None) -> Path:
-    marker = marker_path(root)
+def make_hillclimb_dir(root: Path, config: dict | None = None) -> Path:
+    """Create `<root>/hillclimb/config.yaml`; returns the holding folder."""
+    marker = root / "hillclimb" / "config.yaml"
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(yaml.safe_dump(config or {}))
     return root
@@ -28,6 +28,7 @@ def make_workspace(root: Path, config: dict | None = None) -> Path:
 @pytest.fixture(autouse=True)
 def isolated_env(tmp_path, monkeypatch):
     """Keep discovery and machine dirs away from the real environment."""
+    monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
     monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
     monkeypatch.setenv("HILLCLIMB_CACHE_DIR", str(tmp_path / "machine-cache"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-config"))
@@ -35,21 +36,26 @@ def isolated_env(tmp_path, monkeypatch):
 
 class TestDiscovery:
     def test_finds_marker_from_nested_dir(self, tmp_path):
-        root = make_workspace(tmp_path / "ws")
+        root = make_hillclimb_dir(tmp_path / "ws")
         nested = root / "a" / "b"
         nested.mkdir(parents=True)
-        assert find_workspace_root(nested) == root
+        assert find_hillclimb_dir(nested) == root / "hillclimb"
 
-    def test_finds_root_from_inside_hillclimb_dir(self, tmp_path):
-        root = make_workspace(tmp_path / "ws")
-        assert find_workspace_root(root / "hillclimb") == root
+    def test_finds_it_from_inside_itself(self, tmp_path):
+        root = make_hillclimb_dir(tmp_path / "ws")
+        assert find_hillclimb_dir(root / "hillclimb") == root / "hillclimb"
 
     def test_none_without_marker(self, tmp_path):
-        assert find_workspace_root(tmp_path) is None
+        assert find_hillclimb_dir(tmp_path) is None
 
     def test_env_pin_short_circuits(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HILLCLIMB_DIR", str(tmp_path / "pinned"))
+        assert find_hillclimb_dir(tmp_path) == (tmp_path / "pinned").resolve()
+
+    def test_legacy_env_pin_names_the_parent(self, tmp_path, monkeypatch):
+        """HILLCLIMB_WORKSPACE named the folder holding hillclimb/, not the dir."""
         monkeypatch.setenv("HILLCLIMB_WORKSPACE", str(tmp_path / "pinned"))
-        assert find_workspace_root(tmp_path) == (tmp_path / "pinned").resolve()
+        assert find_hillclimb_dir(tmp_path) == (tmp_path / "pinned").resolve() / "hillclimb"
 
     def test_machine_dirs_honor_env(self, tmp_path, monkeypatch):
         assert machine_cache_dir() == tmp_path / "machine-cache"
@@ -60,40 +66,40 @@ class TestDiscovery:
 
 
 class TestConfigPrecedence:
-    def test_workspace_paths_resolve_against_root(self, tmp_path, monkeypatch):
-        root = make_workspace(tmp_path / "ws")
+    def test_paths_resolve_against_the_holding_folder(self, tmp_path, monkeypatch):
+        root = make_hillclimb_dir(tmp_path / "ws")
         nested = root / "deep"
         nested.mkdir()
         monkeypatch.chdir(nested)
         config = Config.load()
-        assert config.workspace_root == root
+        assert config.hillclimb_dir == root / "hillclimb"
         assert config.paths.runs_dir == root / "hillclimb" / "runs"
         assert config.paths.problems_dir == root / "hillclimb" / "problems"
 
-    def test_workspace_overrides_user_config(self, tmp_path, monkeypatch):
+    def test_hillclimb_dir_overrides_user_config(self, tmp_path, monkeypatch):
         user = user_config_path()
         user.parent.mkdir(parents=True)
         user.write_text(yaml.safe_dump({"model": "haiku", "backend": "dummy"}))
-        root = make_workspace(tmp_path / "ws", {"model": "opus"})
+        root = make_hillclimb_dir(tmp_path / "ws", {"model": "opus"})
         monkeypatch.chdir(root)
         config = Config.load()
-        assert config.model == "opus"  # workspace wins
+        assert config.model == "opus"  # the hillclimb dir wins
         assert config.backend == "dummy"  # user fills the gap
 
-    def test_overrides_beat_workspace(self, tmp_path, monkeypatch):
-        root = make_workspace(tmp_path / "ws", {"model": "opus"})
+    def test_overrides_beat_the_config_file(self, tmp_path, monkeypatch):
+        root = make_hillclimb_dir(tmp_path / "ws", {"model": "opus"})
         monkeypatch.chdir(root)
         assert Config.load(model="haiku").model == "haiku"
 
-    def test_missing_workspace_raises(self, tmp_path, monkeypatch):
+    def test_missing_hillclimb_dir_raises(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        with pytest.raises(WorkspaceNotFound):
+        with pytest.raises(HillclimbDirNotFound):
             Config.load()
 
-    def test_require_workspace_false_returns_defaults(self, tmp_path, monkeypatch):
+    def test_require_dir_false_returns_defaults(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        config = Config.load(require_workspace=False)
-        assert config.workspace_root is None
+        config = Config.load(require_dir=False)
+        assert config.hillclimb_dir is None
         assert config.backend == "claude-code"
 
     def test_explicit_path_bypasses_discovery(self, tmp_path):
@@ -101,7 +107,7 @@ class TestConfigPrecedence:
         explicit.write_text(yaml.safe_dump({"model": "opus"}))
         config = Config.load(path=explicit)
         assert config.model == "opus"
-        assert config.workspace_root is None
+        assert config.hillclimb_dir is None
 
 
 class TestInit:
@@ -118,10 +124,10 @@ class TestInit:
         assert (tmp_path / "hillclimb" / "problems").is_dir()
         assert (tmp_path / "hillclimb" / "specs" / "example.yaml").exists()
         assert "hillclimb/runs/" in (tmp_path / ".gitignore").read_text()
-        assert find_workspace_root(tmp_path) == tmp_path
+        assert find_hillclimb_dir(tmp_path) == tmp_path / "hillclimb"
 
     def test_refuses_nested_without_force(self, tmp_path, monkeypatch):
-        make_workspace(tmp_path)
+        make_hillclimb_dir(tmp_path)
         inner = tmp_path / "inner"
         inner.mkdir()
         monkeypatch.chdir(inner)

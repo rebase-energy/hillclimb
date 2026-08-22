@@ -10,21 +10,24 @@ dependencies = [
     "pyyaml>=6.0",
     "pandas>=3.0.3",
     "scikit-learn>=1.9.0",
-]
-
-[project.optional-dependencies]
-tui = [
+    # `hillclimb demo` must work from a bare `pip install hillclimb`: the
+    # TUIs (watch/chart/graph) and the venv builder are core, not extras.
+    "uv>=0.5",
     "textual>=1.0",
     "pydot>=4.0.1",
     "networkx>=3.0",
     "plotui>=0.2",
 ]
+
+[project.optional-dependencies]
+# kept so `pip install 'hillclimb[tui]'` keeps working; everything is core now
+tui = []
 emflow = [
     "emflow>=0.3.1,<0.4",
 ]
 
 [project.scripts]
-hillclimb = "hillclimb.cli:app"
+hillclimb = "hillclimb.cli:main"
 
 [dependency-groups]
 dev = [

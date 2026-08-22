@@ -6,5 +6,7 @@ description: description.md
 baseline: baseline.py
 # valid-by-construction fallback: best/ always holds something
 baseline_files: {submission.csv: sample_submission.csv}
-time_budget_s: 900
+# lean runtime venv (numpy/scipy/pandas) so the demo starts in seconds
+requirements: requirements.txt
+time_budget_s: 600
 allow_network: false

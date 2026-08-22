@@ -8,7 +8,7 @@ carrying a canonical entity slug, a confidence, and provenance (candidate
 ids), so downstream consumers (graph.py, prompt retrieval) can rank and
 trace them.
 
-Entities are canonicalized against a workspace registry
+Entities are canonicalized against a per-hillclimb-dir registry
 (knowledge/entities.yaml) and auto-categorized into a small curated concept
 ontology (knowledge/concepts.yaml) by CLOSED-SET classification: the agent
 picks concepts from the ontology and may only PROPOSE additions (flagged

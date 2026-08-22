@@ -8,10 +8,10 @@ import yaml
 from pydantic import BaseModel, Field
 
 from hillclimb.project import (
-    find_workspace_root,
-    marker_path,
+    find_hillclimb_dir,
+    MARKER_FILE,
     user_config_path,
-    WorkspaceNotFound,
+    HillclimbDirNotFound,
 )
 
 
@@ -101,8 +101,8 @@ class EnsembleConfig(BaseModel):
 
 
 class PathsConfig(BaseModel):
-    # Relative runs_dir/problems_dir resolve against the workspace root at
-    # load time; everything hillclimb writes stays inside the workspace's
+    # Relative runs_dir/problems_dir resolve at load time against the folder
+    # holding the hillclimb dir; everything hillclimb writes stays inside the
     # hillclimb/ folder by default.
     runs_dir: Path = Path("hillclimb/runs")
     problems_dir: Path = Path("hillclimb/problems")
@@ -205,36 +205,36 @@ class Config(BaseModel):
     operators: OperatorsConfig = OperatorsConfig()
     # Resolved at load time; None for embedders that construct Config()
     # directly and set absolute paths themselves (e.g. the hosted container).
-    workspace_root: Path | None = Field(default=None, exclude=True)
+    hillclimb_dir: Path | None = Field(default=None, exclude=True)
 
     @classmethod
     def load(
         cls,
         path: Path | None = None,
         *,
-        require_workspace: bool = True,
+        require_dir: bool = True,
         **overrides,
     ) -> Config:
         """Resolve configuration. Precedence (highest wins): keyword
-        overrides > workspace `hillclimb/config.yaml` > user
+        overrides > the hillclimb dir's `config.yaml` > user
         `~/.config/hillclimb/config.yaml` > built-in defaults.
 
         An explicit `path` reads only that file (no discovery, no user
         config) — the escape hatch for tests and embedders. Otherwise the
-        workspace is found by upward search; with `require_workspace` (the
-        default) a missing workspace raises WorkspaceNotFound."""
+        hillclimb dir is found by upward search; with `require_dir` (the
+        default) a missing one raises HillclimbDirNotFound."""
         if path is not None:
             config = cls.model_validate(_read_yaml(path))
-            config.workspace_root = None
+            config.hillclimb_dir = None
         else:
-            root = find_workspace_root()
-            if root is None and require_workspace:
-                raise WorkspaceNotFound(Path.cwd())
+            found = find_hillclimb_dir()
+            if found is None and require_dir:
+                raise HillclimbDirNotFound(Path.cwd())
             data = _read_yaml(user_config_path())
-            if root is not None:
-                data = _deep_merge(data, _read_yaml(marker_path(root)))
+            if found is not None:
+                data = _deep_merge(data, _read_yaml(found / MARKER_FILE))
             config = cls.model_validate(data)
-            config.workspace_root = root
+            config.hillclimb_dir = found
         for key, value in overrides.items():
             if value is None:
                 continue
@@ -243,16 +243,17 @@ class Config(BaseModel):
                 setattr(getattr(config, section), field, value)
             else:
                 setattr(config, key, value)
-        config._resolve_workspace_paths()
+        config._resolve_paths()
         return config
 
-    def _resolve_workspace_paths(self) -> None:
-        """Anchor relative runs_dir/problems_dir at the workspace root so
-        commands work from any subdirectory. Without a root (explicit-path
-        loads, embedders) relative paths keep their CWD meaning."""
-        if self.workspace_root is None:
+    def _resolve_paths(self) -> None:
+        """Anchor relative runs_dir/problems_dir at the folder holding the
+        hillclimb dir, so commands work from any subdirectory. Without one
+        (explicit-path loads, embedders) relative paths keep their CWD
+        meaning."""
+        if self.hillclimb_dir is None:
             return
         for name in ("runs_dir", "problems_dir"):
             value: Path = getattr(self.paths, name)
             if not value.is_absolute():
-                setattr(self.paths, name, self.workspace_root / value)
+                setattr(self.paths, name, self.hillclimb_dir.parent / value)

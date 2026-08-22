@@ -19,6 +19,12 @@ RESULT_LINE = json.dumps(
         "session_id": "sess-123",
         "total_cost_usd": 0.42,
         "num_turns": 7,
+        "usage": {
+            "input_tokens": 10,
+            "output_tokens": 8209,
+            "cache_creation_input_tokens": 29297,
+            "cache_read_input_tokens": 199902,
+        },
         "result": "done",
     }
 )
@@ -80,6 +86,7 @@ def test_success_parses_result_and_streams(tmp_path: Path):
     assert result.session_id == "sess-123"
     assert result.cost_usd == 0.42
     assert result.num_turns == 7
+    assert result.total_tokens == 10 + 8209 + 29297 + 199902
     stream = (request.workspace / "agent_stream.jsonl").read_text().splitlines()
     assert len(stream) == 3  # init + assistant + result, all captured
     assert json.loads(stream[-1])["type"] == "result"
