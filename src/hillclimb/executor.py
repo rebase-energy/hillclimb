@@ -6,7 +6,10 @@ itself (run it, import it, shell out to it), and reports the score by writing
 `$HILLCLIMB_RESULT`:
 
     exit 0                 the candidate is valid
-    $HILLCLIMB_RESULT      `{"score": <float>, ...}` — or a bare number
+    $HILLCLIMB_RESULT      `{"score": <float>, ...}` — or a bare number;
+                           other numeric keys are journaled as trial
+                           `metrics` (feature dimensions for quality-
+                           diversity policies — never scores)
 
 The result file is both the score carrier and the completion proof: the engine
 deletes it before every run, so a stale file can never masquerade as this
@@ -79,6 +82,9 @@ class ExecResult(BaseModel):
     # reported, submission_ok is "the verifier wrote a usable result file".
     val_score: float | None = None
     submission_ok: bool = False
+    # extra numeric keys the verifier wrote next to `score` (see
+    # result_metrics); opaque to the engine, consumed by policies
+    metrics: dict[str, float] = {}
 
     @property
     def ok(self) -> bool:
@@ -135,6 +141,25 @@ def read_result(path: Path) -> tuple[float | None, dict | None]:
     if isinstance(payload, bool) or not isinstance(payload, (int, float)) or payload != payload:
         return None, None
     return float(payload), None
+
+
+RESERVED_RESULT_KEYS = frozenset({"score", "report"})
+
+
+def result_metrics(payload: dict | None) -> dict[str, float]:
+    """Numeric keys of a result object other than the reserved ones — the
+    verifier's auxiliary measurements (e.g. runtime_s, n_params, code_len)
+    that a quality-diversity policy can bin on. Non-numeric, bool and NaN
+    values are dropped rather than rejected: metrics are advisory."""
+    if not isinstance(payload, dict):
+        return {}
+    out: dict[str, float] = {}
+    for key, value in payload.items():
+        if key in RESERVED_RESULT_KEYS or isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)) and value == value:
+            out[str(key)] = float(value)
+    return out
 
 
 def verifier_env(
@@ -245,7 +270,7 @@ class CommandExecutor:
                 candidate_dir, timeout_s, out, err, env,
             )
         duration = time.monotonic() - start
-        score, _ = (None, None) if timed_out else read_result(result_path)
+        score, payload = (None, None) if timed_out else read_result(result_path)
         return ExecResult(
             returncode=returncode,
             duration_s=duration,
@@ -255,6 +280,7 @@ class CommandExecutor:
             val_score=score,
             # completion proof: the verifier writes it only after scoring
             submission_ok=score is not None,
+            metrics=result_metrics(payload),
         )
 
 

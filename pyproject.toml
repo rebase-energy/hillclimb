@@ -25,6 +25,10 @@ tui = []
 emflow = [
     "emflow>=0.3.1,<0.4",
 ]
+# `search.policy: openevolve` — MAP-Elites / islands search strategy
+openevolve = [
+    "openevolve>=0.3,<0.4",
+]
 
 [project.scripts]
 hillclimb = "hillclimb.cli:main"
@@ -38,6 +42,7 @@ dev = [
     "networkx>=3.0",
     "plotui>=0.2",
     "emflow",
+    "openevolve>=0.3,<0.4",
 ]
 
 [tool.uv.sources]

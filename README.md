@@ -170,6 +170,23 @@ holdout, journaling, `best/` — is harness, and a policy never touches it.
 | policy | what it does |
 |---|---|
 | `greedy` | debug the newest buggy tip > ensemble in the final budget window > draft until `num_drafts` branches are scored > improve the best |
+| `openevolve` | [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve)'s MAP-Elites database decides what to expand: a population kept diverse over feature dimensions, split across islands with migration; parent + inspirations sampled per island (exploration / elite archive / fitness-weighted). Hillclimb's operators do the mutating, the verifier the scoring, and the `debug` rule is kept. `pip install 'hillclimb[openevolve]'` |
+
+```yaml
+# config.yaml — OpenEvolve's quality-diversity search over hillclimb's operators
+search:
+  policy: openevolve
+  policy_params:
+    num_islands: 3
+    feature_dimensions: [complexity, score]   # built-ins: complexity, diversity, score
+    num_inspirations: 2                       # copied in as candidate_<i>.py
+```
+
+Any other feature dimension must be a numeric key the verifier writes next
+to `score` (see *Trial metrics* below), e.g. `feature_dimensions: [runtime_s,
+score]`. Each evolved candidate's `policy_meta` records its island, grid cell
+and inspirations in the journal (`hillclimb show <candidate>` prints it);
+the watch TUI and knowledge graph don't surface it yet.
 
 A policy is two methods over a read-only `SearchView`:
 
@@ -299,7 +316,7 @@ exec "$HILLCLIMB_PYTHON" problem/verify.py  # writes $HILLCLIMB_RESULT
 | | |
 |---|---|
 | exit 0 | the candidate is valid; non-zero routes it to the `debug` operator |
-| `$HILLCLIMB_RESULT` | the score: `{"score": <float>, "report": {...}}`, or a bare number |
+| `$HILLCLIMB_RESULT` | the score: `{"score": <float>, "report": {...}, <other numeric keys>}`, or a bare number |
 | `$HILLCLIMB_PYTHON` | the managed runtime venv's interpreter (bare `python` resolves via PATH: wrong interpreter) |
 | `$HILLCLIMB_SOLUTION` | the solution path for this run (trial-dir aware) |
 | `$HILLCLIMB_SPLIT` | `validation` or `holdout` |
@@ -324,6 +341,15 @@ uv run hillclimb verify my-problem --repeat 5   # score it outside a search
 reports the spread between identical runs — an improvement smaller than that
 is noise, not progress. `problems/bin-packing/` and `problems/circle-packing/`
 are the two reference shapes (evaluator-driven, and run-then-score).
+
+### Trial metrics (optional)
+
+Any other **numeric** key in the result object is journaled verbatim as the
+trial's `metrics` (`{"score": 12.3, "runtime_s": 0.8, "n_params": 40}`), and
+a candidate's metrics are the per-key median of its trials — the same rule
+as the score. The engine never ranks on them; they are feature dimensions
+for quality-diversity policies (`openevolve`) and context for reports.
+Strings, booleans and NaN are dropped silently.
 
 ### Trial reports (optional)
 

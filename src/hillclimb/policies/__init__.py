@@ -12,8 +12,15 @@ def _make_greedy(params: dict, *, complexity_start: int = 0) -> GreedyPolicy:
     return GreedyPolicy(complexity_start=complexity_start, params=params)
 
 
+def _make_openevolve(params: dict, *, complexity_start: int = 0) -> SearchPolicy:
+    from hillclimb.policies.openevolve import OpenEvolvePolicy  # optional extra
+
+    return OpenEvolvePolicy(params=params, complexity_start=complexity_start)
+
+
 _POLICIES: dict[str, Callable[..., SearchPolicy]] = {
     "greedy": _make_greedy,
+    "openevolve": _make_openevolve,
 }
 
 

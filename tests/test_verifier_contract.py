@@ -172,3 +172,21 @@ def test_holdout_scorer_failure_mapping(tmp_path):
     score, error = scorer_no_score.score(candidate_dir)
     assert score is None
     assert "produced no score" in error
+
+
+def test_extra_numeric_result_keys_become_trial_metrics(tmp_path):
+    """Keys next to `score` are journaled as metrics (feature dimensions for
+    quality-diversity policies); non-numeric/bool/NaN values are dropped and
+    `report` stays out of the metrics dict."""
+    problem_dir = make_problem(tmp_path)
+    (problem_dir / "evaluate.py").write_text(
+        "import os, json\n"
+        'json.dump({"score": 0.5, "runtime_s": 1.25, "n_params": 3, "ok": True,\n'
+        '           "name": "x", "nan": float("nan"), "report": {"a": 1}},\n'
+        '          open(os.environ["HILLCLIMB_RESULT"], "w"))\n'
+    )
+    candidate_dir = make_workspace(tmp_path, problem_dir)
+    executor = CommandExecutor(Path(sys.executable), COMMAND)
+    result = executor.execute(candidate_dir / "solution.py", candidate_dir, timeout_s=60)
+    assert result.ok and result.val_score == 0.5
+    assert result.metrics == {"runtime_s": 1.25, "n_params": 3.0}

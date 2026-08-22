@@ -50,6 +50,9 @@ class Trial(BaseModel):
     # that would leak the selection signal into prompts); consumers read the
     # first trial's report (trial 0 in multi-trial mode, no averaging)
     report: dict | None = None
+    # auxiliary numeric measurements the verifier wrote next to `score`
+    # (feature dimensions for quality-diversity policies); never a score
+    metrics: dict[str, float] = Field(default_factory=dict)
     started_at: str = Field(default_factory=utcnow)
     finished_at: str | None = None
 
@@ -103,6 +106,19 @@ class Candidate(BaseModel):
     @property
     def val_score(self) -> float | None:
         return median(self.trial_scores) if self.trial_scores else None
+
+    @property
+    def metrics(self) -> dict[str, float]:
+        """Per-key MEDIAN of the scored trials' auxiliary metrics — the same
+        aggregate rule as val_score, so a policy binning on them sees the
+        candidate, not one noisy run."""
+        pooled: dict[str, list[float]] = {}
+        for trial in self.trials:
+            if trial.val_score is None:
+                continue
+            for key, value in trial.metrics.items():
+                pooled.setdefault(key, []).append(value)
+        return {key: median(values) for key, values in pooled.items()}
 
     @property
     def trial_scores(self) -> list[float]:

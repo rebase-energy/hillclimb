@@ -1300,6 +1300,15 @@ def show(
         typer.echo(f"\n# Where it moved vs parent {parent.candidate_id}\n")
         typer.echo(delta)
 
+    if cand.metrics or cand.policy_meta:
+        import json
+
+        typer.echo("\n# search metadata\n")
+        if cand.metrics:
+            typer.echo("metrics: " + json.dumps(cand.metrics, sort_keys=True))
+        if cand.policy_meta:
+            typer.echo("policy_meta: " + json.dumps(cand.policy_meta, sort_keys=True))
+
     candidate_dir = Path(cand.candidate_dir) if cand.candidate_dir else None
     solution = candidate_dir / "solution.py" if candidate_dir else None
     if parent is not None:

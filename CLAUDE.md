@@ -11,8 +11,9 @@ artifact) → **Trial** (one execution).
 
 A problem **is its verifier**: `problems/<id>/verifier.sh` is the only process
 the engine starts. It drives `solution.py` and writes the score to
-`$HILLCLIMB_RESULT` (a `{"score": …}` object or a bare number); exit 0 means
-valid. `holdout: true` in `problem.yaml` makes the engine run the same script
+`$HILLCLIMB_RESULT` (a `{"score": …}` object or a bare number; other numeric
+keys are journaled as `Trial.metrics` — feature dimensions for policies,
+never a score); exit 0 means valid. `holdout: true` in `problem.yaml` makes the engine run the same script
 with `--holdout` in a directory agents never see. Providers (`emflow://`,
 `mlebench://`) supply their own argv for the same contract. Never read a score
 off stdout — agent code shares that stream.
@@ -36,6 +37,12 @@ off stdout — agent code shares that stream.
   search cannot climb noise, and `trial_mode: serial` is mandatory when the
   metric measures the machine (time/throughput/memory) — parallel trials
   measure each other
+- Search policies (`policies/`): `greedy` (default) and `openevolve`
+  (OpenEvolve's MAP-Elites database as the what-next brain; optional extra,
+  `search.policy_params` pass through to its `DatabaseConfig`). A policy
+  owns only `propose`/`observe`; it must stay replay-deterministic — the
+  openevolve policy seeds/restores the global RNG around every OpenEvolve call
+  because that library samples via the `random` module
 - CLI: `uv run hillclimb --help` (engine); live TUIs: `watch` (agents; `watch candidates` jumps to a search),
   `chart` (best score vs time per search), `graph` (knowledge graph)
 - `hillclimb demo`: zero-setup demo (N parallel detached `hillclimb run`s, `stop --all` ends it) — bundled circle-packing problem in
