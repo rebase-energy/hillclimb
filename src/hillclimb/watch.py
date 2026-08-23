@@ -297,6 +297,32 @@ def _tree_order(journal: Journal) -> list[tuple[Candidate, int]]:
     return ordered
 
 
+CANDIDATE_COLUMNS = ("candidate", "operator", "status", "val", "hold", "marks", "summary")
+
+
+def _shows_holdout(record: SearchRecord, journal: Journal) -> bool:
+    """A hold column only when the search scores a holdout: declared on the
+    search, or present on any candidate (older journals predate the flag)."""
+    return bool(record.meta.holdout_enabled) or any(
+        c.holdout_score is not None for c in journal.candidates.values()
+    )
+
+
+def _candidate_cells(row: CandidateRow, holdout: bool) -> tuple[str, ...]:
+    cells = (row.label, row.operator, row.status, row.val, row.hold, row.marks, row.summary)
+    return cells if holdout else cells[:4] + cells[5:]
+
+
+def _set_candidate_columns(table, holdout: bool) -> None:
+    """(Re)build a candidate table's columns for this search's layout; a
+    no-op when the layout is unchanged, so the cursor and scroll survive."""
+    if getattr(table, "_holdout_layout", None) == holdout:
+        return
+    table.clear(columns=True)
+    table.add_columns(*(CANDIDATE_COLUMNS if holdout else CANDIDATE_COLUMNS[:4] + CANDIDATE_COLUMNS[5:]))
+    table._holdout_layout = holdout
+
+
 def candidate_rows(journal: Journal, live: bool = True) -> list[CandidateRow]:
     rows = []
     for candidate, depth in _tree_order(journal):
@@ -1266,7 +1292,7 @@ class CandidateScreen(ResizableDetail, LiveScreen):
 
     def on_mount(self) -> None:
         table = self.query_one("#candidates", DataTable)
-        table.add_columns("candidate", "operator", "status", "val", "hold", "marks", "summary")
+        _set_candidate_columns(table, holdout=True)
         self._set_detail_visible(False)
         self.start_live()
         if self._open_on_mount is not None:
@@ -1308,11 +1334,12 @@ class CandidateScreen(ResizableDetail, LiveScreen):
         self.query_one("#searchline", Label).update(line)
 
         table = self.query_one("#candidates", DataTable)
+        holdout = _shows_holdout(record, journal)
+        _set_candidate_columns(table, holdout)
         snapshot = _snapshot_table(table)
         table.clear()
         for row in candidate_rows(journal, live=state == "running"):
-            styled = [Text(v, style=row.style) for v in
-                      (row.label, row.operator, row.status, row.val, row.hold, row.marks, row.summary)]
+            styled = [Text(v, style=row.style) for v in _candidate_cells(row, holdout)]
             table.add_row(*styled, key=row.candidate_id)
         _restore_table(table, snapshot)
 
@@ -1553,7 +1580,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
             "duration",
         )
         panel = self.query_one("#search-candidates", DataTable)
-        panel.add_columns("candidate", "operator", "status", "val", "hold", "marks", "summary")
+        _set_candidate_columns(panel, holdout=True)
         self._set_detail_visible(False)
         self.start_live()
 
@@ -1587,9 +1614,10 @@ class SearchesScreen(ResizableDetail, LiveScreen):
             return
         journal = Journal(self.store.journal(key))
         live = record.state == "running"
+        holdout = _shows_holdout(record, journal)
+        _set_candidate_columns(panel, holdout)
         for row in candidate_rows(journal, live=live):
-            styled = [Text(v, style=row.style) for v in
-                      (row.label, row.operator, row.status, row.val, row.hold, row.marks, row.summary)]
+            styled = [Text(v, style=row.style) for v in _candidate_cells(row, holdout)]
             panel.add_row(*styled, key=row.candidate_id)
         _restore_table(panel, snapshot)
 

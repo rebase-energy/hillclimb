@@ -612,6 +612,36 @@ async def test_candidate_table_refresh_preserves_scroll_offsets(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_hold_column_only_for_holdout_searches(tmp_path: Path):
+    from hillclimb.candidate import Candidate, Trial
+
+    search_dir, config = make_demo_search(tmp_path, "hold-run")
+    app = WatchApp(config)
+    async with app.run_test(size=(100, 24)) as pilot:
+        await pilot.press("enter")  # runs -> searches
+        await pilot.press("enter")  # open the candidate panel for the search
+        await pilot.pause()
+        panel = app.screen.query_one("#search-candidates")
+        labels = [str(c.label) for c in panel.columns.values()]
+        assert "hold" not in labels and "val" in labels  # the demo search has no holdout
+
+        # a holdout score on any candidate brings the column back
+        Journal(search_dir / "journal.jsonl").candidate_result(
+            Candidate(candidate_id="c009", operator="draft", status="ok",
+                      trials=[Trial(val_score=0.9, holdout_score=0.8)])
+        )
+        app.screen.refresh_data()
+        await pilot.pause()
+        labels = [str(c.label) for c in panel.columns.values()]
+        assert "hold" in labels
+
+        await pilot.press("o")  # full candidate screen follows the same rule
+        await pilot.pause()
+        labels = [str(c.label) for c in app.screen.query_one("#candidates").columns.values()]
+        assert "hold" in labels
+
+
+@pytest.mark.asyncio
 async def test_o_opens_the_selected_candidate_dir(tmp_path: Path, monkeypatch):
     search_dir, config = make_demo_search(tmp_path, "open-run")
     (search_dir / "candidates" / "c000").mkdir(parents=True, exist_ok=True)
