@@ -1528,6 +1528,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         Binding("m", "toggle_maximize_detail", "maximize panel", show=False),
         Binding("s", "stop_search", "stop search", show=False),
         Binding("g", "open_graph", "knowledge graph", show=False),
+        Binding("t", "toggle_tree", "tree panel", show=False),
         KEYS_BINDING,
         *QUIT_BINDINGS,
     ]
@@ -1543,6 +1544,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         text-align: center;
     }
     SearchesScreen #search-candidates { min-height: 6; }
+    SearchesScreen #search-tree { min-height: 6; }
     """
 
     def __init__(self, config: Config, run_dir: Path, run_name: str):
@@ -1552,11 +1554,13 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         self.run_name = run_name
         self.store = open_store(config)
         self._panel_search_id: str | None = None
+        self._tree_open = False           # the topology panel, toggled with t
+        self._tree_fingerprint: tuple | None = None
         self._init_detail()
 
     @property
     def _detail_open(self) -> bool:
-        return self._panel_search_id is not None
+        return self._panel_search_id is not None or self._tree_open
 
     def compose(self) -> ComposeResult:
         yield HillclimbHeader()
@@ -1564,6 +1568,10 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         yield DataTable(id="searches", cursor_type="row")
         yield DetailDivider(" drag to resize candidates ", id="detail-divider")
         yield DataTable(id="search-candidates", cursor_type="row")
+        # imported here: treeview imports back into watch (LiveScreen et al)
+        from hillclimb.treeview import TreePlotWidget
+
+        yield TreePlotWidget(id="search-tree")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -1581,6 +1589,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         )
         panel = self.query_one("#search-candidates", DataTable)
         _set_candidate_columns(panel, holdout=True)
+        self.query_one("#search-tree").styles.display = "none"
         self._set_detail_visible(False)
         self.start_live()
 
@@ -1600,6 +1609,8 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         _restore_table(table, snapshot)
         if self._panel_search_id is not None:
             self._render_panel()
+        if self._tree_open:
+            self._render_tree()
 
     def _render_panel(self) -> None:
         from rich.text import Text
@@ -1647,16 +1658,77 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         self._set_detail_visible(False)
         self.query_one("#searches", DataTable).focus()
 
+    def action_toggle_tree(self) -> None:
+        """`t`: the highlighted search's exploration tree under the table,
+        following the cursor; `t` again (or escape) closes it."""
+        if self._tree_open:
+            self._close_tree()
+            return
+        if self._panel_search_id is not None:  # the two share the lower panel
+            self._close_panel()
+        self.DETAIL_WIDGET = "#search-tree"
+        self._tree_open = True
+        self._detail_height = self._fit_detail_height()
+        self._set_detail_visible(True)
+        self._render_tree()
+
+    def _close_tree(self) -> None:
+        self._tree_open = False
+        self._tree_fingerprint = None
+        self._set_detail_visible(False)
+        self.DETAIL_WIDGET = "#search-candidates"
+        self.query_one("#searches", DataTable).focus()
+
+    def _render_tree(self) -> None:
+        search_id = self._selected_search_id()
+        if search_id is None:
+            return
+        record = self.store.search((self.run_dir.name, search_id))
+        if record is None:
+            return
+        journal = Journal(self.store.journal(record.key))
+        candidates = list(journal.candidates.values())
+        fingerprint = (
+            search_id,
+            tuple((c.candidate_id, c.status, c.val_score, c.pruned, c.finished_at) for c in candidates),
+        )
+        if fingerprint == self._tree_fingerprint:
+            return
+        from hillclimb.tree import build_tree
+
+        reset_view = self._tree_fingerprint is None or self._tree_fingerprint[0] != search_id
+        self._tree_fingerprint = fingerprint
+        canvas = self.query_one("#search-tree")
+        if reset_view:  # a different search: do not inherit the old zoom/pan
+            canvas.selected = None
+            canvas.hidden = frozenset()
+        canvas.set_tree(build_tree(candidates, bool(record.meta.higher_is_better)))
+
+    def on_tree_plot_widget_node_activated(self, message) -> None:
+        """Double-activating a node in the tree drills into that candidate."""
+        search_id = self._selected_search_id()
+        if search_id is None:
+            return
+        self.app.push_screen(
+            CandidateScreen(
+                self.config, self.run_dir / "searches" / search_id, open_candidate_id=message.node_id
+            )
+        )
+
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         # moving the cursor while the panel is open follows the cursor. Read
         # the cursor now rather than event.row_key: a live refresh clears the
         # table (cursor briefly at row 0) and restores it, and the stale
         # highlight from that clear would flip the panel to another search
-        if event.data_table.id == "searches" and self._panel_search_id is not None:
-            current = self._selected_search_id()
-            if current is not None and current != self._panel_search_id:
-                self._open_panel(current)
-            event.stop()
+        if event.data_table.id == "searches":
+            if self._panel_search_id is not None:
+                current = self._selected_search_id()
+                if current is not None and current != self._panel_search_id:
+                    self._open_panel(current)
+                event.stop()
+            elif self._tree_open:
+                self._render_tree()
+                event.stop()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         if event.data_table.id == "search-candidates":
@@ -1695,7 +1767,9 @@ class SearchesScreen(ResizableDetail, LiveScreen):
             self.app.push_screen(CandidateScreen(self.config, search_dir))
 
     def action_close_panel_or_back(self) -> None:
-        if self._panel_search_id is not None:
+        if self._tree_open:
+            self._close_tree()
+        elif self._panel_search_id is not None:
             self._close_panel()
         else:
             self.app.pop_screen()

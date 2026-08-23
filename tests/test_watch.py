@@ -612,6 +612,35 @@ async def test_candidate_table_refresh_preserves_scroll_offsets(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_t_opens_the_tree_panel_and_follows_the_cursor(tmp_path: Path):
+    search_dir, config = make_demo_search(tmp_path, "tree-run")
+    # a second search in the same run, with a distinct extra candidate
+    second = make_run_with_search(
+        tmp_path / "runs", "tree-run", SearchStatus(search_id="cp-2", run_id="tree-run", state="done"),
+        search_id="cp-2",
+    )
+    Journal(second / "journal.jsonl").candidate_result(
+        make_candidate("c777", operator="improve", parent_id="c001", status="ok", val_score=0.9)
+    )
+
+    app = WatchApp(config)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.press("enter")  # runs -> searches
+        await pilot.press("t")
+        await pilot.pause()
+        tree = app.screen.query_one("#search-tree")
+        assert str(tree.styles.display) != "none"
+        first_ids = {n.id for n in tree._tree.nodes}
+        await pilot.press("down")  # cursor to the second search: the tree follows
+        await pilot.pause()
+        second_ids = {n.id for n in tree._tree.nodes}
+        assert first_ids != second_ids and "c777" in second_ids
+        await pilot.press("t")  # toggle off
+        await pilot.pause()
+        assert str(tree.styles.display) == "none"
+
+
+@pytest.mark.asyncio
 async def test_hold_column_only_for_holdout_searches(tmp_path: Path):
     from hillclimb.candidate import Candidate, Trial
 
@@ -1160,7 +1189,7 @@ async def test_ctrl_c_quits_and_question_mark_lists_every_key(tmp_path: Path):
         assert rows["o"] == "full candidate view" and rows["m"] == "maximize panel"
         assert rows["g"] == "knowledge graph" and rows["esc"] == "back"
         assert rows["drag divider"] == "resize panel"
-        assert rows["t"] == "time zone"  # app-level keys listed too
+        assert rows["t"] == "tree panel"  # the screen key shadows the app-level time zone here
         assert screen.query_one("#searches").size.width < 120  # split, not overlay
         await pilot.press("question_mark")
         await pilot.pause()
