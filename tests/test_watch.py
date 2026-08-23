@@ -619,9 +619,16 @@ async def test_t_opens_the_tree_panel_and_follows_the_cursor(tmp_path: Path):
         tmp_path / "runs", "tree-run", SearchStatus(search_id="cp-2", run_id="tree-run", state="done"),
         search_id="cp-2",
     )
-    Journal(second / "journal.jsonl").candidate_result(
-        make_candidate("c777", operator="improve", parent_id="c001", status="ok", val_score=0.9)
-    )
+    journal2 = Journal(second / "journal.jsonl")
+    # scrubber ticks come from finished_at (real searches always stamp it)
+    for i, (cid, kwargs) in enumerate([
+        ("c000", dict(operator="baseline", status="ok")),
+        ("c001", dict(operator="draft", status="ok", val_score=0.7)),
+        ("c777", dict(operator="improve", parent_id="c001", status="ok", val_score=0.9)),
+    ]):
+        candidate = make_candidate(cid, **kwargs)
+        candidate.finished_at = f"2026-08-23T10:0{i}:00+00:00"
+        journal2.candidate_result(candidate)
 
     app = WatchApp(config)
     async with app.run_test(size=(100, 30)) as pilot:
@@ -635,9 +642,34 @@ async def test_t_opens_the_tree_panel_and_follows_the_cursor(tmp_path: Path):
         await pilot.pause()
         second_ids = {n.id for n in tree._tree.nodes}
         assert first_ids != second_ids and "c777" in second_ids
+        # j scrubs back in time: the newest result drops out of the tree
+        scrubber = app.screen.query_one("#search-scrubber")
+        assert str(scrubber.styles.display) != "none"
+        n_live = len(tree._tree.nodes)
+        await pilot.press("j")
+        await pilot.pause()
+        assert scrubber.index is not None
+        assert len(tree._tree.nodes) < n_live
+        await pilot.press("k")  # forward again
+        await pilot.pause()
+        assert len(tree._tree.nodes) == n_live
+
+        # selecting a node slides the candidate detail out on the right
+        detail = app.screen.query_one("#search-node-detail")
+        assert str(detail.styles.display) == "none"
+        tree.selected = "c001"
+        app.screen._show_node_detail("c001")
+        assert str(detail.styles.display) == "block"
+        await pilot.press("escape")  # first escape: deselect/hide the detail, tree stays
+        await pilot.pause()
+        assert str(detail.styles.display) == "none"
+        assert str(tree.styles.display) != "none" and tree.selected is None
+
         await pilot.press("t")  # toggle off
         await pilot.pause()
         assert str(tree.styles.display) == "none"
+        assert str(scrubber.styles.display) == "none"
+        assert str(detail.styles.display) == "none"
 
 
 @pytest.mark.asyncio

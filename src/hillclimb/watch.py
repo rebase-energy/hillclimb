@@ -979,10 +979,35 @@ class LiveScreen(KeysMixin, Screen):
 
     def on_screen_suspend(self) -> None:
         self._live_timer.pause()
+        # Kitty-graphics placements are painted by the terminal, not Textual:
+        # a pushed screen draws its cells but the image from this screen
+        # stays on top of them. Delete the placements while suspended...
+        for canvas in self._plot_widgets():
+            driver = getattr(self.app, "_driver", None)
+            if driver is not None:
+                try:
+                    from plotui import Plot
+                    from plotui.textual import tmux_wrap
+
+                    driver.write(tmux_wrap(Plot.kitty_cleanup()))
+                except Exception:
+                    pass
+                break  # one cleanup deletes every placement
 
     def on_screen_resume(self) -> None:
+        # ...and re-transmit when this screen is on top again.
+        for canvas in self._plot_widgets():
+            canvas._key = None
+            canvas.invalidate()
         self.refresh_data()
         self._live_timer.resume()
+
+    def _plot_widgets(self) -> list:
+        try:
+            from plotui.textual import PlotWidget
+        except ImportError:  # pragma: no cover - plotui is a core dep
+            return []
+        return list(self.query(PlotWidget))
 
 
 class ConfirmScreen(ModalScreen[bool]):
@@ -1529,6 +1554,9 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         Binding("s", "stop_search", "stop search", show=False),
         Binding("g", "open_graph", "knowledge graph", show=False),
         Binding("t", "toggle_tree", "tree panel", show=False),
+        Binding("j", "scrub_back", "tree: back in time", show=False),
+        Binding("k", "scrub_forward", "tree: forward", show=False),
+        Binding("end", "scrub_live", "tree: live", show=False),
         KEYS_BINDING,
         *QUIT_BINDINGS,
     ]
@@ -1545,6 +1573,8 @@ class SearchesScreen(ResizableDetail, LiveScreen):
     }
     SearchesScreen #search-candidates { min-height: 6; }
     SearchesScreen #search-tree { min-height: 6; }
+    SearchesScreen #search-scrubber { height: 2; background: $surface; padding: 0 1; }
+    SearchesScreen #search-node-detail { dock: right; width: 48; display: none; padding: 0 1; }
     """
 
     def __init__(self, config: Config, run_dir: Path, run_name: str):
@@ -1569,9 +1599,12 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         yield DetailDivider(" drag to resize candidates ", id="detail-divider")
         yield DataTable(id="search-candidates", cursor_type="row")
         # imported here: treeview imports back into watch (LiveScreen et al)
+        from hillclimb.graphview import TimeScrubber
         from hillclimb.treeview import TreePlotWidget
 
         yield TreePlotWidget(id="search-tree")
+        yield TimeScrubber(id="search-scrubber")
+        yield RichLog(id="search-node-detail", wrap=True, markup=False, auto_scroll=False)
         yield Footer()
 
     def on_mount(self) -> None:
@@ -1590,6 +1623,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         panel = self.query_one("#search-candidates", DataTable)
         _set_candidate_columns(panel, holdout=True)
         self.query_one("#search-tree").styles.display = "none"
+        self.query_one("#search-scrubber").styles.display = "none"
         self._set_detail_visible(False)
         self.start_live()
 
@@ -1660,7 +1694,8 @@ class SearchesScreen(ResizableDetail, LiveScreen):
 
     def action_toggle_tree(self) -> None:
         """`t`: the highlighted search's exploration tree under the table,
-        following the cursor; `t` again (or escape) closes it."""
+        following the cursor; `t` again (or escape) closes it. `j`/`k`
+        scrub back/forward over landed results, `end` back to live."""
         if self._tree_open:
             self._close_tree()
             return
@@ -1670,16 +1705,24 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         self._tree_open = True
         self._detail_height = self._fit_detail_height()
         self._set_detail_visible(True)
+        self.query_one("#search-scrubber").styles.display = "block"
         self._render_tree()
 
     def _close_tree(self) -> None:
         self._tree_open = False
         self._tree_fingerprint = None
+        self._show_node_detail(None)
+        canvas = self.query_one("#search-tree")
+        canvas.selected = None
+        self.query_one("#search-scrubber").styles.display = "none"
         self._set_detail_visible(False)
         self.DETAIL_WIDGET = "#search-candidates"
         self.query_one("#searches", DataTable).focus()
 
     def _render_tree(self) -> None:
+        from hillclimb.graphview import TimeScrubber
+        from hillclimb.tree import build_tree, candidates_until, tree_events
+
         search_id = self._selected_search_id()
         if search_id is None:
             return
@@ -1688,21 +1731,66 @@ class SearchesScreen(ResizableDetail, LiveScreen):
             return
         journal = Journal(self.store.journal(record.key))
         candidates = list(journal.candidates.values())
+        scrubber = self.query_one("#search-scrubber", TimeScrubber)
+        canvas = self.query_one("#search-tree")
+        switched = self._tree_fingerprint is None or self._tree_fingerprint[0] != search_id
+        if switched:  # a different search: its own time, selection and view
+            scrubber.set_index(None)
+            canvas.selected = None
+            canvas.hidden = frozenset()
+            self._show_node_detail(None)
+        scrubber.set_events(tree_events(candidates))
         fingerprint = (
             search_id,
+            scrubber.index,
             tuple((c.candidate_id, c.status, c.val_score, c.pruned, c.finished_at) for c in candidates),
         )
         if fingerprint == self._tree_fingerprint:
             return
-        from hillclimb.tree import build_tree
-
-        reset_view = self._tree_fingerprint is None or self._tree_fingerprint[0] != search_id
         self._tree_fingerprint = fingerprint
-        canvas = self.query_one("#search-tree")
-        if reset_view:  # a different search: do not inherit the old zoom/pan
-            canvas.selected = None
-            canvas.hidden = frozenset()
-        canvas.set_tree(build_tree(candidates, bool(record.meta.higher_is_better)))
+        higher = bool(record.meta.higher_is_better)
+        live_tree = build_tree(candidates, higher)
+        until = None
+        if scrubber.index is not None and scrubber.events_list:
+            until = scrubber.events_list[scrubber.index]
+        shown = build_tree(candidates_until(candidates, until), higher, layout=live_tree)
+        canvas.set_tree(shown, frame=live_tree)
+
+    def action_scrub_back(self) -> None:
+        if self._tree_open:
+            self.query_one("#search-scrubber").step(-1)
+
+    def action_scrub_forward(self) -> None:
+        if self._tree_open:
+            self.query_one("#search-scrubber").step(1)
+
+    def action_scrub_live(self) -> None:
+        if self._tree_open:
+            self.query_one("#search-scrubber").set_index(None)
+            self._render_tree()
+
+    def on_time_scrubber_time_changed(self, message) -> None:
+        self._render_tree()
+
+    def _show_node_detail(self, node_id: str | None) -> None:
+        """The clicked node's candidate details slide out on the right, as in
+        the full tree view."""
+        detail = self.query_one("#search-node-detail", RichLog)
+        search_id = self._selected_search_id()
+        if node_id is None or search_id is None:
+            detail.styles.display = "none"
+            return
+        record = self.store.search((self.run_dir.name, search_id))
+        if record is None:
+            return
+        journal = Journal(self.store.journal(record.key))
+        detail.clear()
+        for renderable in candidate_detail_renderables(record, journal, node_id):
+            detail.write(renderable)
+        detail.styles.display = "block"
+
+    def on_tree_plot_widget_node_selected(self, message) -> None:
+        self._show_node_detail(message.node_id)
 
     def on_tree_plot_widget_node_activated(self, message) -> None:
         """Double-activating a node in the tree drills into that candidate."""
@@ -1767,7 +1855,12 @@ class SearchesScreen(ResizableDetail, LiveScreen):
             self.app.push_screen(CandidateScreen(self.config, search_dir))
 
     def action_close_panel_or_back(self) -> None:
-        if self._tree_open:
+        if self._tree_open and self.query_one("#search-tree").selected is not None:
+            canvas = self.query_one("#search-tree")
+            canvas.selected = None
+            canvas.rebuild()
+            self._show_node_detail(None)
+        elif self._tree_open:
             self._close_tree()
         elif self._panel_search_id is not None:
             self._close_panel()
