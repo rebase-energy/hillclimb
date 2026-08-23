@@ -4,12 +4,16 @@ import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
 from hillclimb.candidate import utcnow
 from hillclimb.journal import Journal
-from hillclimb.status import effective_state
+from hillclimb.status import derive_state
+
+if TYPE_CHECKING:
+    from hillclimb.store import DataStore, SearchKey
 
 CONTROL_DIR = "control"
 ACTIONS = ("stop", "prune")
@@ -51,13 +55,26 @@ def read_commands(search_dir: Path) -> list[tuple[Path, ControlCommand]]:
     return commands
 
 
-def clear_stale_stops(search_dir: Path) -> None:
+def drain_commands_dir(search_dir: Path) -> list[ControlCommand]:
+    """Queued commands oldest-first, each unlinked before it is returned —
+    consumed before applied, so a crash mid-apply never replays a command."""
+    commands = []
+    for path, cmd in read_commands(search_dir):
+        path.unlink(missing_ok=True)
+        commands.append(cmd)
+    return commands
+
+
+def clear_stale_stops_dir(search_dir: Path) -> None:
     """At engine startup, any queued stop predates this engine and must not
     instantly kill the fresh search. Queued prunes stay: the first control
     poll applies them."""
     for path, cmd in read_commands(search_dir):
         if cmd.action == "stop":
             path.unlink(missing_ok=True)
+
+
+clear_stale_stops = clear_stale_stops_dir
 
 
 def apply_prune(journal: Journal, candidate_id: str, reason: str = "", source: str = "cli") -> list[str]:
@@ -112,7 +129,8 @@ def resync_best(search_dir: Path, journal: Journal, higher_is_better: bool, sele
 
 
 def request_prune(
-    search_dir: Path,
+    store: DataStore,
+    key: SearchKey,
     candidate_id: str,
     higher_is_better: bool,
     selection_mode: str,
@@ -120,28 +138,27 @@ def request_prune(
     source: str = "cli",
 ) -> str:
     """Single entry point for every surface (CLI, TUI): queue the prune when
-    the engine is running, apply it directly otherwise. Returns a short
-    human-readable outcome."""
-    if effective_state(search_dir) == "running":
-        write_command(
-            search_dir,
-            ControlCommand(action="prune", candidate_id=candidate_id, reason=reason, source=source),
+    the engine is running, apply it directly otherwise (no engine means no
+    second writer). Returns a short human-readable outcome."""
+    if derive_state(store.read_status(key)) == "running":
+        store.enqueue_command(
+            key, ControlCommand(action="prune", candidate_id=candidate_id, reason=reason, source=source)
         )
         return f"queued: engine will prune {candidate_id} before its next operator"
-    journal = Journal(search_dir / "journal.jsonl")
+    journal = Journal(store.journal(key))
     pruned = apply_prune(journal, candidate_id, reason, source)
     if not pruned:
         return f"{candidate_id} (and its subtree) was already pruned"
-    selected = resync_best(search_dir, journal, higher_is_better, selection_mode)
+    selected = resync_best(store.search_dir(key), journal, higher_is_better, selection_mode)
     outcome = f"pruned {', '.join(pruned)}"
     outcome += f"; best/ now {selected}" if selected else "; best/ reverted to baseline"
     return outcome
 
 
-def request_stop(search_dir: Path, source: str = "cli") -> str | None:
+def request_stop(store: DataStore, key: SearchKey, source: str = "cli") -> str | None:
     """Queue a graceful stop if the engine is running; returns an outcome
     message, or None when there is nothing to stop."""
-    if effective_state(search_dir) != "running":
+    if derive_state(store.read_status(key)) != "running":
         return None
-    write_command(search_dir, ControlCommand(action="stop", source=source))
+    store.enqueue_command(key, ControlCommand(action="stop", source=source))
     return "stop queued: engine parks after the current operator finishes"

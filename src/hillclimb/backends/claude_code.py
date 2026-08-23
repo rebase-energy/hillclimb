@@ -8,6 +8,7 @@ import threading
 import time
 from pathlib import Path
 
+from hillclimb.candidate import utcnow
 from hillclimb.backends.base import OperatorRequest, OperatorResult
 
 
@@ -16,11 +17,14 @@ def subscription_env(auth: str = "subscription") -> dict[str, str]:
     ANTHROPIC_API_KEY so calls bill the Max subscription (claude.ai login /
     CLAUDE_CODE_OAUTH_TOKEN) — an inherited API key silently takes precedence
     otherwise. auth="api-key" keeps it (headless/hosted runs with no
-    subscription login)."""
+    subscription login). Single-threaded (see executor.SINGLE_THREAD_ENV):
+    the agent's own experiment runs inherit it."""
+    from hillclimb.executor import single_threaded
+
     env = os.environ.copy()
     if auth != "api-key":
         env.pop("ANTHROPIC_API_KEY", None)
-    return env
+    return single_threaded(env)
 
 RATE_LIMIT_MARKERS = (
     "rate limit",
@@ -60,15 +64,22 @@ class _StreamReader(threading.Thread):
     def run(self) -> None:
         with self.stream_path.open("w") as sink:
             for line in self.stdout:
-                sink.write(line)
-                sink.flush()
                 try:
                     message = json.loads(line)
                 except (json.JSONDecodeError, ValueError):
                     # non-JSON output from the CLI itself (error banners)
+                    sink.write(line)
+                    sink.flush()
                     if _has_rate_limit_marker(line):
                         self.rate_limited = True
                     continue
+                if isinstance(message, dict):
+                    # arrival time, so the watch TUI can show the transcript
+                    # as a timestamped terminal log (the CLI stamps nothing)
+                    message.setdefault("ts", utcnow())
+                    line = json.dumps(message) + "\n"
+                sink.write(line)
+                sink.flush()
                 if isinstance(message, dict) and message.get("type") == "result":
                     self.result_payload = message
                     if message.get("is_error") and _has_rate_limit_marker(
@@ -83,6 +94,18 @@ def _kill_group(proc: subprocess.Popen) -> None:
     except (ProcessLookupError, PermissionError):
         pass
     proc.wait()
+
+
+# what counts as a token in the claude stream: the one definition the
+# watch TUI's live counter and the recorded total both use
+USAGE_TOKEN_KEYS = (
+    "input_tokens", "output_tokens",
+    "cache_creation_input_tokens", "cache_read_input_tokens",
+)
+
+
+def usage_total_tokens(usage: dict) -> int:
+    return sum(usage.get(k) or 0 for k in USAGE_TOKEN_KEYS)
 
 
 class ClaudeCodeBackend:
@@ -229,12 +252,7 @@ class ClaudeCodeBackend:
                 error_kind="error",
                 error_message="agent exited 0 but emitted no result message",
             )
-        usage = payload.get("usage") or {}
-        token_keys = (
-            "input_tokens", "output_tokens",
-            "cache_creation_input_tokens", "cache_read_input_tokens",
-        )
-        total_tokens = sum(usage.get(k) or 0 for k in token_keys) or None
+        total_tokens = usage_total_tokens(payload.get("usage") or {}) or None
         return OperatorResult(
             ok=True,
             session_id=payload.get("session_id"),

@@ -9,5 +9,6 @@ tasks/data/**/*.csv
 tasks/data/**/*.zip
 .gstack/
 hillclimb/knowledge/graph.json
+hillclimb/store.sqlite*
 hillclimb/knowledge/.distill/
 hillclimb/knowledge/.consolidate/

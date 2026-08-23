@@ -121,6 +121,7 @@ class TestCollect:
 
         config = Config()
         config.learning.enabled = False
+        config.paths.runs_dir = tmp_path / "runs"  # the store records under the configured runs dir
         problem = ProblemSpec(
             problem_id="p", problem_dir=tmp_path, data_dir=tmp_path,
             description="", metric_name="accuracy", higher_is_better=True,

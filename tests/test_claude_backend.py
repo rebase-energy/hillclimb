@@ -90,6 +90,7 @@ def test_success_parses_result_and_streams(tmp_path: Path):
     stream = (request.candidate_dir / "agent_stream.jsonl").read_text().splitlines()
     assert len(stream) == 3  # init + assistant + result, all captured
     assert json.loads(stream[-1])["type"] == "result"
+    assert all("ts" in json.loads(line) for line in stream)  # stamped on arrival
     assert not (request.candidate_dir / "agent.pid").exists()  # cleaned up
     raw = json.loads((request.candidate_dir / "agent_raw.json").read_text())
     assert raw["result"]["session_id"] == "sess-123"

@@ -85,13 +85,13 @@ def run_scored_baseline(
         submission_ok=exec_result.submission_ok,
         val_score=exec_result.val_score,
     )
+    (search_dir / "best").mkdir(parents=True, exist_ok=True)
     if exec_result.ok:
         if holdout_scorer is not None:
             trial.holdout_score, trial.holdout_error = holdout_scorer.score(candidate_dir)
         trial.finished_at = utcnow()
         candidate.trials.append(trial)
         candidate.is_best = True
-        (search_dir / "best").mkdir(parents=True, exist_ok=True)
         shutil.copy(solution, search_dir / "best" / "solution.py")
         # the artifacts the baseline produced (e.g. submission.csv) ship
         # alongside it, so best/ is complete from t=0
@@ -101,7 +101,6 @@ def run_scored_baseline(
     else:
         candidate.summary += " (baseline eval failed; unscored)"
         for name, source in problem.baseline_files.items():
-            (search_dir / "best").mkdir(parents=True, exist_ok=True)
             shutil.copy(source, search_dir / "best" / name)
     candidate.finished_at = utcnow()
     return candidate

@@ -14,7 +14,7 @@ user may also have `hillclimb watch` (a live TUI) open in another terminal — i
 reads the same on-disk state you do.
 
 The hierarchy: a **Run** (one invocation) contains **Searches** (one engine
-process per problem), each exploring a tree of **Candidates** (immutable code
+process on one problem), each exploring a tree of **Candidates** (immutable code
 artifacts), each executed as a **Trial**.
 
 All commands: `uv run hillclimb <command>` from anywhere inside a hillclimb
@@ -53,11 +53,17 @@ counts, `current` (the candidate being worked on right now, with
 The TUI hierarchy is: runs → searches → candidates. Effective search
 states (derived, shown by `status` and the TUI):
 
-In the candidate view, press enter or click a candidate to open the bottom
-detail panel. That panel follows the highlighted candidate and shows notes,
-scores, lineage, trial output, and any agent stream. Press escape to close
-the detail panel; press escape again to go back. Drag the divider or use `+` /
-`-` to resize the detail panel.
+In the searches view, press enter on a search to open its candidates in a
+panel under the table and move the cursor into it (the panel follows the
+highlighted search); enter on a candidate there gives the candidates the whole
+screen with that candidate's details underneath; `o` opens the full candidate
+view directly; `m` maximizes/restores the lower panel on either screen. In the candidate view, press enter or
+click a candidate to open the bottom detail panel. That panel follows the highlighted candidate and shows notes,
+scores, lineage, trial output, and the operator stream. Press escape to close
+the panel; press escape again to go back. Drag the divider or use `+` /
+`-` to resize either panel. Footers carry only enter / esc / `?` / q; `?`
+slides out a panel from the right listing every key and gesture of the
+current screen, and ctrl+c quits any of the TUIs.
 
 | state | meaning |
 |---|---|
@@ -105,7 +111,10 @@ uv run hillclimb knowledge graph --stats        # text summary of the graph
 uv run hillclimb knowledge graph                # interactive TUI (zoom/pan/click/scrub) — don't run headless (alias: hillclimb graph)
 uv run hillclimb watch candidates [search]      # TUI straight on a search's candidates — don't run headless
 uv run hillclimb stop --all                     # stop every running search (e.g. a demo)
+uv run hillclimb reset --yes                  # kill this folder's engines AND delete its hillclimb/ dir (other folders untouched)
 uv run hillclimb chart                          # live hillclimb curve TUI (best score vs time) — don't run headless
+uv run hillclimb chart --detail [search]        # same, one search with its exploration tree on the curve — don't run headless
+uv run hillclimb tree [search]                  # exploration tree TUI (expanded / discontinued / failed lineages) — don't run headless
 uv run hillclimb knowledge rebuild              # regenerate the derived graph.json
 uv run hillclimb knowledge distill [search]     # claims pass for one search (--backfill: all cards)
 uv run hillclimb knowledge consolidate          # sleep phase: generalize claims + rewrite playbooks (agent calls)
@@ -118,6 +127,9 @@ uv run hillclimb bench report                   # compare the arms on holdout
 ## Rules
 
 - **Never edit `journal.jsonl`, `status.json`, or `control/` by hand.**
+  With `store.backend: sqlite` those records live in `hillclimb/store.sqlite`
+  instead of the search dir — use `hillclimb status` / `store searches` rather
+  than reading files.
   The engine is the single writer of search state; use the CLI commands, which
   route through the control queue when the engine is live.
 - Don't start a `resume` while also issuing an offline `prune` for the same

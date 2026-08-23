@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
@@ -17,6 +18,27 @@ def create_search_dir(run_dir: Path, search_id: str) -> Path:
     (search_dir / "candidates").mkdir(parents=True, exist_ok=True)
     (search_dir / "best").mkdir(parents=True, exist_ok=True)
     return search_dir
+
+
+def allocate_search_dir(run_dir: Path, problem_id: str) -> Path:
+    """A fresh search dir for a search on `problem_id` inside `run_dir`.
+
+    The problem is an attribute of the search, not its name: the first
+    search on a problem in a run is `<problem-id>` (so refs from before
+    suffixes stay valid), the next are `<problem-id>-2`, `-3`, ... The claim
+    is an atomic mkdir, so engines started in parallel for one run (a demo,
+    a suite with a problem listed twice) never share a dir."""
+    root = run_dir / SEARCHES_DIRNAME
+    root.mkdir(parents=True, exist_ok=True)
+    index = 1
+    while True:
+        search_id = problem_id if index == 1 else f"{problem_id}-{index}"
+        try:
+            os.mkdir(root / search_id)
+        except FileExistsError:
+            index += 1
+            continue
+        return create_search_dir(run_dir, search_id)
 
 
 def create_trial_dir(candidate_dir: Path, index: int) -> Path:

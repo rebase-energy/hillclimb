@@ -5,5 +5,5 @@ description: description.md
 baseline: 0.5  # one big circle
 # lean runtime venv (numpy/scipy/pandas) so the demo starts in seconds
 requirements: requirements.txt
-time_budget_s: 600
+time_budget_s: 60  # good packings converge in seconds; bounds how long one candidate can hold a core
 allow_network: false

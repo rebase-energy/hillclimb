@@ -6,8 +6,14 @@ scores each candidate through the problem's verifier, and keeps the best
 solution per search.
 
 Hierarchy: **Run** (one invocation, `runs/<run-id>/`) → **Search** (one engine
-process per problem, `searches/<search-id>/`) → **Candidate** (immutable code
-artifact) → **Trial** (one execution).
+process, `searches/<search-id>/`) → **Candidate** (immutable code artifact) →
+**Trial** (one execution). The problem is an *attribute* of a search, not a
+level: a run may hold searches on different problems (MLE-bench) or several
+on one (the demo). Search ids are `<problem-id>`, then `<problem-id>-2`, `-3`
+(atomic mkdir allocation); `search.yaml` carries `problem_key` — the
+canonical cross-run identity (`emflow://…`, `mlebench://…`, or the local
+problem id; backfilled on read like hillclimb-go's `EffectiveProblemKey`) —
+and every problem-scoped view (chart, best-ever, knowledge) groups on it.
 
 A problem **is its verifier**: `problems/<id>/verifier.sh` is the only process
 the engine starts. It drives `solution.py` and writes the score to
@@ -37,6 +43,22 @@ off stdout — agent code shares that stream.
   search cannot climb noise, and `trial_mode: serial` is mandatory when the
   metric measures the machine (time/throughput/memory) — parallel trials
   measure each other
+- Concurrency: `search.parallel_operators` per search, `search.machine_max_operators`
+  across the machine (flock slots in `~/.cache/hillclimb/agent-slots/`, default
+  `min(8, cores-2)`); verifier and agent envs are single-threaded
+  (`executor.SINGLE_THREAD_ENV`, parent values win). `hillclimb ps` lists the
+  engine process trees; `stop --all` reaps engines whose hillclimb dir was deleted; `reset` kills only the engines pinned to this folder's hillclimb dir, then deletes the dir
+- DataStore (`store.py`): the one read/write path for a search's records —
+  run/search metadata, the append-only journal (`Journal(store.journal(key))`,
+  append order is the replay contract), the status record, and the stop/prune
+  command queue. Backends: `FileDataStore` (default; `runs/` as today) and
+  `SqliteDataStore` (`store.backend: sqlite` → `hillclimb/store.sqlite`, WAL,
+  multi-process, writes no yaml). `open_store(config)` picks it; `resolve_search`/
+  `latest_search`/`running_searches` replace dir walking; `SearchRecord.state`
+  is derived at read time (`status.derive_state`, pid + heartbeat). `key_for(search_dir)`
+  is `(run_id, search_id)`; `SearchMeta.search_uid` is the global id. Views and
+  commands never open `journal.jsonl`/`status.json` directly — only the file
+  backend does. `hillclimb store sync` imports the folder into another backend
 - Search policies (`policies/`): `greedy` (default) and `openevolve`
   (OpenEvolve's MAP-Elites database as the what-next brain; optional extra,
   `search.policy_params` pass through to its `DatabaseConfig`). A policy
@@ -44,7 +66,10 @@ off stdout — agent code shares that stream.
   openevolve policy seeds/restores the global RNG around every OpenEvolve call
   because that library samples via the `random` module
 - CLI: `uv run hillclimb --help` (engine); live TUIs: `watch` (agents; `watch candidates` jumps to a search),
-  `chart` (best score vs time per search), `graph` (knowledge graph)
+  `chart` (best score vs time per search; `--detail`/`d` overlays one search's
+  exploration tree on the curve), `tree` (one search's exploration tree —
+  `tree.py` is the pure layout + fates, `treeview.py` the plotui screen with a
+  face-on locked camera), `graph` (knowledge graph)
 - `hillclimb demo`: zero-setup demo (N parallel detached `hillclimb run`s, `stop --all` ends it) — bundled circle-packing problem in
   `src/hillclimb/demo/` (package data, a copy of `problems/circle-packing`
   with a lean `requirements.txt`); keep the two in sync
@@ -52,12 +77,13 @@ off stdout — agent code shares that stream.
 
 ## Run-state rules
 
-The engine process is the **single writer** of search state
-(`runs/<run-id>/searches/<search-id>/journal.jsonl`, `status.json`, `best/`).
-Never edit those files directly — control a search through
-`hillclimb stop|kill|prune|resume`, which route through the search's `control/`
-command queue when the engine is live. `journal.jsonl` is append-only; replay
-keeps the last record per candidate.
+The engine process is the **single writer** of search state — the journal,
+status and `best/` of `runs/<run-id>/searches/<search-id>/`, whichever
+DataStore backend holds the records. Never edit those files (or rows)
+directly — control a search through `hillclimb stop|kill|prune|resume`, which
+route through the store's command queue when the engine is live. The journal
+is append-only; replay keeps the last record per candidate. What stays on disk
+in every backend: `candidates/`, `best/`, agent streams/logs, `injected_claims.json`.
 
 `hillclimb/knowledge/graph.json` is a **derived index** (gitignored) rebuilt
 deterministically from the knowledge YAML (cards, entities.yaml,

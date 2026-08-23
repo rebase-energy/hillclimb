@@ -60,15 +60,37 @@ SECRET_ENV_EXACT = frozenset({
 SECRET_ENV_SUFFIXES = ("_TOKEN", "_API_KEY", "_SECRET", "_SECRET_KEY", "_PASSWORD")
 
 
+# One thread per solution process. Every verifier and agent experiment runs a
+# numpy/scipy/torch workload that would otherwise fan out across all cores;
+# with N of them in flight that is N x cores of demand, the machine stalls,
+# and timing-based metrics measure the contention. Parent values win, so a
+# problem that really wants multithreaded solutions can export its own.
+SINGLE_THREAD_ENV = {
+    "OMP_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "VECLIB_MAXIMUM_THREADS": "1",
+    "NUMEXPR_NUM_THREADS": "1",
+}
+
+
+def single_threaded(env: dict[str, str]) -> dict[str, str]:
+    """`env` with SINGLE_THREAD_ENV filled in where unset."""
+    for key, value in SINGLE_THREAD_ENV.items():
+        env.setdefault(key, value)
+    return env
+
+
 def scrubbed_env(**extra: str) -> dict[str, str]:
-    """Parent env minus credentials, for running agent-authored code."""
+    """Parent env minus credentials, single-threaded, for running
+    agent-authored code."""
     env = {
         k: v
         for k, v in os.environ.items()
         if k not in SECRET_ENV_EXACT and not k.upper().endswith(SECRET_ENV_SUFFIXES)
     }
     env.update(extra)
-    return env
+    return single_threaded(env)
 
 
 class ExecResult(BaseModel):

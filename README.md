@@ -15,7 +15,7 @@ The design is deliberately three-layered:
    and control runs in the background while you chat.
 3. **`hillclimb watch`** — a live TUI you keep open beside the agent:
    runs → searches → candidate trees, with an on-demand candidate
-   detail panel for notes, scores, lineage, output, and agent stream when present.
+   detail panel for notes, scores, lineage, output, and the timestamped operator stream when present.
    Drag the divider or use `+` / `-` to resize the detail panel.
 
 ## Try it in one command
@@ -29,7 +29,8 @@ hillclimb demo     # agents climb the circle-packing problem, right here
 `hillclimb demo` creates a `hillclimb/` dir in the current folder, installs
 the bundled circle-packing problem (with a declared one-circle baseline, sum of radii
 0.5, scored at t=0), and starts **six 10-minute searches in parallel, in the
-background** — your prompt comes straight back. It prints the commands worth
+background**, all in one run so they share discoveries as they go — your
+prompt comes straight back. It prints the commands worth
 running right there while they climb:
 
 ```bash
@@ -37,11 +38,13 @@ hillclimb watch candidates   # one search's candidates: drafting, debugging, imp
 hillclimb watch              # all the searches side by side
 hillclimb chart              # the hillclimb curves: best score vs time, one line per search
 hillclimb graph              # the knowledge graph growing as searches finish
+hillclimb tree               # one search's exploration tree: expanded vs discontinued lineages
+hillclimb chart --detail     # the curve with that tree drawn on it (every scored candidate, parent edges)
 ```
 
-`hillclimb stop --all` ends the demo (the best solutions stay in `runs/`);
-`--parallel N` and `--budget 5m` size it, and each search's engine log is
-`hillclimb/runs/demo-<timestamp>-<n>.log`.
+`hillclimb stop --all` ends the demo (the best solutions stay in `runs/`); `hillclimb reset` ends it AND deletes this folder's `hillclimb/` dir — only engines pinned to that dir are killed, never another folder's;
+`--parallel-searches N` and `--parallel-operators N` (concurrent operators per search, default 3 each — 9 agents, capped machine-wide by `search.machine_max_operators`) and `--budget 5m` size it, and each search's engine log is
+under `hillclimb/runs/<run-id>/logs/`.
 
 ## Install (from source)
 
@@ -106,7 +109,7 @@ problems:
   - target: emflow://gefcom2014:solar
     model: opus
     budget: 2h
-    parallel_agents: 3
+    parallel_operators: 3
   - target: emflow://gefcom2014:wind
     budget: 1h
 ```
@@ -132,7 +135,7 @@ Run
 
 - **Problem**: reusable definition under `problems/<id>/`.
 - **Run**: one invocation of hillclimb. A single-problem run contains one
-  search; a suite run contains one search per problem.
+  search; a suite run contains one search per suite entry.
 - **Search**: one search worker (engine process) exploring one problem.
 - **Candidate**: an immutable code artifact produced by an operator. Any change
   to the code — however small — is a new candidate with a new id.
@@ -400,6 +403,14 @@ search:
   min_improvement: 0.0   # ...or an absolute floor, in metric units
 ```
 
+Concurrency is bounded machine-wide, not per search: `search.parallel_operators`
+is how many operators one search keeps in flight, and
+`search.machine_max_operators` (default `min(8, cores - 2)`, `0` = off) caps
+the total across every search on the machine — extra operators wait
+(`waiting-slot` in `hillclimb watch`). Every verifier and agent process gets
+`OMP/OPENBLAS/MKL_NUM_THREADS=1` unless the parent environment sets them, so
+N operators cost at most N cores; `hillclimb ps` shows what is actually running.
+
 - **The candidate's score is the MEDIAN of its trials**, so one slow run or
   unlucky seed does not become the number the search ranks on. With
   `n_trials: 1` (the default) it is simply that trial's score.
@@ -555,7 +566,7 @@ the run has a single search), or `latest` (the default).
 
 | command | what it does |
 |---|---|
-| `demo [--budget 10m] [--searches 3]` | try hillclimb in one command: agents climb the bundled circle-packing problem |
+| `demo [--budget 10m] [--parallel-searches 3] [--parallel-operators 3]` | try hillclimb in one command: agents climb the bundled circle-packing problem |
 | `init [dir]` | create the `hillclimb/` dir (config, problems/, specs/, runs/) with an example problem |
 | `verify <problem> [--repeat N] [--holdout]` | run a problem's verifier once, outside a search; `--repeat` measures the noise floor |
 | `run <target> [--name ...] [--budget 2h] [--backend ...] [--model ...]` | start a run for one problem or a suite YAML |
@@ -565,7 +576,8 @@ the run has a single search), or `latest` (the default).
 | `chart` | live chart: best score vs minutes into the search, one line per search |
 | `graph` | the knowledge-graph TUI (same screen as `knowledge graph`) |
 | `show [search] <candidate-id>` | everything about one candidate: scores, evaluation breakdown, diff vs parent, output |
-| `stop [search]` | graceful stop: finish current operator, then park |
+| `ps` | every process hillclimb owns on this machine: engines with their agents and verifiers nested; `orphan` marks engines whose hillclimb dir was deleted |
+| `stop [search] [--all]` | graceful stop: finish current operator, then park; `--all` also reaps orphaned engines when no hillclimb dir is found |
 | `kill [search]` | SIGTERM the engine now (state finalized, resumable) |
 | `prune <search> <candidate-id>` | cut a candidate and its subtree from the search |
 | `tree [search]` | render the exploration tree to `<search>/tree.png` |
@@ -588,7 +600,7 @@ runs/
 └── <run-id>/                        # one hillclimb invocation
     ├── run.yaml                     # run metadata (schema_version: 2)
     ├── logs/                        # per-search engine logs (suite runs)
-    └── searches/<search-id>/        # one search per problem
+    └── searches/<search-id>/        # <problem-id>, then <problem-id>-2, -3 for more on one problem
         ├── search.yaml              # immutable search config (schema_version: 2)
         ├── status.json              # live heartbeat: state, pid, budget, current candidate
         ├── journal.jsonl            # append-only event log — the source of truth
@@ -602,9 +614,44 @@ runs/
 ```
 
 **Single-writer rule:** only the engine process mutates search state. The TUI,
-the CLI control commands, and chat agents all send commands through `control/`
-(or apply them offline only when the engine is provably not running). Never edit
-`journal.jsonl` or `status.json` by hand.
+the CLI control commands, and chat agents all send commands through the store's
+command queue (`control/` in the file backend), or apply them offline only when
+the engine is provably not running. Never edit `journal.jsonl` or `status.json`
+by hand.
+
+### The DataStore (`store.backend`)
+
+`run.yaml`, `search.yaml`, `journal.jsonl`, `status.json` and `control/` are
+the *file backend's* representation of a search's records. The engine, the
+CLI and the TUIs all read and write those records through one abstraction —
+the **DataStore** (`src/hillclimb/store.py`) — and `hillclimb/config.yaml`
+picks the backend:
+
+```yaml
+store:
+  backend: files        # default — the folder above; nothing to set up, git-versionable
+  # backend: sqlite     # one database file instead: hillclimb/store.sqlite
+  # sqlite_path: hillclimb/store.sqlite
+```
+
+With `sqlite`, a search dir holds only what has to be files (`candidates/`,
+`best/`, logs) and everything else lives in the database — cross-run views
+(the chart, `store searches`, bench) query it instead of walking run dirs,
+and N concurrent engines (the demo) write it safely. The single-writer rule
+is unchanged: the engine owns a search's records whichever backend holds
+them; `stop`/`prune` go through the store's command queue.
+
+`hillclimb store sync` imports the folder's searches into the configured
+store (skipping ones it already has) — run it once after switching to
+`sqlite` so earlier history shows up. `hillclimb store searches
+[--problem KEY]` lists what the store holds.
+
+A new backend implements the `DataStore` protocol: run/search metadata
+(upsert), the journal (append-only, returned in append order — policies
+replay it), one status record per search, and a consume-once command queue.
+Candidate working dirs, `best/`, agent streams/logs, problems, knowledge YAML
+and agent slots stay on the local filesystem in every backend — agents and
+verifiers need real files.
 
 Search states: `running` (fresh heartbeat + live pid) · `parked` (rate limit;
 resume later) · `stopped` (user stop/kill) · `done` · `failed` (see

@@ -264,6 +264,17 @@ class TestSearchAndScrub:
         hidden = lines(frozenset({"search"}))
         assert hidden[6] == "7   search" and len(hidden) == len(LEGEND_TYPES)
 
+    def test_place_labels_by_node_pairs_each_span_with_its_node(self):
+        from hillclimb.graphview import VNode, place_labels_by_node
+
+        nodes = [VNode(id="a", type="concept", label="alpha", x=0, y=0, z=0),
+                 VNode(id="b", type="concept", label="beta", x=0, y=0, z=0)]
+        placed = place_labels_by_node(nodes, [(5.0, 4.0, 0.0), (5.0, 8.0, 0.0)], cols=40, rows=10,
+                                      cell_px=(1, 2), zoom=2.0)
+        by_id = {node_id: span for span, node_id in placed}
+        assert by_id["a"][:3] == (2, 7, "alpha")  # row = y // cell_h, col = x + 2
+        assert by_id["b"][:3] == (4, 7, "beta")
+
     def test_fuzzy_match(self):
         nodes = [
             GraphNode(id="entity:histgradientboosting", type="technique",
@@ -442,7 +453,7 @@ async def test_scrubber_steps_and_refresh_keeps_state(graph_workspace):
         scrubber = app.screen.query_one("#time-scrubber", TimeScrubber)
         assert scrubber.index is None and len(scrubber.events_list) == 2
         assert "search:r2/s1" in canvas._ids
-        await pilot.press("left_square_bracket")
+        await pilot.press("j")
         await pilot.pause()
         assert scrubber.index == 0
         assert "search:r2/s1" not in canvas._ids
@@ -580,7 +591,7 @@ async def test_help_panel_toggles_and_lists_every_command(graph_workspace):
         assert rows["shift-drag"] == "pan"
         assert rows["scroll"] == "zoom"
         # ...listed beside every key, including those hidden from the footer
-        assert {"+ =", "f 0", "[", "esc", "q"} <= set(rows)
+        assert {"+ =", "f 0", "j", "esc", "q"} <= set(rows)
         assert all(len(keys) <= 12 for keys in rows), "a key cap would wrap"
 
         await pilot.press("question_mark")
@@ -602,3 +613,24 @@ async def test_apps_use_the_cyan_theme(graph_workspace):
         # chrome follows the theme: footer keys, borders and cursors are cyan
         assert variables["footer-key-foreground"].upper() == HILLCLIMB_THEME.accent.upper()
         assert variables["border"].upper() == HILLCLIMB_THEME.primary.upper()
+
+
+@pytest.mark.asyncio
+async def test_hovering_and_clicking_a_label_hits_its_node(graph_workspace):
+    from hillclimb.graphview import GraphApp, GraphPlotWidget
+
+    app = GraphApp(graph_workspace)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        canvas = app.screen.query_one("#graph-canvas", GraphPlotWidget)
+        canvas.zoom(3.0)  # past LABEL_ZOOM: every label is placed
+        await pilot.pause()
+        assert canvas._label_cells, "no labels placed"
+        # a cell in the middle of some label, away from the mark itself
+        (row, col), node_id = max(canvas._label_cells.items(), key=lambda kv: kv[0][1])
+        await pilot.hover("#graph-canvas", offset=(col, row))
+        await pilot.pause()
+        assert canvas._hover == node_id
+        await pilot.click("#graph-canvas", offset=(col, row))
+        await pilot.pause()
+        assert canvas.selected == node_id

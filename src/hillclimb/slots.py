@@ -1,7 +1,7 @@
 """Machine-wide agent-concurrency slots.
 
 Caps concurrent agent calls across every search process sharing a runs_dir
-(suites spawn one process per problem; each may run several workers). Slots
+(suites spawn one process per search; each may run several workers). Slots
 are `flock`ed files — the lock dies with the process, so crashes free their
 slot with no reclamation logic. Caveat: advisory flock is unreliable on NFS
 mounts; keep runs_dir on a local filesystem.

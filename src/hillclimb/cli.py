@@ -14,13 +14,13 @@ import typer.core
 import typer.rich_utils
 
 from hillclimb.api import (
+    create_run,
     create_search,
     build_executor,
     build_holdout_scorer,
     ensure_runtime_venv,
     execute_search,
     new_run_id,
-    search_ref,
     resume_spent_seconds,
 )
 from hillclimb.backends import get_backend
@@ -35,18 +35,21 @@ from hillclimb.problem import (
     suite_problem_targets,
 )
 from hillclimb.run import (
-    SEARCHES_DIRNAME,
-    iter_run_dirs,
-    RunMeta,
-    iter_search_dirs,
-    latest_search_dir,
-    load_run_meta,
     load_search_meta,
-    write_run_meta,
+    RunMeta,
+    search_ref,
 )
 from hillclimb.search import GreedySearcher
-from hillclimb.status import effective_state, read_status
-from hillclimb.dirs import create_run_dir
+from hillclimb.status import read_status
+from hillclimb.store import (
+    DataStore,
+    SearchRecord,
+    key_for,
+    latest_search,
+    open_store,
+    resolve_search,
+    running_searches,
+)
 
 # Typer's default rich theme paints "Usage:" and every `<...>` metavar yellow,
 # which clashes with the cyan command/option column. Repaint both in the same
@@ -122,13 +125,16 @@ def print_banner() -> None:
     console.print()
 
 
-def load_config(**overrides) -> Config:
-    """Config.load with the no-hillclimb-dir hint rendered for the CLI."""
+def load_config(*, raise_not_found: bool = False, **overrides) -> Config:
+    """Config.load with the no-hillclimb-dir hint rendered for the CLI
+    (or re-raised, for commands that have a fallback)."""
     from hillclimb.project import HillclimbDirNotFound
 
     try:
         return Config.load(**overrides)
     except HillclimbDirNotFound as exc:
+        if raise_not_found:
+            raise
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
@@ -145,7 +151,8 @@ model: sonnet
 #   total_s: 7200
 
 # search:
-#   parallel_agents: 1   # >1 runs concurrent operators
+#   parallel_operators: 1   # >1 runs concurrent operators
+#   machine_max_operators: 8  # cap across every search on this machine (default min(8, cores-2))
 #   n_trials: 1          # evals per candidate (median is the climbing score)
 #   trial_mode: parallel # `serial` when the metric measures the machine (time!)
 #   noise_k: 0           # require gains > k x the measured noise floor
@@ -367,6 +374,69 @@ def verify(
 
 
 
+store_app = typer.Typer(
+    cls=HillclimbGroup,
+    help="The record store behind the cross-run views (`store.backend` in config.yaml: files | sqlite)",
+)
+app.add_typer(store_app, name="store")
+
+
+@store_app.command("sync")
+def store_sync():
+    """Import the hillclimb folder's searches into the configured store.
+
+    Searches the store already holds are left alone, so this is safe to
+    repeat. Run it after switching `store.backend` to `sqlite` so history
+    written as files shows up in the chart and best-ever views.
+    """
+    from hillclimb.store import FileDataStore, open_store, sync_store
+
+    config = load_config()
+    if config.store.backend == "files":
+        typer.echo("store.backend is `files`: the hillclimb folder is the store, nothing to import")
+        return
+    store = open_store(config)
+    try:
+        counts = sync_store(FileDataStore(config.paths.runs_dir), store)
+    finally:
+        store.close()
+    typer.echo(
+        f"imported {counts['runs']} run(s), {counts['searches']} search(es), "
+        f"{counts['records']} journal record(s) into {config.store.sqlite_path}"
+    )
+
+
+@store_app.command("searches")
+def store_searches(
+    problem: str | None = typer.Option(None, "--problem", help="Only searches on this problem key"),
+):
+    """List the searches the store knows, best score per search."""
+    from hillclimb.direction import better
+    from hillclimb.store import open_store
+
+    config = load_config()
+    store = open_store(config)
+    try:
+        records = store.searches(problem_key=problem)
+        if not records:
+            typer.echo("no searches recorded" + (f" for {problem}" if problem else ""))
+            return
+        typer.echo(f"{'search':40} {'problem':24} {'state':8} {'best':>12}  run")
+        for record in records:
+            best = None
+            for cand in Journal(store.journal(record.key)).candidates.values():
+                if cand.pruned or cand.val_score is None:
+                    continue
+                if best is None or better(cand.val_score, best, record.meta.higher_is_better):
+                    best = cand.val_score
+            shown = f"{best:.6g}" if best is not None else "-"
+            typer.echo(
+                f"{record.ref:40} {record.meta.problem_key:24} {record.state:8} {shown:>12}  {record.run_name}"
+            )
+    finally:
+        store.close()
+
+
 knowledge_app = typer.Typer(cls=HillclimbGroup, help="Cross-search learning: cards distilled from finished searches")
 app.add_typer(knowledge_app, name="knowledge")
 
@@ -379,7 +449,7 @@ def knowledge_backfill():
     """
     from hillclimb.api import resolve_knowledge_dir
     from hillclimb.knowledge import distill_card, write_card
-    from hillclimb.run import iter_run_dirs, iter_search_dirs, load_search_meta
+    from hillclimb.run import load_search_meta
 
     config = load_config()
     knowledge_dir = resolve_knowledge_dir(config)
@@ -387,15 +457,14 @@ def knowledge_backfill():
         typer.echo("learning is disabled or no hillclimb/knowledge dir resolvable", err=True)
         raise typer.Exit(1)
     written = 0
-    for run_dir in iter_run_dirs(config.paths.runs_dir):
-        for search_dir in iter_search_dirs(run_dir):
-            meta = load_search_meta(search_dir)
-            state = effective_state(search_dir)
+    store = open_store(config)
+    for record in store.searches():
+            meta, search_dir = record.meta, record.search_dir
             # any finished search teaches something — parked and stopped
             # searches included; "unknown" covers pre-upgrade status files
-            if meta is None or state == "running":
+            if record.state == "running":
                 continue
-            journal = Journal(search_dir / "journal.jsonl")
+            journal = Journal(store.journal(record.key))
             if not journal.scored_candidates():
                 continue
             problem = SimpleNamespace(
@@ -425,15 +494,16 @@ def knowledge_live(run: str = typer.Argument("latest", help="Run id, or `latest`
 
     config = load_config()
     runs_dir = config.paths.runs_dir
+    store = open_store(config)
     if run == "latest":
-        latest = latest_search_dir(runs_dir)
+        latest = latest_search(store)
         if latest is None:
             typer.echo(f"No searches found in {runs_dir}", err=True)
             raise typer.Exit(1)
-        run_dir = latest.parents[1]
+        run_dir = latest.search_dir.parents[1]
     else:
         run_dir = runs_dir / run
-        if load_run_meta(run_dir) is None:
+        if not any(r.run_id == run for r in store.runs()):
             raise typer.BadParameter(f"No run named {run!r} in {runs_dir}")
     cards = load_live_cards(run_dir)
     if not cards:
@@ -523,18 +593,19 @@ def knowledge_distill(
         typer.echo(f"{distilled} card(s) backfilled with claims")
         return
 
+    store = open_store(config)
     if search == "latest":
-        search_dir = latest_search_dir(config.paths.runs_dir)
-        if search_dir is None:
+        record = latest_search(store)
+        if record is None:
             typer.echo(f"No searches found in {config.paths.runs_dir}", err=True)
             raise typer.Exit(1)
     else:
         run_id, _, search_id = search.partition("/")
-        search_dir = config.paths.runs_dir / run_id / SEARCHES_DIRNAME / search_id
-    meta = load_search_meta(search_dir)
-    if meta is None:
-        raise typer.BadParameter(f"No search at {search_dir}")
-    journal = Journal(search_dir / "journal.jsonl")
+        record = store.search((run_id, search_id))
+        if record is None:
+            raise typer.BadParameter(f"No search at {store.search_dir((run_id, search_id))}")
+    meta, search_dir = record.meta, record.search_dir
+    journal = Journal(store.journal(record.key))
     if not journal.scored_candidates():
         typer.echo("search has no scored candidates — nothing to distill", err=True)
         raise typer.Exit(1)
@@ -693,8 +764,7 @@ def bench_run(
         raise typer.BadParameter("bench runs one problem at a time, not a suite")
     problem = load_problem(target, config)
     slug = slugify_target(problem.problem_id)
-    child_cwd = config.hillclimb_dir.parent if config.hillclimb_dir else Path.cwd()
-    child_env = {**os.environ, "HILLCLIMB_DIR": str(config.hillclimb_dir or child_cwd / "hillclimb")}
+    child_cwd, child_env = _child_launch_context(config)
     for pair in range(1, pairs + 1):
         for learning in (False, True):
             arm = "on" if learning else "off"
@@ -750,35 +820,52 @@ def parse_budget(value: str) -> int:
     return amount * {"h": 3600, "m": 60, "s": 1, "": 1}[unit]
 
 
-def resolve_search_dir(config: Config, ref: str | None) -> Path:
-    """Resolve a search reference:
+def open_search(config: Config, ref: str | None) -> tuple[DataStore, SearchRecord]:
+    """The configured store and the search `ref` names in it, with the
+    lookup message as a usage error."""
+    store = open_store(config)
+    try:
+        return store, resolve_search(store, ref)
+    except LookupError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
-    - `latest` (or empty) — the most recently active search across v2 runs
-    - `<run-id>/<search-id>` — exact address
-    - `<run-id>` — the run's only search; error listing choices if several
-    """
-    runs_dir = config.paths.runs_dir
-    if not ref or ref == "latest":
-        latest = latest_search_dir(runs_dir)
-        if latest is None:
-            raise typer.BadParameter(f"No searches found in {runs_dir}")
-        return latest
-    if "/" in ref:
-        run_id, _, search_id = ref.partition("/")
-        search_dir = runs_dir / run_id / SEARCHES_DIRNAME / search_id
-        if load_search_meta(search_dir) is None:
-            raise typer.BadParameter(f"No search at {search_dir}")
-        return search_dir
-    run_dir = runs_dir / ref
-    if load_run_meta(run_dir) is None:
-        raise typer.BadParameter(f"No run named {ref!r} in {runs_dir}")
-    searches = iter_search_dirs(run_dir)
-    if not searches:
-        raise typer.BadParameter(f"Run {ref} has no searches")
-    if len(searches) > 1:
-        choices = "\n".join(f"  {ref}/{s.name}" for s in searches)
-        raise typer.BadParameter(f"Run {ref} has {len(searches)} searches; pick one:\n{choices}")
-    return searches[0]
+
+def resolve_search_dir(config: Config, ref: str | None) -> Path:
+    return open_search(config, ref)[1].search_dir
+
+
+def _child_launch_context(config: Config) -> tuple[Path, dict]:
+    """(cwd, env) for a child `hillclimb run`: rooted at the hillclimb dir's
+    parent with HILLCLIMB_DIR pinned, so the child never has to search."""
+    root = config.hillclimb_dir.parent if config.hillclimb_dir else Path.cwd()
+    return root, {**os.environ, "HILLCLIMB_DIR": str(config.hillclimb_dir or root / "hillclimb")}
+
+
+def _spawn_search(config: Config, run_dir: Path, index: int, slug: str, run_argv: list[str]) -> tuple[int, Path]:
+    """Start a detached `hillclimb run <run_argv...>` as one search of
+    `run_dir`, logging to <run>/logs/NN-<slug>.log. The one launcher behind
+    suites and the demo. Returns (pid, log path)."""
+    log_dir = run_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"{index:02d}-{slug}.log"
+    cwd, env = _child_launch_context(config)
+    cmd = [sys.executable, "-m", "hillclimb.cli", "run", *run_argv]
+    with log_path.open("w") as out:
+        proc = subprocess.Popen(
+            cmd, cwd=cwd, env=env,
+            stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    return proc.pid, log_path
+
+
+def _create_problem_run(config: Config, run_name: str, target: str, problem_id: str) -> Path:
+    """A new run dir + run.yaml for searches on one problem."""
+    run_id = new_run_id(run_name)
+    return create_run(
+        config,
+        RunMeta(run_id=run_id, name=run_name, kind="problem", target=target, problem_ids=[problem_id]),
+    )
 
 
 def _execute(
@@ -828,18 +915,8 @@ def _run_problem(
     problem = load_problem(target, config)
     if run_id is None:
         run_name = run_name or problem.problem_id
-        run_id = new_run_id(run_name)
-        run_dir = create_run_dir(config.paths.runs_dir, run_id)
-        write_run_meta(
-            run_dir,
-            RunMeta(
-                run_id=run_id,
-                name=run_name,
-                kind="problem",
-                target=target,
-                problem_ids=[problem.problem_id],
-            ),
-        )
+        run_dir = _create_problem_run(config, run_name, target, problem.problem_id)
+        run_id = run_dir.name
     else:
         # suite child: the parent already wrote run.yaml
         run_name = run_name or run_id
@@ -877,7 +954,7 @@ def _run_suite(
     holdout: bool,
     name: str | None,
     policy: str | None = None,
-    parallel_agents: int | None = None,
+    parallel_operators: int | None = None,
     n_trials: int | None = None,
     seed_from: Path | None = None,
     learning: bool = True,
@@ -889,16 +966,13 @@ def _run_suite(
     run_name = name or suite.suite_id
     run_id = new_run_id(run_name)
     problem_targets = suite_problem_targets(suite, config)
-    problem_ids = [load_problem(problem_target, config).problem_id for problem_target in problem_targets]
-    duplicates = {p for p in problem_ids if problem_ids.count(p) > 1}
-    if duplicates:
-        # search ids are problem ids, unique within a run
-        raise typer.BadParameter(
-            f"Suite {target!r} lists duplicate problem ids: {', '.join(sorted(duplicates))}"
-        )
-    run_dir = create_run_dir(config.paths.runs_dir, run_id)
-    write_run_meta(
-        run_dir,
+    # a problem may appear more than once (two models on one problem, say):
+    # each entry is its own search, and search ids get a -2/-3 suffix
+    problem_ids = list(dict.fromkeys(
+        load_problem(problem_target, config).problem_id for problem_target in problem_targets
+    ))
+    run_dir = create_run(
+        config,
         RunMeta(
             run_id=run_id,
             name=run_name,
@@ -908,30 +982,15 @@ def _run_suite(
             problem_ids=problem_ids,
         ),
     )
-    log_dir = run_dir / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    child_cwd = config.hillclimb_dir.parent if config.hillclimb_dir else Path.cwd()
-    child_env = {**os.environ, "HILLCLIMB_DIR": str(config.hillclimb_dir or child_cwd / "hillclimb")}
     launched = []
     for index, (entry, problem_target) in enumerate(zip(suite.problems, problem_targets), 1):
         slug = Path(problem_target).name or f"problem-{index}"
-        log_path = log_dir / f"{index:02d}-{slug}.log"
-        cmd = [
-            sys.executable,
-            "-m",
-            "hillclimb.cli",
-            "run",
-            problem_target,
-            "--run-id",
-            run_id,
-            "--run-name",
-            run_name,
-        ]
+        cmd = [problem_target, "--run-id", run_id, "--run-name", run_name]
         # CLI flags override the spec entry's committed values
         child_budget = budget or entry.budget
         child_backend = backend or entry.backend
         child_model = model or entry.model
-        child_parallel = parallel_agents if parallel_agents is not None else entry.parallel_agents
+        child_parallel = parallel_operators if parallel_operators is not None else entry.parallel_operators
         child_trials = n_trials if n_trials is not None else entry.n_trials
         child_seed = seed_from or entry.seed_from
         if child_budget:
@@ -943,7 +1002,7 @@ def _run_suite(
         if policy:
             cmd += ["--policy", policy]
         if child_parallel is not None:
-            cmd += ["--parallel-agents", str(child_parallel)]
+            cmd += ["--parallel-operators", str(child_parallel)]
         if child_trials is not None:
             cmd += ["--n-trials", str(child_trials)]
         if child_seed:
@@ -956,17 +1015,8 @@ def _run_suite(
             cmd.append("--no-holdout")
         if not learning:
             cmd.append("--no-learning")
-        out = log_path.open("w")
-        proc = subprocess.Popen(
-            cmd,
-            cwd=child_cwd,
-            env=child_env,
-            stdout=out,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-        out.close()
-        launched.append((problem_target, proc.pid, log_path))
+        pid, log_path = _spawn_search(config, run_dir, index, slug, cmd)
+        launched.append((problem_target, pid, log_path))
     typer.echo(f"Run {run_id}: launched {len(launched)} searches")
     for problem_target, pid, log_path in launched:
         typer.echo(f"  pid={pid} {problem_target}  log={log_path}")
@@ -987,8 +1037,8 @@ def run(
         help="Cross-search memory (cards/claims injection + distillation); off = memory-blind arm",
     ),
     name: str = typer.Option(None, "--name", help="Run name shown in the TUI"),
-    parallel_agents: int = typer.Option(
-        None, "--parallel-agents", help="Concurrent operators (worker pool)"
+    parallel_operators: int = typer.Option(
+        None, "--parallel-operators", help="Concurrent operators per search (worker pool)"
     ),
     n_trials: int = typer.Option(
         None, "--n-trials", help="Validation evals per candidate (mean climbs)"
@@ -998,27 +1048,24 @@ def run(
     ),
     run_id: str = typer.Option(None, "--run-id", hidden=True),
     run_name: str = typer.Option(None, "--run-name", hidden=True),
-    stop_margin_s: int = typer.Option(None, "--stop-margin-s", hidden=True),
 ):
     """Start a run on a problem or a run-spec YAML."""
     config = load_config(backend=backend, model=model)
-    if stop_margin_s is not None:
-        config.budget.stop_margin_s = stop_margin_s
     if not holdout:
         config.holdout.enabled = False
     if not learning:
         config.learning.enabled = False
     if policy is not None:
         config.search.policy = policy
-    if parallel_agents is not None:
-        config.search.parallel_agents = parallel_agents
+    if parallel_operators is not None:
+        config.search.parallel_operators = parallel_operators
     if n_trials is not None:
         config.search.n_trials = n_trials
     resolved = resolve_target(target, config)
     if resolved.kind == "suite":
         _run_suite(
             target, config, budget, backend, model, holdout, name,
-            policy=policy, parallel_agents=parallel_agents, n_trials=n_trials,
+            policy=policy, parallel_operators=parallel_operators, n_trials=n_trials,
             seed_from=seed_from, learning=learning,
         )
         return
@@ -1039,10 +1086,8 @@ def resume(search: str = typer.Argument("latest")):
     SEARCH is `<run-id>/<search-id>`, `<run-id>`, or `latest`.
     """
     config = load_config()
-    search_dir = resolve_search_dir(config, search)
-    meta = load_search_meta(search_dir)
-    if meta is None:
-        raise typer.BadParameter(f"No valid search.yaml in {search_dir}")
+    store, record = open_search(config, search)
+    meta, search_dir = record.meta, record.search_dir
     config = load_config(backend=meta.backend, model=meta.model)
     config.holdout.enabled = meta.holdout_enabled
     # the search resumes under the policy/routing it started with, not
@@ -1051,8 +1096,8 @@ def resume(search: str = typer.Argument("latest")):
     config.search.policy_params = meta.policy_params
     config.routing = {op: RouteConfig(**route) for op, route in meta.routing.items()}
     problem = load_problem(meta.problem, config)
-    journal = Journal(search_dir / "journal.jsonl")
-    spent = resume_spent_seconds(search_dir, journal)
+    journal = Journal(store.journal(record.key))
+    spent = resume_spent_seconds(store.read_status(record.key), journal)
     typer.echo(
         f"Resuming {search_ref(search_dir)}: {len(journal.candidates)} candidates, ~{int(spent)}s spent"
     )
@@ -1064,13 +1109,85 @@ def resume(search: str = typer.Argument("latest")):
     )
 
 
-def _running_search_dirs(config: Config) -> list[Path]:
-    return [
-        s
-        for run_dir in iter_run_dirs(config.paths.runs_dir)
-        for s in iter_search_dirs(run_dir)
-        if effective_state(s) == "running"
-    ]
+def _load_config_or_reap_orphans(all_: bool) -> Config:
+    """`load_config()`, except that `--all` with no hillclimb dir in sight
+    falls back to the live engines: the dir was deleted under them, so the
+    control queue is gone and the only way to stop them is by signal."""
+    from hillclimb.orphans import kill_engines, orphan_engines
+    from hillclimb.project import HillclimbDirNotFound
+
+    try:
+        return load_config(raise_not_found=True)
+    except HillclimbDirNotFound as exc:
+        if not all_:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(1) from exc
+        orphans = orphan_engines()
+        if not orphans:
+            typer.echo(str(exc), err=True)
+            typer.echo("No orphaned engines running either.")
+            raise typer.Exit(1)
+        typer.echo("No hillclimb/ dir found, but engines whose hillclimb dir was deleted are still running:")
+        for engine in orphans:
+            typer.echo(f"  pid {engine.pid}  (was {engine.hillclimb_dir})")
+        forced = kill_engines(orphans)
+        typer.echo(
+            f"Terminated {len(orphans)} engine process group(s) with their agents and verifiers"
+            + (f"; {len(forced)} needed SIGKILL." if forced else ".")
+        )
+        raise typer.Exit(0)
+
+
+def _search_targets(config: Config, search: str, all_: bool) -> tuple[DataStore, list[SearchRecord]]:
+    """The searches a stop/kill applies to: every running one, or the ref."""
+    if not all_:
+        store, record = open_search(config, search)
+        return store, [record]
+    store = open_store(config)
+    running = running_searches(store)
+    if not running:
+        typer.echo("No running searches.")
+        raise typer.Exit(1)
+    return store, running
+
+
+@app.command()
+def ps():
+    """Every process hillclimb is responsible for on this machine.
+
+    One block per live engine (`hillclimb run`), with its agents, verifiers
+    and their children nested underneath. Engines whose hillclimb dir has
+    been deleted are tagged `orphan` — `hillclimb stop --all` reaps those.
+    """
+    from hillclimb.orphans import engine_trees, process_table
+
+    table = process_table()
+    trees = engine_trees(table)
+    if not trees:
+        typer.echo("No hillclimb engines running.")
+        return
+    total = 0
+    for engine, kids in trees:
+        proc = table[engine.pid]
+        where = str(engine.hillclimb_dir) if engine.hillclimb_dir else "?"
+        tag = "  [orphan: dir deleted]" if engine.hillclimb_dir and not engine.hillclimb_dir.exists() else ""
+        argv = proc.command.split("hillclimb.cli run", 1)[-1].strip()
+        typer.echo(f"engine pid {proc.pid}  up {proc.elapsed}  run {argv}")
+        typer.echo(f"  dir {where}{tag}")
+        for kid in kids:
+            role = (
+                "agent" if "claude -p" in kid.command or "claude --" in kid.command
+                else "verifier" if "verifier.sh" in kid.command
+                else "child"
+            )
+            typer.echo(
+                f"  {role:8} pid {kid.pid:<6} cpu {kid.cpu:5.1f}%  mem {kid.rss_mb:6.0f}M  "
+                f"up {kid.elapsed:>8}  {kid.command[:70]}"
+            )
+        total += 1 + len(kids)
+    cpu = sum(table[e.pid].cpu for e, _ in trees) + sum(k.cpu for _, kids in trees for k in kids)
+    mem = sum(table[e.pid].rss_mb for e, _ in trees) + sum(k.rss_mb for _, kids in trees for k in kids)
+    typer.echo(f"{len(trees)} engine(s), {total} processes, {cpu:.0f}% cpu, {mem:.0f}M rss")
 
 
 @app.command()
@@ -1083,22 +1200,15 @@ def stop(
     It finishes the current operator call, then parks. Resume later with
     `hillclimb resume`. `--all` stops every running search (e.g. the demo).
     """
-    config = load_config()
-    if all_:
-        running = _running_search_dirs(config)
-        if not running:
-            typer.echo("No running searches.")
+    config = _load_config_or_reap_orphans(all_)
+    store, targets = _search_targets(config, search, all_)
+    for record in targets:
+        ref = record.ref
+        outcome = request_stop(store, record.key, source="cli")
+        if outcome is None:
+            typer.echo(f"Search {ref} is {record.state}; nothing to stop.")
             raise typer.Exit(1)
-        for s in running:
-            typer.echo(request_stop(s, source="cli") or f"{search_ref(s)}: nothing to stop")
-        return
-    search_dir = resolve_search_dir(config, search)
-    ref = search_ref(search_dir)
-    outcome = request_stop(search_dir, source="cli")
-    if outcome is None:
-        typer.echo(f"Search {ref} is {effective_state(search_dir)}; nothing to stop.")
-        raise typer.Exit(1)
-    typer.echo(f"{outcome} (use `hillclimb kill {ref}` to interrupt now)")
+        typer.echo(f"{outcome} (use `hillclimb kill {ref}` to interrupt now)")
 
 
 @app.command()
@@ -1113,12 +1223,12 @@ def prune(
     selection. Statuses and scores stay visible in status/tree output.
     """
     config = load_config()
-    search_dir = resolve_search_dir(config, search)
-    meta = load_search_meta(search_dir)
-    higher = bool(meta.higher_is_better) if meta else True
+    store, record = open_search(config, search)
+    higher = bool(record.meta.higher_is_better)
     try:
         outcome = request_prune(
-            search_dir,
+            store,
+            record.key,
             candidate_id,
             higher_is_better=higher,
             selection_mode=config.holdout.selection,
@@ -1142,36 +1252,87 @@ def kill(
     current operator finish, use `hillclimb stop`. `--all` kills every
     running search.
     """
-    config = load_config()
-    if all_:
-        running = _running_search_dirs(config)
-        if not running:
-            typer.echo("No running searches.")
+    config = _load_config_or_reap_orphans(all_)
+    store, targets = _search_targets(config, search, all_)
+    for record in targets:
+        ref = record.ref
+        state = record.state
+        if state != "running":
+            typer.echo(f"Search {ref} is {state}; nothing to kill.")
             raise typer.Exit(1)
-        for s in running:
-            os.kill(read_status(s).pid, signal.SIGTERM)
-            typer.echo(f"Sent SIGTERM to {search_ref(s)}")
-        return
-    search_dir = resolve_search_dir(config, search)
-    ref = search_ref(search_dir)
-    state = effective_state(search_dir)
-    if state != "running":
-        typer.echo(f"Search {ref} is {state}; nothing to kill.")
+        engine_pid = store.read_status(record.key).pid
+        os.kill(engine_pid, signal.SIGTERM)
+        typer.echo(f"Sent SIGTERM to engine pid {engine_pid} ({ref}).")
+        typer.echo(f"Resume with: hillclimb resume {ref}")
+
+
+@app.command()
+def reset(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask for confirmation"),
+):
+    """Kill every engine of THIS hillclimb dir and delete the dir.
+
+    The hillclimb dir is the one found from the current directory (or
+    `HILLCLIMB_DIR`). Only engines pinned to that exact dir are signalled —
+    their agents and verifiers go with them — then the folder is removed.
+    Searches of other folders on the machine are untouched. `runs_dir` or
+    `problems_dir` configured outside the hillclimb dir are left in place and
+    reported.
+    """
+    import shutil
+
+    from hillclimb.orphans import engines_for, kill_engines, live_engines
+
+    config = load_config()
+    root = config.hillclimb_dir
+    if root is None:  # pragma: no cover - Config.load always sets it via discovery
+        typer.echo("No hillclimb dir to reset.", err=True)
         raise typer.Exit(1)
-    engine_pid = read_status(search_dir).pid
-    os.kill(engine_pid, signal.SIGTERM)
-    typer.echo(f"Sent SIGTERM to engine pid {engine_pid} ({ref}).")
-    typer.echo(f"Resume with: hillclimb resume {ref}")
+    engines = live_engines()
+    mine = engines_for(root, engines)
+    unknown = [e for e in engines if e.hillclimb_dir is None]
+
+    typer.echo(f"Will delete {root}")
+    if mine:
+        typer.echo(f"and terminate {len(mine)} engine(s) running against it (with their agents and verifiers):")
+        for engine in mine:
+            typer.echo(f"  pid {engine.pid}")
+    else:
+        typer.echo("No engines are running against it.")
+    if unknown:
+        typer.echo(
+            f"Note: {len(unknown)} engine(s) whose hillclimb dir could not be read will be left alone: "
+            + ", ".join(f"pid {e.pid}" for e in unknown)
+        )
+    outside = []
+    for label, path in (("runs_dir", config.paths.runs_dir), ("problems_dir", config.paths.problems_dir)):
+        if path.exists() and not path.resolve().is_relative_to(root.resolve()):
+            outside.append((label, path))
+    for label, path in outside:
+        typer.echo(f"Note: {label} {path} lives outside the hillclimb dir and will be left in place.")
+    if not yes and not typer.confirm("Proceed?", default=False):
+        typer.echo("Aborted.")
+        raise typer.Exit(1)
+
+    if mine:
+        forced = kill_engines(mine)
+        typer.echo(
+            f"Terminated {len(mine)} engine process tree(s)"
+            + (f"; {len(forced)} needed SIGKILL." if forced else ".")
+        )
+    shutil.rmtree(root)
+    typer.echo(f"Deleted {root}")
 
 
 @app.command()
 def status(search: str = typer.Argument("latest")):
     """Show the candidate tree of a search."""
     config = load_config()
-    search_dir = resolve_search_dir(config, search)
-    journal = Journal(search_dir / "journal.jsonl")
-    search_status = read_status(search_dir)
-    state = effective_state(search_dir)
+    store, record = open_search(config, search)
+    search_dir = record.search_dir
+    journal = Journal(store.journal(record.key))
+    search_status = store.read_status(record.key)
+    state = record.state
     if search_status is not None:
         remaining = int(search_status.budget.remaining_s)
         line = f"state={state}  budget: {int(search_status.budget.spent_s)}s spent / {remaining}s left"
@@ -1232,17 +1393,18 @@ def show(
     from hillclimb.search import tail
 
     config = load_config()
-    search_dir = resolve_search_dir(config, search)
-    journal = Journal(search_dir / "journal.jsonl")
+    store, record = open_search(config, search)
+    search_dir = record.search_dir
+    journal = Journal(store.journal(record.key))
     cand = journal.candidates.get(candidate_id)
     if cand is None:
         known = ", ".join(journal.candidates) or "(none)"
         raise typer.BadParameter(
             f"No candidate {candidate_id!r} in {search_ref(search_dir)}; known: {known}"
         )
-    meta = load_search_meta(search_dir)
-    metric = meta.metric if meta else "score"
-    higher = bool(meta.higher_is_better) if meta else True
+    meta = record.meta
+    metric = meta.metric
+    higher = bool(meta.higher_is_better)
     parent = journal.candidates.get(cand.parent_id) if cand.parent_id else None
 
     marks = [
@@ -1351,15 +1513,12 @@ def tree(
         ) from exc
 
     config = load_config()
-    search_dir = resolve_search_dir(config, search)
-    meta = load_search_meta(search_dir)
-    higher = bool(meta.higher_is_better) if meta else True
-    journal = Journal(search_dir / "journal.jsonl")
+    store, record = open_search(config, search)
+    meta, search_dir = record.meta, record.search_dir
+    higher = bool(meta.higher_is_better)
+    journal = Journal(store.journal(record.key))
     out_path = out or (search_dir / "tree.png")
-    if meta is not None:
-        title = f"{meta.problem_id}  ({meta.model}, budget {meta.budget_s}s)"
-    else:
-        title = search_dir.name
+    title = f"{meta.problem_id}  ({meta.model}, budget {meta.budget_s}s)"
     render_tree(journal, higher, out_path, title)
     typer.echo(f"Wrote {out_path} ({len(journal.candidates)} candidates)")
 
@@ -1411,11 +1570,16 @@ def watch_candidates(
 @app.command()
 def chart(
     search: str = typer.Argument(None, help="latest (default), <run-id>, or <run-id>/<search-id>"),
+    detail: bool = typer.Option(
+        False, "--detail", "-d", help="One search only, with its exploration tree drawn on the curve"
+    ),
 ):
     """Live hillclimb chart: best score vs minutes into the search.
 
     One line per search of the same problem, so repeated searches sit on one
-    pair of axes. Refreshes as candidates land. Keys: r=refresh, q=quit.
+    pair of axes. Refreshes as candidates land. Keys: r=refresh, d=detail
+    (every scored candidate as a mark, parent edges, accepted lineage bold),
+    q=quit.
     """
     try:
         from hillclimb.chart import ChartApp
@@ -1424,7 +1588,29 @@ def chart(
             "`hillclimb chart` needs the TUI extra: pip install 'hillclimb[tui]'"
         ) from exc
 
-    ChartApp(load_config(), search).run()
+    ChartApp(load_config(), search, detail=detail).run()
+
+
+@app.command()
+def tree(
+    search: str = typer.Argument(None, help="latest (default), <run-id>, or <run-id>/<search-id>"),
+):
+    """Live exploration tree of one search: what was expanded, what was left.
+
+    Roots across the top, one row per operator step; colour is the operator,
+    silhouette is the fate (filled = expanded, ring = discontinued, diamond =
+    best, dot = failed). Scroll zooms, drag pans, click a node for details,
+    enter opens it in the candidate screen, j/k scrub through time, n/p switch
+    search, `?` keys.
+    """
+    try:
+        from hillclimb.treeview import TreeApp
+    except ModuleNotFoundError as exc:
+        raise typer.BadParameter(
+            "`hillclimb tree` needs the TUI extra: pip install 'hillclimb[tui]'"
+        ) from exc
+
+    TreeApp(load_config(), search).run()
 
 
 @app.command()
@@ -1435,13 +1621,6 @@ def graph():
     Drag rotates, scroll zooms, click a node for details, `?` lists keys.
     """
     knowledge_graph(stats=False)
-
-
-DEMO_COMMANDS = (
-    ("hillclimb watch", "watch the agents draft, debug, and improve solutions"),
-    ("hillclimb chart", "the hillclimb curve: best score vs time, live"),
-    ("hillclimb graph", "the knowledge graph growing as searches finish"),
-)
 
 
 def _demo_preflight(backend: str) -> None:
@@ -1462,7 +1641,7 @@ def _demo_preflight(backend: str) -> None:
         raise typer.Exit(1)
 
 
-def _print_demo_intro(folder: Path, parallel: int, budget: str) -> None:
+def _print_demo_intro(folder: Path, parallel_searches: int, parallel_operators: int, budget: str) -> None:
     from rich.console import Console
     from rich.panel import Panel
     from rich.table import Table
@@ -1475,9 +1654,10 @@ def _print_demo_intro(folder: Path, parallel: int, budget: str) -> None:
         table.add_row(command, what)
     body = Table.grid(padding=(0, 0))
     body.add_row(
-        f"Circle packing: 26 circles in the unit square, maximize the sum of radii.\n"
-        f"{parallel} searches of {budget} are climbing in parallel in [cyan]{folder}[/],\n"
-        f"each starting from a one-circle baseline (sum of radii 0.5).\n"
+        f"Circle packing: 50 circles in the unit square, maximize the sum of radii.\n"
+        f"{parallel_searches} searches of {budget} are climbing in parallel in [cyan]{folder}[/],\n"
+        f"each running {parallel_operators} operators at a time, "
+        f"starting from a one-circle baseline (sum of radii 0.5).\n"
     )
     body.add_row("They run in the background — watch them from this terminal:\n")
     body.add_row(table)
@@ -1490,40 +1670,18 @@ DEMO_COMMANDS = (
     ("hillclimb watch candidates", "one search's candidates: agents drafting, debugging, improving"),
     ("hillclimb watch", "all the searches side by side"),
     ("hillclimb chart", "the hillclimb curves: best score vs time, live"),
+    ("hillclimb tree", "one search's exploration tree: expanded vs discontinued lineages"),
     ("hillclimb graph", "the knowledge graph growing as searches finish"),
 )
-
-
-def _launch_demo_search(config: Config, index: int, argv: list[str]) -> tuple[int, Path]:
-    """One detached `hillclimb run` on the demo problem, logging to runs/.
-    Returns (pid, log path)."""
-    from hillclimb.demo import DEMO_PROBLEM_ID
-
-    log_dir = config.paths.runs_dir
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"demo-{datetime.now():%Y%m%d-%H%M%S}-{index}.log"
-    cmd = [
-        sys.executable, "-m", "hillclimb.cli", "run", DEMO_PROBLEM_ID,
-        "--name", f"demo-{index}", *argv,
-    ]
-    env = {**os.environ, "HILLCLIMB_DIR": str(config.hillclimb_dir)}
-    with log_path.open("w") as out:
-        proc = subprocess.Popen(
-            cmd,
-            cwd=config.hillclimb_dir.parent,
-            env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=out,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-    return proc.pid, log_path
 
 
 @app.command()
 def demo(
     budget: str = typer.Option("10m", help="Wall-clock budget per search, e.g. 10m"),
-    parallel: int = typer.Option(6, "--parallel", min=1, help="Searches to run at once"),
+    parallel_searches: int = typer.Option(3, "--parallel-searches", min=1, help="Searches to run at once"),
+    parallel_operators: int = typer.Option(
+        3, "--parallel-operators", min=1, help="Concurrent operators (one candidate each) per search"
+    ),
     model: str = typer.Option(None, help="Model for operator calls, e.g. sonnet / opus"),
     backend: str = typer.Option(None, help="Operator backend: claude-code | dummy"),
 ):
@@ -1548,17 +1706,23 @@ def demo(
     # build the solution venv once, here, instead of N searches racing for it
     problem = load_problem(DEMO_PROBLEM_ID, config)
     ensure_runtime_venv(config, problem.runtime, log=typer.echo, requirements=problem.requirements_file)
-    # a 10-minute search cannot afford the default 5-minute stop margin
-    margin = min(config.budget.stop_margin_s, max(30, parse_budget(budget) // 10))
-    argv = ["--budget", budget, "--stop-margin-s", str(margin)]
+    run_dir = _create_problem_run(config, "demo", DEMO_PROBLEM_ID, DEMO_PROBLEM_ID)
+    argv = [
+        DEMO_PROBLEM_ID, "--run-id", run_dir.name, "--run-name", "demo",
+        "--budget", budget, "--parallel-operators", str(parallel_operators),
+    ]
     if model:
         argv += ["--model", model]
     if backend:
         argv += ["--backend", backend]
-    launched = [_launch_demo_search(config, index, argv) for index in range(1, parallel + 1)]
-    _print_demo_intro(config.hillclimb_dir or problem_dir.parents[1], parallel, budget)
-    typer.echo(f"{parallel} searches running in the background; engine logs in {config.paths.runs_dir}/demo-*.log")
-    typer.echo("Try: hillclimb watch candidates")
+    for index in range(1, parallel_searches + 1):
+        _spawn_search(config, run_dir, index, DEMO_PROBLEM_ID, argv)
+    _print_demo_intro(config.hillclimb_dir, parallel_searches, parallel_operators, budget)
+    typer.echo(
+        f"Run {run_dir.name}: {parallel_searches} searches x {parallel_operators} operators "
+        f"running in the background; "
+        f"engine logs in {run_dir / 'logs'}"
+    )
 
 
 @app.command()
@@ -1576,9 +1740,8 @@ def smoke(
     version = subprocess.run(["claude", "-v"], capture_output=True, text=True).stdout.strip()
     typer.echo(f"claude version: {version}")
     run_id = f"smoke-{datetime.now():%Y%m%d-%H%M%S}"
-    run_dir = create_run_dir(config.paths.runs_dir, run_id)
-    write_run_meta(
-        run_dir,
+    run_dir = create_run(
+        config,
         RunMeta(
             run_id=run_id,
             name=run_id,
@@ -1588,7 +1751,7 @@ def smoke(
         ),
     )
     search_dir = create_search(config, problem, run_dir, run_id, total_s=1800)
-    journal = Journal(search_dir / "journal.jsonl")
+    journal = Journal(open_store(config).journal(key_for(search_dir)))
     searcher = GreedySearcher(
         problem=problem,
         config=config,

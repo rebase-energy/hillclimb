@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from statistics import median
+from typing import Protocol
 
 from hillclimb.candidate import Candidate, utcnow
 
@@ -15,28 +16,57 @@ def _ranks(values: list[float], higher_is_better: bool) -> list[float]:
     ]
 
 
-class Journal:
-    """Append-only JSONL journal of search candidates.
+class JournalBackend(Protocol):
+    """Where a search's journal records live (store.py hands one out per
+    search). `records()` returns every event in append order — candidate
+    events and `control` audit lines alike — and `append` adds one."""
 
-    Events: `candidate_created` (candidate enters the tree, status=pending) and
-    `candidate_result` (terminal state for the candidate). The in-memory view
-    is the replay of all events; the file is never rewritten, which is what
-    makes `resume` and `status` safe against crashes mid-run.
-    """
+    def records(self) -> list[dict]: ...
+    def append(self, record: dict) -> None: ...
+
+
+class FileJournal:
+    """The JSONL file: one JSON object per line, only ever appended to."""
 
     def __init__(self, path: Path):
         self.path = path
+
+    def records(self) -> list[dict]:
+        if not self.path.exists():
+            return []
+        return [json.loads(line) for line in self.path.read_text().splitlines() if line.strip()]
+
+    def append(self, record: dict) -> None:
+        with self.path.open("a") as f:
+            f.write(json.dumps(record) + "\n")
+
+
+class Journal:
+    """Append-only journal of search candidates over a JournalBackend.
+
+    Events: `candidate_created` (candidate enters the tree, status=pending) and
+    `candidate_result` (terminal state for the candidate). The in-memory view
+    is the replay of all events in append order; records are never rewritten,
+    which is what makes `resume` and `status` safe against crashes mid-run.
+
+    A `Path` is accepted as shorthand for `FileJournal(path)`.
+    """
+
+    def __init__(self, backend: JournalBackend | Path):
+        self.backend: JournalBackend = FileJournal(backend) if isinstance(backend, Path) else backend
         self.candidates: dict[str, Candidate] = {}
-        if path.exists():
-            self._replay()
+        self._replay()
 
     CANDIDATE_EVENTS = ("candidate_created", "candidate_result")
 
+    @property
+    def path(self) -> Path | None:
+        """The JSONL file when the backend is one (tests and viewers peek)."""
+        return self.backend.path if isinstance(self.backend, FileJournal) else None
+
     def _replay(self) -> None:
-        for line in self.path.read_text().splitlines():
-            if not line.strip():
-                continue
-            record = json.loads(line)
+        for record in self.backend.records():
+            record = dict(record)
             # only candidate events carry tree state; other events (control
             # audit lines, future kinds) are skipped so old code tolerates new ones
             if record.pop("event", None) not in self.CANDIDATE_EVENTS:
@@ -45,8 +75,7 @@ class Journal:
             self.candidates[candidate.candidate_id] = candidate
 
     def _append_line(self, record: dict) -> None:
-        with self.path.open("a") as f:
-            f.write(json.dumps(record) + "\n")
+        self.backend.append(record)
 
     def _append(self, event: str, candidate: Candidate) -> None:
         self._append_line({"event": event, **candidate.model_dump()})

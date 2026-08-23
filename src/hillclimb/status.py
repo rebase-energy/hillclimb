@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -132,13 +133,17 @@ def _age_s(iso: str) -> float:
 
 
 def effective_state(search_dir: Path) -> str:
-    """What a reader should believe about this search.
+    """`derive_state` of the search dir's status.json."""
+    return derive_state(read_status(search_dir))
+
+
+def derive_state(status: SearchStatus | None) -> str:
+    """What a reader should believe about a search from its last status record.
 
     `running` requires the engine's own claim AND a live pid AND a fresh
     heartbeat (defends against PID reuse); otherwise the search `crashed`.
-    Searches predating status.json report `unknown`.
+    Searches with no status record yet report `unknown`.
     """
-    status = read_status(search_dir)
     if status is None:
         return "unknown"
     if status.state != "running":
@@ -154,15 +159,20 @@ def effective_state(search_dir: Path) -> str:
     return "running"
 
 
-class StatusWriter:
-    """Single writer of a search's status.json, owned by the engine process.
+StatusSink = Callable[[SearchStatus], None]
 
+
+class StatusWriter:
+    """Single writer of a search's status record, owned by the engine process.
+
+    `sink` is where each write goes — `store.write_status` bound to the
+    search's key; a search dir is accepted as shorthand for its status.json.
     Thread-safe because the heartbeat runs on a daemon thread while the
     search loop updates fields from the main thread.
     """
 
-    def __init__(self, search_dir: Path, status: SearchStatus, budget: BudgetManager | None = None):
-        self.search_dir = search_dir
+    def __init__(self, sink: StatusSink | Path, status: SearchStatus, budget: BudgetManager | None = None):
+        self.sink: StatusSink = (lambda s, d=sink: write_status(d, s)) if isinstance(sink, Path) else sink
         self.status = status
         self.budget = budget
         self._lock = threading.Lock()
@@ -178,7 +188,7 @@ class StatusWriter:
                 spent_s=round(self.budget.elapsed(), 1),
                 remaining_s=round(self.budget.remaining(), 1),
             )
-        write_status(self.search_dir, self.status)
+        self.sink(self.status)
 
     def update(self, **fields) -> None:
         with self._lock:

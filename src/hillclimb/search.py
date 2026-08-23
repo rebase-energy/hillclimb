@@ -12,7 +12,7 @@ from hillclimb.baseline import write_baseline
 from hillclimb.budget import BudgetManager
 from hillclimb.candidate import BackendInfo, Candidate, Trial, utcnow
 from hillclimb.config import Config
-from hillclimb.control import ControlCommand, apply_prune, read_commands, resync_best
+from hillclimb.control import ControlCommand, apply_prune, drain_commands_dir, resync_best
 from hillclimb.executor import RESULT_FILE, Executor, HoldoutScorer, read_result
 from hillclimb.journal import Journal
 from hillclimb.policies.greedy import GreedyPolicy
@@ -103,7 +103,11 @@ class GreedySearcher:
         policy: SearchPolicy | None = None,
         router: Router | None = None,
         backends: BackendPool | None = None,
+        drain_commands: Callable[[], list[ControlCommand]] | None = None,
     ):
+        # where queued stop/prune commands come from: the store's queue for
+        # this search (the engine binds it), else the search dir's control/
+        self.drain_commands = drain_commands or (lambda: drain_commands_dir(search_dir))
         self.problem = problem
         self.config = config
         self.journal = journal
@@ -199,7 +203,7 @@ class GreedySearcher:
             self._run_seed()  # resume-idempotent: at most one seed per search
         # one loop for every parallelism level: n=1 is a pool with one slot.
         # Recorded golden sequences pin it to the historical serial behavior.
-        return self._run_pool(max(1, self.config.search.parallel_agents))
+        return self._run_pool(max(1, self.config.search.parallel_operators))
 
     def _run_pool(self, n: int) -> Candidate | None:
         """Worker-pool scheduler: keep up to n operators in flight; commit
@@ -429,10 +433,9 @@ class GreedySearcher:
     def _process_control(self) -> None:
         """Apply queued user commands (control/) between operators. Prunes are
         applied before a stop so nothing is left half-processed."""
-        commands = read_commands(self.search_dir)
+        commands = self.drain_commands()
         stop: ControlCommand | None = None
-        for path, cmd in sorted(commands, key=lambda pc: pc[1].action != "prune"):
-            path.unlink(missing_ok=True)
+        for cmd in sorted(commands, key=lambda c: c.action != "prune"):
             if cmd.action == "stop":
                 stop = cmd
             elif cmd.action == "prune" and cmd.candidate_id:
@@ -585,11 +588,19 @@ class GreedySearcher:
                 else 0
             ),
             candidate_dir=str(candidate_dir),
-            policy_meta=dict(action.policy_meta),
+            # inspiration ids ride along so the tree view can draw an
+            # ensemble's extra in-edges (parent_id only carries the first)
+            policy_meta={
+                **dict(action.policy_meta),
+                **({"inspiration_ids": list(action.inspiration_ids)} if action.inspiration_ids else {}),
+            },
         )
+        route = self._resolve_route(action)
+        # known before the call starts, so a running candidate's detail view
+        # can say who is writing it; the result fills in the rest
+        candidate.backend = BackendInfo(name=route.backend, model=route.model)
         self.journal.candidate_created(candidate)
 
-        route = self._resolve_route(action)
         request = OperatorRequest(
             operator=operator,
             prompt=prompt,

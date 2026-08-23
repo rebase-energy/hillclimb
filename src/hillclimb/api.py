@@ -14,6 +14,7 @@ import re
 import shlex
 import signal
 import subprocess
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -23,13 +24,13 @@ from hillclimb.backends import get_backend
 from hillclimb.budget import BudgetManager
 from hillclimb.candidate import Candidate
 from hillclimb.config import Config
-from hillclimb.control import clear_stale_stops
 from hillclimb.journal import Journal
 from hillclimb.problem import ProblemSpec, load_problem
-from hillclimb.run import RunMeta, SearchMeta, write_run_meta, write_search_meta
+from hillclimb.run import RunMeta, SearchMeta, new_search_uid
 from hillclimb.search import GreedySearcher, ParkedSearch, StopRequested
 from hillclimb.status import SearchStatus, StatusWriter
-from hillclimb.dirs import create_run_dir, create_search_dir
+from hillclimb.store import key_for, open_store
+from hillclimb.dirs import allocate_search_dir, create_run_dir
 
 Log = Callable[[str], None]
 
@@ -56,9 +57,7 @@ def new_run_id(name: str) -> str:
     return f"{datetime.now():%Y%m%d-%H%M%S}-{slug(name)}"
 
 
-def search_ref(search_dir: Path) -> str:
-    """Human-facing `<run-id>/<search-id>` address of a search dir."""
-    return f"{search_dir.parents[1].name}/{search_dir.name}"
+from hillclimb.run import search_ref  # noqa: E402,F401  (re-exported; the helper lives with run.py's walkers)
 
 
 def default_venv_python(config: Config, kind: str, requirements: Path | None = None) -> Path:
@@ -203,18 +202,23 @@ def spent_seconds(journal: Journal) -> float:
     )
 
 
-def resume_spent_seconds(search_dir: Path, journal: Journal) -> float:
+def resume_spent_seconds(status, journal: Journal) -> float:
     """Wall-clock already consumed by a search, for budget seeding on resume.
-    status.json persists budget.spent_s on every heartbeat (15 s) and on
-    finalize, so this is exact for parked/stopped searches and loses at most
-    one heartbeat on crashes. Falls back to the work-duration sum for
+    The status record persists budget.spent_s on every heartbeat (15 s) and
+    on finalize, so this is exact for parked/stopped searches and loses at
+    most one heartbeat on crashes. Falls back to the work-duration sum for
     pre-upgrade searches without a persisted budget."""
-    from hillclimb.status import read_status
-
-    status = read_status(search_dir)
     if status is not None and status.budget.total_s > 0:
         return status.budget.spent_s
     return spent_seconds(journal)
+
+
+def create_run(config: Config, meta: RunMeta) -> Path:
+    """The run dir, with the run recorded in the configured store."""
+    run_dir = create_run_dir(config.paths.runs_dir, meta.run_id)
+    with closing(open_store(config)) as store:
+        store.record_run(meta)
+    return run_dir
 
 
 def create_search(
@@ -225,20 +229,14 @@ def create_search(
     total_s: int,
     seed_from: Path | None = None,
 ) -> Path:
-    search_dir = create_search_dir(run_dir, problem.problem_id)
-    write_search_meta(
-        search_dir,
-        SearchMeta(
-            search_id=problem.problem_id,
+    search_dir = allocate_search_dir(run_dir, problem.problem_id)
+    meta = SearchMeta(
+            search_id=search_dir.name,
             run_id=run_id,
-            problem=(
-                f"emflow://{problem.emflow_problem}"
-                if problem.emflow_problem
-                else f"mlebench://{problem.mlebench_comp_id}"
-                if problem.mlebench_comp_id
-                else str(problem.problem_dir)
-            ),
+            search_uid=new_search_uid(),
+            problem=problem.target or str(problem.problem_dir),
             problem_id=problem.problem_id,
+            problem_key=problem.problem_key,
             backend=config.backend,
             model=config.model,
             policy=config.search.policy,
@@ -253,8 +251,9 @@ def create_search(
             holdout_enabled=config.holdout.enabled and problem.holdout_cmd is not None,
             seed_from=str(seed_from) if seed_from else None,
             learning_enabled=config.learning.enabled,
-        ),
     )
+    with closing(open_store(config)) as store:
+        store.record_search(meta)
     return search_dir
 
 
@@ -484,10 +483,12 @@ def execute_search(
     parked/stopped/done; unexpected engine crashes finalize `failed` and
     re-raise."""
     run_dir = search_dir.parents[1]
-    clear_stale_stops(search_dir)
-    journal = Journal(search_dir / "journal.jsonl")
+    store = open_store(config)
+    key = key_for(search_dir)
+    store.clear_stale_stops(key)
+    journal = Journal(store.journal(key))
     status = StatusWriter(
-        search_dir,
+        lambda s: store.write_status(key, s),
         SearchStatus(
             search_id=search_dir.name,
             run_id=run_dir.name,
@@ -547,11 +548,8 @@ def execute_search(
     backends.seed(config.backend, config.backend_auth, backend_obj)
     from hillclimb.project import machine_cache_dir
 
-    slots = (
-        MachineSlots(machine_cache_dir() / "agent-slots", config.search.machine_max_agents)
-        if config.search.machine_max_agents > 0
-        else None
-    )
+    machine_max = config.search.effective_machine_max_operators()
+    slots = MachineSlots(machine_cache_dir() / "agent-slots", machine_max) if machine_max > 0 else None
     from hillclimb.policies import get_policy
 
     searcher = GreedySearcher(
@@ -577,19 +575,25 @@ def execute_search(
         ),
         router=Router(config),
         backends=backends,
+        drain_commands=lambda: store.drain_commands(key),
     )
+
+    def finalize(state: str, last_error: str | None = None) -> None:
+        status.finalize(state, last_error=last_error)
+        store.close()
+
     try:
         selected = searcher.run()
     except ParkedSearch as exc:
-        status.finalize("parked", last_error=str(exc)[:500])
+        finalize("parked", last_error=str(exc)[:500])
         return SearchOutcome(run_dir, search_dir, None, "parked", error=str(exc))
     except (StopRequested, KeyboardInterrupt) as exc:
-        status.finalize("stopped", last_error=str(exc)[:500] or None)
+        finalize("stopped", last_error=str(exc)[:500] or None)
         return SearchOutcome(run_dir, search_dir, None, "stopped", error=str(exc) or None)
     except Exception as exc:
-        status.finalize("failed", last_error=f"{type(exc).__name__}: {exc}"[:500])
+        finalize("failed", last_error=f"{type(exc).__name__}: {exc}"[:500])
         raise
-    status.finalize("done")
+    finalize("done")
     if problem.emflow_problem and selected is not None:
         _official_verify(config, problem, search_dir, journal, selected, log)
     if problem.mlebench_comp_id and selected is not None:
@@ -694,9 +698,8 @@ def run_search(
     if run_id is None:
         run_name = run_name or name or problem.problem_id
         run_id = new_run_id(run_name)
-        run_dir = create_run_dir(config.paths.runs_dir, run_id)
-        write_run_meta(
-            run_dir,
+        run_dir = create_run(
+            config,
             RunMeta(
                 run_id=run_id,
                 name=run_name,

@@ -9,7 +9,10 @@ class BudgetManager:
 
     def __init__(self, total_s: int, stop_margin_s: int = 300, spent_s: float = 0.0):
         self.total_s = total_s
-        self.stop_margin_s = stop_margin_s
+        # the margin is meant as "don't start an operator you can't finish",
+        # so it cannot be a fixed 5 minutes when the whole budget is 10:
+        # it is capped at a tenth of the budget
+        self.stop_margin_s = min(stop_margin_s, total_s // 10)
         self._started = time.monotonic() - spent_s
 
     def elapsed(self) -> float:

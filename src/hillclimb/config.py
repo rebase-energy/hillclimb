@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import os
+
 from pathlib import Path
 
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from hillclimb.project import (
     find_hillclimb_dir,
@@ -25,13 +27,36 @@ class BudgetConfig(BaseModel):
     max_cost_usd: float = 0.0
 
 
+def default_machine_max_operators() -> int:
+    """min(8, cores - 2): each operator is an API-bound agent plus, at worst,
+    one single-threaded solution process, so this keeps a laptop responsive
+    however many searches are launched."""
+    return max(1, min(8, (os.cpu_count() or 4) - 2))
+
+
 class SearchConfig(BaseModel):
     """Policy knobs for one Search (the `search:` config block), not the
     Search entity itself — that lives in run.py as SearchMeta."""
 
     num_drafts: int = 3
     max_debug_depth: int = 3
-    parallel_agents: int = 1  # >1 enables the worker pool; 1 = serial (default)
+    parallel_operators: int = 1  # >1 enables the worker pool; 1 = serial (default)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_parallel_agents(cls, data):
+        # pre-rename keys; "agent" is overloaded, the engine noun is operator
+        if isinstance(data, dict):
+            data = dict(data)
+            for old, new in (("parallel_agents", "parallel_operators"), ("machine_max_agents", "machine_max_operators")):
+                if old in data:
+                    data.setdefault(new, data.pop(old))
+        return data
+
+    def effective_machine_max_operators(self) -> int:
+        if self.machine_max_operators is None:
+            return default_machine_max_operators()
+        return self.machine_max_operators
     n_trials: int = 1  # validation evals per candidate (median val is the climbing score)
     # how repeated trials run. "parallel" is right for seed variance (and 3x
     # faster); "serial" is REQUIRED for anything that measures time — trials
@@ -45,7 +70,10 @@ class SearchConfig(BaseModel):
     # Both default to 0 = off, which is the strict comparison.
     min_improvement: float = 0.0
     noise_k: float = 0.0
-    machine_max_agents: int = 0  # machine-wide concurrent-agent cap across searches; 0 = off
+    # Machine-wide cap on concurrent operators across every search on this
+    # machine (flock slots in ~/.cache/hillclimb/agent-slots/). Operators
+    # beyond it wait (`waiting-slot` in watch). 0 = off; None = default_machine_max_operators().
+    machine_max_operators: int | None = None
     policy: str = "greedy"  # search policy (policies registry)
     policy_params: dict = Field(default_factory=dict)  # opaque; validated by the policy factory
 
@@ -113,6 +141,16 @@ class PathsConfig(BaseModel):
     mlebench_python: Path = Path("../mle-bench/.venv/bin/python")
     mlebench_data_dir: Path | None = None
     kaggle_bin: Path = Path("../mle-bench/.venv/bin/kaggle")
+
+
+class StoreConfig(BaseModel):
+    """Where run/search/candidate records are indexed for the cross-run
+    views (see store.py). `files` reads the hillclimb folder directly;
+    `sqlite` keeps one database file the engine feeds live and
+    `hillclimb store sync` rebuilds from the folder."""
+
+    backend: str = "files"  # files | sqlite
+    sqlite_path: Path = Path("hillclimb/store.sqlite")
 
 
 class LearningConfig(BaseModel):
@@ -199,6 +237,7 @@ class Config(BaseModel):
     holdout: HoldoutConfig = HoldoutConfig()
     ensemble: EnsembleConfig = EnsembleConfig()
     paths: PathsConfig = PathsConfig()
+    store: StoreConfig = StoreConfig()
     emflow: EmflowConfig = EmflowConfig()
     learning: LearningConfig = LearningConfig()
     report: ReportConfig = ReportConfig()
@@ -253,7 +292,11 @@ class Config(BaseModel):
         meaning."""
         if self.hillclimb_dir is None:
             return
-        for name in ("runs_dir", "problems_dir"):
-            value: Path = getattr(self.paths, name)
+        for section, name in (
+            (self.paths, "runs_dir"),
+            (self.paths, "problems_dir"),
+            (self.store, "sqlite_path"),
+        ):
+            value: Path = getattr(section, name)
             if not value.is_absolute():
-                setattr(self.paths, name, self.hillclimb_dir.parent / value)
+                setattr(section, name, self.hillclimb_dir.parent / value)

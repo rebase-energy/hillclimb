@@ -178,3 +178,15 @@ def test_verifier_env_and_render(tmp_path):
     )
     assert argv == ["/venv/bin/python", "eval.py", "/w/solution.py",
                     "--out", "/w/eval_result.json"]
+
+
+def test_solution_and_agent_envs_are_single_threaded(monkeypatch):
+    from hillclimb.backends.claude_code import subscription_env
+    from hillclimb.executor import SINGLE_THREAD_ENV
+
+    monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
+    monkeypatch.setenv("MKL_NUM_THREADS", "4")  # an explicit parent value wins
+    for env in (scrubbed_env(), subscription_env()):
+        assert env["OMP_NUM_THREADS"] == "1" and env["OPENBLAS_NUM_THREADS"] == "1"
+        assert env["MKL_NUM_THREADS"] == "4"
+    assert set(SINGLE_THREAD_ENV) >= {"OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"}

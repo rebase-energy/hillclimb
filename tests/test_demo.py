@@ -116,32 +116,30 @@ def test_demo_launches_parallel_detached_searches(tmp_path, monkeypatch):
     monkeypatch.setattr("hillclimb.cli.ensure_runtime_venv", lambda *a, **k: Path("/py"))
     monkeypatch.setattr("subprocess.Popen", fake_popen)
     with pytest.raises(SystemExit) as exc:
-        cli_main(["demo", "--budget", "5m", "--parallel", "2", "--backend", "dummy", "--model", "haiku"])
+        cli_main([
+            "demo", "--budget", "5m", "--parallel-searches", "2", "--parallel-operators", "3",
+            "--backend", "dummy", "--model", "haiku",
+        ])
     assert exc.value.code == 0
     assert (tmp_path / "hillclimb" / "config.yaml").exists()
     assert (tmp_path / "hillclimb" / "problems" / DEMO_PROBLEM_ID / "verifier.sh").exists()
     assert len(launched) == 2
+    from hillclimb.run import iter_run_dirs, load_run_meta
+
+    (run_dir,) = iter_run_dirs(tmp_path / "hillclimb" / "runs")
+    assert load_run_meta(run_dir).name == "demo"
     for index, (cmd, kwargs) in enumerate(launched, 1):
+        # one run, N searches on the same problem: they share live knowledge
         assert cmd[1:] == [
-            "-m", "hillclimb.cli", "run", DEMO_PROBLEM_ID, "--name", f"demo-{index}",
-            "--budget", "5m", "--stop-margin-s", "30", "--model", "haiku", "--backend", "dummy",
+            "-m", "hillclimb.cli", "run", DEMO_PROBLEM_ID, "--run-id", run_dir.name, "--run-name", "demo",
+            "--budget", "5m", "--parallel-operators", "3", "--model", "haiku", "--backend", "dummy",
         ]
         assert kwargs["start_new_session"] is True
         assert kwargs["env"]["HILLCLIMB_DIR"] == str(tmp_path / "hillclimb")
         assert kwargs["cwd"] == tmp_path
-    assert len(list((tmp_path / "hillclimb" / "runs").glob("demo-*.log"))) == 2
-
-
-def test_run_accepts_hidden_stop_margin(tmp_path, config, monkeypatch):
-    seen = {}
-    monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
-    monkeypatch.setattr(
-        "hillclimb.cli._run_problem",
-        lambda target, cfg, budget, **kw: seen.setdefault("margin", cfg.budget.stop_margin_s),
-    )
-    with pytest.raises(SystemExit):
-        cli_main(["run", "circle-packing", "--budget", "5m", "--stop-margin-s", "42"])
-    assert seen["margin"] == 42
+    assert sorted(p.name for p in (run_dir / "logs").iterdir()) == [
+        f"01-{DEMO_PROBLEM_ID}.log", f"02-{DEMO_PROBLEM_ID}.log",
+    ]
 
 
 def test_stop_all_reaches_every_running_search(tmp_path, config, monkeypatch):
@@ -177,3 +175,71 @@ async def test_watch_candidates_opens_on_the_search(tmp_path, config):
         await pilot.press("escape")
         await pilot.pause(0.2)
         assert type(app.screen).__name__ == "SearchesScreen"
+
+
+def test_search_ids_suffix_within_a_run(tmp_path):
+    from hillclimb.dirs import allocate_search_dir
+
+    run_dir = tmp_path / "run"
+    ids = [allocate_search_dir(run_dir, "circle-packing").name for _ in range(3)]
+    assert ids == ["circle-packing", "circle-packing-2", "circle-packing-3"]
+    assert (run_dir / "searches" / "circle-packing-3" / "candidates").is_dir()
+    # a different problem in the same run starts its own sequence
+    assert allocate_search_dir(run_dir, "tsp-200").name == "tsp-200"
+
+
+def test_search_meta_problem_key_backfills_like_hillclimb_go():
+    from hillclimb.run import SearchMeta
+
+    def meta(**kw):
+        base = dict(search_id="s", run_id="r", backend="b", model="m", metric="score")
+        return SearchMeta(**{**base, **kw})
+
+    assert meta(problem="/x/toy", problem_id="toy", problem_key="toy@ab12cd34").problem_key == "toy@ab12cd34"
+    assert meta(problem="emflow://gefcom2014:solar", problem_id="gefcom2014-solar").problem_key == "emflow://gefcom2014:solar"
+    assert meta(problem="mlebench://spaceship-titanic", problem_id="spaceship-titanic").problem_key == "mlebench://spaceship-titanic"
+    assert meta(problem="/abs/problems/circle-packing", problem_id="circle-packing").problem_key == "circle-packing"
+
+
+def test_create_search_records_problem_key_and_unique_ids(tmp_path, config):
+    from hillclimb.api import create_search
+    from hillclimb.run import load_search_meta
+
+    config.paths.problems_dir = tmp_path / "problems"
+    install_demo_problem(config.paths.problems_dir)
+    problem = load_problem(DEMO_PROBLEM_ID, config)
+    run_dir = config.paths.runs_dir / "r1"
+    first = create_search(config, problem, run_dir, "r1", total_s=60)
+    second = create_search(config, problem, run_dir, "r1", total_s=60)
+    assert (first.name, second.name) == ("circle-packing", "circle-packing-2")
+    meta = load_search_meta(second)
+    assert meta.search_id == "circle-packing-2"
+    assert meta.problem_id == "circle-packing"
+    assert meta.problem_key == "circle-packing"
+
+
+def test_chart_groups_searches_by_problem_key_across_runs(tmp_path):
+    runs = tmp_path / "runs"
+    _search(runs, "r1", "demo", [("2026-08-22T10:01:00+00:00", 1.0)])
+    # a second search on the same problem inside the same run
+    run_dir = runs / "r1"
+    second = run_dir / "searches" / "p-2"
+    second.mkdir(parents=True)
+    write_search_meta(second, SearchMeta(
+        search_id="p-2", run_id="r1", problem="p", problem_id="p", backend="dummy",
+        model="m", metric="score", started_at="2026-08-22T10:00:30+00:00",
+    ))
+    Journal(second / "journal.jsonl").candidate_result(Candidate(
+        candidate_id="c000", operator="draft", status="ok",
+        trials=[Trial(val_score=2.0)], finished_at="2026-08-22T10:02:00+00:00",
+    ))
+    curves = climb_curves(runs, "p")
+    # a run with several searches on the problem labels each by search id
+    assert [c.label for c in curves] == ["demo/p", "demo/p-2"]
+
+
+def test_budget_margin_scales_with_short_budgets():
+    from hillclimb.budget import BudgetManager
+
+    assert BudgetManager(600, stop_margin_s=300).stop_margin_s == 60
+    assert BudgetManager(7200, stop_margin_s=300).stop_margin_s == 300

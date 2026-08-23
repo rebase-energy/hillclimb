@@ -23,6 +23,7 @@ import yaml
 from pydantic import BaseModel, Field, model_validator
 
 from hillclimb.candidate import utcnow
+from hillclimb.direction import better
 from hillclimb.direction import legacy_direction_key
 from hillclimb.knowledge import extract_libraries
 
@@ -80,10 +81,6 @@ def load_skills(knowledge_dir: Path, *, family: str = "") -> list[tuple[Skill, P
     return skills
 
 
-def _better(a: float, b: float, higher_is_better: bool) -> bool:
-    return a > b if higher_is_better else a < b
-
-
 def harvest_skill(
     journal,
     *,
@@ -110,7 +107,7 @@ def harvest_skill(
             scored,
             key=lambda pair: (-1 if problem.higher_is_better else 1) * pair[0].score,
         )
-        if not _better(selected.val_score, worst_skill.score, problem.higher_is_better):
+        if not better(selected.val_score, worst_skill.score, problem.higher_is_better):
             return None
         shutil.rmtree(worst_dir, ignore_errors=True)
     from hillclimb.claims import problem_concepts

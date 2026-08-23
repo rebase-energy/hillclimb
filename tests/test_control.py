@@ -15,6 +15,7 @@ from hillclimb.control import (
     write_command,
 )
 from hillclimb.journal import Journal
+from hillclimb.store import FileDataStore, key_for
 
 
 def make_candidate(candidate_id: str, **kwargs) -> Candidate:
@@ -25,7 +26,7 @@ def make_candidate(candidate_id: str, **kwargs) -> Candidate:
 
 
 def make_search(tmp_path: Path) -> tuple[Path, Journal]:
-    search_dir = tmp_path / "search"
+    search_dir = tmp_path / "runs" / "r" / "searches" / "search"  # the real layout: keys resolve
     (search_dir / "best").mkdir(parents=True)
     (search_dir / "candidates").mkdir()
     return search_dir, Journal(search_dir / "journal.jsonl")
@@ -137,8 +138,9 @@ def test_request_prune_offline_applies_directly(tmp_path: Path):
     search_dir, journal = make_search(tmp_path)
     add_candidate(journal, search_dir, "c001", status="ok", val_score=0.5)
 
+    store = FileDataStore(search_dir.parents[2])
     outcome = request_prune(
-        search_dir, "c001", higher_is_better=True, selection_mode="rank-blend", source="cli"
+        store, key_for(search_dir), "c001", higher_is_better=True, selection_mode="rank-blend", source="cli"
     )
 
     assert "pruned c001" in outcome
@@ -149,10 +151,11 @@ def test_request_prune_offline_applies_directly(tmp_path: Path):
 def test_request_prune_queues_when_running(tmp_path: Path, monkeypatch):
     search_dir, journal = make_search(tmp_path)
     add_candidate(journal, search_dir, "c001", status="ok", val_score=0.5)
-    monkeypatch.setattr("hillclimb.control.effective_state", lambda _: "running")
+    monkeypatch.setattr("hillclimb.control.derive_state", lambda _: "running")
 
+    store = FileDataStore(search_dir.parents[2])
     outcome = request_prune(
-        search_dir, "c001", higher_is_better=True, selection_mode="rank-blend", source="tui"
+        store, key_for(search_dir), "c001", higher_is_better=True, selection_mode="rank-blend", source="tui"
     )
 
     assert "queued" in outcome

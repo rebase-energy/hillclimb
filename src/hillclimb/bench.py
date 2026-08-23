@@ -19,8 +19,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from hillclimb.run import iter_run_dirs, iter_search_dirs, load_run_meta, load_search_meta
-from hillclimb.status import effective_state, read_status
+from hillclimb.direction import better
+from hillclimb.store import DataStore, FileDataStore
 
 BENCH_PREFIX = "bench-"
 
@@ -59,30 +59,32 @@ def bench_run_name(problem_slug: str, pair: int, learning: bool) -> str:
 
 
 def collect_bench_results(
-    runs_dir: Path, *, problem_id: str = "", include_all: bool = False
+    store: DataStore | Path, *, problem_id: str = "", include_all: bool = False
 ) -> list[BenchRow]:
     """One row per finished search. Default: only `bench-*` runs (the
     orchestrated pairs); `include_all` groups every finished search by its
-    recorded learning flag instead."""
+    recorded learning flag instead. A runs dir is shorthand for its
+    FileDataStore."""
+    if isinstance(store, Path):
+        store = FileDataStore(store)
     rows: list[BenchRow] = []
-    for run_dir in iter_run_dirs(runs_dir):
-        run_meta = load_run_meta(run_dir)
-        run_name = run_meta.name if run_meta else run_dir.name
+    for run in store.runs():
+        run_name = run.name or run.run_id
         if not include_all and not run_name.startswith(BENCH_PREFIX):
             continue
-        for search_dir in iter_search_dirs(run_dir):
-            meta = load_search_meta(search_dir)
-            status = read_status(search_dir)
-            if meta is None or status is None:
+        for record in store.searches(run_id=run.run_id):
+            meta = record.meta
+            status = store.read_status(record.key)
+            if status is None:
                 continue
             if problem_id and meta.problem_id != problem_id:
                 continue
-            state = effective_state(search_dir)
+            state = record.state
             if state == "running":
                 continue
             selected = status.selected
             rows.append(BenchRow(
-                run_id=run_dir.name,
+                run_id=run.run_id,
                 run_name=run_name,
                 problem_id=meta.problem_id,
                 learning=meta.learning_enabled,
@@ -94,10 +96,6 @@ def collect_bench_results(
             ))
     rows.sort(key=lambda r: r.started_at)
     return rows
-
-
-def _better(a: float, b: float, higher_is_better: bool) -> bool:
-    return a > b if higher_is_better else a < b
 
 
 def pair_and_summarize(rows: list[BenchRow]) -> list[BenchSummary]:
@@ -116,9 +114,9 @@ def pair_and_summarize(rows: list[BenchRow]) -> list[BenchSummary]:
         for off, on in pairs:
             if off.score is None or on.score is None:
                 ties += 1
-            elif _better(on.score, off.score, on.higher_is_better):
+            elif better(on.score, off.score, on.higher_is_better):
                 on_wins += 1
-            elif _better(off.score, on.score, on.higher_is_better):
+            elif better(off.score, on.score, on.higher_is_better):
                 off_wins += 1
             else:
                 ties += 1
@@ -155,9 +153,9 @@ def render_bench_report(summaries: list[BenchSummary]) -> str:
         for index, (off, on) in enumerate(summary.pairs, 1):
             if off.score is None or on.score is None:
                 winner = "-"
-            elif _better(on.score, off.score, on.higher_is_better):
+            elif better(on.score, off.score, on.higher_is_better):
                 winner = "on"
-            elif _better(off.score, on.score, on.higher_is_better):
+            elif better(off.score, on.score, on.higher_is_better):
                 winner = "off"
             else:
                 winner = "tie"

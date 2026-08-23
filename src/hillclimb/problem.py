@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from hillclimb.config import Config
 from hillclimb.direction import legacy_direction_key
@@ -72,6 +72,22 @@ class ProblemSpec(BaseModel):
     # after the search finishes (never during — selection integrity).
     mlebench_comp_id: str | None = None
 
+    @property
+    def target(self) -> str | None:
+        """Provider target string when the problem comes from one."""
+        if self.emflow_problem:
+            return f"emflow://{self.emflow_problem}"
+        if self.mlebench_comp_id:
+            return f"mlebench://{self.mlebench_comp_id}"
+        return None
+
+    @property
+    def problem_key(self) -> str:
+        """Canonical identity of the problem across runs (SearchMeta.problem_key)."""
+        from hillclimb.run import problem_key_for
+
+        return problem_key_for(self.target or "", self.problem_id)
+
 
 class SuiteEntry(BaseModel):
     """One search in a run-spec file. Bare-string entries are shorthand for
@@ -84,9 +100,17 @@ class SuiteEntry(BaseModel):
     model: str | None = None
     backend: str | None = None
     budget: str | None = None  # "2h" / "30m" / seconds — parsed by the CLI
-    parallel_agents: int | None = None
+    parallel_operators: int | None = None
     n_trials: int | None = None
     seed_from: str | None = None  # incumbent solution.py, relative to the spec file
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_parallel_agents(cls, data):
+        if isinstance(data, dict) and "parallel_agents" in data:
+            data = dict(data)
+            data.setdefault("parallel_operators", data.pop("parallel_agents"))
+        return data
 
 
 class SuiteSpec(BaseModel):

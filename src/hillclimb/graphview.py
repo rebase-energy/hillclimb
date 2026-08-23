@@ -96,6 +96,7 @@ class VNode:
     concepts: tuple[str, ...] = ()
     first_seen: str = ""
     count: int = 1
+    style: str = ""  # label style when not selected/hovered; "" = the dim default
     members: tuple[str, ...] = ()
 
 
@@ -174,9 +175,9 @@ def legend_spans(hidden: frozenset[str]) -> list[tuple[int, int, str, str]]:
     """The legend as text-overlay spans `(row, col, text, style)` — one line
     per type from LEGEND_ROW down, drawn over the plot the same way node
     labels are, so it costs the canvas no columns. Entries carry their hotkey
-    (1-8) and render in the truecolor the plot paints the type with; hidden
-    types go dim and lose their glyph, so the legend itself shows what the
-    canvas is not drawing."""
+    (1-8, which hides/shows the type) and render in the truecolor the plot
+    paints the type with; hidden types go dim and lose their glyph, so the
+    legend itself shows what the canvas is not drawing."""
     spans: list[tuple[int, int, str, str]] = []
     for index, type_ in enumerate(LEGEND_TYPES):
         row = LEGEND_ROW + index
@@ -373,7 +374,8 @@ def place_labels(
     selected: str | None = None,
     hovered: str | None = None,
 ) -> list[tuple[int, int, str, str]]:
-    """Label spans for the overlay: `(row, col, text, style_str)` per label.
+    """Label spans for the overlay: `(row, col, text, style_str)` per label
+    (see `place_labels_by_node` for the node each span belongs to).
     Rules carried over from the braille canvas: all labels past LABEL_ZOOM,
     always for selected/hovered/supernodes; priority order (selection, hover,
     supernode weight, nearer depth) with a greedy collision mask; text
@@ -396,7 +398,40 @@ def place_labels(
         ),
         reverse=True,
     )
-    spans: list[tuple[int, int, str, str]] = []
+    return [span for span, _node_id in _place(by_priority, claimed, cols, show_all, selected, hovered)]
+
+
+def place_labels_by_node(
+    nodes: Sequence[VNode],
+    projected: Sequence[tuple[float, float, float]],
+    **kw,
+) -> list[tuple[tuple[int, int, str, str], str]]:
+    """`place_labels`, each span paired with its node id — so a label's cells
+    can hit-test back to the node the way the mark itself does."""
+    cell_w, cell_h = kw["cell_px"]
+    cols, rows = kw["cols"], kw["rows"]
+    show_all = kw["zoom"] >= LABEL_ZOOM
+    selected, hovered = kw.get("selected"), kw.get("hovered")
+    on_screen: list[tuple[VNode, int, int, float]] = []
+    claimed: set[tuple[int, int]] = set()
+    for node, (sx, sy, depth) in zip(nodes, projected):
+        col, row = int(sx // cell_w), int(sy // cell_h)
+        if 0 <= col < cols and 0 <= row < rows:
+            on_screen.append((node, col, row, depth))
+            claimed.add((row, col))
+    by_priority = sorted(
+        on_screen,
+        key=lambda item: (
+            item[0].id == selected, item[0].id == hovered,
+            item[0].count, -item[3], item[0].label,
+        ),
+        reverse=True,
+    )
+    return _place(by_priority, claimed, cols, show_all, selected, hovered)
+
+
+def _place(by_priority, claimed, cols, show_all, selected, hovered):
+    placed: list[tuple[tuple[int, int, str, str], str]] = []
     for node, col, row, _depth in by_priority:
         if not (show_all or node.id in (selected, hovered) or node.type == "supernode"):
             continue
@@ -407,9 +442,9 @@ def place_labels(
             continue  # greedy collision mask: lower-priority label skipped
         claimed.update(cells)
         label = label[: len(cells)]
-        style = "bold white" if node.id in (selected, hovered) else "bright_black"
-        spans.append((row, start, label, style))
-    return spans
+        style = "bold white" if node.id in (selected, hovered) else node.style or "bright_black"
+        placed.append(((row, start, label, style), node.id))
+    return placed
 
 
 def snap_to_event(events: list[str], fraction: float) -> int:
@@ -469,7 +504,7 @@ def render_scrubber(
         label = f"live · {n} search{'es' if n != 1 else ''}"
     else:
         label = f"as of {event_stamp(events[index])} · search {index + 1} of {n}"
-    hint = "drag · [ ] step · end live"
+    hint = "drag · j/k step · end live"
     text.append(label, st["scrubber--label"])
     gap = width - len(label) - len(hint)
     if gap >= 2:
@@ -538,10 +573,12 @@ from textual.containers import Vertical  # noqa: E402
 from textual.message import Message  # noqa: E402
 from textual.screen import Screen  # noqa: E402
 from textual.widgets import (  # noqa: E402
-    Footer, Header, Input, OptionList, RichLog, Select, SelectionList, Static,
+    Footer, Input, OptionList, RichLog, Select, SelectionList, Static,
 )
 from textual.widgets.option_list import Option  # noqa: E402
 
+from hillclimb.header import HillclimbHeader, TimezoneMixin  # noqa: E402
+from hillclimb.keys import KEYS_BINDING, QUIT_BINDINGS, KeysMixin, KeysPanel  # noqa: E402
 from hillclimb.watch import REFRESH_S, _mouse_event_x, _mouse_event_y  # noqa: E402
 
 
@@ -583,6 +620,7 @@ class GraphPlotWidget(PlotWidget):
         self._index: dict[str, int] = {}
         self._collapsed = False
         self._hover: str | None = None
+        self._label_cells: dict[tuple[int, int], str] = {}  # (row, col) -> node id
 
     # -- data --
 
@@ -630,20 +668,20 @@ class GraphPlotWidget(PlotWidget):
         y = _mouse_event_y(event) - self.region.y
         px_w, px_h, px, py, radius = self._pixel_geometry(x, y)
         flat = self._plot.pick_px(px_w, px_h, px, py, radius)
-        if flat is None or flat >= len(self._ids):
-            return None
-        return self._ids[flat]
+        if flat is not None and flat < len(self._ids):
+            return self._ids[flat]
+        # not on a mark: the node's label next to it counts as the node too
+        return self._label_cells.get((int(y), int(x)))
 
     def _refresh_overlay(self) -> None:
         if self._mode == "unsupported":
             return  # the widget shows its terminal-support notice instead
         legend = legend_spans(self.hidden_types)
+        self._label_cells = {}
         if self._visible is None or not self._ids or self.size.width <= 0:
             self.set_overlay([(r, c, t, Style.parse(st)) for r, c, t, st in legend])
             return
-        # legend first: set_overlay keeps the first span where two overlap,
-        # so a node label never paints over a legend line
-        spans = legend + place_labels(
+        placed = place_labels_by_node(
             self._visible.nodes,
             self._plot.project_nodes(*self._px_dims()),
             cols=self.size.width,
@@ -653,6 +691,12 @@ class GraphPlotWidget(PlotWidget):
             selected=self.selected,
             hovered=self._hover,
         )
+        for (row, col, text, _style), node_id in placed:
+            for x in range(col, col + len(text)):
+                self._label_cells[(row, x)] = node_id
+        # legend first: set_overlay keeps the first span where two overlap,
+        # so a node label never paints over a legend line
+        spans = legend + [span for span, _node_id in placed]
         self.set_overlay(
             [(row, col, text, Style.parse(style)) for row, col, text, style in spans]
         )
@@ -932,33 +976,20 @@ class ConceptSidebar(Vertical):
         event.stop()
 
 
-class GraphKeys(Static):
-    """The `?` panel: every graph command in one list.
+GraphKeys = KeysPanel  # the `?` panel; graph gestures come from GraphScreen.POINTER_HELP
 
-    Textual's own HelpPanel can only list Bindings, and the camera gestures
-    live inside plotui's PlotWidget rather than in Textual — which is why they
-    are spelled out in POINTER here. Everything else is read off the host
-    screen's BINDINGS at render time, so the list cannot drift from the keys
-    that actually work.
-    """
 
-    COMPONENT_CLASSES = {"graph-keys--key", "graph-keys--description"}
+class GraphScreen(KeysMixin, Screen):
+    """The knowledge graph: canvas + concept sidebar + node detail + time
+    scrubber. Reached via `g` in watch or `hillclimb knowledge graph`.
 
-    DEFAULT_CSS = """
-    GraphKeys {
-        split: right;
-        width: 30;
-        height: 1fr;
-        padding: 1 2 0 1;
-        border-left: vkey $foreground 30%;
-        background: $surface;
-    }
-    GraphKeys > .graph-keys--key { color: $text-accent; text-style: bold; }
-    GraphKeys > .graph-keys--description { color: $text-muted; }
-    """
+    `?` splits out the keys panel — every command in one list — so the footer
+    only has to carry a few keys."""
 
-    # Camera gestures, in the order they are worth discovering.
-    POINTER = [
+    # Camera gestures, in the order they are worth discovering. They live
+    # inside plotui's PlotWidget rather than in Textual bindings, so the keys
+    # panel cannot read them off BINDINGS.
+    POINTER_HELP = [
         ("drag", "rotate"),
         ("shift-drag", "pan"),
         ("scroll", "zoom"),
@@ -969,46 +1000,6 @@ class GraphKeys(Static):
         ("click again", "open"),
         ("click legend", "hide a type"),
     ]
-    # Textual key names that read badly on a key cap.
-    KEY_NAMES = {
-        "escape": "esc",
-        "slash": "/",
-        "question_mark": "?",
-        "left_square_bracket": "[",
-        "right_square_bracket": "]",
-    }
-
-    def rows(self) -> list[tuple[str, str]]:
-        """(keys, what it does) for the whole screen — gestures, then keys."""
-        rows = list(self.POINTER)
-        for binding in getattr(self.screen, "BINDINGS", []):
-            if not isinstance(binding, Binding) or not binding.description:
-                continue
-            keys = binding.key_display or " ".join(
-                self.KEY_NAMES.get(k, k) for k in binding.key.split(",")
-            )
-            rows.append((keys, binding.description))
-        return rows
-
-    def render(self) -> Table:
-        key_style = self.get_component_rich_style("graph-keys--key")
-        text_style = self.get_component_rich_style("graph-keys--description")
-        table = Table(box=None, show_header=False, padding=(0, 1, 0, 0))
-        table.add_column(justify="right")
-        table.add_column()
-        for index, (keys, description) in enumerate(self.rows()):
-            if index == len(self.POINTER):  # gestures above, keys below
-                table.add_row("", "")
-            table.add_row(Text(keys, style=key_style), Text(description, style=text_style))
-        return table
-
-
-class GraphScreen(Screen):
-    """The knowledge graph: canvas + concept sidebar + node detail + time
-    scrubber. Reached via `g` in watch or `hillclimb knowledge graph`.
-
-    `?` splits out GraphKeys — every command in one list — so the footer only
-    has to carry a few keys."""
 
     # Only the handful worth a permanent slot stay in the footer; everything
     # else is show=False and lives in the `?` panel, which lists every active
@@ -1021,19 +1012,16 @@ class GraphScreen(Screen):
         Binding("-", "zoom_out", "zoom out", show=False),
         Binding("f,0", "fit", "fit", show=False, tooltip="frame the whole graph"),
         Binding("slash", "search", "search"),
-        Binding(
-            "left_square_bracket", "scrub_back", "back in time", show=False,
-            tooltip="one tick per finished search",
-        ),
-        Binding("right_square_bracket", "scrub_forward", "forward", show=False),
+        Binding("j", "scrub_back", "back in time", show=False, tooltip="one tick per finished search"),
+        Binding("k", "scrub_forward", "forward", show=False),
         Binding("end", "scrub_live", "live", show=False, tooltip="jump to now"),
         Binding("c", "toggle_sidebar", "concepts"),
         # One binding per legend slot; only the first is described, so the
         # `?` panel shows a single "1-8" row for the lot.
         Binding("1", "toggle_type(0)", "hide/show a type", show=False, key_display="1-8"),
         *(Binding(str(i + 1), f"toggle_type({i})", show=False) for i in range(1, len(LEGEND_TYPES))),
-        Binding("question_mark", "toggle_help", "keys"),
-        Binding("q", "app.quit", "quit"),
+        KEYS_BINDING,
+        *QUIT_BINDINGS,
     ]
 
     DEFAULT_CSS = """
@@ -1056,7 +1044,7 @@ class GraphScreen(Screen):
         self._hidden_types: frozenset[str] = frozenset()
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        yield HillclimbHeader()
         yield Input(placeholder="find node…", id="graph-search")
         yield OptionList(id="graph-search-results")
         yield ConceptSidebar(id="concept-sidebar")
@@ -1213,14 +1201,7 @@ class GraphScreen(Screen):
         self._apply_view()
 
     def action_toggle_help(self) -> None:
-        # GraphKeys is `split: right`, so it reserves its column instead of
-        # overlaying — the canvas shrinks and repaints, which a kitty-graphics
-        # plot needs.
-        panel = self.query(GraphKeys)
-        if panel:
-            panel.remove()
-        else:
-            self.mount(GraphKeys())
+        self.action_toggle_keys()
 
     def action_toggle_sidebar(self) -> None:
         sidebar = self.query_one("#concept-sidebar", ConceptSidebar)
@@ -1273,12 +1254,15 @@ class GraphScreen(Screen):
         self.app.pop_screen()
 
 
-class GraphApp(App):
+class GraphApp(TimezoneMixin, App):
     """Standalone shell for `hillclimb knowledge graph` — same screen the
     watch TUI reaches via `g`."""
 
+    BINDINGS = [
+        Binding("t", "choose_timezone", "time zone", show=False),
+        Binding("ctrl+c", "quit", "quit", show=False, priority=True),
+    ]
     CSS = HILLCLIMB_CSS
-    TITLE = "hillclimb knowledge graph"
 
     def __init__(self, config: Config | None = None):
         super().__init__()
@@ -1286,4 +1270,5 @@ class GraphApp(App):
 
     def on_mount(self) -> None:
         apply_theme(self)
+        self._init_timezone()
         self.push_screen(GraphScreen(self.config))

@@ -137,16 +137,26 @@ def test_run_suite_threads_no_learning_flag(config, tmp_path, monkeypatch):
     assert all("--no-learning" not in cmd for cmd in calls)
 
 
-def test_run_suite_rejects_duplicate_problem_ids(config, tmp_path, monkeypatch):
+def test_run_suite_allows_the_same_problem_twice(config, tmp_path, monkeypatch):
+    """The problem is an attribute of a search: a suite may list one problem
+    several times (two models on it, say) and each entry is its own search."""
     root = tmp_path / "problems"
     write_problem(root, "a")
     suite = root / "suite.yaml"
     suite.write_text("suite_id: demo\nproblems:\n  - a\n  - a\n")
     config.paths.problems_dir = root
     config.paths.runs_dir = tmp_path / "runs"
+    calls = []
 
-    with pytest.raises(typer.BadParameter, match="duplicate problem ids"):
-        _run_suite(str(suite), config, budget=None, backend=None, model=None, holdout=True, name=None)
+    class DummyProc:
+        pid = 123
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("subprocess.Popen", lambda cmd, **kw: calls.append(cmd) or DummyProc())
+    _run_suite(str(suite), config, budget=None, backend=None, model=None, holdout=True, name=None)
+    assert len(calls) == 2
+    meta = load_run_meta(iter_run_dirs(config.paths.runs_dir)[0])
+    assert meta.problem_ids == ["a"]
 
 
 def make_search(runs_dir, run_id, search_id, run_kind="problem"):
@@ -434,3 +444,198 @@ def test_subcommand_help_skips_the_banner(capsys):
 
 def test_banner_lines_are_uniform_width():
     assert len({len(line) for line in BANNER_LINES}) == 1
+
+
+def test_legacy_parallel_agents_key_maps_to_parallel_operators():
+    from hillclimb.config import SearchConfig
+    from hillclimb.problem import SuiteEntry
+
+    assert SearchConfig(parallel_agents=4).parallel_operators == 4
+    assert SuiteEntry(target="x", parallel_agents=2).parallel_operators == 2
+    assert SearchConfig(machine_max_agents=5).effective_machine_max_operators() == 5
+
+
+def test_machine_max_operators_defaults_to_cores_minus_two_capped(monkeypatch):
+    from hillclimb.config import SearchConfig
+
+    monkeypatch.setattr("os.cpu_count", lambda: 10)
+    assert SearchConfig().effective_machine_max_operators() == 8
+    monkeypatch.setattr("os.cpu_count", lambda: 32)
+    assert SearchConfig().effective_machine_max_operators() == 8
+    monkeypatch.setattr("os.cpu_count", lambda: 4)
+    assert SearchConfig().effective_machine_max_operators() == 2
+    assert SearchConfig(machine_max_operators=0).effective_machine_max_operators() == 0  # off
+
+
+def test_orphan_engines_are_those_whose_dir_is_gone(tmp_path, monkeypatch):
+    from hillclimb import orphans
+
+    alive = tmp_path / "hillclimb"
+    alive.mkdir()
+    envs = {11: alive, 12: tmp_path / "deleted" / "hillclimb", 13: None}
+    monkeypatch.setattr(orphans, "_environ_dir", lambda pid: envs[pid])
+    listing = (
+        "11 11 /venv/bin/python3 -m hillclimb.cli run circle-packing\n"
+        "12 12 /venv/bin/python3 -m hillclimb.cli run circle-packing --budget 5m\n"
+        "13 13 /venv/bin/python3 -m hillclimb.cli run other\n"
+        "14 14 claude -p --output-format stream-json\n"
+        "15 15 /usr/bin/python3 -m hillclimb.cli watch\n"
+    )
+    engines = orphans.live_engines(listing)
+    assert [e.pid for e in engines] == [11, 12, 13]
+    assert [e.pid for e in orphans.orphan_engines(engines)] == [12]  # unknown env is not an orphan
+
+
+def test_kill_engines_takes_the_whole_process_group(tmp_path):
+    import os
+    import signal
+    import subprocess
+    import sys
+    import time
+
+    from hillclimb.orphans import Engine, kill_engines
+
+    # a session leader that spawns a detached child (its own session, like the
+    # engine's verifiers and agents) and ignores SIGTERM, like a wedged engine
+    code = (
+        "import os, signal, subprocess, sys, time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)\n"
+        "print(child.pid, flush=True)\n"
+        "time.sleep(60)\n"
+    )
+    proc = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True, start_new_session=True)
+    child_pid = int(proc.stdout.readline())
+    forced = kill_engines([Engine(pid=proc.pid, pgid=proc.pid, hillclimb_dir=tmp_path / "gone")], grace_s=0.5)
+    assert [e.pid for e in forced] == [proc.pid]
+    proc.wait(timeout=5)
+    for _ in range(50):  # the grandchild was killed through the group, not reaped by anyone yet
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        try:
+            os.waitpid(child_pid, os.WNOHANG)
+        except ChildProcessError:
+            pass
+        time.sleep(0.1)
+    else:
+        pytest.fail("detached grandchild survived the tree kill")
+
+
+def test_descendants_walks_the_ps_tree():
+    from hillclimb.orphans import _descendants
+
+    listing = "1 0\n10 1\n11 10\n12 11\n13 10\n20 1\n"
+    assert sorted(_descendants(10, listing)) == [11, 12, 13]
+    assert _descendants(20, listing) == []
+
+
+def test_stop_all_without_a_dir_reaps_orphaned_engines(tmp_path, monkeypatch, capsys):
+    from hillclimb import cli as cli_module
+    from hillclimb.orphans import Engine
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
+    monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
+    gone = tmp_path / "deleted" / "hillclimb"
+    killed = []
+    monkeypatch.setattr("hillclimb.orphans.orphan_engines", lambda: [Engine(pid=7, pgid=7, hillclimb_dir=gone)])
+    monkeypatch.setattr("hillclimb.orphans.kill_engines", lambda engines, grace_s=5.0: killed.extend(engines) or [])
+    with pytest.raises(SystemExit) as exc:
+        cli_main(["stop", "--all"])
+    assert exc.value.code == 0
+    assert [e.pid for e in killed] == [7]
+    assert "pid 7" in capsys.readouterr().out
+
+    # without --all the original error stands; with --all and no orphans it is reported
+    monkeypatch.setattr("hillclimb.orphans.orphan_engines", lambda: [])
+    with pytest.raises(SystemExit) as exc:
+        cli_main(["kill", "--all"])
+    assert exc.value.code == 1
+    assert "No orphaned engines" in capsys.readouterr().out
+
+
+def test_engines_for_matches_only_this_hillclimb_dir(tmp_path, monkeypatch):
+    from hillclimb import orphans
+
+    mine = tmp_path / "a" / "hillclimb"
+    other = tmp_path / "b" / "hillclimb"
+    mine.mkdir(parents=True)
+    (tmp_path / "link").symlink_to(tmp_path / "a")
+    envs = {21: mine, 22: other, 23: None, 24: tmp_path / "link" / "hillclimb"}
+    monkeypatch.setattr(orphans, "_environ_dir", lambda pid: envs[pid])
+    listing = "\n".join(f"{pid} {pid} /venv/bin/python3 -m hillclimb.cli run x" for pid in envs)
+    engines = orphans.live_engines(listing)
+    assert [e.pid for e in orphans.engines_for(mine, engines)] == [21, 24]  # 24: same dir via symlink
+
+
+def test_reset_kills_this_dirs_engines_and_deletes_it(tmp_path, monkeypatch, capsys):
+    from hillclimb.orphans import Engine
+
+    root = tmp_path / "hillclimb"
+    root.mkdir()
+    (root / "config.yaml").write_text("")
+    (root / "runs").mkdir()
+    other = tmp_path / "elsewhere" / "hillclimb"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
+    monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
+    engines = [
+        Engine(pid=31, pgid=31, hillclimb_dir=root),
+        Engine(pid=32, pgid=32, hillclimb_dir=other),
+        Engine(pid=33, pgid=33, hillclimb_dir=None),
+    ]
+    killed = []
+    monkeypatch.setattr("hillclimb.orphans.live_engines", lambda: engines)
+    monkeypatch.setattr("hillclimb.orphans.kill_engines", lambda engines, grace_s=5.0: killed.extend(engines) or [])
+
+    # without --yes a declined prompt aborts and deletes nothing
+    monkeypatch.setattr("typer.confirm", lambda *a, **k: False)
+    with pytest.raises(SystemExit) as exc:
+        cli_main(["reset"])
+    assert exc.value.code == 1
+    assert root.exists() and killed == []
+
+    with pytest.raises(SystemExit) as exc:
+        cli_main(["reset", "--yes"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert [e.pid for e in killed] == [31]  # not the other folder's engine, not the unreadable one
+    assert not root.exists()
+    assert "pid 33" in out and "left alone" in out
+
+
+def test_ps_lists_engines_with_their_process_trees(tmp_path, monkeypatch, capsys):
+    from hillclimb import orphans
+
+    listing = (
+        "100 1 100 0.5 40000 05:00 /venv/bin/python3 -m hillclimb.cli run circle-packing --budget 5m\n"
+        "101 100 101 1.0 200000 04:00 claude -p --output-format stream-json --model sonnet\n"
+        "102 100 102 95.0 60000 00:10 /bin/bash verifier.sh\n"
+        "103 102 102 90.0 50000 00:09 /venv/bin/python3 solution.py\n"
+        "200 1 200 0.0 3000 1-02:00:00 /usr/bin/python3 -m hillclimb.cli watch\n"
+    )
+    monkeypatch.setattr(orphans, "_ps", lambda args: listing)
+    monkeypatch.setattr(orphans, "_environ_dir", lambda pid: tmp_path / "gone" / "hillclimb")
+    with pytest.raises(SystemExit) as exc:
+        cli_main(["ps"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "engine pid 100" in out and "[orphan: dir deleted]" in out
+    assert "agent    pid 101" in out and "verifier pid 102" in out and "child    pid 103" in out
+    assert "1 engine(s), 4 processes" in out
+    assert "watch" not in out
+
+    monkeypatch.setattr(orphans, "_ps", lambda args: "")
+    with pytest.raises(SystemExit):
+        cli_main(["ps"])
+    assert "No hillclimb engines running." in capsys.readouterr().out
+
+
+def test_is_engine_matches_the_launcher_argv_only():
+    from hillclimb.orphans import is_engine
+
+    assert is_engine("/venv/bin/python3 -m hillclimb.cli run circle-packing")
+    assert not is_engine("/bin/zsh -c 'grep hillclimb.cli run'")
+    assert not is_engine("/venv/bin/python3 -m hillclimb.cli watch")

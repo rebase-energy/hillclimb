@@ -183,7 +183,7 @@ from hillclimb.search import ParkedSearch, StopRequested  # noqa: E402
 
 
 def pool_searcher(task, config, backend, n, max_candidates=10, **kwargs):
-    config.search.parallel_agents = n
+    config.search.parallel_operators = n
     return make_searcher(task, config, backend, max_candidates=max_candidates, **kwargs)
 
 
@@ -528,7 +528,8 @@ class TestResumeAccounting:
             ),
         )
         journal = Journal(tmp_path / "journal.jsonl")
-        assert resume_spent_seconds(tmp_path, journal) == 1234.0
+        from hillclimb.status import read_status
+        assert resume_spent_seconds(read_status(tmp_path), journal) == 1234.0
 
     def test_falls_back_to_work_sum(self, tmp_path):
         from hillclimb.api import resume_spent_seconds
@@ -542,7 +543,7 @@ class TestResumeAccounting:
                 trials=[Trial(duration_s=50.0)],
             )
         )
-        assert resume_spent_seconds(tmp_path, journal) == 150.0
+        assert resume_spent_seconds(None, journal) == 150.0
 
 
 class TestCostCeiling:
@@ -639,7 +640,7 @@ class TestIncumbentSeeding:
 def test_worker_crash_does_not_hang_the_scheduler(task, config):
     """A worker that dies without reporting used to leave the candidate in
     flight and the scheduler blocked on the done-queue forever."""
-    config.search.parallel_agents = 2
+    config.search.parallel_operators = 2
     backend = FakeBackend()
     backend.queue(script=ok_script(0.5), notes="d\n")
     search_dir = create_search_dir(config.paths.runs_dir, "crash-search")

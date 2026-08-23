@@ -9,6 +9,7 @@ import pytest
 from hillclimb.candidate import BackendInfo, Candidate, Trial
 from hillclimb.config import Config
 from hillclimb.control import read_commands
+from hillclimb.store import FileDataStore, key_for
 from hillclimb.journal import Journal
 from hillclimb.run import RunMeta, SearchMeta, write_run_meta, write_search_meta
 from hillclimb.status import SearchStatus, write_status
@@ -26,6 +27,11 @@ from hillclimb.watch import (
 )
 
 DEAD_PID = 2**22
+
+
+def _record(search_dir):
+    """The search's store record, the way the TUI hands it to the detail renderers."""
+    return FileDataStore(search_dir.parents[2]).search(key_for(search_dir))
 
 
 def make_candidate(candidate_id: str, **kwargs) -> Candidate:
@@ -105,10 +111,13 @@ def make_demo_search(
     return search_dir, config
 
 
+DETAIL_MIN_HEIGHT_FOR_TESTS = 6  # == watch.DETAIL_MIN_HEIGHT
+
+
 async def open_candidate_detail(pilot) -> None:
-    await pilot.press("enter")
-    await pilot.press("enter")
-    await pilot.press("enter")
+    await pilot.press("enter")  # runs -> searches
+    await pilot.press("o")  # searches -> full candidate screen
+    await pilot.press("enter")  # candidate -> detail
     await pilot.pause()
 
 
@@ -126,7 +135,7 @@ def test_scan_runs_and_searches_with_status(tmp_path: Path):
     assert rows[0].searches == "1"
     assert rows[0].candidates == "3"
 
-    search_rows = scan_searches(runs_dir / "20260701-run")
+    search_rows = scan_searches(runs_dir, "20260701-run")
     assert len(search_rows) == 1
     assert search_rows[0].problem == "circle-packing"
     assert search_rows[0].candidates == "3 (2 ok)"
@@ -200,7 +209,8 @@ def test_search_row_counts_in_flight_tokens(tmp_path: Path):
     )
     from hillclimb.status import write_status
     write_status(search_dir, status)
-    row = _search_row(search_dir)
+    store = FileDataStore(search_dir.parents[2])
+    row = _search_row(store, store.search(key_for(search_dir)))
     # 240k + 1.0M finished (from make_run_with_search) + 500k in-flight = 1.74M
     assert row.tokens == "1.74M"
 
@@ -211,7 +221,7 @@ def test_scan_searches_detects_crash(tmp_path: Path):
         "crashed-run",
         SearchStatus(search_id="circle-packing", run_id="crashed-run", state="running", pid=DEAD_PID),
     )
-    assert scan_searches(tmp_path / "runs" / "crashed-run")[0].state == "crashed"
+    assert scan_searches(tmp_path / "runs", "crashed-run")[0].state == "crashed"
 
 
 def test_scan_runs_skips_v1_layout(tmp_path: Path):
@@ -236,6 +246,20 @@ def test_candidate_rows_tree_order_and_pruned(tmp_path: Path):
     assert "strike" in rows[2].style
 
 
+def test_candidate_rows_show_pending_as_running_or_stale(tmp_path: Path):
+    from hillclimb.watch import display_status
+
+    search_dir = make_run_with_search(tmp_path / "runs", "r")
+    journal = Journal(search_dir / "journal.jsonl")
+    journal.candidate_created(make_candidate("c003", operator="improve", parent_id="c001", status="pending"))
+    journal = Journal(search_dir / "journal.jsonl")
+    live = {r.candidate_id: r.status for r in candidate_rows(journal, live=True)}
+    dead = {r.candidate_id: r.status for r in candidate_rows(journal, live=False)}
+    assert live["c003"] == "running" and dead["c003"] == "stale"
+    assert live["c001"] == dead["c001"] == "ok"  # only pending is remapped
+    assert display_status("buggy", True) == "buggy"
+
+
 def test_candidate_detail_lines_include_scores_lineage_and_notes(tmp_path: Path):
     search_dir = make_run_with_search(tmp_path / "runs", "r")
     candidate_dir = search_dir / "candidates" / "c001"
@@ -251,7 +275,7 @@ def test_candidate_detail_lines_include_scores_lineage_and_notes(tmp_path: Path)
     )
 
     detail = "\n".join(
-        candidate_detail_lines(search_dir, Journal(search_dir / "journal.jsonl"), "c001")
+        candidate_detail_lines(_record(search_dir), Journal(search_dir / "journal.jsonl"), "c001")
     )
 
     assert "Candidate c001 | draft | ok" in detail
@@ -265,7 +289,7 @@ def test_candidate_detail_lines_include_scores_lineage_and_notes(tmp_path: Path)
     assert "warning: local search plateau" in detail
     assert "Stdout:" in detail
     assert "val_score: 0.7" in detail
-    assert "Agent stream:" in detail
+    assert "Operator stream:" in detail
     assert "I will try a constructive heuristic." in detail
 
 
@@ -273,7 +297,7 @@ def test_candidate_detail_lines_baseline_without_trial(tmp_path: Path):
     """The baseline has no trials; the detail panel must not crash."""
     search_dir = make_run_with_search(tmp_path / "runs", "r")
     detail = "\n".join(
-        candidate_detail_lines(search_dir, Journal(search_dir / "journal.jsonl"), "c000")
+        candidate_detail_lines(_record(search_dir), Journal(search_dir / "journal.jsonl"), "c000")
     )
     assert "Candidate c000 | baseline | ok" in detail
     assert "Trial: (not executed)" in detail
@@ -290,7 +314,7 @@ def test_candidate_detail_renderables_are_sectioned(tmp_path: Path):
     (candidate_dir / "exec_stderr.log").write_text("warning: local search plateau\n")
 
     renderables = candidate_detail_renderables(
-        search_dir,
+        _record(search_dir),
         Journal(search_dir / "journal.jsonl"),
         "c001",
     )
@@ -330,6 +354,89 @@ def test_render_stream_line_shapes():
 
     assert render_stream_line("not json at all") == "not json at all"
     assert render_stream_line(json.dumps({"type": "user"})) is None
+
+
+def test_parse_stream_line_timestamps_kinds_and_noise():
+    from hillclimb.watch import parse_stream_line
+
+    stamped = json.dumps({"type": "assistant", "ts": "2026-08-23T05:33:01+00:00", "message": {"content": [
+        {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}},
+    ]}})
+    entry = parse_stream_line(stamped)
+    assert entry.kind == "tool" and entry.text == "→ Bash(ls)"
+    assert len(entry.ts) == 8 and entry.ts.count(":") == 2  # local HH:MM:SS
+    assert render_stream_line(stamped) == f"{entry.ts}  → Bash(ls)"
+
+    # per-turn bookkeeping is noise; only init is shown, with its model
+    assert parse_stream_line(json.dumps({"type": "system", "subtype": "thinking_tokens", "session_id": "s"})) is None
+    init = parse_stream_line(json.dumps({"type": "system", "subtype": "init", "session_id": "s", "model": "opus"}))
+    assert init.kind == "system" and "model=opus" in init.text
+
+    failed = parse_stream_line(json.dumps({"type": "result", "subtype": "error", "is_error": True, "num_turns": 2}))
+    assert failed.kind == "error"
+    assert parse_stream_line("banner").kind == "raw"
+
+    # the argument that matters, on one line, not Edit's leading boolean flag
+    edit = json.dumps({"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "Edit", "input": {"replace_all": False, "file_path": "solution.py", "old_string": "x"}},
+    ]}})
+    assert parse_stream_line(edit).text == "→ Edit(solution.py)"
+    multi = json.dumps({"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "Bash", "input": {"command": "python3 -c \"\nimport re\n  x = 1\n\""}},
+    ]}})
+    assert parse_stream_line(multi).text == '→ Bash(python3 -c " import re x = 1 ")'
+
+
+def test_running_candidate_detail_shows_backend_tokens_and_elapsed(tmp_path: Path):
+    from rich.console import Console
+
+    from hillclimb.candidate import BackendInfo, Candidate, utcnow
+
+    search_dir = make_run_with_search(tmp_path / "runs", "r")
+    journal = Journal(search_dir / "journal.jsonl")
+    candidate_dir = search_dir / "candidates" / "c009"
+    candidate_dir.mkdir(parents=True)
+    (candidate_dir / "agent_stream.jsonl").write_text(
+        json.dumps({"type": "assistant", "message": {"id": "m1", "usage": {"input_tokens": 1500, "output_tokens": 500}, "content": []}}) + "\n"
+    )
+    journal.candidate_created(
+        Candidate(
+            candidate_id="c009", operator="draft", status="running", candidate_dir=str(candidate_dir),
+            backend=BackendInfo(name="claude-code", model="sonnet"), created_at=utcnow(),
+        )
+    )
+    journal = Journal(search_dir / "journal.jsonl")
+    console = Console(record=True, width=120)
+    for renderable in candidate_detail_renderables(_record(search_dir), journal, "c009", live=True):
+        console.print(renderable)
+    rendered = console.export_text()
+    assert "claude-code" in rendered and "model=sonnet" in rendered
+    assert "2.0k so far" in rendered
+    assert "elapsed" in rendered and "0s" in rendered
+    assert "path" in rendered and "candidates/c009" in rendered  # the full working dir (may wrap)
+    assert "lineage" in rendered
+
+
+def test_path_link_is_short_label_with_file_uri(tmp_path: Path):
+    from hillclimb.watch import _path_label, _path_link
+
+    path = tmp_path / "runs" / "r1" / "searches" / "cp" / "candidates" / "c003"
+    assert _path_label(path) == "runs/…/candidates/c003"
+    link = _path_link(path)
+    assert link.plain == "runs/…/candidates/c003"
+    assert f"link {path.resolve().as_uri()}" in str(link.spans[0].style)
+    assert not link.style  # no base style: cell padding must not carry the link
+    assert _path_label(Path("/odd/place")) == "/odd/place"  # no runs/ layout: full path
+
+
+def test_open_in_file_manager_uses_the_desktop_opener(tmp_path: Path, monkeypatch):
+    from hillclimb.watch import open_in_file_manager
+
+    calls = []
+    monkeypatch.setattr("subprocess.Popen", lambda cmd, **kw: calls.append(cmd))
+    open_in_file_manager(tmp_path)
+    assert calls[0][-1] == str(tmp_path)
+    assert calls[0][0] in ("open", "xdg-open")
 
 
 def test_stream_tail(tmp_path: Path):
@@ -459,8 +566,8 @@ async def test_candidate_table_refresh_preserves_scroll_offsets(tmp_path: Path):
 
     app = WatchApp(config)
     async with app.run_test(size=(50, 10)) as pilot:
-        await pilot.press("enter")
-        await pilot.press("enter")
+        await pilot.press("enter")  # runs -> searches
+        await pilot.press("o")  # -> full candidate screen
         await pilot.pause()
         table = app.screen.query_one("#candidates")
         if table.max_scroll_x == 0 or table.max_scroll_y == 0:
@@ -477,6 +584,23 @@ async def test_candidate_table_refresh_preserves_scroll_offsets(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_o_opens_the_selected_candidate_dir(tmp_path: Path, monkeypatch):
+    search_dir, config = make_demo_search(tmp_path, "open-run")
+    (search_dir / "candidates" / "c000").mkdir(parents=True, exist_ok=True)
+    opened = []
+    monkeypatch.setattr("hillclimb.watch.open_in_file_manager", lambda path: opened.append(path))
+
+    app = WatchApp(config)
+    async with app.run_test(size=(80, 20)) as pilot:
+        await pilot.press("enter")  # runs -> searches
+        await pilot.press("o")  # -> full candidate screen
+        await pilot.pause()
+        await pilot.press("o")  # on the candidate screen: reveal the selected candidate's dir
+        await pilot.pause()
+    assert opened == [search_dir / "candidates" / "c000"]
+
+
+@pytest.mark.asyncio
 async def test_candidate_detail_panel_opens_updates_and_closes(tmp_path: Path):
     search_dir, config = make_demo_search(tmp_path, "detail-run")
     (search_dir / "candidates" / "c000").mkdir(parents=True, exist_ok=True)
@@ -486,8 +610,8 @@ async def test_candidate_detail_panel_opens_updates_and_closes(tmp_path: Path):
 
     app = WatchApp(config)
     async with app.run_test(size=(80, 20)) as pilot:
-        await pilot.press("enter")
-        await pilot.press("enter")
+        await pilot.press("enter")  # runs -> searches
+        await pilot.press("o")  # -> full candidate screen
         await pilot.pause()
         detail = app.screen.query_one("#candidate-detail")
         divider = app.screen.query_one("#detail-divider")
@@ -520,6 +644,8 @@ async def test_candidate_detail_panel_resizes_and_clamps(tmp_path: Path):
     async with app.run_test(size=(80, 24)) as pilot:
         await open_candidate_detail(pilot)
         screen = app.screen
+        screen._set_detail_height(DETAIL_MIN_HEIGHT_FOR_TESTS)  # leave room to grow
+        await pilot.pause()
         initial = screen._detail_height
 
         await pilot.press("+")
@@ -546,6 +672,8 @@ async def test_candidate_detail_divider_drag_resizes(tmp_path: Path):
         await open_candidate_detail(pilot)
         screen = app.screen
         divider = screen.query_one("#detail-divider")
+        screen._set_detail_height(DETAIL_MIN_HEIGHT_FOR_TESTS)  # leave room to grow
+        await pilot.pause()
         initial = screen._detail_height
 
         assert await pilot.mouse_down("#detail-divider", offset=(1, 0))
@@ -567,6 +695,8 @@ async def test_candidate_table_scrollbar_row_drag_resizes(tmp_path: Path):
         screen = app.screen
         table = screen.query_one("#candidates")
         hbar = table.horizontal_scrollbar
+        screen._set_detail_height(DETAIL_MIN_HEIGHT_FOR_TESTS)  # leave room to grow
+        await pilot.pause()
         initial = screen._detail_height
 
         assert hbar.__class__.__name__ == "CandidateHorizontalScrollBar"
@@ -682,3 +812,290 @@ def test_live_remaining_counts_down_between_heartbeats():
     assert live_remaining_s(status, "done") == 100
     status.budget.remaining_s = 3
     assert live_remaining_s(status, "running") == 0.0
+
+
+@pytest.mark.asyncio
+async def test_searches_screen_inline_candidates_panel(tmp_path: Path):
+    from hillclimb.watch import DETAIL_STEP
+
+    _, config = make_demo_search(tmp_path, "panel-run")
+
+    app = WatchApp(config)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.press("enter")  # runs -> searches
+        await pilot.pause()
+        screen = app.screen
+        panel = screen.query_one("#search-candidates")
+        divider = screen.query_one("#detail-divider")
+        assert str(panel.styles.display) == "none" and str(divider.styles.display) == "none"
+
+        await pilot.press("enter")  # open the panel for the highlighted search
+        await pilot.pause()
+        assert app.screen is screen  # same screen, no push
+        assert screen._panel_search_id == "circle-packing"
+        assert str(panel.styles.display) == "block"
+        assert panel.row_count == 3
+        assert [str(panel.get_cell_at((i, 0))).strip() for i in range(3)] == ["c000", "c001", "c002"]
+
+        screen._set_detail_height(DETAIL_MIN_HEIGHT_FOR_TESTS)  # leave room to grow
+        await pilot.pause()
+        initial = screen._detail_height
+        await pilot.press("+")
+        assert screen._detail_height == initial + DETAIL_STEP
+        await pilot.press("-")
+        assert screen._detail_height == initial
+
+        assert await pilot.mouse_down("#detail-divider", offset=(1, 0))
+        await pilot.hover(offset=(divider.region.x + 1, divider.region.y - 3))
+        await pilot.pause()
+        assert screen._detail_height == initial + 3
+        await pilot.mouse_up(offset=(divider.region.x + 1, divider.region.y - 3))
+        assert not screen._dragging_detail
+
+        await pilot.press("escape")  # closes the panel, stays on the screen
+        await pilot.pause()
+        assert app.screen is screen and screen._panel_search_id is None
+        assert str(panel.styles.display) == "none"
+        assert app.focused.id == "searches"
+
+        await pilot.press("enter")  # opens the panel with the cursor in it
+        await pilot.pause()
+        assert app.focused.id == "search-candidates"
+        await pilot.press("down")
+        await pilot.press("enter")  # enter on a candidate: full candidates + its details
+        await pilot.pause()
+        assert app.screen is not screen
+        full = app.screen
+        assert full.query_one("#candidates").row_count == 3
+        assert full._detail_candidate_id == "c001"
+        assert full.query_one("#candidates").cursor_row == 1
+        assert str(full.query_one("#candidate-detail").styles.display) == "block"
+
+
+@pytest.mark.asyncio
+async def test_searches_panel_cursor_survives_refresh_with_several_searches(tmp_path: Path):
+    import asyncio
+
+    runs_dir = tmp_path / "runs"
+    make_run_with_search(runs_dir, "multi", search_id="a")  # 3 candidates
+    big = make_run_with_search(runs_dir, "multi", search_id="b")
+    journal = Journal(big / "journal.jsonl")
+    for i in range(3, 8):
+        journal.candidate_result(make_candidate(f"c00{i}", operator="improve", parent_id="c001", status="buggy"))
+    config = Config()
+    config.paths.runs_dir = runs_dir
+
+    app = WatchApp(config)
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.press("enter")  # runs -> searches
+        await pilot.press("down")  # highlight "b"
+        await pilot.press("enter")  # open its panel
+        await pilot.pause()
+        screen = app.screen
+        assert screen._panel_search_id == "b"
+        panel = screen.query_one("#search-candidates")
+        screen._set_detail_height(20)
+        await pilot.pause()
+        rows = [str(panel.get_cell_at((i, 0))).strip() for i in range(panel.row_count)]
+        target = rows.index("c007")  # beyond search a's row count
+        await pilot.click(offset=(panel.region.x + 3, panel.region.y + 1 + target))
+        await pilot.pause()
+        assert panel.cursor_row == target
+        await asyncio.sleep(1.2)  # a live refresh tick
+        await pilot.pause()
+        assert screen._panel_search_id == "b"
+        assert panel.cursor_row == target
+
+
+@pytest.mark.asyncio
+async def test_m_maximizes_and_restores_the_panel(tmp_path: Path):
+    _, config = make_demo_search(tmp_path, "max-run")
+
+    app = WatchApp(config)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.press("enter")
+        await pilot.press("m")  # nothing open: no-op
+        await pilot.pause()
+        screen = app.screen
+        assert not screen._detail_maximized
+        await pilot.press("enter")  # open panel
+        await pilot.pause()
+        height = screen._detail_height
+        table, panel = screen.query_one("#searches"), screen.query_one("#search-candidates")
+        await pilot.press("m")
+        await pilot.pause()
+        assert screen._detail_maximized
+        assert str(table.styles.display) == "none" and str(panel.styles.height) == "1fr"
+        await pilot.press("m")
+        await pilot.pause()
+        assert not screen._detail_maximized
+        assert str(table.styles.display) == "block" and panel.styles.height.value == height
+        await pilot.press("m")
+        await pilot.press("escape")  # closing the panel also un-maximizes
+        await pilot.pause()
+        assert not screen._detail_maximized and str(table.styles.display) == "block"
+
+        await pilot.press("o")  # the candidate screen has the same key for its detail
+        await pilot.press("enter")
+        await pilot.press("m")
+        await pilot.pause()
+        cs = app.screen
+        assert cs._detail_maximized and str(cs.query_one("#candidates").styles.display) == "none"
+
+
+@pytest.mark.asyncio
+async def test_detail_renders_full_width_on_first_paint(tmp_path: Path):
+    _, config = make_demo_search(tmp_path, "width-run")
+
+    app = WatchApp(config)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await open_candidate_detail(pilot)
+        detail = app.screen.query_one("#candidate-detail")
+        # the first write happened before the log had a layout width; the
+        # rendered lines must still span the screen, not a default 80 columns
+        widths = {len(strip.text.rstrip()) for strip in detail.lines if strip.text.strip()}
+        assert max(widths) >= 110, widths
+
+
+@pytest.mark.asyncio
+async def test_detail_is_not_rewritten_when_nothing_changed(tmp_path: Path):
+    import asyncio
+
+    from textual.widgets import RichLog
+
+    search_dir, config = make_demo_search(tmp_path, "flicker-run")
+    clears = []
+    original_clear = RichLog.clear
+
+    def counting_clear(self):
+        clears.append(self.id)
+        return original_clear(self)
+
+    RichLog.clear = counting_clear
+    try:
+        app = WatchApp(config)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await open_candidate_detail(pilot)
+            detail = app.screen.query_one("#candidate-detail")
+            detail.scroll_to(y=0, animate=False)
+            baseline = len(clears)
+            await asyncio.sleep(2.3)  # two live ticks with identical content
+            await pilot.pause()
+            assert len(clears) == baseline, "detail was cleared and rewritten on a no-change tick"
+
+            # a change in the journal is still picked up
+            journal = Journal(search_dir / "journal.jsonl")
+            c000 = journal.candidates["c000"]
+            c000.summary = "baseline, now with a new summary"
+            journal.candidate_result(c000)
+            await asyncio.sleep(1.2)
+            await pilot.pause()
+            assert len(clears) == baseline + 1
+            assert any("new summary" in strip.text for strip in detail.lines)
+    finally:
+        RichLog.clear = original_clear
+
+
+@pytest.mark.asyncio
+async def test_detail_opens_fitted_under_the_whole_table_and_maximize_hides_divider(tmp_path: Path):
+    from hillclimb.watch import DETAIL_CHROME_ROWS
+
+    _, config = make_demo_search(tmp_path, "fit-run")
+
+    app = WatchApp(config)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await open_candidate_detail(pilot)
+        screen = app.screen
+        table = screen.query_one("#candidates")
+        # 3 rows + header; the detail takes everything else
+        expected = 40 - DETAIL_CHROME_ROWS - (1 + 3 + (1 if table.show_horizontal_scrollbar else 0))
+        assert screen._detail_height == expected
+        assert table.region.height >= 1 + 3  # header and every row visible
+
+        divider = screen.query_one("#detail-divider")
+        await pilot.press("m")
+        await pilot.pause()
+        assert str(divider.styles.display) == "none"
+        await asyncio_tick(pilot)  # a live refresh re-renders; divider must stay hidden
+        assert str(divider.styles.display) == "none"
+        await pilot.press("m")
+        await pilot.pause()
+        assert str(divider.styles.display) == "block"
+
+
+async def asyncio_tick(pilot) -> None:
+    import asyncio
+
+    await asyncio.sleep(1.2)
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_header_clock_names_its_zone_and_choice_persists(tmp_path: Path, monkeypatch):
+    import re
+    from zoneinfo import ZoneInfo
+
+    from textual.widgets import Input
+
+    from hillclimb.header import HillclimbClock, TimezoneChoiceScreen, load_display_timezone
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    _, config = make_demo_search(tmp_path, "tz-run")
+
+    app = WatchApp(config)
+    async with app.run_test(size=(100, 30)) as pilot:
+        assert app.title == "hillclimb"
+        clock = app.screen.query_one(HillclimbClock)
+        assert re.fullmatch(r"\d\d:\d\d:\d\d \S+", str(clock.render()))
+        # flush with the right edge: no padding past the text
+        assert clock.region.x + clock.region.width == app.size.width
+        await pilot.press("t")
+        await pilot.pause()
+        assert isinstance(app.screen, TimezoneChoiceScreen)
+        app.screen.query_one("#timezone-filter", Input).value = "tokyo"
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.display_timezone == ZoneInfo("Asia/Tokyo")
+        assert str(clock.render()).endswith("JST")
+    assert load_display_timezone() == ZoneInfo("Asia/Tokyo")
+
+
+@pytest.mark.asyncio
+async def test_searches_runline_says_run(tmp_path: Path):
+    _, config = make_demo_search(tmp_path, "runline-run")
+    app = WatchApp(config)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.press("enter")
+        await pilot.pause()
+        assert str(app.screen.query_one("#runline").content).startswith("run: Demo")
+
+
+@pytest.mark.asyncio
+async def test_ctrl_c_quits_and_question_mark_lists_every_key(tmp_path: Path):
+    from hillclimb.keys import KeysPanel
+
+    _, config = make_demo_search(tmp_path, "keys-run")
+    app = WatchApp(config)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.press("enter")  # searches
+        await pilot.pause()
+        screen = app.screen
+        footer_keys = [b.key for b in screen.BINDINGS if b.show]
+        assert footer_keys == ["enter", "escape", "question_mark", "q"]  # lean footer
+        assert not screen.query(KeysPanel)
+        await pilot.press("question_mark")
+        await pilot.pause()
+        rows = dict(screen.query_one(KeysPanel).rows())
+        assert rows["o"] == "full candidate view" and rows["m"] == "maximize panel"
+        assert rows["g"] == "knowledge graph" and rows["esc"] == "back"
+        assert rows["drag divider"] == "resize panel"
+        assert rows["t"] == "time zone"  # app-level keys listed too
+        assert screen.query_one("#searches").size.width < 120  # split, not overlay
+        await pilot.press("question_mark")
+        await pilot.pause()
+        assert not screen.query(KeysPanel)
+
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+    assert app.return_code is not None or not app.is_running

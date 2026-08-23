@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import uuid
+
 import yaml
 from pydantic import BaseModel, Field, model_validator
 
@@ -34,8 +36,19 @@ class SearchMeta(BaseModel):
     schema_version: int = SCHEMA_VERSION
     search_id: str
     run_id: str
-    problem: str  # path to the problem definition dir
+    problem: str  # path to the problem definition dir, or the provider target
     problem_id: str
+    # The problem is an attribute of the search, and this is its canonical
+    # identity across runs: `emflow://gefcom2014:solar`, `mlebench://<comp>`,
+    # or the local problem id. Every problem-scoped view (the climb chart,
+    # best-ever, knowledge) groups on it. Empty in pre-key search.yaml files
+    # and backfilled on read — same rule as hillclimb-go's EffectiveProblemKey.
+    problem_key: str = ""
+    # Globally unique identity of this search (uuid4 at creation) so records
+    # can live in a store shared across hillclimb dirs/machines without a
+    # migration; `<run-id>/<search-id>` stays the human address. Pre-uid
+    # search.yaml files get a deterministic uuid5 of that address on read.
+    search_uid: str = ""
     backend: str
     model: str
     # additive with defaults on purpose: bumping SCHEMA_VERSION would hide
@@ -57,6 +70,29 @@ class SearchMeta(BaseModel):
     # learning on/off A/B benchmark (bench.py)
     learning_enabled: bool = True
     started_at: str = Field(default_factory=utcnow)
+
+    @model_validator(mode="after")
+    def _backfill_problem_key(self):
+        if not self.problem_key:
+            self.problem_key = problem_key_for(self.problem, self.problem_id)
+        if not self.search_uid:
+            self.search_uid = uuid.uuid5(SEARCH_UID_NAMESPACE, f"{self.run_id}/{self.search_id}").hex
+        return self
+
+
+SEARCH_UID_NAMESPACE = uuid.UUID("6f1c2a3e-7b0d-4d5e-9a8f-1d2c3b4a5e6f")
+
+
+def new_search_uid() -> str:
+    return uuid.uuid4().hex
+
+
+def problem_key_for(problem: str, problem_id: str) -> str:
+    """Canonical problem identity: a provider target (`emflow://…`,
+    `mlebench://…`) is already canonical; a local problem is its id. The one
+    place this rule lives — ProblemSpec.problem_key and the search.yaml
+    backfill both come here (hillclimb-go: EffectiveProblemKey)."""
+    return problem if "://" in problem else problem_id
 
 
 def _load_meta(path: Path, model: type[BaseModel]):
@@ -82,6 +118,17 @@ def write_run_meta(run_dir: Path, meta: RunMeta) -> Path:
 
 def load_run_meta(run_dir: Path) -> RunMeta | None:
     return _load_meta(run_dir / RUN_META_FILE, RunMeta)
+
+
+def run_display_name(run_dir: Path) -> str:
+    """The name the user gave the run, falling back to its id."""
+    meta = load_run_meta(run_dir)
+    return meta.name if meta and meta.name else run_dir.name
+
+
+def search_ref(search_dir: Path) -> str:
+    """Human-facing `<run-id>/<search-id>` address of a search dir."""
+    return f"{search_dir.parents[1].name}/{search_dir.name}"
 
 
 def write_search_meta(search_dir: Path, meta: SearchMeta) -> Path:
@@ -114,13 +161,22 @@ def iter_search_dirs(run_dir: Path) -> list[Path]:
 
 
 def latest_search_dir(runs_dir: Path) -> Path | None:
-    """The most recently active search across all v2 runs: newest status.json
-    mtime, falling back to search.yaml mtime for searches that never started."""
+    """`store.latest_search` of the folder backend, as a dir."""
+    from hillclimb.store import FileDataStore, latest_search
 
-    def activity(search_dir: Path) -> float:
-        status = search_dir / "status.json"
-        marker = status if status.exists() else search_dir / SEARCH_META_FILE
-        return marker.stat().st_mtime
+    record = latest_search(FileDataStore(runs_dir))
+    return record.search_dir if record else None
 
-    searches = [s for run in iter_run_dirs(runs_dir) for s in iter_search_dirs(run)]
-    return max(searches, key=activity) if searches else None
+
+def running_search_dirs(runs_dir: Path) -> list[Path]:
+    """`store.running_searches` of the folder backend, as dirs."""
+    from hillclimb.store import FileDataStore, running_searches
+
+    return [r.search_dir for r in running_searches(FileDataStore(runs_dir))]
+
+
+def resolve_search_dir(runs_dir: Path, ref: str | None) -> Path:
+    """`store.resolve_search` of the folder backend, as a dir."""
+    from hillclimb.store import FileDataStore, resolve_search
+
+    return resolve_search(FileDataStore(runs_dir), ref).search_dir
