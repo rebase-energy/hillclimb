@@ -22,7 +22,7 @@ class RunMeta(BaseModel):
     schema_version: int = SCHEMA_VERSION
     run_id: str
     name: str
-    kind: str = "problem"  # problem | suite
+    kind: str = "problem"  # problem | suite | experiment
     target: str
     spec: str | None = None  # hillclimb-dir-relative run-spec file, when launched from one
     problem_ids: list[str] = Field(default_factory=list)
@@ -66,9 +66,15 @@ class SearchMeta(BaseModel):
     budget_s: int = 0
     holdout_enabled: bool = False
     seed_from: str | None = None  # incumbent solution the search was seeded with
-    # whether cross-search memory was active — the grouping key for the
-    # learning on/off A/B benchmark (bench.py)
+    # whether cross-search memory was active
     learning_enabled: bool = True
+    # Experiment tags (experiment.py): which experiment and arm this search
+    # belongs to, its repeat index, and the config overrides the arm applied
+    # — the grouping keys for every setup-vs-setup comparison
+    experiment: str | None = None
+    arm: str | None = None
+    repeat: int = 0
+    arm_overrides: dict = Field(default_factory=dict)
     started_at: str = Field(default_factory=utcnow)
 
     @model_validator(mode="after")

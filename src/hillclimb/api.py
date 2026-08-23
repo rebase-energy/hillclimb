@@ -228,6 +228,10 @@ def create_search(
     run_id: str,
     total_s: int,
     seed_from: Path | None = None,
+    experiment: str | None = None,
+    arm: str | None = None,
+    repeat: int = 0,
+    arm_overrides: dict | None = None,
 ) -> Path:
     search_dir = allocate_search_dir(run_dir, problem.problem_id)
     meta = SearchMeta(
@@ -251,6 +255,10 @@ def create_search(
             holdout_enabled=config.holdout.enabled and problem.holdout_cmd is not None,
             seed_from=str(seed_from) if seed_from else None,
             learning_enabled=config.learning.enabled,
+            experiment=experiment,
+            arm=arm,
+            repeat=repeat,
+            arm_overrides=dict(arm_overrides or {}),
     )
     with closing(open_store(config)) as store:
         store.record_search(meta)

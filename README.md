@@ -516,9 +516,8 @@ git-versionable — it lives in your hillclimb dir, under `knowledge/`:
 - **Query tool** (`operators.knowledge_tool`, default on) — operator agents
   are told they can run `hillclimb knowledge query "<keywords>"` mid-search
   to consult the memory before re-deriving something expensive.
-- **Benchmark** — `hillclimb bench run <problem> --pairs N` answers the only
-  question that matters: do memory-on searches beat memory-blind ones on
-  holdout? `bench report` renders the verdict.
+- **Does it help?** — an experiment with a memory-on and a memory-off arm
+  (`learning.enabled: false`) answers it on holdout; see *Experiments* below.
 
 Explore it interactively with `hillclimb knowledge graph` (or `g` inside
 `hillclimb watch`): a true-3D scene rendered by [plotui](../plotui) (Rust
@@ -588,10 +587,44 @@ the run has a single search), or `latest` (the default).
 | `knowledge consolidate [--dry-run]` | sleep phase: generalize claims + rewrite playbooks |
 | `knowledge query "<terms>" [--json]` | read-only memory lookup (also available to agents) |
 | `knowledge show <target>` | the prior-experience section a new search would get |
-| `bench run <problem> --pairs N` | paired learning-on/off searches (the memory A/B) |
-| `bench report [--problem X] [--all]` | compare the arms on holdout |
+| `run <problem> --set key=value … [--experiment E --arm A]` | any config setting, dotted; tag the search as an experiment arm |
+| `experiment run <spec> [--repeats N] [--parallel] [--dry-run]` | every arm × problem × repeat of a spec |
+| `experiment report [spec] [--problem X] [--control A] [--noise-floor F]` | compare the arms on holdout |
 
 Exit code `2` from `run`/`resume` means the search parked or was stopped — resume it.
+
+## Experiments: which setup wins?
+
+Every knob — search policy, its params, the model, cross-search memory,
+trial count — is a config setting, so "does X help?" is one experiment: a
+problem × named *arms* (sets of config overrides) × N repeats. A spec lives
+in `hillclimb/experiments/<name>.yaml`:
+
+```yaml
+problems: [circle-packing]
+repeats: 3
+budget: 15m
+schedule: sequential        # sequential | parallel
+noise_floor: 0.02           # from `hillclimb verify circle-packing --repeat 5`
+arms:
+  greedy:       {search.policy: greedy}             # first arm = the control
+  greedy-nomem: {search.policy: greedy, learning.enabled: false}
+  openevolve:   {search.policy: openevolve, search.policy_params: {population_size: 50}}
+```
+
+`hillclimb experiment run <name>` launches the matrix: sequentially by
+default — repeat by repeat, arms round-robin inside, so shared state such as
+the knowledge graph is seen by every arm at the same point (mandatory when an
+arm touches memory) — or `--parallel` for stateless comparisons (policy,
+model). Each search is a normal `hillclimb run … --experiment <name> --arm
+<arm> --set key=value`, tagged in its `search.yaml` (`experiment`, `arm`,
+`repeat`, `arm_overrides`), so a search you start by hand with those flags
+counts too. `hillclimb experiment report <name>` compares the arms on the
+selected candidate's holdout score (val when holdout is off): n / mean /
+median / spread, best-of-repeat wins, minutes to best, tokens, and each arm's
+paired gap to the control judged against the noise floor — a gap inside it
+is reported as "within noise, not a result". `hillclimb chart` colours an
+experiment's curves by arm.
 
 ## How runs and searches are laid out
 
@@ -636,7 +669,7 @@ store:
 
 With `sqlite`, a search dir holds only what has to be files (`candidates/`,
 `best/`, logs) and everything else lives in the database — cross-run views
-(the chart, `store searches`, bench) query it instead of walking run dirs,
+(the chart, `store searches`, experiments) query it instead of walking run dirs,
 and N concurrent engines (the demo) write it safely. The single-writer rule
 is unchanged: the engine owns a search's records whichever backend holds
 them; `stop`/`prune` go through the store's command queue.

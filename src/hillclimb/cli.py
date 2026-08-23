@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import signal
 import subprocess
 import sys
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -737,79 +739,166 @@ def knowledge_graph(
     GraphApp(config).run()
 
 
-bench_app = typer.Typer(cls=HillclimbGroup, help="Learning A/B benchmark: does cross-search memory help?")
-app.add_typer(bench_app, name="bench")
+experiment_app = typer.Typer(
+    cls=HillclimbGroup, help="Compare setups: named arms of config overrides × repeats on a problem"
+)
+app.add_typer(experiment_app, name="experiment")
 
 
-@bench_app.command("run")
-def bench_run(
-    target: str = typer.Argument(..., help="One problem (not a suite)"),
-    pairs: int = typer.Option(1, "--pairs", help="Number of off/on pairs to run"),
-    budget: str = typer.Option(None, "--budget", help="Per-search budget, e.g. 10m"),
-    backend: str = typer.Option(None, "--backend"),
-    model: str = typer.Option(None, "--model"),
+@experiment_app.command("run")
+def experiment_run(
+    spec: str = typer.Argument(..., help="Spec YAML path, or a name under hillclimb/experiments/"),
+    budget: str = typer.Option(None, "--budget", help="Per-search budget, e.g. 10m (overrides the spec)"),
+    repeats: int = typer.Option(None, "--repeats", help="Override the spec's repeat count"),
+    parallel: bool = typer.Option(
+        None, "--parallel/--sequential",
+        help="Launch every search detached at once, or one after another (default: the spec's schedule)",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print the jobs, start nothing"),
 ):
-    """Run paired searches: a memory-blind arm, then a memory-full one.
+    """Run an experiment: every arm × every problem × N repeats.
 
-    Sequentially per pair, off (`--no-learning`) first, so a pair's blind arm
-    never sees what its sibling learned; the on-arm accumulates knowledge
-    between pairs exactly as production searches do. Real agent runs —
-    subscription-billed; `--pairs` is your cost dial.
+    Sequential (the default) runs jobs in a fair order — repeat by repeat,
+    arms round-robin inside — so shared state such as cross-search memory
+    is seen by every arm at the same point; use it whenever an arm touches
+    shared state. Parallel launches all jobs detached at once (machine
+    slots still cap concurrency) — fine for stateless comparisons such as
+    policy or model. Real agent runs — the repeat count is your cost dial.
     """
-    from hillclimb.bench import bench_run_name, slugify_target
+    from hillclimb.experiment import expand, load_experiment, resolve_experiment_path
 
     config = load_config()
-    resolved = resolve_target(target, config)
-    if resolved.kind == "suite":
-        raise typer.BadParameter("bench runs one problem at a time, not a suite")
-    problem = load_problem(target, config)
-    slug = slugify_target(problem.problem_id)
-    child_cwd, child_env = _child_launch_context(config)
-    for pair in range(1, pairs + 1):
-        for learning in (False, True):
-            arm = "on" if learning else "off"
-            run_name = bench_run_name(slug, pair, learning)
-            cmd = [sys.executable, "-m", "hillclimb.cli", "run", target, "--name", run_name]
-            if budget:
-                cmd += ["--budget", budget]
-            if backend:
-                cmd += ["--backend", backend]
-            if model:
-                cmd += ["--model", model]
-            if not learning:
-                cmd.append("--no-learning")
-            typer.echo(f"=== pair {pair}/{pairs}, {arm} arm: {run_name} ===")
-            result = subprocess.run(cmd, cwd=child_cwd, env=child_env)
-            if result.returncode != 0:
-                hint = " (parked — resume it, then rerun bench report)" if result.returncode == 2 else ""
-                typer.echo(f"{arm} arm exited {result.returncode}{hint}; stopping bench", err=True)
-                raise typer.Exit(result.returncode)
+    try:
+        spec_path = resolve_experiment_path(spec, config.hillclimb_dir)
+        experiment = load_experiment(spec_path)
+    except (FileNotFoundError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if repeats is not None:
+        experiment = experiment.model_copy(update={"repeats": repeats})
+    for problem_target in experiment.problems:
+        if resolve_target(problem_target, config).kind == "suite":
+            raise typer.BadParameter(f"experiments take problems, not suites ({problem_target!r})")
+    jobs = expand(experiment)
+    schedule = "parallel" if parallel else "sequential" if parallel is False else experiment.schedule
+    child_budget = budget or experiment.budget
+    typer.echo(
+        f"Experiment {experiment.name}: {len(experiment.arms)} arms × {len(experiment.problems)} "
+        f"problem(s) × {experiment.repeats} repeat(s) = {len(jobs)} searches, {schedule}"
+    )
+    for job in jobs:
+        settings = ", ".join(f"{k}={v}" for k, v in job.overrides.items()) or "(defaults)"
+        typer.echo(f"  {job.index:2d}. {job.problem} · {job.arm} · r{job.repeat}  {settings}")
+    if dry_run:
+        return
+    run_name = experiment.name
+    run_id = new_run_id(run_name)
+    run_dir = create_run(
+        config,
+        RunMeta(
+            run_id=run_id, name=run_name, kind="experiment", target=spec,
+            spec=_spec_provenance(config, spec_path),
+            problem_ids=list(dict.fromkeys(load_problem(p, config).problem_id for p in experiment.problems)),
+        ),
+    )
+    launched = []
+    for job in jobs:
+        argv = [
+            job.problem, "--run-id", run_id, "--run-name", run_name,
+            "--experiment", experiment.name, "--arm", job.arm, "--repeat", str(job.repeat),
+        ]
+        if child_budget:
+            argv += ["--budget", child_budget]
+        for key, value in job.overrides.items():
+            argv += ["--set", f"{key}={_set_value(value)}"]
+        slug = f"{Path(job.problem).name}-{job.arm}-r{job.repeat}"
+        if schedule == "parallel":
+            pid, log_path = _spawn_search(config, run_dir, job.index, slug, argv)
+            launched.append((slug, pid, log_path))
+            continue
+        typer.echo(f"=== {job.index}/{len(jobs)}: {slug} ===")
+        cwd, env = _child_launch_context(config)
+        result = subprocess.run([sys.executable, "-m", "hillclimb.cli", "run", *argv], cwd=cwd, env=env)
+        if result.returncode != 0:
+            hint = " (parked — resume it, then `experiment report`)" if result.returncode == 2 else ""
+            typer.echo(f"{slug} exited {result.returncode}{hint}; stopping the experiment", err=True)
+            raise typer.Exit(result.returncode)
+    if schedule == "parallel":
+        typer.echo(f"Run {run_id}: launched {len(launched)} searches (`hillclimb experiment report` when done)")
+        for slug, pid, log_path in launched:
+            typer.echo(f"  pid={pid} {slug}  log={log_path}")
+        return
     typer.echo("")
-    _bench_report_impl(config, problem.problem_id, include_all=False)
+    _experiment_report_impl(config, experiment.name, "", spec_path=spec_path)
 
 
-@bench_app.command("report")
-def bench_report(
+def _set_value(value) -> str:
+    """An override value as `--set` text: scalars verbatim, mappings/lists as
+    JSON (which `--set` parses back as YAML)."""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+@experiment_app.command("report")
+def experiment_report(
+    experiment: str = typer.Argument(None, help="Experiment name or spec (default: every experiment)"),
     problem: str = typer.Option("", "--problem", help="Filter to one problem id"),
-    include_all: bool = typer.Option(
-        False, "--all", help="Group EVERY finished search by its learning flag, not just bench-* runs"
+    control: str = typer.Option(None, "--control", help="Arm to compare against (default: the first)"),
+    noise_floor: float = typer.Option(
+        None, "--noise-floor", help="Gap below which arms are not different (default: the spec's)"
     ),
 ):
-    """Compare learning-on vs learning-off arms.
+    """Compare the arms of an experiment.
 
-    On the selected candidate's holdout score (falls back to val when
-    holdout was off).
+    On the selected candidate's holdout score (val when holdout was off):
+    per arm n/mean/median/spread, best-of-repeat wins, time to best and
+    tokens; then every arm against the control, with the gap judged against
+    the noise floor (`hillclimb verify <problem> --repeat 5` measures it).
     """
-    _bench_report_impl(load_config(), problem, include_all=include_all)
+    from hillclimb.experiment import resolve_experiment_path
 
-
-def _bench_report_impl(config: Config, problem_id: str, *, include_all: bool) -> None:
-    from hillclimb.bench import collect_bench_results, pair_and_summarize, render_bench_report
-
-    rows = collect_bench_results(
-        config.paths.runs_dir, problem_id=problem_id, include_all=include_all
+    config = load_config()
+    spec_path = None
+    if experiment:
+        try:
+            spec_path = resolve_experiment_path(experiment, config.hillclimb_dir)
+        except FileNotFoundError:
+            spec_path = None  # a name with no spec on disk: report by tag alone
+    _experiment_report_impl(
+        config, experiment, problem, spec_path=spec_path, control=control, noise_floor=noise_floor
     )
-    typer.echo(render_bench_report(pair_and_summarize(rows)))
+
+
+def _experiment_report_impl(
+    config: Config,
+    experiment: str | None,
+    problem_id: str,
+    *,
+    spec_path: Path | None = None,
+    control: str | None = None,
+    noise_floor: float | None = None,
+) -> None:
+    from hillclimb.experiment import collect_results, load_experiment, render_report, summarize
+
+    floors: dict[str, float | None] = {}
+    name = experiment
+    if spec_path is not None:
+        spec = load_experiment(spec_path)
+        name = spec.name
+        control = control or spec.control
+        for target in spec.problems:
+            try:
+                pid = load_problem(target, config).problem_id
+            except Exception:  # noqa: BLE001 — a problem that no longer loads still has rows
+                pid = Path(target).name
+            floors[pid] = spec.noise_for(pid)
+    with closing(open_store(config)) as store:
+        rows = collect_results(store, experiment=name, problem_id=problem_id)
+    if noise_floor is not None:
+        floors = {row.problem_id: noise_floor for row in rows}
+    typer.echo(render_report(summarize(rows, control=control, noise_floor=floors)))
 
 
 def parse_budget(value: str) -> int:
@@ -911,7 +1000,16 @@ def _run_problem(
     run_id: str | None = None,
     run_name: str | None = None,
     seed_from: Path | None = None,
+    experiment: str | None = None,
+    arm: str | None = None,
+    repeat: int = 0,
+    arm_overrides: dict | None = None,
 ) -> None:
+    if arm_overrides:
+        try:
+            config.apply_overrides(arm_overrides)
+        except (KeyError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
     problem = load_problem(target, config)
     if run_id is None:
         run_name = run_name or problem.problem_id
@@ -922,10 +1020,14 @@ def _run_problem(
         run_name = run_name or run_id
         run_dir = config.paths.runs_dir / run_id
     total_s = parse_budget(budget) if budget else problem.time_budget_s
-    search_dir = create_search(config, problem, run_dir, run_id, total_s)
+    search_dir = create_search(
+        config, problem, run_dir, run_id, total_s,
+        experiment=experiment, arm=arm, repeat=repeat, arm_overrides=arm_overrides,
+    )
+    tag = f", experiment={experiment}/{arm}" + (f" r{repeat}" if repeat else "") if experiment else ""
     typer.echo(
         f"Search {search_ref(search_dir)} (run={run_name}, problem={problem.problem_id}, "
-        f"backend={config.backend}, model={config.model}, budget={total_s}s)"
+        f"backend={config.backend}, model={config.model}, budget={total_s}s{tag})"
     )
     _execute(
         config, problem, search_dir,
@@ -958,6 +1060,7 @@ def _run_suite(
     n_trials: int | None = None,
     seed_from: Path | None = None,
     learning: bool = True,
+    set_: list[str] | None = None,
 ) -> None:
     resolved = resolve_target(target, config)
     if resolved.kind != "suite" or resolved.suite is None:
@@ -1015,6 +1118,8 @@ def _run_suite(
             cmd.append("--no-holdout")
         if not learning:
             cmd.append("--no-learning")
+        for pair in set_ or []:
+            cmd += ["--set", pair]
         pid, log_path = _spawn_search(config, run_dir, index, slug, cmd)
         launched.append((problem_target, pid, log_path))
     typer.echo(f"Run {run_id}: launched {len(launched)} searches")
@@ -1046,6 +1151,12 @@ def run(
     seed_from: Path = typer.Option(
         None, "--seed-from", help="Incumbent solution.py scored as the floor candidate"
     ),
+    set_: list[str] = typer.Option(
+        None, "--set", help="Any config setting, dotted: --set search.policy=openevolve --set learning.enabled=false",
+    ),
+    experiment: str = typer.Option(None, "--experiment", help="Tag the search as one arm of an experiment"),
+    arm: str = typer.Option(None, "--arm", help="The arm name (with --experiment)"),
+    repeat: int = typer.Option(0, "--repeat", hidden=True),
     run_id: str = typer.Option(None, "--run-id", hidden=True),
     run_name: str = typer.Option(None, "--run-name", hidden=True),
 ):
@@ -1061,12 +1172,15 @@ def run(
         config.search.parallel_operators = parallel_operators
     if n_trials is not None:
         config.search.n_trials = n_trials
+    overrides = _parse_set(set_ or [])
+    if (experiment is None) != (arm is None):
+        raise typer.BadParameter("--experiment and --arm go together")
     resolved = resolve_target(target, config)
     if resolved.kind == "suite":
         _run_suite(
             target, config, budget, backend, model, holdout, name,
             policy=policy, parallel_operators=parallel_operators, n_trials=n_trials,
-            seed_from=seed_from, learning=learning,
+            seed_from=seed_from, learning=learning, set_=set_,
         )
         return
     _run_problem(
@@ -1076,7 +1190,20 @@ def run(
         run_id=run_id,
         run_name=run_name or name,
         seed_from=seed_from,
+        experiment=experiment,
+        arm=arm,
+        repeat=repeat,
+        arm_overrides=overrides,
     )
+
+
+def _parse_set(pairs: list[str]) -> dict:
+    from hillclimb.config import parse_set_overrides
+
+    try:
+        return parse_set_overrides(pairs)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 @app.command()

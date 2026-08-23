@@ -285,6 +285,32 @@ class Config(BaseModel):
         config._resolve_paths()
         return config
 
+    def apply_overrides(self, overrides: dict[str, object]) -> None:
+        """Set dotted config paths (`search.policy`, `learning.enabled`,
+        `search.policy_params.population_size`, top-level `model`) with
+        pydantic validation at each level — the one way an experiment arm
+        or `hillclimb run --set` changes a setting. Unknown paths raise
+        KeyError naming the offending key."""
+        for key, value in overrides.items():
+            parts = key.split(".")
+            target: object = self
+            for part in parts[:-1]:
+                if isinstance(target, dict):
+                    target = target.setdefault(part, {})
+                elif isinstance(target, BaseModel) and part in type(target).model_fields:
+                    target = getattr(target, part)
+                else:
+                    raise KeyError(f"unknown config setting {key!r}")
+            leaf = parts[-1]
+            if isinstance(target, dict):
+                target[leaf] = value
+            elif isinstance(target, BaseModel) and leaf in type(target).model_fields:
+                annotation = type(target).model_fields[leaf].annotation
+                setattr(target, leaf, _coerce(value, annotation))
+            else:
+                raise KeyError(f"unknown config setting {key!r}")
+
+
     def _resolve_paths(self) -> None:
         """Anchor relative runs_dir/problems_dir at the folder holding the
         hillclimb dir, so commands work from any subdirectory. Without one
@@ -300,3 +326,49 @@ class Config(BaseModel):
             value: Path = getattr(section, name)
             if not value.is_absolute():
                 setattr(section, name, self.hillclimb_dir.parent / value)
+
+
+def _coerce(value: object, annotation: object) -> object:
+    """Parse a string override (`--set search.n_trials=3`) to the field's
+    declared type; non-strings (from YAML) pass through."""
+    if not isinstance(value, str):
+        return value
+    from typing import get_args
+
+    candidates = [annotation, *get_args(annotation)]
+    for candidate in candidates:
+        if candidate is bool:
+            lowered = value.strip().lower()
+            if lowered in ("true", "yes", "on", "1"):
+                return True
+            if lowered in ("false", "no", "off", "0"):
+                return False
+        elif candidate is int:
+            try:
+                return int(value)
+            except ValueError:
+                continue
+        elif candidate is float:
+            try:
+                return float(value)
+            except ValueError:
+                continue
+        elif candidate is Path:
+            return Path(value)
+    return value
+
+
+def parse_set_overrides(pairs: list[str]) -> dict[str, object]:
+    """`key=value` strings (the `--set` flag) → override mapping; a value that
+    parses as YAML/JSON (numbers, lists, `{a: 1}`) is taken as such."""
+    out: dict[str, object] = {}
+    for pair in pairs:
+        key, sep, raw = pair.partition("=")
+        if not sep or not key.strip():
+            raise ValueError(f"--set expects key=value, got {pair!r}")
+        try:
+            value = yaml.safe_load(raw)
+        except yaml.YAMLError:
+            value = raw
+        out[key.strip()] = raw if isinstance(value, str) or value is None else value
+    return out

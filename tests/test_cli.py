@@ -421,7 +421,7 @@ def test_bare_invocation_prints_banner_and_command_list(capsys):
     out = capsys.readouterr().out
     assert BANNER_LINES[0] in out
     assert "Usage: hillclimb" in out
-    for command in ("run", "status", "watch", "knowledge", "bench"):
+    for command in ("run", "status", "watch", "knowledge", "experiment"):
         assert command in out
 
 

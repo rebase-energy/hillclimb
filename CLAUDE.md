@@ -65,6 +65,13 @@ off stdout — agent code shares that stream.
   owns only `propose`/`observe`; it must stay replay-deterministic — the
   openevolve policy seeds/restores the global RNG around every OpenEvolve call
   because that library samples via the `random` module
+- Experiments (`experiment.py`): a spec (`hillclimb/experiments/<name>.yaml`)
+  is problems × named arms (dotted config overrides, `Config.apply_overrides`)
+  × repeats; searches are tagged in `SearchMeta` (`experiment`, `arm`,
+  `repeat`, `arm_overrides`) and the report groups on those tags through the
+  store — the first arm is the control, gaps are paired by repeat and judged
+  against the spec's `noise_floor`. Sequential schedule (repeat-major, arms
+  round-robin) is mandatory when an arm touches shared state (memory)
 - CLI: `uv run hillclimb --help` (engine); live TUIs: `watch` (agents; `watch candidates` jumps to a search),
   `chart` (best score vs time per search; `--detail`/`d` overlays one search's
   exploration tree on the curve), `tree` (one search's exploration tree —

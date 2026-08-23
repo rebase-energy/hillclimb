@@ -31,12 +31,21 @@ from hillclimb.store import DataStore, FileDataStore, SearchRecord, key_for, ope
 MAX_CURVES = 8
 
 
+# plotui's line palette, mirrored so curves of one experiment arm can share
+# a colour (repeats) while arms differ — the chart's "colour by arm"
+ARM_PALETTE = (
+    (57, 135, 229), (25, 158, 112), (201, 133, 0), (0, 131, 0),
+    (144, 133, 233), (230, 103, 103), (213, 81, 129), (217, 89, 38),
+)
+
+
 @dataclass
 class Curve:
     label: str
     state: str
     xs: list[float] = field(default_factory=list)  # minutes since the search started
     ys: list[float] = field(default_factory=list)  # best-so-far val score
+    arm: str | None = None  # experiment arm, when the search is one
 
     @property
     def best(self) -> float | None:
@@ -88,13 +97,28 @@ def curve_from_candidates(
 
 
 def _record_curve(store: DataStore, record: SearchRecord, label: str) -> Curve:
-    return curve_from_candidates(
+    curve = curve_from_candidates(
         list(Journal(store.journal(record.key)).candidates.values()),
         label=label,
         state=record.state,
         higher_is_better=bool(record.meta.higher_is_better),
         started_at=record.meta.started_at,
     )
+    curve.arm = record.meta.arm if record.meta.experiment else None
+    return curve
+
+
+def curve_label(record: SearchRecord, per_run: dict[str, int]) -> str:
+    """Run name (what the user chose), plus the search id when the run holds
+    several searches on the problem; an experiment search is its arm and
+    repeat instead — the comparison the chart is then drawing."""
+    meta = record.meta
+    if meta.experiment and meta.arm:
+        return f"{meta.arm} r{meta.repeat}" if meta.repeat else meta.arm
+    label = record.run_name
+    if per_run.get(record.run_id, 0) > 1:
+        label += f"/{record.search_id}"
+    return label
 
 
 def climb_curve(search_dir: Path, label: str | None = None, meta: SearchMeta | None = None) -> Curve:
@@ -123,13 +147,7 @@ def climb_curves(store: DataStore | Path, problem_key: str, limit: int = MAX_CUR
     per_run: dict[str, int] = {}
     for record in records:
         per_run[record.run_id] = per_run.get(record.run_id, 0) + 1
-    curves = []
-    for record in records[-limit:]:
-        label = record.run_name
-        if per_run[record.run_id] > 1:
-            label += f"/{record.search_id}"
-        curves.append(_record_curve(store, record, label))
-    return curves
+    return [_record_curve(store, record, curve_label(record, per_run)) for record in records[-limit:]]
 
 
 @dataclass(frozen=True)
@@ -243,9 +261,17 @@ from hillclimb.theme import HILLCLIMB_CSS, apply_theme  # noqa: E402
 from hillclimb.watch import STATE_STYLE, LiveScreen  # noqa: E402
 
 
+def curve_colors(curves: list[Curve]) -> list[tuple[int, int, int] | None]:
+    """A colour per curve: curves of the same experiment arm share one, so an
+    arm's repeats read as one family against the others; curves without an
+    arm (None) take plotui's next palette slot as before."""
+    arms = list(dict.fromkeys(c.arm for c in curves if c.arm))
+    return [ARM_PALETTE[arms.index(c.arm) % len(ARM_PALETTE)] if c.arm else None for c in curves]
+
+
 def build_plot(curves: list[Curve]) -> Plot:
     plot = Plot()
-    for curve in curves:
+    for curve, color in zip(curves, curve_colors(curves)):
         if not curve.xs:
             continue
         xs = list(curve.xs)
@@ -255,7 +281,7 @@ def build_plot(curves: list[Curve]) -> Plot:
             # the first candidate is visible the moment it lands
             xs.append(xs[0] + 0.1)
             ys.append(ys[0])
-        plot.add_line(xs, ys, name=curve.label)
+        plot.add_line(xs, ys, color=color, name=curve.label)
     return plot
 
 

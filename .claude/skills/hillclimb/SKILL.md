@@ -120,8 +120,9 @@ uv run hillclimb knowledge distill [search]     # claims pass for one search (--
 uv run hillclimb knowledge consolidate          # sleep phase: generalize claims + rewrite playbooks (agent calls)
 uv run hillclimb knowledge query "<terms>"      # read-only memory lookup (no agent calls)
 uv run hillclimb knowledge show <target>        # prior-experience block a new search would get
-uv run hillclimb bench run <problem> --pairs 1 --budget 10m  # learning on/off A/B (2 real searches per pair)
-uv run hillclimb bench report                   # compare the arms on holdout
+uv run hillclimb experiment run <spec> [--dry-run] [--parallel]  # arms × problems × repeats (real searches; --dry-run lists jobs)
+uv run hillclimb experiment report [spec]       # compare the arms on holdout, gap vs control judged against the noise floor
+uv run hillclimb run <problem> --set search.policy=openevolve --experiment E --arm A  # one arm by hand (counts in the report)
 ```
 
 ## Rules
