@@ -1577,7 +1577,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
     SearchesScreen #search-candidates { min-height: 6; }
     SearchesScreen #search-tree { min-height: 6; }
     SearchesScreen #search-scrubber { height: 2; background: $surface; padding: 0 1; }
-    SearchesScreen #search-node-detail { dock: right; width: 48; display: none; padding: 0 1; }
+    SearchesScreen #search-node-detail { dock: right; width: 80; display: none; padding: 0 1; }
     """
 
     def __init__(self, config: Config, run_dir: Path, run_name: str):
@@ -1791,7 +1791,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         detail.clear()
         from hillclimb.treeview import NODE_DETAIL_WIDTH
 
-        # fit the dock: RichLog's default min_width (78) would h-scroll at 48
+        # fit the dock: RichLog's default min_width is unrelated to the dock width
         for renderable in candidate_detail_renderables(record, journal, node_id):
             detail.write(renderable, width=NODE_DETAIL_WIDTH - 3, expand=True)
         detail.styles.display = "block"

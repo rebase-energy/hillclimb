@@ -456,7 +456,7 @@ class TreeKeys(GraphKeys):
     ]
 
 
-NODE_DETAIL_WIDTH = 48  # the slide-out detail dock; content renders to fit it
+NODE_DETAIL_WIDTH = 80  # the slide-out detail dock; content renders to fit it
 
 
 class TreeScreen(LiveScreen):
@@ -486,7 +486,7 @@ class TreeScreen(LiveScreen):
 
     DEFAULT_CSS = """
     TreeScreen #treeline { height: 1; padding: 0 1; background: $surface; }
-    TreeScreen #node-detail { dock: right; width: 48; display: none; padding: 0 1; }
+    TreeScreen #node-detail { dock: right; width: 80; display: none; padding: 0 1; }
     TreeScreen #tree-stage { width: 1fr; height: 1fr; }
     TreeScreen #time-scrubber { height: 2; background: $surface; padding: 0 1; }
     TreeScreen #tree-canvas { width: 1fr; height: 1fr; }
@@ -608,7 +608,7 @@ class TreeScreen(LiveScreen):
             detail.styles.display = "none"
             return
         detail.clear()
-        # render at the dock's content width (48 minus padding and scrollbar):
+        # render at the dock's content width (its width minus padding and scrollbar):
         # RichLog's default min_width is 78, which forces horizontal scroll
         width = NODE_DETAIL_WIDTH - 3
         for renderable in candidate_detail_renderables(self._record, self._journal, node_id):
