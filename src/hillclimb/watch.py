@@ -1082,11 +1082,14 @@ class ResizableDetail:
         screen_height = self.size.height or DETAIL_DEFAULT_HEIGHT
         return max(DETAIL_MIN_HEIGHT, screen_height - DETAIL_RESERVED_ROWS)
 
-    def _fit_detail_height(self) -> int:
+    def _fit_detail_height(self, max_table_rows: int | None = None) -> int:
         """As tall as the detail can be while the whole table above stays
-        visible: its header, every row, and a horizontal scrollbar if shown."""
+        visible: its header, every row, and a horizontal scrollbar if shown.
+        `max_table_rows` caps how many rows the table keeps — the rest
+        scroll behind the panel."""
         table = self.query_one(self.TABLE_WIDGET, DataTable)
-        table_rows = 1 + table.row_count + (1 if table.show_horizontal_scrollbar else 0)
+        rows = table.row_count if max_table_rows is None else min(table.row_count, max_table_rows)
+        table_rows = 1 + rows + (1 if table.show_horizontal_scrollbar else 0)
         screen_height = self.size.height or DETAIL_DEFAULT_HEIGHT
         return self._clamp_detail_height(screen_height - DETAIL_CHROME_ROWS - table_rows)
 
@@ -1703,7 +1706,8 @@ class SearchesScreen(ResizableDetail, LiveScreen):
             self._close_panel()
         self.DETAIL_WIDGET = "#search-tree"
         self._tree_open = True
-        self._detail_height = self._fit_detail_height()
+        # all the room the searches leave; past 8 searches the tree wins
+        self._detail_height = self._fit_detail_height(max_table_rows=8)
         self._set_detail_visible(True)
         self.query_one("#search-scrubber").styles.display = "block"
         self._render_tree()

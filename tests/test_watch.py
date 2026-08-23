@@ -637,6 +637,8 @@ async def test_t_opens_the_tree_panel_and_follows_the_cursor(tmp_path: Path):
         await pilot.pause()
         tree = app.screen.query_one("#search-tree")
         assert str(tree.styles.display) != "none"
+        # opens as tall as the searches allow (2 searches: fit under both)
+        assert app.screen._detail_height == app.screen._fit_detail_height(max_table_rows=8)
         first_ids = {n.id for n in tree._tree.nodes}
         await pilot.press("down")  # cursor to the second search: the tree follows
         await pilot.pause()
@@ -670,6 +672,28 @@ async def test_t_opens_the_tree_panel_and_follows_the_cursor(tmp_path: Path):
         assert str(tree.styles.display) == "none"
         assert str(scrubber.styles.display) == "none"
         assert str(detail.styles.display) == "none"
+
+
+@pytest.mark.asyncio
+async def test_tree_panel_caps_the_searches_table_at_eight_rows(tmp_path: Path):
+    _, config = make_demo_search(tmp_path, "cap-run")
+    for i in range(11):  # 12 searches in all
+        make_run_with_search(
+            tmp_path / "runs", "cap-run",
+            SearchStatus(search_id=f"cp-{i:02d}", run_id="cap-run", state="done"),
+            search_id=f"cp-{i:02d}",
+        )
+    app = WatchApp(config)
+    async with app.run_test(size=(120, 32)) as pilot:
+        await pilot.press("enter")
+        await pilot.press("t")
+        await pilot.pause()
+        screen = app.screen
+        table = screen.query_one("#searches")
+        assert table.row_count == 12
+        hbar = 1 if table.show_horizontal_scrollbar else 0
+        # the tree takes everything past 8 table rows (+ header + chrome)
+        assert screen._detail_height == 32 - 4 - (1 + 8 + hbar)
 
 
 @pytest.mark.asyncio
