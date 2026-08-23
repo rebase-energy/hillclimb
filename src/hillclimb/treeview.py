@@ -456,7 +456,13 @@ class TreeKeys(GraphKeys):
     ]
 
 
-NODE_DETAIL_WIDTH = 80  # the slide-out detail dock; content renders to fit it
+NODE_DETAIL_WIDTH = 80  # the slide-out detail dock's widest; capped at half the screen
+
+
+def node_detail_width(screen_width: int) -> int:
+    """As wide as the detail can be without starving the canvas: up to 80
+    columns, never more than half the screen."""
+    return min(NODE_DETAIL_WIDTH, max(40, screen_width // 2))
 
 
 class TreeScreen(LiveScreen):
@@ -608,11 +614,12 @@ class TreeScreen(LiveScreen):
             detail.styles.display = "none"
             return
         detail.clear()
-        # render at the dock's content width (its width minus padding and scrollbar):
+        # render at the dock's content width (minus padding and scrollbar):
         # RichLog's default min_width is 78, which forces horizontal scroll
-        width = NODE_DETAIL_WIDTH - 3
+        width = node_detail_width(self.size.width)
+        detail.styles.width = width
         for renderable in candidate_detail_renderables(self._record, self._journal, node_id):
-            detail.write(renderable, width=width, expand=True)
+            detail.write(renderable, width=width - 3, expand=True)
         detail.styles.display = "block"
 
     # -- messages --

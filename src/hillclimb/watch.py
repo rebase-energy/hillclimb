@@ -1789,11 +1789,13 @@ class SearchesScreen(ResizableDetail, LiveScreen):
             return
         journal = Journal(self.store.journal(record.key))
         detail.clear()
-        from hillclimb.treeview import NODE_DETAIL_WIDTH
+        from hillclimb.treeview import node_detail_width
 
-        # fit the dock: RichLog's default min_width is unrelated to the dock width
+        # fit the dock: RichLog's default min_width (78) is unrelated to it
+        width = node_detail_width(self.size.width)
+        detail.styles.width = width
         for renderable in candidate_detail_renderables(record, journal, node_id):
-            detail.write(renderable, width=NODE_DETAIL_WIDTH - 3, expand=True)
+            detail.write(renderable, width=width - 3, expand=True)
         detail.styles.display = "block"
 
     def on_tree_plot_widget_node_selected(self, message) -> None:
