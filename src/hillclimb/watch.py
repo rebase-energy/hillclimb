@@ -1607,7 +1607,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
 
         yield TreePlotWidget(id="search-tree")
         yield TimeScrubber(id="search-scrubber")
-        yield RichLog(id="search-node-detail", wrap=True, markup=False, auto_scroll=False)
+        yield RichLog(id="search-node-detail", wrap=True, markup=False, auto_scroll=False, min_width=1)
         yield Footer()
 
     def on_mount(self) -> None:
@@ -1789,8 +1789,11 @@ class SearchesScreen(ResizableDetail, LiveScreen):
             return
         journal = Journal(self.store.journal(record.key))
         detail.clear()
+        from hillclimb.treeview import NODE_DETAIL_WIDTH
+
+        # fit the dock: RichLog's default min_width (78) would h-scroll at 48
         for renderable in candidate_detail_renderables(record, journal, node_id):
-            detail.write(renderable)
+            detail.write(renderable, width=NODE_DETAIL_WIDTH - 3, expand=True)
         detail.styles.display = "block"
 
     def on_tree_plot_widget_node_selected(self, message) -> None:

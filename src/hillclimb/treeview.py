@@ -103,12 +103,12 @@ def build_tree_plot(tree: SearchTree, *, selected: str | None = None, frame: Sea
     pan are the caller's to restore. `frame` pins the view to another tree's
     extent (the live tree, while scrubbing), so drawing a subset of its
     nodes does not re-centre the picture."""
-    from plotui import Plot
+    from hillclimb.theme import themed_plot
 
     ids = [n.id for n in tree.nodes]
     index_of = {node_id: i for i, node_id in enumerate(ids)}
     on_path = set(tree.accepted)
-    plot = Plot()
+    plot = themed_plot()
     plot.set_show_box(False)
     plot.set_camera_state(0.0, 0.0, 1.0, 0.0, 0.0)
     extent = tree_extent(frame) if frame is not None else None
@@ -248,7 +248,7 @@ from hillclimb.graphview import GraphKeys, TimeScrubber, place_labels_by_node  #
 from hillclimb.header import HillclimbHeader, TimezoneMixin  # noqa: E402
 from hillclimb.journal import Journal  # noqa: E402
 from hillclimb.store import DataStore, SearchRecord, open_store, resolve_search  # noqa: E402
-from hillclimb.theme import HILLCLIMB_CSS, apply_theme  # noqa: E402
+from hillclimb.theme import HILLCLIMB_CSS, apply_theme, themed_plot  # noqa: E402
 from hillclimb.tree import build_tree, candidates_until, tree_events  # noqa: E402
 from hillclimb.watch import (  # noqa: E402
     LiveScreen, candidate_detail_renderables, _mouse_event_x, _mouse_event_y,
@@ -279,7 +279,7 @@ class TreePlotWidget(PlotWidget):
             self.entry = entry
 
     def __init__(self, **kwargs):
-        super().__init__(Plot(), **kwargs)
+        super().__init__(themed_plot(), **kwargs)
         self.selected: str | None = None
         self.hidden: frozenset[str] = frozenset()
         self._tree: SearchTree | None = None      # unfiltered (legend counts)
@@ -456,6 +456,9 @@ class TreeKeys(GraphKeys):
     ]
 
 
+NODE_DETAIL_WIDTH = 48  # the slide-out detail dock; content renders to fit it
+
+
 class TreeScreen(LiveScreen):
     """Canvas + time scrubber + candidate detail for one search. Reached via
     `hillclimb tree [search]`."""
@@ -505,7 +508,7 @@ class TreeScreen(LiveScreen):
     def compose(self) -> ComposeResult:
         yield HillclimbHeader()
         yield Label(id="treeline")
-        yield RichLog(id="node-detail", wrap=True, markup=False, auto_scroll=False)
+        yield RichLog(id="node-detail", wrap=True, markup=False, auto_scroll=False, min_width=1)
         with Vertical(id="tree-stage"):
             yield TreePlotWidget(id="tree-canvas")
             yield TimeScrubber(id="time-scrubber")
@@ -605,8 +608,11 @@ class TreeScreen(LiveScreen):
             detail.styles.display = "none"
             return
         detail.clear()
+        # render at the dock's content width (48 minus padding and scrollbar):
+        # RichLog's default min_width is 78, which forces horizontal scroll
+        width = NODE_DETAIL_WIDTH - 3
         for renderable in candidate_detail_renderables(self._record, self._journal, node_id):
-            detail.write(renderable)
+            detail.write(renderable, width=width, expand=True)
         detail.styles.display = "block"
 
     # -- messages --

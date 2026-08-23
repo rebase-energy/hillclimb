@@ -662,6 +662,8 @@ async def test_t_opens_the_tree_panel_and_follows_the_cursor(tmp_path: Path):
         tree.selected = "c001"
         app.screen._show_node_detail("c001")
         assert str(detail.styles.display) == "block"
+        await pilot.pause()
+        assert detail.max_scroll_x == 0  # content fits the dock: no horizontal scroll
         await pilot.press("escape")  # first escape: deselect/hide the detail, tree stays
         await pilot.pause()
         assert str(detail.styles.display) == "none"

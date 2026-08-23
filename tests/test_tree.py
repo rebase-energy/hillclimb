@@ -321,6 +321,7 @@ async def test_tree_app_mounts_selects_scrubs_and_opens(tree_workspace):
         await pilot.pause()
         assert canvas.selected == "c007"
         assert app.screen.query_one("#node-detail").styles.display == "block"
+        assert app.screen.query_one("#node-detail").max_scroll_x == 0  # fits the dock
         # scrub one tick back: the last landed result drops out
         await pilot.press("j")
         await pilot.pause()
