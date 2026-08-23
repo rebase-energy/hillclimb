@@ -1212,7 +1212,7 @@ class CandidateScreen(ResizableDetail, LiveScreen):
     }
     CandidateScreen #candidate-detail {
         min-height: 6;
-        padding: 0 1;
+        padding: 0 0 0 1;  /* no right padding: the scrollbar sits flush at the edge, like the table's */
     }
     CandidateScreen #searchline { height: 1; padding: 0 1; background: $surface; }
     """
