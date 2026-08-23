@@ -80,7 +80,7 @@ class SearchRow:
     candidates: str  # "7 (5 ok)"
     best_val: str
     selected: str
-    budget_left: str
+    duration: str  # time spent so far, ticking while running, with the budget alongside
 
 
 @dataclass
@@ -109,6 +109,28 @@ def _fmt_tokens(total: int | None) -> str:
     if total < 1_000_000:
         return f"{total / 1000:.1f}k"
     return f"{total / 1_000_000:.2f}M"
+
+
+def _format_budget_total(seconds: float) -> str:
+    """A budget as it was given: `10m`, `1h 30m`, `1m 30s` — zero parts dropped."""
+    total = max(0, int(seconds))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    parts = [f"{hours}h" if hours else "", f"{minutes}m" if minutes else "", f"{secs}s" if secs else ""]
+    return " ".join(p for p in parts if p) or "0s"
+
+
+def _format_duration(spent_s: float | None, total_s: float | None) -> str:
+    """`4m 07s (budget: 10m)`: what has been spent, counting up while the
+    search runs, next to the budget it was given — so a search that stopped
+    early reads as "used 4 of 10 minutes" rather than a countdown stuck
+    short of zero."""
+    if spent_s is None:
+        return "-"
+    text = _format_budget_left(spent_s)
+    if total_s:
+        text += f" (budget: {_format_budget_total(total_s)})"
+    return text
 
 
 def _format_budget_left(seconds: float | None) -> str:
@@ -186,9 +208,11 @@ def _search_row(store: DataStore, record: SearchRecord) -> SearchRow:
             if status.selected
             else "-"
         )
-        budget_left = _format_budget_left(live_remaining_s(status, state))
+        duration = _format_duration(
+            status.budget.total_s - live_remaining_s(status, state), status.budget.total_s
+        )
     else:
-        best_val, selected, budget_left = "-", "-", "-"
+        best_val, selected, duration = "-", "-", "-"
     return SearchRow(
         search_id=search_dir.name,
         problem=meta.problem_id,
@@ -198,7 +222,7 @@ def _search_row(store: DataStore, record: SearchRecord) -> SearchRow:
         candidates=f"{len(journal.candidates)} ({n_ok} ok)",
         best_val=best_val,
         selected=selected,
-        budget_left=budget_left,
+        duration=duration,
     )
 
 
@@ -1526,7 +1550,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
             "candidates",
             "best val",
             "selected",
-            "budget left",
+            "duration",
         )
         panel = self.query_one("#search-candidates", DataTable)
         panel.add_columns("candidate", "operator", "status", "val", "hold", "marks", "summary")
@@ -1544,7 +1568,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
             state = Text(row.state, style=STATE_STYLE.get(row.state, ""))
             table.add_row(
                 row.search_id, row.problem, row.model, row.tokens, state, row.candidates,
-                row.best_val, row.selected, row.budget_left, key=row.search_id,
+                row.best_val, row.selected, row.duration, key=row.search_id,
             )
         _restore_table(table, snapshot)
         if self._panel_search_id is not None:

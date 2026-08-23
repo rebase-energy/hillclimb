@@ -819,6 +819,18 @@ async def test_candidate_table_scrollbar_switches_resize_then_scroll_in_one_drag
         await pilot.mouse_up(offset=(hbar.region.x + 12, hbar.region.y - 3))
 
 
+def test_search_duration_counts_up_with_the_budget_alongside():
+    from hillclimb.watch import _format_budget_total, _format_duration
+
+    assert _format_budget_total(600) == "10m"
+    assert _format_budget_total(5400) == "1h 30m"
+    assert _format_budget_total(90) == "1m 30s"
+    assert _format_duration(247.9, 600) == "4m 07s (budget: 10m)"
+    assert _format_duration(600, 600) == "10m 00s (budget: 10m)"
+    assert _format_duration(12, 0) == "0m 12s"  # no budget declared
+    assert _format_duration(None, 600) == "-"
+
+
 def test_budget_left_shows_seconds():
     from hillclimb.watch import _format_budget_left
 
