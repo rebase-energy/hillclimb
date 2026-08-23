@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import typer
 
-from hillclimb.cli import BANNER_LINES, _run_problem, _run_suite, resolve_search_dir
+from hillclimb.cli import BANNER_LINES, WORDMARK_LINES, _run_problem, _run_suite, resolve_search_dir
 from hillclimb.cli import main as cli_main
 from hillclimb.run import (
     RunMeta,
@@ -419,7 +419,7 @@ def test_bare_invocation_prints_banner_and_command_list(capsys):
         cli_main([])
     assert exc.value.code == 0
     out = capsys.readouterr().out
-    assert BANNER_LINES[0] in out
+    assert WORDMARK_LINES[0] in out
     assert "Usage: hillclimb" in out
     for command in ("run", "status", "watch", "knowledge", "experiment"):
         assert command in out
@@ -430,7 +430,7 @@ def test_help_flags_print_the_banner_too(capsys):
         with pytest.raises(SystemExit) as exc:
             cli_main([flag])
         assert exc.value.code == 0
-        assert BANNER_LINES[0] in capsys.readouterr().out
+        assert WORDMARK_LINES[0] in capsys.readouterr().out
 
 
 def test_subcommand_help_skips_the_banner(capsys):
@@ -438,12 +438,20 @@ def test_subcommand_help_skips_the_banner(capsys):
         cli_main(["run", "--help"])
     assert exc.value.code == 0
     out = capsys.readouterr().out
-    assert BANNER_LINES[0] not in out
+    assert WORDMARK_LINES[0] not in out
     assert "Usage: hillclimb run" in out
 
 
 def test_banner_lines_are_uniform_width():
     assert len({len(line) for line in BANNER_LINES}) == 1
+    assert len({len(line) for line in WORDMARK_LINES}) == 1
+
+
+def test_wide_terminal_prints_the_mark(monkeypatch, capsys):
+    monkeypatch.setenv("COLUMNS", "120")
+    with pytest.raises(SystemExit):
+        cli_main([])
+    assert BANNER_LINES[0] in capsys.readouterr().out
 
 
 def test_legacy_parallel_agents_key_maps_to_parallel_operators():

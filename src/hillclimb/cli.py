@@ -101,16 +101,17 @@ app = typer.Typer(
 # the command and option columns below it, so the whole help screen reads as
 # one palette.
 BANNER_STYLE = "bold cyan"
-# Abstract ridge-line mark to the right of the wordmark, in the same
-# ANSI-shadow style as the letters. Both peaks and all three low points each
-# lie on a line rising to the right, so the whole mark climbs.
+# Rising-trend arrow to the right of the wordmark, in the same ANSI-shadow
+# style as the letters: a climb, a small dip, then a climb into the arrowhead.
+# Diagonals step one column per row so adjacent cells share an edge, not just
+# a corner; that needs all six banner rows, so the mark has no bottom shadow.
 LOGO_LINES = [
-    "                ██╗    ",
-    "      ██╗     ██╔═██╗  ",
-    "    ██╔═██╗ ██╔═╝ ╚═██╗",
-    "  ██╔═╝ ╚═██╔═╝     ╚═╝",
-    "██╔═╝     ╚═╝          ",
-    "╚═╝                    ",
+    "        ██████╗",
+    "    ██╗ ╚═████║",
+    "   ████╗ ██╔██║",
+    "  ██╔═████╔╝╚═╝",
+    " ██╔╝ ╚██╔╝    ",
+    "██╔╝   ╚═╝     ",
 ]
 WORDMARK_LINES = [
     "██╗  ██╗ ██╗ ██╗      ██╗       ██████╗ ██╗      ██╗ ███╗   ███╗ ██████╗ ",
