@@ -439,6 +439,34 @@ def test_open_in_file_manager_uses_the_desktop_opener(tmp_path: Path, monkeypatc
     assert calls[0][0] in ("open", "xdg-open")
 
 
+def test_scrollbars_are_whole_cell_and_one_wide():
+    from textual.scrollbar import ScrollBar
+
+    from hillclimb.theme import WholeCellScrollBarRender
+
+    assert ScrollBar.renderer is WholeCellScrollBarRender
+    # a fractional position: the stock renderer would draw ▁/▃ partial cells
+    segments = WholeCellScrollBarRender.render_bar(
+        size=10, virtual_size=37, window_size=10, position=7.3, thickness=1, vertical=True
+    ).segments
+    assert {s.text for s in segments} == {" "}
+    thumb = [s for s in segments if s.style.reverse]
+    assert 1 <= len(thumb) < 10  # a real thumb, not the whole track
+
+
+@pytest.mark.asyncio
+async def test_detail_and_table_scrollbars_are_one_cell(tmp_path: Path):
+    search_dir, config = make_demo_search(tmp_path, "bar-run")
+    app = WatchApp(config)
+    async with app.run_test(size=(80, 20)) as pilot:
+        await pilot.press("enter")
+        await pilot.press("o")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.screen.query_one("#candidates").styles.scrollbar_size_vertical == 1
+        assert app.screen.query_one("#candidate-detail").styles.scrollbar_size_vertical == 1
+
+
 def test_stream_tail(tmp_path: Path):
     (tmp_path / "agent_stream.jsonl").write_text(
         json.dumps({"type": "system", "subtype": "init", "session_id": "s"}) + "\n"

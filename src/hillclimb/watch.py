@@ -1308,7 +1308,7 @@ class CandidateScreen(ResizableDetail, LiveScreen):
         # shown and has no (or a stale) layout width, and Textual would render
         # the first paint narrow until the next refresh re-wrote it.
         # 4 = screen margins + the log's `padding: 0 1`.
-        width = max(20, self.size.width - 4 - (2 if detail.show_vertical_scrollbar else 0))
+        width = max(20, self.size.width - 4 - (detail.scrollbar_size_vertical if detail.show_vertical_scrollbar else 0))
         renderables = candidate_detail_renderables(self._record(), journal, self._detail_candidate_id)
         # Only rewrite the log when the rendered content changed. A clear +
         # rewrite every live tick flashes the log's tail for a frame before

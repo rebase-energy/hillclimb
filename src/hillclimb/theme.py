@@ -18,6 +18,7 @@ object. `HILLCLIMB_CSS` goes on each App as its `CSS`.
 
 from __future__ import annotations
 
+from textual.scrollbar import ScrollBar, ScrollBarRender
 from textual.app import App
 from textual.theme import Theme
 
@@ -44,8 +45,35 @@ HILLCLIMB_THEME = Theme(
 # focus makes the page flicker between two greys. The website keeps one flat
 # page color and lifts only thin chrome bars, so do that here: content sits
 # on the background and stays put when focused.
+class WholeCellScrollBarRender(ScrollBarRender):
+    """Scrollbar thumb snapped to whole cells. Textual positions the thumb
+    with sub-cell precision and draws its fractional ends with eighth-block
+    glyphs (▁▂▃…) in thumb-on-track colours — at a 1-2 cell width that
+    reads as a second, smaller rectangle stuck to the thumb. With one glyph
+    per table the start/end remainders are always 0, so every cell is either
+    all thumb or all track."""
+
+    VERTICAL_BARS = [" "]
+    HORIZONTAL_BARS = [" "]
+
+
+# every ScrollBar in the process (all hillclimb TUIs share this module)
+ScrollBar.renderer = WholeCellScrollBarRender
+
+
 HILLCLIMB_CSS = """
 Screen { background: $background; }
+
+/* scrollbars: one cell wide, a crisp thumb on an invisible track */
+* {
+    scrollbar-size-vertical: 1;
+    scrollbar-background: $background;
+    scrollbar-background-hover: $background;
+    scrollbar-background-active: $background;
+    scrollbar-color: $primary-darken-1;
+    scrollbar-color-hover: $primary;
+    scrollbar-color-active: $primary-lighten-1;
+}
 
 DataTable, RichLog, OptionList {
     background: $background;
