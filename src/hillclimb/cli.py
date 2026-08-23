@@ -96,12 +96,23 @@ app = typer.Typer(
     context_settings={"help_option_names": ["--help", "-h"]},
 )
 
-# ANSI-shadow "HILLCLIMB", printed above the command list on a bare `hillclimb`
+# Ridge-line mark + ANSI-shadow "HILLCLIMB", printed above the command list on a bare `hillclimb`
 # and on `--help`, the way `rebase` fronts the toolkit CLI. Same bold cyan as
 # the command and option columns below it, so the whole help screen reads as
 # one palette.
 BANNER_STYLE = "bold cyan"
-BANNER_LINES = [
+# Abstract ridge-line mark to the right of the wordmark, in the same
+# ANSI-shadow style as the letters. Both peaks and all three low points each
+# lie on a line rising to the right, so the whole mark climbs.
+LOGO_LINES = [
+    "                ██╗    ",
+    "      ██╗     ██╔═██╗  ",
+    "    ██╔═██╗ ██╔═╝ ╚═██╗",
+    "  ██╔═╝ ╚═██╔═╝     ╚═╝",
+    "██╔═╝     ╚═╝          ",
+    "╚═╝                    ",
+]
+WORDMARK_LINES = [
     "██╗  ██╗ ██╗ ██╗      ██╗       ██████╗ ██╗      ██╗ ███╗   ███╗ ██████╗ ",
     "██║  ██║ ██║ ██║      ██║      ██╔════╝ ██║      ██║ ████╗ ████║ ██╔══██╗",
     "███████║ ██║ ██║      ██║      ██║      ██║      ██║ ██╔████╔██║ ██████╔╝",
@@ -109,20 +120,24 @@ BANNER_LINES = [
     "██║  ██║ ██║ ███████╗ ███████╗ ╚██████╗ ███████╗ ██║ ██║ ╚═╝ ██║ ██████╔╝",
     "╚═╝  ╚═╝ ╚═╝ ╚══════╝ ╚══════╝  ╚═════╝ ╚══════╝ ╚═╝ ╚═╝     ╚═╝ ╚═════╝ ",
 ]
+BANNER_LINES = [f"{word}  {logo}" for logo, word in zip(LOGO_LINES, WORDMARK_LINES)]
 BANNER_WIDTH = max(len(line) for line in BANNER_LINES)
+WORDMARK_WIDTH = max(len(line) for line in WORDMARK_LINES)
 
 
 def print_banner() -> None:
-    """Print the wordmark, or a plain-text fallback in a terminal too narrow for it."""
+    """Print the mark + wordmark; drop the mark, then the art, as the terminal narrows."""
     from rich.console import Console
 
     console = Console(highlight=False)
     console.print()
-    if console.width < BANNER_WIDTH:
-        console.print("hillclimb", style=BANNER_STYLE)
-        console.print()
-        return
-    for line in BANNER_LINES:
+    if console.width >= BANNER_WIDTH:
+        lines = BANNER_LINES
+    elif console.width >= WORDMARK_WIDTH:
+        lines = WORDMARK_LINES
+    else:
+        lines = ["hillclimb"]
+    for line in lines:
         console.print(line, style=BANNER_STYLE)
     console.print()
 
@@ -258,6 +273,45 @@ def scaffold_hillclimb_dir(root: Path) -> Path:
     if ignore_line not in existing_ignore.splitlines():
         gitignore.write_text(existing_ignore.rstrip("\n") + ("\n" if existing_ignore else "") + ignore_line + "\n")
     return folder
+
+
+@app.command()
+def fetch(
+    problem: str = typer.Argument("circle-packing", help="A bundled problem id (today: circle-packing)"),
+):
+    """Fetch a ready-made problem into hillclimb/problems/.
+
+    Creates the hillclimb/ dir here if there is none, then copies the
+    problem's files in and lists them — read them before you run: the
+    verifier IS the problem. An existing folder is never overwritten.
+    """
+    from hillclimb.demo import DEMO_PROBLEM_ID, install_demo_problem
+    from hillclimb.project import find_hillclimb_dir
+
+    if problem != DEMO_PROBLEM_ID:
+        typer.echo(f"error: no bundled problem {problem!r} (available: {DEMO_PROBLEM_ID})", err=True)
+        raise typer.Exit(1)
+    if find_hillclimb_dir() is None:
+        folder = scaffold_hillclimb_dir(Path.cwd())
+        typer.echo(f"Created hillclimb dir at {folder}")
+    config = load_config()
+    problem_dir, created = install_demo_problem(config.paths.problems_dir)
+    verb = "Fetched" if created else "Already have"
+    typer.echo(f"{verb} {problem} at {problem_dir}")
+    for name, what in PROBLEM_FILES:
+        if (problem_dir / name).exists():
+            typer.echo(f"  {name:<24}— {what}")
+    typer.echo(f"Next: hillclimb verify {problem}   (then: hillclimb run {problem} --budget 10m)")
+
+
+PROBLEM_FILES = (
+    ("problem.yaml", "metric, direction, budget — the problem's identity"),
+    ("description.md", "what the agents read before drafting"),
+    ("verifier.sh", "the ONLY process hillclimb starts: runs solution.py, then the scorer"),
+    ("verify.py", "the scorer — writes the score to $HILLCLIMB_RESULT"),
+    ("sample_submission.csv", "the output format a solution must produce"),
+    ("requirements.txt", "the solution venv"),
+)
 
 
 @app.command()
@@ -1145,6 +1199,10 @@ def run(
     parallel_operators: int = typer.Option(
         None, "--parallel-operators", help="Concurrent operators per search (worker pool)"
     ),
+    parallel_searches: int = typer.Option(
+        1, "--parallel-searches", min=1,
+        help="Independent searches on the problem at once (>1 runs them detached, in the background)",
+    ),
     n_trials: int = typer.Option(
         None, "--n-trials", help="Validation evals per candidate (mean climbs)"
     ),
@@ -1183,6 +1241,15 @@ def run(
             seed_from=seed_from, learning=learning, set_=set_,
         )
         return
+    if parallel_searches > 1:
+        if experiment or run_id or seed_from:
+            raise typer.BadParameter("--parallel-searches does not combine with --experiment/--seed-from")
+        _run_problem_fleet(
+            target, config, budget, parallel_searches, name,
+            backend=backend, model=model, policy=policy, parallel_operators=parallel_operators,
+            n_trials=n_trials, holdout=holdout, learning=learning, set_=set_ or [],
+        )
+        return
     _run_problem(
         target,
         config,
@@ -1195,6 +1262,58 @@ def run(
         repeat=repeat,
         arm_overrides=overrides,
     )
+
+
+def _run_problem_fleet(
+    target: str,
+    config: Config,
+    budget: str | None,
+    parallel_searches: int,
+    name: str | None,
+    *,
+    backend: str | None,
+    model: str | None,
+    policy: str | None,
+    parallel_operators: int | None,
+    n_trials: int | None,
+    holdout: bool,
+    learning: bool,
+    set_: list[str],
+) -> Path:
+    """N independent searches on one problem, each its own detached engine
+    under one run (the demo's shape). Builds the solution venv once first so
+    the engines do not race for it. Returns the run dir."""
+    problem = load_problem(target, config)
+    ensure_runtime_venv(config, problem.runtime, log=typer.echo, requirements=problem.requirements_file)
+    run_name = name or problem.problem_id
+    run_dir = _create_problem_run(config, run_name, target, problem.problem_id)
+    argv = [target, "--run-id", run_dir.name, "--run-name", run_name]
+    if budget:
+        argv += ["--budget", budget]
+    if backend:
+        argv += ["--backend", backend]
+    if model:
+        argv += ["--model", model]
+    if policy:
+        argv += ["--policy", policy]
+    if parallel_operators is not None:
+        argv += ["--parallel-operators", str(parallel_operators)]
+    if n_trials is not None:
+        argv += ["--n-trials", str(n_trials)]
+    if not holdout:
+        argv.append("--no-holdout")
+    if not learning:
+        argv.append("--no-learning")
+    for pair in set_:
+        argv += ["--set", pair]
+    for index in range(1, parallel_searches + 1):
+        _spawn_search(config, run_dir, index, problem.problem_id, argv)
+    operators = parallel_operators if parallel_operators is not None else config.search.parallel_operators
+    typer.echo(
+        f"Run {run_dir.name}: {parallel_searches} searches x {operators} operators "
+        f"running in the background; engine logs in {run_dir / 'logs'}"
+    )
+    return run_dir
 
 
 def _parse_set(pairs: list[str]) -> dict:
@@ -1830,26 +1949,13 @@ def demo(
     if created:
         typer.echo(f"Installed the {DEMO_PROBLEM_ID} problem at {problem_dir}")
     _demo_preflight(config.backend)
-    # build the solution venv once, here, instead of N searches racing for it
-    problem = load_problem(DEMO_PROBLEM_ID, config)
-    ensure_runtime_venv(config, problem.runtime, log=typer.echo, requirements=problem.requirements_file)
-    run_dir = _create_problem_run(config, "demo", DEMO_PROBLEM_ID, DEMO_PROBLEM_ID)
-    argv = [
-        DEMO_PROBLEM_ID, "--run-id", run_dir.name, "--run-name", "demo",
-        "--budget", budget, "--parallel-operators", str(parallel_operators),
-    ]
-    if model:
-        argv += ["--model", model]
-    if backend:
-        argv += ["--backend", backend]
-    for index in range(1, parallel_searches + 1):
-        _spawn_search(config, run_dir, index, DEMO_PROBLEM_ID, argv)
-    _print_demo_intro(config.hillclimb_dir, parallel_searches, parallel_operators, budget)
-    typer.echo(
-        f"Run {run_dir.name}: {parallel_searches} searches x {parallel_operators} operators "
-        f"running in the background; "
-        f"engine logs in {run_dir / 'logs'}"
+    run_dir = _run_problem_fleet(
+        DEMO_PROBLEM_ID, config, budget, parallel_searches, "demo",
+        backend=backend, model=model, policy=None, parallel_operators=parallel_operators,
+        n_trials=None, holdout=True, learning=True, set_=[],
     )
+    _print_demo_intro(config.hillclimb_dir, parallel_searches, parallel_operators, budget)
+    typer.echo(f"Engine logs in {run_dir / 'logs'}")
 
 
 @app.command()

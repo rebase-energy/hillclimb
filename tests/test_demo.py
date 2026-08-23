@@ -132,13 +132,62 @@ def test_demo_launches_parallel_detached_searches(tmp_path, monkeypatch):
         # one run, N searches on the same problem: they share live knowledge
         assert cmd[1:] == [
             "-m", "hillclimb.cli", "run", DEMO_PROBLEM_ID, "--run-id", run_dir.name, "--run-name", "demo",
-            "--budget", "5m", "--parallel-operators", "3", "--model", "haiku", "--backend", "dummy",
+            "--budget", "5m", "--backend", "dummy", "--model", "haiku", "--parallel-operators", "3",
         ]
         assert kwargs["start_new_session"] is True
         assert kwargs["env"]["HILLCLIMB_DIR"] == str(tmp_path / "hillclimb")
         assert kwargs["cwd"] == tmp_path
     assert sorted(p.name for p in (run_dir / "logs").iterdir()) == [
         f"01-{DEMO_PROBLEM_ID}.log", f"02-{DEMO_PROBLEM_ID}.log",
+    ]
+
+
+def test_fetch_installs_the_problem_and_lists_its_files(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
+    monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
+    with pytest.raises(SystemExit) as exc:
+        cli_main(["fetch", DEMO_PROBLEM_ID])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert (tmp_path / "hillclimb" / "problems" / DEMO_PROBLEM_ID / "verifier.sh").exists()
+    assert "Fetched circle-packing" in out and "verifier.sh" in out and "verify.py" in out
+    # fetching again never overwrites
+    with pytest.raises(SystemExit):
+        cli_main(["fetch", DEMO_PROBLEM_ID])
+    assert "Already have" in capsys.readouterr().out
+    with pytest.raises(SystemExit) as exc:
+        cli_main(["fetch", "no-such-problem"])
+    assert exc.value.code == 1
+
+
+def test_run_parallel_searches_spawns_detached_engines(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
+    monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
+    with pytest.raises(SystemExit):
+        cli_main(["fetch", DEMO_PROBLEM_ID])
+    launched = []
+
+    class FakeProc:
+        pid = 4242
+
+    monkeypatch.setattr("hillclimb.cli.ensure_runtime_venv", lambda *a, **k: Path("/py"))
+    monkeypatch.setattr("subprocess.Popen", lambda cmd, **kw: launched.append(cmd) or FakeProc())
+    with pytest.raises(SystemExit) as exc:
+        cli_main([
+            "run", DEMO_PROBLEM_ID, "--budget", "10m",
+            "--parallel-searches", "3", "--parallel-operators", "2", "--backend", "dummy",
+        ])
+    assert exc.value.code == 0
+    assert len(launched) == 3
+    from hillclimb.run import iter_run_dirs, load_run_meta
+
+    (run_dir,) = iter_run_dirs(tmp_path / "hillclimb" / "runs")
+    assert load_run_meta(run_dir).name == DEMO_PROBLEM_ID
+    assert launched[0][3:] == [
+        "run", DEMO_PROBLEM_ID, "--run-id", run_dir.name, "--run-name", DEMO_PROBLEM_ID,
+        "--budget", "10m", "--backend", "dummy", "--parallel-operators", "2",
     ]
 
 

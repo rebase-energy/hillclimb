@@ -18,20 +18,26 @@ The design is deliberately three-layered:
    detail panel for notes, scores, lineage, output, and the timestamped operator stream when present.
    Drag the divider or use `+` / `-` to resize the detail panel.
 
-## Try it in one command
+## Try it in three commands
 
 ```bash
 pip install hillclimb
-claude login       # agents run through the Claude Code CLI and bill your subscription
-hillclimb demo     # agents climb the circle-packing problem, right here
+claude login                   # agents run through the Claude Code CLI and bill your subscription
+hillclimb fetch circle-packing # 1. the problem: a folder you can read — the verifier IS the problem
+hillclimb run circle-packing --budget 10m --parallel-searches 3 --parallel-operators 3   # 2. climb
 ```
 
-`hillclimb demo` creates a `hillclimb/` dir in the current folder, installs
-the bundled circle-packing problem (with a declared one-circle baseline, sum of radii
-0.5, scored at t=0), and starts **six 10-minute searches in parallel, in the
+`hillclimb fetch` creates a `hillclimb/` dir in the current folder and copies
+the bundled circle-packing problem into `hillclimb/problems/` (with a declared
+one-circle baseline, sum of radii 0.5, scored at t=0) — open `verifier.sh`
+and `verify.py` before running anything, that is the whole interface.
+`hillclimb run` then starts **three 10-minute searches in parallel, in the
 background**, all in one run so they share discoveries as they go — your
-prompt comes straight back. It prints the commands worth
-running right there while they climb:
+prompt comes straight back. Parallelism has two levels: `--parallel-searches`
+is how many independent searches climb the problem (each its own engine
+process), `--parallel-operators` how many agents each search keeps busy at
+once (one candidate each). `hillclimb demo` is the same thing as one command.
+While they climb:
 
 ```bash
 hillclimb watch candidates   # one search's candidates: drafting, debugging, improving
@@ -43,7 +49,7 @@ hillclimb chart --detail     # the curve with that tree drawn on it (every score
 ```
 
 `hillclimb stop --all` ends the demo (the best solutions stay in `runs/`); `hillclimb reset` ends it AND deletes this folder's `hillclimb/` dir — only engines pinned to that dir are killed, never another folder's;
-`--parallel-searches N` and `--parallel-operators N` (concurrent operators per search, default 3 each — 9 agents, capped machine-wide by `search.machine_max_operators`) and `--budget 5m` size it, and each search's engine log is
+3 searches x 3 operators is 9 agents, capped machine-wide by `search.machine_max_operators`; each search's engine log is
 under `hillclimb/runs/<run-id>/logs/`.
 
 ## Install (from source)
@@ -565,10 +571,12 @@ the run has a single search), or `latest` (the default).
 
 | command | what it does |
 |---|---|
-| `demo [--budget 10m] [--parallel-searches 3] [--parallel-operators 3]` | try hillclimb in one command: agents climb the bundled circle-packing problem |
+| `fetch [circle-packing]` | copy a bundled problem into `hillclimb/problems/` (creates the `hillclimb/` dir if needed) and list its files |
+| `demo [--budget 10m] [--parallel-searches 3] [--parallel-operators 3]` | `fetch` + `run --parallel-searches` in one command |
 | `init [dir]` | create the `hillclimb/` dir (config, problems/, specs/, runs/) with an example problem |
 | `verify <problem> [--repeat N] [--holdout]` | run a problem's verifier once, outside a search; `--repeat` measures the noise floor |
 | `run <target> [--name ...] [--budget 2h] [--backend ...] [--model ...]` | start a run for one problem or a suite YAML |
+| `run <problem> --parallel-searches N --parallel-operators M` | N independent searches (detached engines, one run) each running M agents at once |
 | `resume [search]` | continue a parked / stopped / crashed search |
 | `status [search]` | search state + candidate tree (text) |
 | `watch` | live TUI over runs, searches, and candidates |
