@@ -664,6 +664,21 @@ async def test_t_opens_the_tree_panel_and_follows_the_cursor(tmp_path: Path):
         assert str(detail.styles.display) == "block"
         await pilot.pause()
         assert detail.max_scroll_x == 0  # content fits the dock: no horizontal scroll
+        # stream entries stay one row each: the long tool line scrolls, not wraps
+        cdir = second / "candidates" / "c777"
+        cdir.mkdir(parents=True, exist_ok=True)
+        (cdir / "agent_stream.jsonl").write_text(json.dumps({
+            "type": "assistant", "ts": "2026-08-24T04:00:00+00:00",
+            "message": {"content": [{"type": "tool_use", "name": "Bash",
+                                     "input": {"command": "x" * 200}}]},
+        }) + "\n")
+        app.screen._show_node_detail("c777")
+        await pilot.pause()
+        assert detail.max_scroll_x > 0  # horizontal overflow, no line break
+
+        app.screen._show_node_detail("c001")
+        tree.selected = "c001"
+        await pilot.pause()
         await pilot.press("escape")  # first escape: deselect/hide the detail, tree stays
         await pilot.pause()
         assert str(detail.styles.display) == "none"

@@ -618,8 +618,13 @@ class TreeScreen(LiveScreen):
         # RichLog's default min_width is 78, which forces horizontal scroll
         width = node_detail_width(self.size.width)
         detail.styles.width = width
+        from hillclimb.watch import StreamPanel
+
         for renderable in candidate_detail_renderables(self._record, self._journal, node_id):
-            detail.write(renderable, width=width - 3, expand=True)
+            if isinstance(renderable, StreamPanel):  # one row per entry; overflow scrolls
+                detail.write(renderable, shrink=False)
+            else:
+                detail.write(renderable, width=width - 3, expand=True)
         detail.styles.display = "block"
 
     # -- messages --

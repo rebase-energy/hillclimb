@@ -98,3 +98,25 @@ def apply_theme(app: App) -> None:
     """Register and select the hillclimb theme — call from an App.on_mount."""
     app.register_theme(HILLCLIMB_THEME)
     app.theme = HILLCLIMB_THEME.name
+
+
+# The website's chart chrome (index.html `.climb-plot`), so a plotui canvas
+# in a hillclimb TUI reads as the same figure: grid and axes that recede into
+# the page, tick labels in the faint ink, data in the site's cyan.
+PLOT_BG = (14, 17, 19)          # #0e1113 — the site's .climb box
+PLOT_GRID = (26, 32, 36)        # #1a2024
+PLOT_FRAME = (43, 50, 55)       # #2b3237
+PLOT_INK = (103, 111, 118)      # #676f76 — --faint
+PLOT_INK_BRIGHT = (144, 153, 160)  # #9099a0 — --muted
+CYAN = (46, 230, 230)           # #2ee6e6 — --cyan
+
+
+def themed_plot():
+    """A plotui Plot with the site's chrome. Falls back to plotui's own
+    palette on a build that predates `set_chrome`."""
+    from plotui import Plot
+
+    plot = Plot()
+    if hasattr(plot, "set_chrome"):
+        plot.set_chrome(bg=PLOT_BG, frame=PLOT_FRAME, grid=PLOT_GRID, ink=PLOT_INK, ink_bright=PLOT_INK_BRIGHT)
+    return plot

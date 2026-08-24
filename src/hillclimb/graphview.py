@@ -32,7 +32,7 @@ from rich.text import Text
 
 from hillclimb.config import Config
 from hillclimb.graph import GraphNode, KnowledgeGraph, fuzzy_match, graph_at
-from hillclimb.theme import HILLCLIMB_CSS, apply_theme
+from hillclimb.theme import HILLCLIMB_CSS, apply_theme, themed_plot
 
 # --- pure data layer ---
 
@@ -338,12 +338,12 @@ def build_plot(vg: VisibleGraph, *, color_by: str = "type", selected: str | None
     """VisibleGraph -> a fresh plotui Plot plus the flat-index -> node-id list
     (a single Graph3d trace, so flat index == node order). Selection is set on
     the plot; camera state is the caller's to restore."""
-    from plotui import Plot
+    from hillclimb.theme import themed_plot
 
     ids = [n.id for n in vg.nodes]
     index_of = {node_id: i for i, node_id in enumerate(ids)}
     latest = max((n.first_seen for n in vg.nodes if n.first_seen), default="")
-    plot = Plot()
+    plot = themed_plot()
     plot.set_show_box(False)  # the axis cube reads as clutter over a graph
     if vg.nodes:
         edges = [e for e in vg.edges if e.src in index_of and e.dst in index_of]
@@ -610,7 +610,7 @@ class GraphPlotWidget(PlotWidget):
             self.type_ = type_
 
     def __init__(self, **kwargs):
-        super().__init__(Plot(), **kwargs)
+        super().__init__(themed_plot(), **kwargs)
         self.color_by = "type"
         self.hidden_types: frozenset[str] = frozenset()
         self.selected: str | None = None

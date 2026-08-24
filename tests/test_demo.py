@@ -292,3 +292,72 @@ def test_budget_margin_scales_with_short_budgets():
 
     assert BudgetManager(600, stop_margin_s=300).stop_margin_s == 60
     assert BudgetManager(7200, stop_margin_s=300).stop_margin_s == 300
+
+
+def test_step_points_hold_each_score_until_the_next():
+    from hillclimb.chart import step_points
+
+    assert step_points([], []) == ([], [])
+    assert step_points([1.0], [2.0]) == ([1.0], [2.0])
+    assert step_points([1.0], [2.0], extent=3.0) == ([1.0, 3.0], [2.0, 2.0])
+    xs, ys = step_points([0.0, 2.0, 5.0], [0.5, 3.0, 3.6], extent=9.0)
+    # flat to each rise, vertical at it, flat to the extent
+    assert xs == [0.0, 2.0, 2.0, 5.0, 5.0, 9.0]
+    assert ys == [0.5, 0.5, 3.0, 3.0, 3.6, 3.6]
+    # an extent before the last x never shortens the line
+    assert step_points([0.0, 4.0], [1.0, 2.0], extent=1.0)[0] == [0.0, 4.0, 4.0]
+
+
+def test_climb_folds_every_search_into_one_staircase(tmp_path):
+    """Three parallel searches are one climb: `best` is judged against what
+    any of them had landed so far, the origin is the earliest start, and the
+    misses are kept as dots."""
+    from hillclimb.chart import climb_for_problem
+
+    runs = tmp_path / "runs"
+    _search(runs, "r1", "demo", [
+        ("2026-08-22T10:02:00+00:00", 1.0),
+        ("2026-08-22T10:06:00+00:00", 1.4),
+    ])
+    _search(runs, "r2", "demo", [
+        ("2026-08-22T10:04:00+00:00", 2.0),   # best of everything so far
+        ("2026-08-22T10:08:00+00:00", 1.9),   # a miss against r2's own 2.0
+    ])
+    climb = climb_for_problem(runs, "p")
+    assert climb.searches == 2
+    assert [(e.x, e.y, e.best) for e in climb.events] == [
+        (2.0, 1.0, True), (4.0, 2.0, True), (6.0, 1.4, False), (8.0, 1.9, False),
+    ]
+    assert climb.best == 2.0
+    assert climb.hits == 2
+    assert climb.extent == 8.0
+    assert climb.staircase() == ([2.0, 4.0, 4.0, 8.0], [1.0, 1.0, 2.0, 2.0])
+    assert climb_for_problem(runs, "other").events == []
+
+
+def test_climb_respects_lower_is_better(tmp_path):
+    from hillclimb.chart import climb_for_problem
+
+    runs = tmp_path / "runs"
+    _search(runs, "r1", "demo", [
+        ("2026-08-22T10:01:00+00:00", 5.0),
+        ("2026-08-22T10:02:00+00:00", 6.0),
+        ("2026-08-22T10:03:00+00:00", 4.0),
+    ], lower=True)
+    assert [e.best for e in climb_for_problem(runs, "p").events] == [True, False, True]
+
+
+def test_build_climb_plot_renders_steps_and_dots(tmp_path):
+    from hillclimb.chart import build_climb_plot, climb_for_problem
+
+    runs = tmp_path / "runs"
+    _search(runs, "r1", "demo", [
+        ("2026-08-22T10:01:00+00:00", 1.0),
+        ("2026-08-22T10:02:00+00:00", 0.5),
+        ("2026-08-22T10:03:00+00:00", 2.0),
+    ])
+    plot = build_climb_plot(climb_for_problem(runs, "p"))
+    assert len(plot.render_rgba(200, 100)) == 200 * 100 * 4
+    # a single scored candidate still draws (a stub line), not a bare point
+    _search(runs, "r2", "solo", [("2026-08-22T10:01:00+00:00", 1.0)])
+    build_climb_plot(climb_for_problem(tmp_path / "runs", "p")).render_rgba(200, 100)

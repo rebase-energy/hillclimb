@@ -1821,10 +1821,12 @@ def chart(
         False, "--detail", "-d", help="One search only, with its exploration tree drawn on the curve"
     ),
 ):
-    """Live hillclimb chart: best score vs minutes into the search.
+    """Live hillclimb chart: best score so far vs minutes into the search.
 
-    One line per search of the same problem, so repeated searches sit on one
-    pair of axes. Refreshes as candidates land. Keys: r=refresh, d=detail
+    One staircase across every search of the problem, every scored candidate
+    a dot (bright where it set a new best, dim where it missed); an
+    experiment gets one line per arm instead. Refreshes as candidates land.
+    Keys: r=refresh, d=detail
     (every scored candidate as a mark, parent edges, accepted lineage bold),
     q=quit.
     """

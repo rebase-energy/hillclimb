@@ -1,9 +1,12 @@
 """`hillclimb chart` — the live hillclimb curve.
 
-Best-so-far validation score against minutes into the search, one line per
-search of the same problem, so successive searches (the demo runs several)
-sit on one pair of axes and the climb is visible at a glance. Strictly a
-viewer like watch.py: everything is read through the configured store
+One staircase per problem: the best validation score so far across every
+search of it, against minutes since the first of them started, with every
+scored candidate as a dot on the same axes — bright where it set a new best,
+dim where it missed. The demo's three parallel searches are one climb, not
+three; a search only gets its own line in an experiment, where the arms are
+the comparison (build_plot). Same figure as the website's, in the same
+colours. Strictly a viewer like watch.py: everything is read through the configured store
 (store.py — the hillclimb folder by default, or the SQLite index), and the
 pure data functions at the top stay testable without Textual.
 
@@ -151,6 +154,115 @@ def climb_curves(store: DataStore | Path, problem_key: str, limit: int = MAX_CUR
 
 
 @dataclass(frozen=True)
+class ClimbEvent:
+    x: float            # minutes since the climb's origin
+    y: float            # val score
+    best: bool          # set a new best across every search, when it landed
+    search: str         # label of the search it came from
+    operator: str
+
+
+@dataclass
+class Climb:
+    """Every scored candidate of a problem, across its searches, in landing
+    order; the staircase is the `best` ones."""
+
+    events: list[ClimbEvent] = field(default_factory=list)
+    extent: float = 0.0  # minutes — the staircase runs flat to here
+    searches: int = 0
+
+    @property
+    def best(self) -> float | None:
+        hits = [e for e in self.events if e.best]
+        return hits[-1].y if hits else None
+
+    @property
+    def hits(self) -> int:
+        return sum(1 for e in self.events if e.best)
+
+    def staircase(self) -> tuple[list[float], list[float]]:
+        """The best-so-far line as step points, flat to `extent`."""
+        hits = [e for e in self.events if e.best]
+        return step_points([e.x for e in hits], [e.y for e in hits], self.extent)
+
+
+def step_points(xs: list[float], ys: list[float], extent: float | None = None) -> tuple[list[float], list[float]]:
+    """Expand (x, y) samples into the points of a step plot: hold each y until
+    the next x, rise there, and run flat to `extent` (or the last x). A
+    best-so-far curve is a staircase by nature — a line drawn straight
+    between improvements would claim a score that was never held."""
+    if not xs:
+        return [], []
+    sx, sy = [xs[0]], [ys[0]]
+    for x, y in zip(xs[1:], ys[1:]):
+        sx.extend((x, x))
+        sy.extend((sy[-1], y))
+    end = max(extent if extent is not None else xs[-1], xs[-1])
+    if end > sx[-1]:
+        sx.append(end)
+        sy.append(sy[-1])
+    return sx, sy
+
+
+def climb_from_searches(
+    searches: list[tuple[str, list[Candidate], str | None]],
+    *,
+    higher_is_better: bool = True,
+) -> Climb:
+    """Fold every search's scored, unpruned candidates into one climb.
+    `searches` is (label, candidates, started_at) per search; the origin is
+    the earliest start (else the first landing), and `best` is judged
+    against everything that landed before, whichever search it came from."""
+    higher = higher_is_better
+    starts = [_parse_ts(started) for _, _, started in searches]
+    starts = [t for t in starts if t is not None]
+    landed: list[tuple[datetime, float, str, str]] = []
+    for label, candidates, _ in searches:
+        for cand in candidates:
+            if cand.pruned or cand.val_score is None:
+                continue
+            when = _parse_ts(cand.finished_at) or _parse_ts(cand.created_at)
+            if when is None:
+                continue
+            landed.append((when, cand.val_score, label, cand.operator or ""))
+    landed.sort(key=lambda item: item[0])
+    climb = Climb(searches=len(searches))
+    if not landed:
+        return climb
+    origin = min(starts) if starts else landed[0][0]
+    best: float | None = None
+    for when, score, label, operator in landed:
+        improved = best is None or better(score, best, higher)
+        if improved:
+            best = score
+        x = max(0.0, (when - origin).total_seconds() / 60.0)
+        climb.events.append(ClimbEvent(x, score, improved, label, operator))
+    climb.extent = climb.events[-1].x
+    return climb
+
+
+def climb_for_problem(store: DataStore | Path, problem_key: str, limit: int = MAX_CURVES) -> Climb:
+    """The climb across every search of `problem_key` (the newest `limit`)."""
+    if isinstance(store, Path):
+        store = FileDataStore(store)
+    records = store.searches(problem_key=problem_key)
+    per_run: dict[str, int] = {}
+    for record in records:
+        per_run[record.run_id] = per_run.get(record.run_id, 0) + 1
+    return climb_from_searches(
+        [
+            (
+                curve_label(record, per_run),
+                list(Journal(store.journal(record.key)).candidates.values()),
+                record.meta.started_at,
+            )
+            for record in records[-limit:]
+        ],
+        higher_is_better=bool(records[-1].meta.higher_is_better) if records else True,
+    )
+
+
+@dataclass(frozen=True)
 class DetailMark:
     id: str
     x: float            # minutes since the search started
@@ -257,7 +369,7 @@ from textual.widgets import Footer, Label  # noqa: E402
 from hillclimb.header import HillclimbHeader, TimezoneMixin  # noqa: E402
 from hillclimb.keys import KEYS_BINDING, QUIT_BINDINGS  # noqa: E402
 
-from hillclimb.theme import HILLCLIMB_CSS, apply_theme  # noqa: E402
+from hillclimb.theme import CYAN, HILLCLIMB_CSS, PLOT_BG, apply_theme, themed_plot  # noqa: E402
 from hillclimb.watch import STATE_STYLE, LiveScreen  # noqa: E402
 
 
@@ -270,18 +382,44 @@ def curve_colors(curves: list[Curve]) -> list[tuple[int, int, int] | None]:
 
 
 def build_plot(curves: list[Curve]) -> Plot:
-    plot = Plot()
+    """One step line per curve — the experiment view, where each arm is a
+    series of its own, and the base of the detail overlay."""
+    plot = themed_plot()
     for curve, color in zip(curves, curve_colors(curves)):
         if not curve.xs:
             continue
-        xs = list(curve.xs)
-        ys = list(curve.ys)
-        if len(xs) == 1:
-            # a single point draws nothing as a line; give it a flat stub so
-            # the first candidate is visible the moment it lands
-            xs.append(xs[0] + 0.1)
-            ys.append(ys[0])
+        # a single point draws nothing as a line; the flat stub makes the
+        # first candidate visible the moment it lands
+        xs, ys = step_points(curve.xs, curve.ys, curve.xs[-1] + (0.1 if len(curve.xs) == 1 else 0.0))
         plot.add_line(xs, ys, color=color, name=curve.label)
+    return plot
+
+
+def _mix(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[int, int, int]:
+    return tuple(round(x + (y - x) * t) for x, y in zip(a, b))  # type: ignore[return-value]
+
+
+# A miss is the same hue as the staircase, receded towards the background —
+# the site's `.miss { fill-opacity: .45 }` — so the climb stays the figure
+# and the attempts stay the ground.
+MISS_RGB = _mix(PLOT_BG, CYAN, 0.45)
+
+
+def build_climb_plot(climb: Climb) -> Plot:
+    """The website's figure: the staircase in cyan, a bright dot where a
+    candidate set a new best, a dim one where it scored but did not."""
+    plot = themed_plot()
+    misses = [e for e in climb.events if not e.best]
+    if misses:
+        plot.add_scatter([e.x for e in misses], [e.y for e in misses], color=MISS_RGB, size=2.4, name="attempt")
+    xs, ys = climb.staircase()
+    if len(xs) == 1:
+        xs, ys = step_points(xs, ys, xs[0] + 0.1)
+    if xs:
+        plot.add_line(xs, ys, color=CYAN, width=2.0, name="best so far")
+    hits = [e for e in climb.events if e.best]
+    if hits:
+        plot.add_scatter([e.x for e in hits], [e.y for e in hits], color=CYAN, size=3.0, name="new best")
     return plot
 
 
@@ -327,7 +465,7 @@ class ChartScreen(LiveScreen):
 
     DEFAULT_CSS = """
     ChartScreen #chartline { height: 1; padding: 0 1; background: $surface; }
-    ChartScreen #chart-stage { width: 1fr; height: 1fr; }
+    ChartScreen #chart-stage { width: 1fr; height: 1fr; background: #0e1113; }
     """
 
     def __init__(self, config: Config, search: str | None = None, detail: bool = False):
@@ -385,20 +523,41 @@ class ChartScreen(LiveScreen):
             )
         else:
             curves = climb_curves(self._store, anchor.problem_key)
-        for curve in curves:
-            style = STATE_STYLE.get(curve.state, "")
-            best = f"{curve.best:.5g}" if curve.best is not None else "-"
-            parts.append(f"{curve.label} [{style}]{curve.state}[/] best={best}")
+        climb: Climb | None = None
+        if layout is not None or any(c.arm for c in curves):
+            # one line per search: the detail overlay, or an experiment
+            # where the arms are the comparison
+            for curve in curves:
+                style = STATE_STYLE.get(curve.state, "")
+                best = f"{curve.best:.5g}" if curve.best is not None else "-"
+                parts.append(f"{curve.label} [{style}]{curve.state}[/] best={best}")
+        else:
+            climb = climb_for_problem(self._store, anchor.problem_key)
+            best = f"{climb.best:.5g}" if climb.best is not None else "-"
+            n = climb.searches
+            running = sum(1 for c in curves if c.state == "running")
+            parts.append(
+                f"best={best} · {n} search{'' if n == 1 else 'es'}"
+                + (f" ([{STATE_STYLE.get('running', '')}]{running} running[/])" if running else "")
+                + f" · {climb.hits} of {len(climb.events)} candidates improved"
+            )
         self.query_one("#chartline", Label).update("  ·  ".join(parts))
         key: tuple = (self.detail, tuple((c.label, tuple(c.xs), tuple(c.ys)) for c in curves))
         if layout is not None:
             key += (tuple((m.id, m.x, m.y) for m in layout.marks),)
+        if climb is not None:
+            key += (tuple((e.x, e.y, e.best) for e in climb.events),)
         if key == self._key:
             return
         self._key = key
         stage = self.query_one("#chart-stage", Vertical)
         if any(c.xs for c in curves):
-            plot = build_detail_plot(layout) if layout is not None else build_plot(curves)
+            if layout is not None:
+                plot = build_detail_plot(layout)
+            elif climb is not None:
+                plot = build_climb_plot(climb)
+            else:
+                plot = build_plot(curves)
             canvas = stage.query(PlotWidget)
             if canvas:
                 # swap the plot in place: widget removal is asynchronous, so

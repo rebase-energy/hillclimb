@@ -466,12 +466,21 @@ _STREAM_STYLE = {
 }
 
 
+from rich.panel import Panel as _RichPanel
+
+
+class StreamPanel(_RichPanel):
+    """Marks the stream panel: writers render it at its natural width (each
+    entry one terminal row, horizontal overflow scrollable) instead of
+    wrapping it to the detail's width."""
+
+
 def _stream_text(entry: StreamEntry):
     """A stream entry as a terminal-log line: dim clock, a kind-coloured
     body; multi-line bodies indent under the clock column."""
     from rich.text import Text
 
-    text = Text()
+    text = Text(no_wrap=True)  # one terminal row per line: overflow scrolls
     if entry.ts:
         text.append(entry.ts, style="dim")
         text.append("  ")
@@ -858,7 +867,7 @@ def candidate_detail_renderables(
     stream = stream_entries(candidate_dir, max_lines=80)
     if stream:
         renderables.append(
-            Panel(
+            StreamPanel(
                 Group(*(_stream_text(entry) for entry in stream)),
                 title="Operator stream",
                 title_align="left",
@@ -1398,7 +1407,10 @@ class CandidateScreen(ResizableDetail, LiveScreen):
         self._detail_fingerprint = fingerprint
         detail.clear()
         for renderable in renderables:
-            detail.write(renderable, width=width, expand=True)
+            if isinstance(renderable, StreamPanel):  # one row per entry; overflow scrolls
+                detail.write(renderable, shrink=False)
+            else:
+                detail.write(renderable, width=width, expand=True)
         if preserve_scroll:
             _restore_scroll(detail, snapshot)
         else:
@@ -1795,7 +1807,10 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         width = node_detail_width(self.size.width)
         detail.styles.width = width
         for renderable in candidate_detail_renderables(record, journal, node_id):
-            detail.write(renderable, width=width - 3, expand=True)
+            if isinstance(renderable, StreamPanel):  # one row per entry; overflow scrolls
+                detail.write(renderable, shrink=False)
+            else:
+                detail.write(renderable, width=width - 3, expand=True)
         detail.styles.display = "block"
 
     def on_tree_plot_widget_node_selected(self, message) -> None:
