@@ -684,7 +684,23 @@ async def test_t_opens_the_tree_panel_and_follows_the_cursor(tmp_path: Path):
         assert str(detail.styles.display) == "none"
         assert str(tree.styles.display) != "none" and tree.selected is None
 
-        await pilot.press("t")  # toggle off
+        # drilling into a candidate and coming back closes the tree panel
+        class _Msg:
+            node_id = "c001"
+
+        app.screen.on_tree_plot_widget_node_activated(_Msg())
+        await pilot.pause()
+        assert app.screen is not app.screen_stack[1]  # candidate screen pushed
+        await pilot.press("escape")  # closes the candidate screen's own detail
+        await pilot.press("escape")  # pops back to the searches screen
+        await pilot.pause()
+        searches_screen = app.screen
+        assert searches_screen._tree_open is False
+        assert str(tree.styles.display) == "none"
+
+        await pilot.press("t")  # reopen, then toggle off
+        await pilot.pause()
+        await pilot.press("t")
         await pilot.pause()
         assert str(tree.styles.display) == "none"
         assert str(scrubber.styles.display) == "none"

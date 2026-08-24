@@ -991,17 +991,22 @@ class LiveScreen(KeysMixin, Screen):
         # Kitty-graphics placements are painted by the terminal, not Textual:
         # a pushed screen draws its cells but the image from this screen
         # stays on top of them. Delete the placements while suspended...
-        for canvas in self._plot_widgets():
-            driver = getattr(self.app, "_driver", None)
-            if driver is not None:
-                try:
-                    from plotui import Plot
-                    from plotui.textual import tmux_wrap
+        if self._plot_widgets():
+            self._delete_plot_placements()
 
-                    driver.write(tmux_wrap(Plot.kitty_cleanup()))
-                except Exception:
-                    pass
-                break  # one cleanup deletes every placement
+    def _delete_plot_placements(self) -> None:
+        """Delete every Kitty image placement — hiding or covering a plot
+        widget only removes its cells; the terminal keeps the image."""
+        driver = getattr(self.app, "_driver", None)
+        if driver is None:
+            return
+        try:
+            from plotui import Plot
+            from plotui.textual import tmux_wrap
+
+            driver.write(tmux_wrap(Plot.kitty_cleanup()))
+        except Exception:
+            pass
 
     def on_screen_resume(self) -> None:
         # ...and re-transmit when this screen is on top again.
@@ -1732,8 +1737,16 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         canvas.selected = None
         self.query_one("#search-scrubber").styles.display = "none"
         self._set_detail_visible(False)
+        self._delete_plot_placements()  # hiding the widget does not delete the image
         self.DETAIL_WIDGET = "#search-candidates"
         self.query_one("#searches", DataTable).focus()
+
+    def on_screen_resume(self) -> None:
+        # back from a drilled-in candidate screen: land on the plain searches
+        # view, not a stale tree panel
+        if self._tree_open:
+            self._close_tree()
+        super().on_screen_resume()
 
     def _render_tree(self) -> None:
         from hillclimb.graphview import TimeScrubber
