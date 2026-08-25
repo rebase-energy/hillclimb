@@ -58,6 +58,9 @@ class SearchMeta(BaseModel):
     routing: dict = Field(default_factory=dict)  # RouteConfig dumps by operator
     metric: str
     higher_is_better: bool = True
+    # Snapshot of problem.yaml's named chart reference lines. The chart also
+    # reloads a reachable local problem so edits apply to existing searches.
+    chart_baselines: dict[str, float] = Field(default_factory=dict)
 
     @model_validator(mode="before")
     @classmethod

@@ -1,0 +1,9 @@
+problem_id: knapsack
+metric: mean-percent-of-upper-bound
+higher_is_better: true
+description: description.md
+contract: contract.md
+holdout: true
+baseline: baseline.py
+time_budget_s: 60
+allow_network: false

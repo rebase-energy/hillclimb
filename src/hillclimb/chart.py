@@ -1,7 +1,7 @@
 """`hillclimb chart` — the live hillclimb curve.
 
 One staircase per problem: the best validation score so far across every
-search of it, against minutes since the first of them started, with every
+search of it, against the number of tested candidate solutions, with every
 scored candidate as a dot on the same axes — bright where it set a new best,
 dim where it missed. The demo's three parallel searches are one climb, not
 three; a search only gets its own line in an experiment, where the arms are
@@ -11,13 +11,15 @@ colours. Strictly a viewer like watch.py: everything is read through the configu
 pure data functions at the top stay testable without Textual.
 
 `--detail` anchors on one search and overlays its exploration tree on the
-curve: every scored candidate as a mark at (minute it landed, its score),
+curve: every scored candidate as a mark at (evaluation number, its score),
 parent→child edges between them, the accepted lineage bold — the climb and
 the attempts it took, on one pair of axes (tree.py supplies the lineage).
 """
 
 from __future__ import annotations
 
+import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -41,12 +43,31 @@ ARM_PALETTE = (
     (144, 133, 233), (230, 103, 103), (213, 81, 129), (217, 89, 38),
 )
 
+# Reference lines sit behind the climb. The first is deliberately neutral for
+# the usual "baseline" floor; additional named comparisons cycle through hues
+# distinct from the chart's cyan best-so-far line.
+CHART_BASELINE_PALETTE = (
+    (144, 153, 160),
+    (234, 179, 8),
+    (168, 85, 247),
+    (249, 115, 22),
+    (59, 130, 246),
+    (236, 72, 153),
+    (34, 197, 94),
+)
+
+# Kitty reserves z values below INT32_MIN / 2 for images that must sit below
+# cells with explicit backgrounds. Annotation tags use an explicit black
+# background, so this makes the whole tag occlude the plot instead of letting
+# the staircase show through the gaps inside and between glyphs.
+_KITTY_BELOW_CELL_BACKGROUND_Z = -1_073_741_825
+
 
 @dataclass
 class Curve:
     label: str
     state: str
-    xs: list[float] = field(default_factory=list)  # minutes since the search started
+    xs: list[float] = field(default_factory=list)  # 1-based scored-candidate count
     ys: list[float] = field(default_factory=list)  # best-so-far val score
     arm: str | None = None  # experiment arm, when the search is one
 
@@ -73,10 +94,14 @@ def curve_from_candidates(
     started_at: str | None = None,
 ) -> Curve:
     """Best-so-far curve for one search. A point per scored, unpruned
-    candidate at the minute it finished; the y value only ever moves in the
-    metric's good direction, so the line is the staircase the search climbed."""
+    candidate in finish order; the 1-based x value is how many candidates
+    have been tested. The y value only ever moves in the metric's good
+    direction, so the line is the staircase the search climbed.
+
+    `started_at` remains accepted for callers reading older search metadata;
+    candidate count no longer depends on the search's wall-clock origin.
+    """
     higher = higher_is_better
-    start = _parse_ts(started_at)
     curve = Curve(label=label, state=state)
     scored = []
     for cand in candidates:
@@ -89,12 +114,11 @@ def curve_from_candidates(
     scored.sort(key=lambda item: item[0])
     if not scored:
         return curve
-    origin = start or scored[0][0]
     best: float | None = None
-    for when, score in scored:
+    for experiment, (_when, score) in enumerate(scored, start=1):
         if best is None or better(score, best, higher):
             best = score
-        curve.xs.append(max(0.0, (when - origin).total_seconds() / 60.0))
+        curve.xs.append(float(experiment))
         curve.ys.append(best)
     return curve
 
@@ -155,11 +179,12 @@ def climb_curves(store: DataStore | Path, problem_key: str, limit: int = MAX_CUR
 
 @dataclass(frozen=True)
 class ClimbEvent:
-    x: float            # minutes since the climb's origin
+    x: float            # 1-based scored-candidate count across the climb
     y: float            # val score
     best: bool          # set a new best across every search, when it landed
     search: str         # label of the search it came from
     operator: str
+    summary: str = ""   # what changed, for new-best annotations
 
 
 @dataclass
@@ -168,7 +193,7 @@ class Climb:
     order; the staircase is the `best` ones."""
 
     events: list[ClimbEvent] = field(default_factory=list)
-    extent: float = 0.0  # minutes — the staircase runs flat to here
+    extent: float = 0.0  # tested candidates — the staircase runs flat to here
     searches: int = 0
 
     @property
@@ -210,13 +235,12 @@ def climb_from_searches(
     higher_is_better: bool = True,
 ) -> Climb:
     """Fold every search's scored, unpruned candidates into one climb.
-    `searches` is (label, candidates, started_at) per search; the origin is
-    the earliest start (else the first landing), and `best` is judged
-    against everything that landed before, whichever search it came from."""
+    `searches` is (label, candidates, started_at) per search; `started_at` is
+    retained in that shape for callers but x is the 1-based candidate count.
+    `best` is judged against everything that landed before, whichever search
+    it came from."""
     higher = higher_is_better
-    starts = [_parse_ts(started) for _, _, started in searches]
-    starts = [t for t in starts if t is not None]
-    landed: list[tuple[datetime, float, str, str]] = []
+    landed: list[tuple[datetime, float, str, str, str]] = []
     for label, candidates, _ in searches:
         for cand in candidates:
             if cand.pruned or cand.val_score is None:
@@ -224,19 +248,17 @@ def climb_from_searches(
             when = _parse_ts(cand.finished_at) or _parse_ts(cand.created_at)
             if when is None:
                 continue
-            landed.append((when, cand.val_score, label, cand.operator or ""))
+            landed.append((when, cand.val_score, label, cand.operator or "", cand.summary or ""))
     landed.sort(key=lambda item: item[0])
     climb = Climb(searches=len(searches))
     if not landed:
         return climb
-    origin = min(starts) if starts else landed[0][0]
     best: float | None = None
-    for when, score, label, operator in landed:
+    for experiment, (_when, score, label, operator, summary) in enumerate(landed, start=1):
         improved = best is None or better(score, best, higher)
         if improved:
             best = score
-        x = max(0.0, (when - origin).total_seconds() / 60.0)
-        climb.events.append(ClimbEvent(x, score, improved, label, operator))
+        climb.events.append(ClimbEvent(float(experiment), score, improved, label, operator, summary))
     climb.extent = climb.events[-1].x
     return climb
 
@@ -265,7 +287,7 @@ def climb_for_problem(store: DataStore | Path, problem_key: str, limit: int = MA
 @dataclass(frozen=True)
 class DetailMark:
     id: str
-    x: float            # minutes since the search started
+    x: float            # 1-based scored-candidate count
     y: float            # val score
     operator: str
     fate: str
@@ -301,7 +323,7 @@ def detail_layout(
     """The curve plus the tree behind it. A mark per scored, unpruned
     candidate; an edge from its parent when the parent is scored too (a
     failed parent leaves its children rootless rather than inventing a y)."""
-    from hillclimb.tree import build_tree, minutes_since
+    from hillclimb.tree import build_tree
 
     curve = curve_from_candidates(
         candidates, label=label, state=state, higher_is_better=higher_is_better, started_at=started_at
@@ -312,7 +334,16 @@ def detail_layout(
     if not scored:
         layout.unscored = len(candidates)
         return layout
-    origin = started_at or min(c.finished_at or c.created_at for c in scored.values())
+    landed = []
+    for cand in scored.values():
+        when = _parse_ts(cand.finished_at) or _parse_ts(cand.created_at)
+        if when is not None:
+            landed.append((when, cand.candidate_id))
+    landed.sort(key=lambda item: item[0])
+    experiment_by_id = {
+        candidate_id: float(index)
+        for index, (_when, candidate_id) in enumerate(landed, start=1)
+    }
     on_path = set(tree.accepted)
     at: dict[str, tuple[float, float]] = {}
     for node in tree.nodes:
@@ -320,7 +351,7 @@ def detail_layout(
         if cand is None or node.score is None:
             layout.unscored += 1
             continue
-        x = minutes_since(cand.finished_at or cand.created_at, origin)
+        x = experiment_by_id.get(node.id)
         if x is None:
             continue
         at[node.id] = (x, node.score)
@@ -357,10 +388,29 @@ def chart_problem(config: Config, search: str | None = None) -> SearchMeta | Non
         store.close()
 
 
+def chart_baselines(config: Config, meta: SearchMeta) -> dict[str, float]:
+    """Current problem-config reference lines, falling back to the snapshot
+    in search metadata when the original local problem is unavailable.
+
+    Reloading local problem.yaml makes chart-only edits take effect for old
+    searches too. Provider problems have no user-owned problem.yaml, so their
+    persisted copy keeps charts portable without rematerializing the provider
+    on every live refresh.
+    """
+    from hillclimb.problem import load_problem
+
+    if "://" in meta.problem:
+        return dict(meta.chart_baselines)
+    try:
+        return dict(load_problem(meta.problem, config).chart_baselines)
+    except (ImportError, KeyError, OSError, ValueError):
+        return dict(meta.chart_baselines)
+
+
 # --- Textual app ---
 
 from plotui import Plot  # noqa: E402
-from plotui.textual import PlotWidget  # noqa: E402
+from plotui.textual import OverlaySpan, PlotWidget  # noqa: E402
 from textual.app import App, ComposeResult  # noqa: E402
 from textual.binding import Binding  # noqa: E402
 from textual.containers import Vertical  # noqa: E402
@@ -373,6 +423,106 @@ from hillclimb.theme import CYAN, HILLCLIMB_CSS, PLOT_BG, apply_theme, themed_pl
 from hillclimb.watch import STATE_STYLE, LiveScreen  # noqa: E402
 
 
+class ChartPlotWidget(PlotWidget):
+    """Plot widget with terminal-native improvement labels and safe compositing.
+
+    The chart is a static figure, like the website's: zoom and pan are
+    disabled (a stray scroll used to shrink the staircase to a speck), so the
+    camera always frames the whole climb.
+
+    Kitty uploads ride on a zero-width Rich control segment. Textual's
+    monochrome filter expects composited segments to carry a Style, so give
+    only otherwise-unstyled segments a neutral one. This is invisible in a
+    real colour terminal and keeps NO_COLOR/headless rendering valid.
+    """
+
+    def __init__(
+        self,
+        plot: Plot,
+        *,
+        annotations: list[ImprovementAnnotation] | None = None,
+        annotation_bounds: tuple[float, float, float, float] | None = None,
+        **kwargs,
+    ):
+        self._annotations = list(annotations or [])
+        self._annotation_bounds = annotation_bounds
+        super().__init__(plot, **kwargs)
+
+    def set_annotations(
+        self,
+        annotations: list[ImprovementAnnotation],
+        bounds: tuple[float, float, float, float] | None,
+    ) -> None:
+        self._annotations = list(annotations)
+        self._annotation_bounds = bounds
+        self._sync_annotations()
+
+    def _sync_annotations(self) -> None:
+        spans = []
+        if self._annotation_bounds is not None:
+            spans = annotation_spans(
+                self._annotations,
+                self._annotation_bounds,
+                self.size.width,
+                self.size.height,
+                camera_state=self._plot.camera_state(),
+                cell_px=(self._cell_w, self._cell_h),
+            )
+        self.set_overlay(spans)
+
+    def on_resize(self) -> None:
+        self._sync_annotations()
+
+    def apply_pan(self, dx: float, dy: float) -> None:
+        pass  # static figure — the whole climb stays framed
+
+    def apply_zoom(self, factor: float) -> None:
+        pass  # static figure — a stray scroll must not shrink the chart
+
+    def apply_reset(self) -> None:
+        super().apply_reset()
+        self._sync_annotations()
+
+    def _ensure_frame(self) -> None:
+        super()._ensure_frame()
+        if (
+            self._mode == "placeholder"
+            and self._transmit
+            and "a=T,U=1,z=" not in self._transmit
+        ):
+            # A regular negative z-index only puts the image below glyphs;
+            # this lower protocol layer also puts it below their backgrounds.
+            self._transmit = self._transmit.replace(
+                "a=T,U=1,",
+                f"a=T,U=1,z={_KITTY_BELOW_CELL_BACKGROUND_Z},",
+                1,
+            )
+        elif self._mode == "direct" and self._transmit:
+            # iTerm2 uses direct placement. plotui already puts that image at
+            # z=-1 (below glyphs); lower it past Kitty's background threshold
+            # as well so the black annotation tag masks the graph completely.
+            self._transmit = self._transmit.replace(
+                "z=-1,",
+                f"z={_KITTY_BELOW_CELL_BACKGROUND_Z},",
+                1,
+            )
+
+    def render_line(self, y: int):
+        from rich.segment import Segment
+        from rich.style import Style
+        from textual.strip import Strip
+
+        strip = super().render_line(y)
+        return Strip(
+            [
+                segment if segment.style is not None
+                else Segment(segment.text, Style(), segment.control)
+                for segment in strip
+            ],
+            strip.cell_length,
+        )
+
+
 def curve_colors(curves: list[Curve]) -> list[tuple[int, int, int] | None]:
     """A colour per curve: curves of the same experiment arm share one, so an
     arm's repeats read as one family against the others; curves without an
@@ -381,17 +531,64 @@ def curve_colors(curves: list[Curve]) -> list[tuple[int, int, int] | None]:
     return [ARM_PALETTE[arms.index(c.arm) % len(ARM_PALETTE)] if c.arm else None for c in curves]
 
 
-def build_plot(curves: list[Curve]) -> Plot:
+def _add_chart_baselines(
+    plot: Plot,
+    baselines: Mapping[str, float],
+    extent: float,
+    *,
+    show_legend: bool = True,
+    hidden: frozenset[str] | set[str] = frozenset(),
+) -> None:
+    """Add arbitrary named horizontal score references behind the data.
+
+    `hidden` entries are skipped but keep their palette slot, so toggling one
+    off never recolours the others out from under the legend."""
+    right = max(1.0, extent)
+    for index, (label, value) in enumerate(baselines.items()):
+        if label in hidden:
+            continue
+        plot.add_line(
+            [0.0, right],
+            [value, value],
+            color=CHART_BASELINE_PALETTE[index % len(CHART_BASELINE_PALETTE)],
+            width=1.0,
+            name=label if show_legend else None,
+        )
+
+
+def build_plot(
+    curves: list[Curve],
+    baselines: Mapping[str, float] | None = None,
+    *,
+    show_legend: bool = True,
+    hidden: frozenset[str] | set[str] = frozenset(),
+) -> Plot:
     """One step line per curve — the experiment view, where each arm is a
-    series of its own, and the base of the detail overlay."""
+    series of its own, and the base of the detail overlay. `hidden` names
+    legend entries toggled off: their traces are left out of the plot."""
     plot = themed_plot()
+    extent = max((max(c.xs, default=0.0) for c in curves), default=0.0)
+    _add_chart_baselines(plot, baselines or {}, extent, show_legend=show_legend, hidden=hidden)
+    trace_index = len(baselines or {})
     for curve, color in zip(curves, curve_colors(curves)):
         if not curve.xs:
             continue
-        # a single point draws nothing as a line; the flat stub makes the
-        # first candidate visible the moment it lands
-        xs, ys = step_points(curve.xs, curve.ys, curve.xs[-1] + (0.1 if len(curve.xs) == 1 else 0.0))
-        plot.add_line(xs, ys, color=color, name=curve.label)
+        # Pin the colour plot_legend assigns this slot: skipping a hidden
+        # trace must not let plotui's next-palette-slot drift under the rest.
+        rgb = color or ARM_PALETTE[trace_index % len(ARM_PALETTE)]
+        trace_index += 1
+        if curve.label in hidden:
+            continue
+        if len(curve.xs) == 1:
+            # Keep the domain in whole candidate counts; a one-point line is
+            # invisible, so render that first evaluation as a dot.
+            plot.add_scatter(
+                curve.xs, curve.ys, color=rgb, size=3.0,
+                name=curve.label if show_legend else None,
+            )
+        else:
+            xs, ys = step_points(curve.xs, curve.ys)
+            plot.add_line(xs, ys, color=rgb, name=curve.label if show_legend else None)
     return plot
 
 
@@ -405,33 +602,57 @@ def _mix(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[in
 MISS_RGB = _mix(PLOT_BG, CYAN, 0.45)
 
 
-def build_climb_plot(climb: Climb) -> Plot:
+def build_climb_plot(
+    climb: Climb,
+    baselines: Mapping[str, float] | None = None,
+    *,
+    show_legend: bool = True,
+    hidden: frozenset[str] | set[str] = frozenset(),
+) -> Plot:
     """The website's figure: the staircase in cyan, a bright dot where a
-    candidate set a new best, a dim one where it scored but did not."""
+    candidate set a new best, a dim one where it scored but did not.
+    `hidden` names legend entries toggled off — their traces are left out."""
     plot = themed_plot()
+    _add_chart_baselines(plot, baselines or {}, climb.extent, show_legend=show_legend, hidden=hidden)
     misses = [e for e in climb.events if not e.best]
-    if misses:
-        plot.add_scatter([e.x for e in misses], [e.y for e in misses], color=MISS_RGB, size=2.4, name="attempt")
+    if misses and "attempt" not in hidden:
+        plot.add_scatter(
+            [e.x for e in misses], [e.y for e in misses], color=MISS_RGB, size=2.4,
+            name="attempt" if show_legend else None,
+        )
     xs, ys = climb.staircase()
-    if len(xs) == 1:
-        xs, ys = step_points(xs, ys, xs[0] + 0.1)
-    if xs:
-        plot.add_line(xs, ys, color=CYAN, width=2.0, name="best so far")
+    if len(xs) > 1 and "best so far" not in hidden:
+        plot.add_line(
+            xs, ys, color=CYAN, width=2.0,
+            name="best so far" if show_legend else None,
+        )
     hits = [e for e in climb.events if e.best]
-    if hits:
-        plot.add_scatter([e.x for e in hits], [e.y for e in hits], color=CYAN, size=3.0, name="new best")
+    if hits and "new best" not in hidden:
+        plot.add_scatter(
+            [e.x for e in hits], [e.y for e in hits], color=CYAN, size=3.0,
+            name="new best" if show_legend else None,
+        )
     return plot
 
 
-def build_detail_plot(layout: DetailLayout) -> Plot:
+def build_detail_plot(
+    layout: DetailLayout,
+    baselines: Mapping[str, float] | None = None,
+    *,
+    show_legend: bool = True,
+    hidden: frozenset[str] | set[str] = frozenset(),
+) -> Plot:
     """The curve as in build_plot, then the tree: one thin line per edge
     (dim, the child's operator colour; bold on the accepted lineage) and a
     scatter per operator so the legend names them; accepted candidates get
-    a larger mark on top."""
+    a larger mark on top. `hidden` names legend entries toggled off — an
+    operator takes its marks and its edges with it."""
     from hillclimb.treeview import OPERATOR_RGB, dim_rgb
 
-    plot = build_plot([layout.curve])
+    plot = build_plot([layout.curve], baselines, show_legend=show_legend, hidden=hidden)
     for edge in layout.edges:
+        if edge.operator in hidden:
+            continue
         rgb = OPERATOR_RGB.get(edge.operator, (160, 160, 160))
         plot.add_line(
             [edge.x0, edge.x1], [edge.y0, edge.y1],
@@ -442,30 +663,324 @@ def build_detail_plot(layout: DetailLayout) -> Plot:
     for mark in layout.marks:
         by_operator.setdefault(mark.operator, []).append(mark)
     for operator, marks in by_operator.items():
+        if operator in hidden:
+            continue
         plot.add_scatter(
             [m.x for m in marks], [m.y for m in marks],
-            color=OPERATOR_RGB.get(operator, (160, 160, 160)), size=2.5, name=operator,
+            color=OPERATOR_RGB.get(operator, (160, 160, 160)), size=2.5,
+            name=operator if show_legend else None,
         )
     accepted = [m for m in layout.marks if m.on_path]
-    if accepted:
+    if accepted and "accepted" not in hidden:
         plot.add_scatter(
             [m.x for m in accepted], [m.y for m in accepted],
-            color=(255, 255, 255), size=4.0, name="accepted",
+            color=(255, 255, 255), size=4.0,
+            name="accepted" if show_legend else None,
         )
     return plot
+
+
+# (label, colour, glyph) — the glyph mirrors the trace's mark, the way the
+# knowledge graph's legend echoes each node type's marker: "─" for a line
+# trace, "●" for a scatter. legend_text tolerates the old two-field shape.
+LegendEntry = tuple[str, tuple[int, int, int], str]
+
+
+def _baseline_legend(baselines: Mapping[str, float]) -> list[LegendEntry]:
+    return [
+        (label, CHART_BASELINE_PALETTE[index % len(CHART_BASELINE_PALETTE)], "─")
+        for index, label in enumerate(baselines)
+    ]
+
+
+def plot_legend(curves: list[Curve], baselines: Mapping[str, float]) -> list[LegendEntry]:
+    """Legend for an experiment/detail base plot, in trace order."""
+    entries = _baseline_legend(baselines)
+    trace_index = len(baselines)
+    for curve, color in zip(curves, curve_colors(curves)):
+        if not curve.xs:
+            continue
+        # ARM_PALETTE mirrors plotui's default trace palette. An uncoloured
+        # trace takes the slot determined by everything already added.
+        entries.append((curve.label, color or ARM_PALETTE[trace_index % len(ARM_PALETTE)], "─"))
+        trace_index += 1
+    return entries
+
+
+def climb_legend(climb: Climb, baselines: Mapping[str, float]) -> list[LegendEntry]:
+    entries = _baseline_legend(baselines)
+    if any(not event.best for event in climb.events):
+        entries.append(("attempt", MISS_RGB, "●"))
+    if len(climb.staircase()[0]) > 1:
+        entries.append(("best so far", CYAN, "─"))
+    if any(event.best for event in climb.events):
+        entries.append(("new best", CYAN, "●"))
+    return entries
+
+
+def detail_legend(layout: DetailLayout, baselines: Mapping[str, float]) -> list[LegendEntry]:
+    from hillclimb.treeview import OPERATOR_RGB
+
+    entries = plot_legend([layout.curve], baselines)
+    for operator in dict.fromkeys(mark.operator for mark in layout.marks):
+        entries.append((operator, OPERATOR_RGB.get(operator, (160, 160, 160)), "●"))
+    if any(mark.on_path for mark in layout.marks):
+        entries.append(("accepted", (255, 255, 255), "●"))
+    return entries
+
+
+@dataclass(frozen=True)
+class ImprovementAnnotation:
+    x: float
+    y: float
+    text: str
+
+
+def brief_improvement(summary: str, operator: str, max_chars: int = 42) -> str:
+    """Turn an agent's result summary into one chart-sized improvement label."""
+    if operator == "baseline":
+        return "baseline"
+    text = " ".join(summary.replace("`", "").replace("**", "").split()).strip()
+    if not text:
+        return operator or "improvement"
+
+    # Agent summaries often lead with a useful named technique before a
+    # colon, followed by the full rationale. Prefer that natural title.
+    prefix, separator, _rest = text.partition(":")
+    if separator and 1 < len(prefix.split()) <= 7 and len(prefix) <= max_chars:
+        return prefix.strip().rstrip(".,;")
+
+    text = re.sub(r"^(?:this candidate|the candidate)\s+", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^(?:uses?|i)\s+", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^(?:a|an)\s+", "", text, flags=re.IGNORECASE)
+    text = text.split(".", 1)[0].strip()
+    words = text.split()
+    shortened = " ".join(words[:7])
+    clipped = shortened[:max_chars].rstrip(" ,.;:-")
+    if len(shortened) > max_chars:
+        clipped = clipped.rsplit(" ", 1)[0] or clipped
+    if len(words) > 7 or len(shortened) > max_chars:
+        clipped += "…"
+    return clipped or operator or "improvement"
+
+
+def improvement_annotations(climb: Climb) -> list[ImprovementAnnotation]:
+    return [
+        ImprovementAnnotation(
+            event.x,
+            event.y,
+            brief_improvement(event.summary, event.operator),
+        )
+        for event in climb.events
+        if event.best
+    ]
+
+
+def climb_plot_bounds(
+    climb: Climb,
+    baselines: Mapping[str, float],
+) -> tuple[float, float, float, float]:
+    """The same 5%-padded data bounds plotui derives from chart traces."""
+    xs = [event.x for event in climb.events]
+    ys = [event.y for event in climb.events]
+    if baselines:
+        right = max(1.0, climb.extent)
+        xs.extend((0.0, right))
+        ys.extend(float(value) for value in baselines.values())
+    if not xs or not ys:
+        return (-1.0, 1.0, -1.0, 1.0)
+
+    def padded(lo: float, hi: float) -> tuple[float, float]:
+        span = hi - lo
+        pad = span * 0.05 if span > 0 else 1.0
+        return lo - pad, hi + pad
+
+    xlo, xhi = padded(min(xs), max(xs))
+    ylo, yhi = padded(min(ys), max(ys))
+    return xlo, xhi, ylo, yhi
+
+
+def annotation_spans(
+    annotations: list[ImprovementAnnotation],
+    bounds: tuple[float, float, float, float],
+    width: int,
+    height: int,
+    *,
+    camera_state: tuple[float, float, float, float, float] = (0.0, 0.0, 1.0, 0.0, 0.0),
+    cell_px: tuple[int, int] = (12, 24),
+) -> list[OverlaySpan]:
+    """Place short new-best labels near their dots, using collision lanes."""
+    if not annotations or width < 20 or height < 8:
+        return []
+    from rich.style import Style
+
+    xlo, xhi, ylo, yhi = bounds
+    if xhi <= xlo or yhi <= ylo:
+        return []
+    left = max(7, min(14, width // 16))
+    right = max(left + 4, width - 2)
+    top, bottom = 1, max(5, height - 3)
+    _yaw, _pitch, zoom, pan_x, pan_y = camera_state
+    cx, cy = (left + right) / 2, (top + bottom) / 2
+
+    occupied: dict[int, list[tuple[int, int]]] = {}
+    spans: list[OverlaySpan] = []
+    # Textual applies this overlay after plotui has rasterized the chart, so
+    # these opaque tags always sit above (and hide) the staircase beneath.
+    style = Style.parse(
+        f"italic rgb({CYAN[0]},{CYAN[1]},{CYAN[2]}) on #000000"
+    )
+    for annotation in sorted(annotations, key=lambda item: item.x):
+        base_col = left + (annotation.x - xlo) / (xhi - xlo) * (right - left)
+        base_row = top + (yhi - annotation.y) / (yhi - ylo) * (bottom - top)
+        point_col = round(cx + (base_col - cx) * zoom + pan_x / max(1, cell_px[0]))
+        point_row = round(cy + (base_row - cy) * zoom + pan_y / max(1, cell_px[1]))
+        if not (left <= point_col <= right and top <= point_row <= bottom):
+            continue
+
+        max_label = max(12, min(44, width // 3))
+        label = annotation.text
+        if len(label) > max_label:
+            label = label[: max_label - 1].rstrip() + "…"
+        text = f" ╱ {label} "
+        start = point_col + 1
+        if start + len(text) > right:
+            start = max(left, point_col - len(text) - 1)
+
+        placed = False
+        # Above first (like the reference chart), then below; successive lanes
+        # keep nearby improvements readable without hiding the staircase.
+        offsets = [
+            offset
+            for distance in range(1, height)
+            for offset in (-distance, distance)
+        ]
+        for offset in offsets:
+            row = point_row + offset
+            end = start + len(text)
+            if row < top or row > bottom:
+                continue
+            if any(not (end + 1 < lo or start > hi + 1) for lo, hi in occupied.get(row, [])):
+                continue
+            occupied.setdefault(row, []).append((start, end))
+            spans.append((row, start, text, style))
+            placed = True
+            break
+        if not placed:
+            # More improvements than available lanes is intrinsically dense;
+            # keep the annotation visible rather than silently omitting it.
+            row = min(bottom, max(top, point_row - 1))
+            spans.append((row, start, text, style))
+    return spans
+
+
+def legend_text(
+    entries: list[LegendEntry],
+    width: int | None = None,
+    *,
+    hidden: frozenset[str] | set[str] = frozenset(),
+    interactive: bool = False,
+) -> "Text":
+    """A terminal-crisp legend, wrapped only between complete entries.
+
+    Entries render the way the knowledge graph's legend does: a dim hotkey
+    number, then the trace's glyph and name in the trace's own colour; an
+    entry in `hidden` loses its glyph and goes dim and struck through, so the
+    legend itself shows what the chart is not drawing. `interactive` turns
+    every entry into a click target that toggles its series
+    (`screen.toggle_series`) and adds the 1-9 hotkey prefix."""
+    from rich.cells import cell_len
+    from rich.style import Style
+    from rich.text import Text
+
+    text = Text(no_wrap=width is not None, overflow="crop" if width is not None else None)
+    line_width = 0
+    for index, (label, (red, green, blue), *rest) in enumerate(entries):
+        glyph = rest[0] if rest else "●"
+        off = label in hidden
+        meta = {"@click": f"screen.toggle_series({label!r})"} if interactive else None
+        item = Text()
+        if interactive and index < 9:
+            item.append(f"{index + 1} ", style=Style.parse("dim") + Style(meta=meta))
+        if off:
+            item.append(f"  {label}", style=Style.parse("dim strike") + Style(meta=meta))
+        else:
+            item.append(f"{glyph} {label}", style=Style.parse(f"rgb({red},{green},{blue})") + Style(meta=meta))
+        item_width = cell_len(item.plain)
+        separator_width = 3 if line_width else 0
+        if width is not None and line_width and line_width + separator_width + item_width > width:
+            text.append("\n")
+            line_width = 0
+            separator_width = 0
+        if separator_width:
+            text.append(" " * separator_width)
+        text.append(item)
+        line_width += separator_width + item_width
+    return text
+
+
+class ChartLegend(Label):
+    """Responsive legend whose entries move as units between rows. Every
+    entry is a click target: clicking toggles that series on the chart
+    (`ChartScreen.action_toggle_series`), and a toggled-off entry stays in
+    the legend — receded and struck through — as the way back."""
+
+    def __init__(self, *, id: str):
+        super().__init__(id=id)
+        # Textual restyles any @click text as a hyperlink (underline, theme
+        # link colour) — which would flatten the per-trace colours to one.
+        # Clicks still dispatch without the link dress-up.
+        self.auto_links = False
+        self._entries: list[LegendEntry] = []
+        self._hidden: frozenset[str] = frozenset()
+        self._layout_width = -1
+
+    def set_entries(self, entries: list[LegendEntry], hidden: set[str] | frozenset[str] = frozenset()) -> None:
+        self._entries = list(entries)
+        self._hidden = frozenset(hidden)
+        self._layout_width = -1
+        self._sync_entries()
+
+    def _sync_entries(self, fallback_width: int | None = None) -> None:
+        width = self.content_region.width
+        if width <= 0:
+            width = max(1, (fallback_width or self.size.width) - 4)
+        if width == self._layout_width:
+            return
+        self._layout_width = width
+        self.update(legend_text(self._entries, width, hidden=self._hidden, interactive=True))
+
+    def on_resize(self, event) -> None:
+        self._sync_entries(event.size.width)
 
 
 class ChartScreen(LiveScreen):
     BINDINGS = [
         Binding("d", "toggle_detail", "detail", tooltip="overlay the exploration tree"),
+        Binding(
+            "t", "toggle_annotations", "text",
+            tooltip="show or hide improvement text", priority=True,
+        ),
         Binding("r", "refresh", "refresh", show=False),
+        # One binding per legend slot, like the knowledge graph's 1-8; only
+        # the first is described, so the `?` panel shows a single "1-9" row.
+        Binding("1", "toggle_entry(0)", "hide/show a series", show=False, key_display="1-9"),
+        *(Binding(str(i + 1), f"toggle_entry({i})", show=False) for i in range(1, 9)),
         KEYS_BINDING,
         *QUIT_BINDINGS,
     ]
 
     DEFAULT_CSS = """
     ChartScreen #chartline { height: 1; padding: 0 1; background: $surface; }
+    ChartScreen #chart-body { width: 1fr; height: 1fr; background: #0e1113; }
+    ChartScreen #chart-legend {
+        width: 1fr; height: auto; min-height: 1; padding: 0 2;
+        text-align: center; background: #0e1113;
+    }
     ChartScreen #chart-stage { width: 1fr; height: 1fr; background: #0e1113; }
+    ChartScreen #chart-x-label {
+        width: 1fr; height: 1; text-align: center; color: $secondary; background: #0e1113;
+    }
     """
 
     def __init__(self, config: Config, search: str | None = None, detail: bool = False):
@@ -473,6 +988,9 @@ class ChartScreen(LiveScreen):
         self.config = config
         self.search = search
         self.detail = detail  # one search, with its exploration tree on the curve
+        self.show_annotations = False  # `t` reveals the improvement labels
+        self.hidden_series: set[str] = set()  # legend entries toggled off by click
+        self._legend_entries: list[LegendEntry] = []  # what 1-9 index into
         self._anchor: SearchMeta | None = None  # resolved once; `r` re-resolves
         self._key: tuple | None = None
         self._store: DataStore | None = None  # opened on first refresh, kept for the session
@@ -480,7 +998,10 @@ class ChartScreen(LiveScreen):
     def compose(self) -> ComposeResult:
         yield HillclimbHeader()
         yield Label(id="chartline")
-        yield Vertical(id="chart-stage")
+        with Vertical(id="chart-body"):
+            yield Vertical(id="chart-stage")
+            yield Label("candidates", id="chart-x-label")
+            yield ChartLegend(id="chart-legend")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -496,6 +1017,22 @@ class ChartScreen(LiveScreen):
         self._key = None
         self.refresh_data()
 
+    def action_toggle_annotations(self) -> None:
+        self.show_annotations = not self.show_annotations
+        self._key = None
+        self.refresh_data()
+
+    def action_toggle_series(self, label: str) -> None:
+        """Show or hide one series — reached by clicking its legend entry."""
+        self.hidden_series.symmetric_difference_update({label})
+        self._key = None
+        self.refresh_data()
+
+    def action_toggle_entry(self, index: int) -> None:
+        """The keyboard route to the same toggle: 1-9 by legend position."""
+        if 0 <= index < len(self._legend_entries):
+            self.action_toggle_series(self._legend_entries[index][0])
+
     def refresh_data(self) -> None:
         if self._anchor is None:
             self._anchor = chart_problem(self.config, self.search)
@@ -507,8 +1044,11 @@ class ChartScreen(LiveScreen):
             return
         if self._store is None:
             self._store = open_store(self.config)
+        # The website's climb head, word for word, so both renderings of the
+        # figure introduce it the same way.
         direction = "higher" if anchor.higher_is_better else "lower"
-        parts = [f"[bold]{anchor.problem_key}[/]  {anchor.metric} ({direction} is better)"]
+        parts = [f"[bold]{anchor.problem_key}[/] — best {anchor.metric} so far ({direction} is better)"]
+        baselines = chart_baselines(self.config, anchor)
         layout: DetailLayout | None = None
         if self.detail:
             record = self._store.search((anchor.run_id, anchor.search_id))
@@ -542,32 +1082,61 @@ class ChartScreen(LiveScreen):
                 + f" · {climb.hits} of {len(climb.events)} candidates improved"
             )
         self.query_one("#chartline", Label).update("  ·  ".join(parts))
-        key: tuple = (self.detail, tuple((c.label, tuple(c.xs), tuple(c.ys)) for c in curves))
+        key: tuple = (
+            self.detail,
+            self.show_annotations,
+            tuple(sorted(self.hidden_series)),
+            tuple((c.label, tuple(c.xs), tuple(c.ys)) for c in curves),
+        )
+        key += (tuple(baselines.items()),)
         if layout is not None:
             key += (tuple((m.id, m.x, m.y) for m in layout.marks),)
         if climb is not None:
-            key += (tuple((e.x, e.y, e.best) for e in climb.events),)
+            key += (tuple((e.x, e.y, e.best, e.summary) for e in climb.events),)
         if key == self._key:
             return
         self._key = key
         stage = self.query_one("#chart-stage", Vertical)
+        legend = self.query_one("#chart-legend", ChartLegend)
         if any(c.xs for c in curves):
+            hidden = self.hidden_series
+            annotations: list[ImprovementAnnotation] = []
+            annotation_bounds = None
             if layout is not None:
-                plot = build_detail_plot(layout)
+                plot = build_detail_plot(layout, baselines, show_legend=False, hidden=hidden)
+                entries = detail_legend(layout, baselines)
             elif climb is not None:
-                plot = build_climb_plot(climb)
+                plot = build_climb_plot(climb, baselines, show_legend=False, hidden=hidden)
+                entries = climb_legend(climb, baselines)
+                # The labels annotate the new-best dots; they hide with them.
+                if self.show_annotations and "new best" not in hidden:
+                    annotations = improvement_annotations(climb)
+                    annotation_bounds = climb_plot_bounds(climb, baselines)
             else:
-                plot = build_plot(curves)
+                plot = build_plot(curves, baselines, show_legend=False, hidden=hidden)
+                entries = plot_legend(curves, baselines)
+            self._legend_entries = entries
+            legend.set_entries(entries, hidden)
             canvas = stage.query(PlotWidget)
             if canvas:
                 # swap the plot in place: widget removal is asynchronous, so
                 # remounting under the same id would collide with the old one
-                canvas.first()._plot = plot
-                canvas.first().invalidate()
+                widget = canvas.first()
+                widget._plot = plot
+                if isinstance(widget, ChartPlotWidget):
+                    widget.set_annotations(annotations, annotation_bounds)
+                widget.invalidate()
             else:
                 stage.remove_children()
-                stage.mount(PlotWidget(plot, id="chart-canvas"))
+                stage.mount(ChartPlotWidget(
+                    plot,
+                    annotations=annotations,
+                    annotation_bounds=annotation_bounds,
+                    id="chart-canvas",
+                ))
         elif not stage.query("#chart-empty"):
+            self._legend_entries = []
+            legend.set_entries([])
             stage.remove_children()
             stage.mount(Label("waiting for the first scored candidate…", id="chart-empty"))
 

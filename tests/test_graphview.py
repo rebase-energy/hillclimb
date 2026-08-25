@@ -634,3 +634,54 @@ async def test_hovering_and_clicking_a_label_hits_its_node(graph_workspace):
         await pilot.click("#graph-canvas", offset=(col, row))
         await pilot.pause()
         assert canvas.selected == node_id
+
+
+def test_render_scrubber_units():
+    label = render_scrubber(["t1", "t2", "t3"], 1, 60, unit="change").plain.split("\n")[1]
+    assert "change 2 of 3" in label
+    live = render_scrubber(["t1", "t2", "t3"], None, 60, unit="change").plain.split("\n")[1]
+    assert "live · 3 changes" in live
+    assert "g unit" in live
+
+
+@pytest.mark.asyncio
+async def test_granularity_toggle_keeps_the_moment(graph_workspace):
+    """`g` swaps the timeline to one tick per graph change and back; a
+    historical cursor stays on the same moment, re-expressed in the new
+    unit's index."""
+    from hillclimb.graph import rebuild_graph
+    from hillclimb.graphview import GraphApp, TimeScrubber
+    from hillclimb.knowledge import write_card
+
+    # a claim observed mid-search (its candidate's finish): a tick of its own
+    kdir = graph_workspace.learning.dir
+    write_card(kdir, make_card(
+        run_ref="r3/s1", finished_at="2026-07-03T00:00:00Z",
+        claims=[claim(cid="cl-mid", observed="2026-07-02T12:00:00Z")],
+    ))
+    rebuild_graph(kdir)
+    app = GraphApp(graph_workspace)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        scrubber = app.screen.query_one("#time-scrubber", TimeScrubber)
+        searches = list(scrubber.events_list)
+        assert scrubber.unit == "search" and len(searches) == 3
+        await pilot.press("g")
+        await pilot.pause()
+        changes = list(scrubber.events_list)
+        assert scrubber.unit == "change"
+        assert len(changes) > len(searches) and set(searches) <= set(changes)
+        assert scrubber.index is None  # live stays live
+        # park on the first search's finish, flip to fine: same moment
+        await pilot.press("g")
+        await pilot.pause()
+        await pilot.press("j", "j", "j")
+        await pilot.pause()
+        assert scrubber.index == 0
+        await pilot.press("g")
+        await pilot.pause()
+        assert scrubber.events_list[scrubber.index] == searches[0]
+        # and back again
+        await pilot.press("g")
+        await pilot.pause()
+        assert scrubber.events_list[scrubber.index] == searches[0]

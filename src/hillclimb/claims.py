@@ -513,7 +513,7 @@ def distill_claims(
 ) -> list[Claim]:
     """The post-search LLM pass: journal + winning solution -> typed claims.
     Best effort by contract — callers treat [] as 'nothing learned'."""
-    return _distill(
+    claims = _distill(
         card=card,
         digest=_search_digest(journal, problem, card),
         excerpt=_solution_excerpt(journal, problem, config),
@@ -522,6 +522,25 @@ def distill_claims(
         config=config,
         log=log,
     )
+    return backdate_claims(claims, journal)
+
+
+def backdate_claims(claims: list[Claim], journal: Journal) -> list[Claim]:
+    """Stamp each claim with the moment its evidence existed: the finish of
+    the last candidate it cites, instead of the distill pass's "now". The
+    knowledge graph slices time by these stamps, so with them the graph's
+    timeline steps candidate by candidate rather than in one clump per
+    search. Claims without recognisable evidence keep their stamp."""
+    finished = {
+        c.candidate_id: (c.finished_at or c.created_at)
+        for c in journal.candidates.values()
+        if c.finished_at or c.created_at
+    }
+    for claim in claims:
+        stamps = [finished[e] for e in claim.evidence if e in finished]
+        if stamps:
+            claim.observed_at = max(stamps)
+    return claims
 
 
 def distill_claims_from_card(

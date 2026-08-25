@@ -56,7 +56,7 @@ def _search(runs_dir: Path, run_id: str, name: str, scores: list[tuple[str, floa
     return search_dir
 
 
-def test_climb_curve_is_best_so_far_in_minutes(tmp_path):
+def test_climb_curve_is_best_so_far_by_tested_candidate(tmp_path):
     search_dir = _search(tmp_path / "runs", "r1", "one", [
         ("2026-08-22T10:02:00+00:00", 1.0),
         ("2026-08-22T10:01:00+00:00", 0.5),  # out of order on disk
@@ -64,7 +64,7 @@ def test_climb_curve_is_best_so_far_in_minutes(tmp_path):
         ("2026-08-22T10:06:00+00:00", 1.4),
     ])
     curve = climb_curve(search_dir, "one")
-    assert curve.xs == [1.0, 2.0, 5.0, 6.0]
+    assert curve.xs == [1.0, 2.0, 3.0, 4.0]
     assert curve.ys == [0.5, 1.0, 1.0, 1.4]
     assert curve.best == 1.4
 
@@ -142,23 +142,43 @@ def test_demo_launches_parallel_detached_searches(tmp_path, monkeypatch):
     ]
 
 
-def test_fetch_installs_the_problem_and_lists_its_files(tmp_path, monkeypatch, capsys):
+def test_problem_get_installs_the_problem_and_lists_its_files(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
     monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
     with pytest.raises(SystemExit) as exc:
-        cli_main(["fetch", DEMO_PROBLEM_ID])
+        cli_main(["problem", "get", DEMO_PROBLEM_ID])
     assert exc.value.code == 0
     out = capsys.readouterr().out
     assert (tmp_path / "hillclimb" / "problems" / DEMO_PROBLEM_ID / "verifier.sh").exists()
     assert "Fetched circle-packing" in out and "verifier.sh" in out and "verify.py" in out
-    # fetching again never overwrites
+    # getting it again never overwrites; `fetch` stays as a deprecated alias
     with pytest.raises(SystemExit):
         cli_main(["fetch", DEMO_PROBLEM_ID])
-    assert "Already have" in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert "Already have" in captured.out
+    assert "hillclimb problem get" in captured.err
     with pytest.raises(SystemExit) as exc:
-        cli_main(["fetch", "no-such-problem"])
+        cli_main(["problem", "get", "no-such-problem"])
     assert exc.value.code == 1
+
+
+def test_problem_list_shows_every_bundled_problem_without_a_project(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
+    monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
+
+    with pytest.raises(SystemExit) as exc:
+        cli_main(["problem", "list"])
+    assert exc.value.code == 0
+
+    output = capsys.readouterr().out
+    assert "problem" in output and "metric" in output and "direction" in output and "budget" in output
+    assert "circle-packing" in output and "sum-radii" in output and "1m" in output
+    assert "heilbronn-convex-13" in output and "normalized-min-triangle-area" in output and "30m" in output
+    assert "knapsack" in output and "mean-percent-of-upper-bound" in output
+    assert "hillclimb problem get <problem>" in output
+    assert not (tmp_path / "hillclimb").exists()
 
 
 def test_run_parallel_searches_spawns_detached_engines(tmp_path, monkeypatch):
@@ -166,7 +186,7 @@ def test_run_parallel_searches_spawns_detached_engines(tmp_path, monkeypatch):
     monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
     monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
     with pytest.raises(SystemExit):
-        cli_main(["fetch", DEMO_PROBLEM_ID])
+        cli_main(["problem", "get", DEMO_PROBLEM_ID])
     launched = []
 
     class FakeProc:
@@ -265,6 +285,48 @@ def test_create_search_records_problem_key_and_unique_ids(tmp_path, config):
     assert meta.search_id == "circle-packing-2"
     assert meta.problem_id == "circle-packing"
     assert meta.problem_key == "circle-packing"
+    assert meta.chart_baselines == {
+        "baseline": 0.5,
+        "OpenEvolve": 2.6359773947566274,
+        "AlphaEvolve": 2.6359830849176067,
+    }
+
+
+def test_chart_baselines_reload_current_problem_config(tmp_path, config):
+    from hillclimb.chart import chart_baselines
+    from hillclimb.run import SearchMeta
+
+    config.paths.problems_dir = tmp_path / "problems"
+    problem_dir, _ = install_demo_problem(config.paths.problems_dir)
+    meta = SearchMeta(
+        search_id="p",
+        run_id="r",
+        problem=str(problem_dir),
+        problem_id="circle-packing",
+        backend="dummy",
+        model="m",
+        metric="sum-radii",
+        chart_baselines={"stale snapshot": 0.1},
+    )
+    assert chart_baselines(config, meta) == {
+        "baseline": 0.5,
+        "OpenEvolve": 2.6359773947566274,
+        "AlphaEvolve": 2.6359830849176067,
+    }
+
+    yaml_path = problem_dir / "problem.yaml"
+    yaml_path.write_text(yaml_path.read_text().replace("baseline: 0.5", "baseline: 0.6", 1))
+    assert chart_baselines(config, meta) == {
+        "baseline": 0.6,
+        "OpenEvolve": 2.6359773947566274,
+        "AlphaEvolve": 2.6359830849176067,
+    }
+
+    meta.problem = str(tmp_path / "removed-problem")
+    assert chart_baselines(config, meta) == {"stale snapshot": 0.1}
+
+    meta.problem = "emflow://some-provider-problem"
+    assert chart_baselines(config, meta) == {"stale snapshot": 0.1}
 
 
 def test_chart_groups_searches_by_problem_key_across_runs(tmp_path):
@@ -310,8 +372,8 @@ def test_step_points_hold_each_score_until_the_next():
 
 def test_climb_folds_every_search_into_one_staircase(tmp_path):
     """Three parallel searches are one climb: `best` is judged against what
-    any of them had landed so far, the origin is the earliest start, and the
-    misses are kept as dots."""
+    any of them had landed so far, x counts candidates across searches, and
+    the misses are kept as dots."""
     from hillclimb.chart import climb_for_problem
 
     runs = tmp_path / "runs"
@@ -326,12 +388,12 @@ def test_climb_folds_every_search_into_one_staircase(tmp_path):
     climb = climb_for_problem(runs, "p")
     assert climb.searches == 2
     assert [(e.x, e.y, e.best) for e in climb.events] == [
-        (2.0, 1.0, True), (4.0, 2.0, True), (6.0, 1.4, False), (8.0, 1.9, False),
+        (1.0, 1.0, True), (2.0, 2.0, True), (3.0, 1.4, False), (4.0, 1.9, False),
     ]
     assert climb.best == 2.0
     assert climb.hits == 2
-    assert climb.extent == 8.0
-    assert climb.staircase() == ([2.0, 4.0, 4.0, 8.0], [1.0, 1.0, 2.0, 2.0])
+    assert climb.extent == 4.0
+    assert climb.staircase() == ([1.0, 2.0, 2.0, 4.0], [1.0, 1.0, 2.0, 2.0])
     assert climb_for_problem(runs, "other").events == []
 
 
@@ -358,6 +420,10 @@ def test_build_climb_plot_renders_steps_and_dots(tmp_path):
     ])
     plot = build_climb_plot(climb_for_problem(runs, "p"))
     assert len(plot.render_rgba(200, 100)) == 200 * 100 * 4
-    # a single scored candidate still draws (a stub line), not a bare point
-    _search(runs, "r2", "solo", [("2026-08-22T10:01:00+00:00", 1.0)])
-    build_climb_plot(climb_for_problem(tmp_path / "runs", "p")).render_rgba(200, 100)
+    # a single scored candidate still draws as a point without inventing a
+    # fractional candidate count merely to make a line segment visible
+    solo_runs = tmp_path / "solo-runs"
+    _search(solo_runs, "r2", "solo", [("2026-08-22T10:01:00+00:00", 1.0)])
+    solo = climb_for_problem(solo_runs, "p")
+    assert [e.x for e in solo.events] == [1.0]
+    build_climb_plot(solo).render_rgba(200, 100)

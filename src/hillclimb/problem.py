@@ -30,6 +30,9 @@ class ProblemSpec(BaseModel):
     higher_is_better: bool
     time_budget_s: int
     allow_network: bool = False
+    # Named score references drawn as horizontal lines by `hillclimb chart`.
+    # A mapping keeps problem.yaml compact and preserves legend order.
+    chart_baselines: dict[str, float] = Field(default_factory=dict)
 
     # --- the verifier contract ---
     # argv of the validation command; `{python}`/`{solution}`/`{result}`
@@ -272,6 +275,15 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
     contract_path = _optional_file(problem_dir, meta, "contract", default="contract.md")
     baseline_raw = meta.get("baseline")
     baseline_score = float(baseline_raw) if isinstance(baseline_raw, (int, float)) and not isinstance(baseline_raw, bool) else None
+    chart_baselines = dict(meta.get("chart_baselines") or {})
+    if baseline_score is not None:
+        # A declared numeric floor is both a real c000 search candidate and an
+        # obvious chart reference. Keep it first in the legend and authoritative
+        # if an older config redundantly declared `chart_baselines.baseline`.
+        chart_baselines = {
+            "baseline": baseline_score,
+            **{label: value for label, value in chart_baselines.items() if label != "baseline"},
+        }
     baseline_path = None if baseline_score is not None else _optional_file(problem_dir, meta, "baseline")
     if baseline_score is not None:
         baseline_summary = f"baseline: {baseline_score:g} (declared)"
@@ -289,6 +301,7 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
         baseline_text=baseline_path.read_text() if baseline_path else None,
         baseline_score=baseline_score,
         baseline_summary=baseline_summary,
+        chart_baselines=chart_baselines,
         baseline_files={
             dest: (problem_dir / src).resolve()
             for dest, src in (meta.get("baseline_files") or {}).items()

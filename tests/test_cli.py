@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import typer
 
-from hillclimb.cli import BANNER_LINES, WORDMARK_LINES, _run_problem, _run_suite, resolve_search_dir
+from hillclimb.cli import BANNER_LINES, LOGO_LINES, WORDMARK_LINES, _run_problem, _run_suite, resolve_search_dir
 from hillclimb.cli import main as cli_main
 from hillclimb.run import (
     RunMeta,
@@ -447,6 +447,13 @@ def test_banner_lines_are_uniform_width():
     assert len({len(line) for line in WORDMARK_LINES}) == 1
 
 
+def test_arrow_logo_closes_its_bottom_shadow():
+    assert LOGO_LINES[-2].startswith("██╔╝")
+    assert LOGO_LINES[-1].startswith("╚═╝")
+    assert len(BANNER_LINES) == len(LOGO_LINES)
+    assert BANNER_LINES[-1].rstrip().endswith(LOGO_LINES[-1].rstrip())
+
+
 def test_wide_terminal_prints_the_mark(monkeypatch, capsys):
     monkeypatch.setenv("COLUMNS", "120")
     with pytest.raises(SystemExit):
@@ -647,3 +654,106 @@ def test_is_engine_matches_the_launcher_argv_only():
     assert is_engine("/venv/bin/python3 -m hillclimb.cli run circle-packing")
     assert not is_engine("/bin/zsh -c 'grep hillclimb.cli run'")
     assert not is_engine("/venv/bin/python3 -m hillclimb.cli watch")
+
+
+# --- summit -----------------------------------------------------------------
+
+
+def _summit_search(runs_dir, run_id, search_id, problem_id, scores, higher_is_better=True):
+    """A finished-looking search: metadata, a journal of scored drafts, and a
+    best/ dir stamped with its own address so tests can see whose files won."""
+    from hillclimb.candidate import Candidate, Trial
+    from hillclimb.journal import Journal
+
+    run_dir = runs_dir / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    write_run_meta(
+        run_dir,
+        RunMeta(run_id=run_id, name=run_id, kind="problem", target=problem_id, problem_ids=[problem_id]),
+    )
+    search_dir = run_dir / "searches" / search_id
+    (search_dir / "best").mkdir(parents=True)
+    write_search_meta(
+        search_dir,
+        SearchMeta(
+            search_id=search_id,
+            run_id=run_id,
+            problem=problem_id,
+            problem_id=problem_id,
+            problem_key=problem_id,
+            backend="dummy",
+            model="",
+            metric="score",
+            higher_is_better=higher_is_better,
+        ),
+    )
+    journal = Journal(search_dir / "journal.jsonl")
+    for i, score in enumerate(scores):
+        journal.candidate_result(
+            Candidate(
+                candidate_id=f"c{i:03d}",
+                operator="draft",
+                status="ok",
+                trials=[Trial(val_score=score, submission_ok=True)],
+            )
+        )
+    (search_dir / "best" / "solution.py").write_text(f"# {run_id}/{search_id}\n")
+    (search_dir / "best" / "submission.csv").write_text(f"id\n{run_id}/{search_id}\n")
+    return search_dir
+
+
+def test_summit_copies_the_best_search_across_runs(config, tmp_path):
+    from hillclimb.cli import _summit
+
+    _summit_search(config.paths.runs_dir, "r1", "p", "p", [0.1, 0.3])
+    _summit_search(config.paths.runs_dir, "r2", "p", "p", [0.2])
+    dest = tmp_path / "root"
+    dest.mkdir()
+
+    record, candidate, copied = _summit(config, None, dest)
+
+    assert record.run_id == "r1"
+    assert candidate.val_score == 0.3
+    assert copied == ["solution.py", "submission.csv"]
+    assert (dest / "solution.py").read_text() == "# r1/p\n"
+    assert (dest / "submission.csv").read_text() == "id\nr1/p\n"
+
+
+def test_summit_respects_lower_is_better(config, tmp_path):
+    from hillclimb.cli import _summit
+
+    _summit_search(config.paths.runs_dir, "r1", "p", "p", [0.4], higher_is_better=False)
+    _summit_search(config.paths.runs_dir, "r2", "p", "p", [0.2], higher_is_better=False)
+    dest = tmp_path / "root"
+    dest.mkdir()
+
+    record, candidate, _ = _summit(config, None, dest)
+
+    assert record.run_id == "r2"
+    assert candidate.val_score == 0.2
+
+
+def test_summit_requires_a_problem_when_several_exist(config, tmp_path):
+    from hillclimb.cli import _summit
+
+    _summit_search(config.paths.runs_dir, "r1", "a", "a", [0.1])
+    _summit_search(config.paths.runs_dir, "r1", "b", "b", [0.2])
+    dest = tmp_path / "root"
+    dest.mkdir()
+
+    with pytest.raises(typer.BadParameter, match="a, b"):
+        _summit(config, None, dest)
+
+    record, _, _ = _summit(config, "b", dest)
+    assert record.search_id == "b"
+
+
+def test_summit_with_no_scored_candidate_explains_itself(config, tmp_path):
+    from hillclimb.cli import _summit
+
+    _summit_search(config.paths.runs_dir, "r1", "p", "p", [])
+    dest = tmp_path / "root"
+    dest.mkdir()
+
+    with pytest.raises(typer.BadParameter, match="no scored candidate"):
+        _summit(config, None, dest)

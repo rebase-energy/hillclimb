@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
 from contextlib import closing
 from datetime import datetime
+from itertools import zip_longest
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -104,7 +106,7 @@ BANNER_STYLE = "bold cyan"
 # Rising-trend arrow to the right of the wordmark, in the same ANSI-shadow
 # style as the letters: a climb, a small dip, then a climb into the arrowhead.
 # Diagonals step one column per row so adjacent cells share an edge, not just
-# a corner; that needs all six banner rows, so the mark has no bottom shadow.
+# a corner. The seventh row closes the shadow below the lowest step.
 LOGO_LINES = [
     "        ██████╗",
     "    ██╗ ╚═████║",
@@ -112,6 +114,7 @@ LOGO_LINES = [
     "  ██╔═████╔╝╚═╝",
     " ██╔╝ ╚██╔╝    ",
     "██╔╝   ╚═╝     ",
+    "╚═╝            ",
 ]
 WORDMARK_LINES = [
     "██╗  ██╗ ██╗ ██╗      ██╗       ██████╗ ██╗      ██╗ ███╗   ███╗ ██████╗ ",
@@ -121,9 +124,13 @@ WORDMARK_LINES = [
     "██║  ██║ ██║ ███████╗ ███████╗ ╚██████╗ ███████╗ ██║ ██║ ╚═╝ ██║ ██████╔╝",
     "╚═╝  ╚═╝ ╚═╝ ╚══════╝ ╚══════╝  ╚═════╝ ╚══════╝ ╚═╝ ╚═╝     ╚═╝ ╚═════╝ ",
 ]
-BANNER_LINES = [f"{word}  {logo}" for logo, word in zip(LOGO_LINES, WORDMARK_LINES)]
-BANNER_WIDTH = max(len(line) for line in BANNER_LINES)
 WORDMARK_WIDTH = max(len(line) for line in WORDMARK_LINES)
+LOGO_WIDTH = max(len(line) for line in LOGO_LINES)
+BANNER_LINES = [
+    f"{word:<{WORDMARK_WIDTH}}  {logo:<{LOGO_WIDTH}}"
+    for word, logo in zip_longest(WORDMARK_LINES, LOGO_LINES, fillvalue="")
+]
+BANNER_WIDTH = max(len(line) for line in BANNER_LINES)
 
 
 def print_banner() -> None:
@@ -276,27 +283,84 @@ def scaffold_hillclimb_dir(root: Path) -> Path:
     return folder
 
 
-@app.command()
-def fetch(
-    problem: str = typer.Argument("circle-packing", help="A bundled problem id (today: circle-packing)"),
+problem_app = typer.Typer(
+    cls=HillclimbGroup,
+    help="Ready-made verifier problems shipped with hillclimb.",
+    no_args_is_help=True,
+)
+app.add_typer(problem_app, name="problem")
+
+
+def _compact_duration(seconds: int) -> str:
+    """A problem budget in its shortest exact CLI spelling."""
+    if seconds <= 0:
+        return "-"
+    if seconds % 3600 == 0:
+        return f"{seconds // 3600}h"
+    if seconds % 60 == 0:
+        return f"{seconds // 60}m"
+    return f"{seconds}s"
+
+
+@problem_app.command("list")
+def problem_list():
+    """List every problem bundled with hillclimb."""
+    import yaml
+
+    from hillclimb.demo import BUNDLED_PROBLEM_IDS, demo_problem_resource
+
+    rows = []
+    for problem_id in sorted(BUNDLED_PROBLEM_IDS):
+        resource = demo_problem_resource(problem_id) / "problem.yaml"
+        metadata = yaml.safe_load(resource.read_text()) or {}
+        rows.append((
+            problem_id,
+            str(metadata.get("metric", "-")),
+            "maximize" if metadata.get("higher_is_better", True) else "minimize",
+            _compact_duration(int(metadata.get("time_budget_s", 0))),
+        ))
+
+    widths = [
+        max(len(header), *(len(row[index]) for row in rows))
+        for index, header in enumerate(("problem", "metric", "direction", "budget"))
+    ]
+    typer.echo(
+        f"{'problem':<{widths[0]}}  {'metric':<{widths[1]}}  "
+        f"{'direction':<{widths[2]}}  budget"
+    )
+    for problem_id, metric, direction, budget in rows:
+        typer.echo(
+            f"{problem_id:<{widths[0]}}  {metric:<{widths[1]}}  "
+            f"{direction:<{widths[2]}}  {budget}"
+        )
+    typer.echo("\nGet one with: hillclimb problem get <problem>")
+
+
+@problem_app.command("get")
+def problem_get(
+    problem: str = typer.Argument(
+        "circle-packing",
+        help="A bundled problem id (see: hillclimb problem list)",
+    ),
 ):
-    """Fetch a ready-made problem into hillclimb/problems/.
+    """Copy a ready-made problem into hillclimb/problems/.
 
     Creates the hillclimb/ dir here if there is none, then copies the
     problem's files in and lists them — read them before you run: the
     verifier IS the problem. An existing folder is never overwritten.
     """
-    from hillclimb.demo import DEMO_PROBLEM_ID, install_demo_problem
+    from hillclimb.demo import BUNDLED_PROBLEM_IDS, install_demo_problem
     from hillclimb.project import find_hillclimb_dir
 
-    if problem != DEMO_PROBLEM_ID:
-        typer.echo(f"error: no bundled problem {problem!r} (available: {DEMO_PROBLEM_ID})", err=True)
+    if problem not in BUNDLED_PROBLEM_IDS:
+        available = ", ".join(BUNDLED_PROBLEM_IDS)
+        typer.echo(f"error: no bundled problem {problem!r} (available: {available})", err=True)
         raise typer.Exit(1)
     if find_hillclimb_dir() is None:
         folder = scaffold_hillclimb_dir(Path.cwd())
         typer.echo(f"Created hillclimb dir at {folder}")
     config = load_config()
-    problem_dir, created = install_demo_problem(config.paths.problems_dir)
+    problem_dir, created = install_demo_problem(config.paths.problems_dir, problem)
     verb = "Fetched" if created else "Already have"
     typer.echo(f"{verb} {problem} at {problem_dir}")
     for name, what in PROBLEM_FILES:
@@ -305,11 +369,41 @@ def fetch(
     typer.echo(f"Next: hillclimb verify {problem}   (then: hillclimb run {problem} --budget 10m)")
 
 
+@app.command(hidden=True)
+def intro(
+    reset: bool = typer.Option(
+        False, "--reset", help="Forget that the intro played; it plays again on the next run"
+    ),
+):
+    """Replay the first-run 3D intro animation."""
+    from hillclimb.intro import intro_marker_path, play_intro
+
+    if reset:
+        intro_marker_path().unlink(missing_ok=True)
+        typer.echo("Intro re-armed: it plays on the next hillclimb command.")
+        return
+    play_intro()
+
+
+@app.command(hidden=True)
+def fetch(
+    problem: str = typer.Argument(
+        "circle-packing",
+        help="A bundled problem id (see: hillclimb problem list)",
+    ),
+):
+    """Deprecated spelling of `hillclimb problem get`."""
+    typer.echo("note: `hillclimb fetch` is now `hillclimb problem get`", err=True)
+    problem_get(problem)
+
+
 PROBLEM_FILES = (
     ("problem.yaml", "metric, direction, budget — the problem's identity"),
     ("description.md", "what the agents read before drafting"),
-    ("verifier.sh", "the ONLY process hillclimb starts: runs solution.py, then the scorer"),
+    ("contract.md", "the interface solution.py must implement"),
+    ("verifier.sh", "the ONLY process hillclimb starts: drives solution.py and reports the score"),
     ("verify.py", "the scorer — writes the score to $HILLCLIMB_RESULT"),
+    ("baseline.py", "the starting solution scored at t=0"),
     ("sample_submission.csv", "the output format a solution must produce"),
     ("requirements.txt", "the solution venv"),
 )
@@ -1023,7 +1117,7 @@ def _execute(
     outcome = execute_search(config, problem, search_dir, budget, log=typer.echo, seed_from=seed_from)
     ref = outcome.ref
     if outcome.state == "parked":
-        typer.echo(f"\nRate limited: {outcome.error}")
+        typer.echo(f"\nParked: {outcome.error}")
         typer.echo(f"Resume later with: hillclimb resume {ref}")
         raise typer.Exit(2)
     if outcome.state == "stopped":
@@ -1186,7 +1280,7 @@ def _run_suite(
 def run(
     target: str,
     budget: str = typer.Option(None, help="Wall-clock budget, e.g. 2h / 30m"),
-    backend: str = typer.Option(None, help="Operator backend: claude-code | dummy"),
+    backend: str = typer.Option(None, help="Operator backend: claude-code | codex | dummy"),
     model: str = typer.Option(None, help="Model for operator calls, e.g. sonnet / opus"),
     policy: str = typer.Option(
         None, "--policy", help="Search policy (default: greedy); params via config search.policy_params"
@@ -1623,6 +1717,87 @@ def status(search: str = typer.Argument("latest")):
         )
 
 
+SUMMIT_FILES = ("solution.py", "submission.csv")
+
+
+def _summit(config: Config, problem: str | None, dest: Path):
+    """The best solution for `problem` across every run, copied into `dest`.
+
+    Ranks each search's selected candidate (the one whose files its best/
+    holds) and copies the winning search's best/ files. Reads journals as
+    they are, so it is safe mid-climb. Returns (search record, candidate,
+    copied file names)."""
+    with closing(open_store(config)) as store:
+        records = store.searches(problem_key=problem)
+        if not records:
+            known = sorted({r.meta.problem_key or r.meta.problem_id for r in store.searches()})
+            what = f"no searches for {problem!r}" if problem else "no searches in this workspace"
+            hint = f". Problems here: {', '.join(known)}" if known else ""
+            raise typer.BadParameter(f"{what}{hint}.")
+        keys = sorted({r.meta.problem_key or r.meta.problem_id for r in records})
+        if len(keys) > 1:
+            raise typer.BadParameter(
+                f"several problems in this workspace ({', '.join(keys)}) — "
+                "name one: hillclimb summit <problem>"
+            )
+        best: tuple[SearchRecord, object] | None = None
+        for record in records:
+            journal = Journal(store.journal(record.key))
+            candidate = journal.selected_candidate(
+                record.meta.higher_is_better, config.holdout.selection
+            )
+            if candidate is None or candidate.val_score is None:
+                continue
+            if best is None or (
+                candidate.val_score > best[1].val_score
+                if record.meta.higher_is_better
+                else candidate.val_score < best[1].val_score
+            ):
+                best = (record, candidate)
+    if best is None:
+        raise typer.BadParameter(
+            "no scored candidate yet — nothing to copy. Try again once the climb lands one."
+        )
+    record, candidate = best
+    source = record.search_dir / "best"
+    copied = [name for name in SUMMIT_FILES if (source / name).is_file()]
+    if not copied:
+        raise typer.BadParameter(f"{source} holds no solution files yet; try again in a moment.")
+    for name in copied:
+        shutil.copy(source / name, dest / name)
+    return record, candidate, copied
+
+
+@app.command()
+def summit(
+    problem: str = typer.Argument(
+        None, help="Problem key; defaults to the only problem in the workspace"
+    ),
+    to: Path = typer.Option(
+        None, "--to", help="Destination folder (default: the folder holding hillclimb/)"
+    ),
+):
+    """Copy the best solution found so far next to your hillclimb/ folder.
+
+    Ranks every search of the problem, across all runs, by its selected
+    candidate and copies that search's best/ files (solution.py and
+    submission.csv) into the destination. Run it at any point, even
+    mid-climb — you always get the best discovered so far.
+    """
+    config = load_config()
+    dest = (to or config.hillclimb_dir.parent).resolve()
+    already_there = {name for name in SUMMIT_FILES if (dest / name).exists()}
+    record, candidate, copied = _summit(config, problem, dest)
+    key = record.meta.problem_key or record.meta.problem_id
+    typer.echo(
+        f"summit of {key}: {record.meta.metric} {candidate.val_score:.6g} — "
+        f"{candidate.candidate_id} ({candidate.operator}) from {record.ref}"
+    )
+    for name in copied:
+        verb = "refreshed" if name in already_there else "wrote"
+        typer.echo(f"  {verb} {dest / name}")
+
+
 @app.command()
 def show(
     search: str = typer.Argument("latest", help="latest, <run-id>, or <run-id>/<search-id>"),
@@ -1821,12 +1996,13 @@ def chart(
         False, "--detail", "-d", help="One search only, with its exploration tree drawn on the curve"
     ),
 ):
-    """Live hillclimb chart: best score so far vs minutes into the search.
+    """Live hillclimb chart: best score so far vs tested candidates.
 
     One staircase across every search of the problem, every scored candidate
-    a dot (bright where it set a new best, dim where it missed); an
-    experiment gets one line per arm instead. Refreshes as candidates land.
-    Keys: r=refresh, d=detail
+    a dot (bright where it set a new best, dim where it missed), plus optional
+    problem-config baselines; an experiment gets one line per arm instead.
+    Refreshes as candidates land.
+    Keys: r=refresh, t=toggle improvement text, d=detail
     (every scored candidate as a mark, parent edges, accepted lineage bold),
     q=quit.
     """
@@ -1884,6 +2060,10 @@ def _demo_preflight(backend: str) -> None:
             "claude (Claude Code CLI) is not on PATH — the agents run through it:\n"
             "    npm install -g @anthropic-ai/claude-code && claude login"
         )
+    if backend == "codex" and shutil.which("codex") is None:
+        missing.append(
+            "codex (Codex CLI) is not on PATH — install it and run `codex login`"
+        )
     if missing:
         for line in missing:
             typer.echo(f"error: {line}", err=True)
@@ -1903,7 +2083,7 @@ def _print_demo_intro(folder: Path, parallel_searches: int, parallel_operators: 
         table.add_row(command, what)
     body = Table.grid(padding=(0, 0))
     body.add_row(
-        f"Circle packing: 50 circles in the unit square, maximize the sum of radii.\n"
+        f"Circle packing: 26 circles in the unit square, maximize the sum of radii.\n"
         f"{parallel_searches} searches of {budget} are climbing in parallel in [cyan]{folder}[/],\n"
         f"each running {parallel_operators} operators at a time, "
         f"starting from a one-circle baseline (sum of radii 0.5).\n"
@@ -1918,7 +2098,7 @@ def _print_demo_intro(folder: Path, parallel_searches: int, parallel_operators: 
 DEMO_COMMANDS = (
     ("hillclimb watch candidates", "one search's candidates: agents drafting, debugging, improving"),
     ("hillclimb watch", "all the searches side by side"),
-    ("hillclimb chart", "the hillclimb curves: best score vs time, live"),
+    ("hillclimb chart", "the hillclimb curve: best score vs candidates, live"),
     ("hillclimb tree", "one search's exploration tree: expanded vs discontinued lineages"),
     ("hillclimb graph", "the knowledge graph growing as searches finish"),
 )
@@ -1932,7 +2112,7 @@ def demo(
         3, "--parallel-operators", min=1, help="Concurrent operators (one candidate each) per search"
     ),
     model: str = typer.Option(None, help="Model for operator calls, e.g. sonnet / opus"),
-    backend: str = typer.Option(None, help="Operator backend: claude-code | dummy"),
+    backend: str = typer.Option(None, help="Operator backend: claude-code | codex | dummy"),
 ):
     """Try hillclimb in one command: agents climb the circle-packing problem.
 
@@ -1965,16 +2145,25 @@ def demo(
 def smoke(
     target: str = typer.Argument("circle-packing"),
     model: str = typer.Option(None),
+    backend: str = typer.Option(None, help="Operator backend: claude-code | codex | dummy"),
 ):
-    """One real DRAFT call through the claude-code backend, end to end.
+    """One real DRAFT call through the selected backend, end to end.
 
     Executes the result and reports — verifies auth, JSON field names, and
     the filesystem contract.
     """
-    config = load_config(backend="claude-code", model=model)
+    config = load_config(backend=backend, model=model)
     problem = load_problem(target, config)
-    version = subprocess.run(["claude", "-v"], capture_output=True, text=True).stdout.strip()
-    typer.echo(f"claude version: {version}")
+    _demo_preflight(config.backend)
+    version_cmd = {
+        "claude-code": ["claude", "-v"],
+        "codex": ["codex", "--version"],
+    }.get(config.backend)
+    if version_cmd:
+        version = subprocess.run(
+            version_cmd, capture_output=True, text=True
+        ).stdout.strip()
+        typer.echo(f"{config.backend} version: {version}")
     run_id = f"smoke-{datetime.now():%Y%m%d-%H%M%S}"
     run_dir = create_run(
         config,
@@ -1992,13 +2181,18 @@ def smoke(
         problem=problem,
         config=config,
         journal=journal,
-        backend=get_backend("claude-code"),
+        backend=get_backend(config.backend, auth=config.backend_auth),
         executor=build_executor(config, problem),
         budget=BudgetManager(1800, stop_margin_s=0),
         search_dir=search_dir,
         log=typer.echo,
         holdout_scorer=build_holdout_scorer(config, problem, search_dir),
     )
+    typer.echo(
+        f"Running one {config.backend} DRAFT in the foreground; "
+        "this can take several minutes."
+    )
+    typer.echo("To follow it live, open another terminal and run: hillclimb watch")
     candidate = searcher.run_operator("draft", None)
     trial = candidate.last_trial
     typer.echo(f"\ncandidate:   {candidate.candidate_id} status={candidate.status}")
@@ -2021,6 +2215,16 @@ def main(argv: list[str] | None = None) -> None:
     typer's "Missing command".
     """
     args = list(sys.argv[1:] if argv is None else argv)
+    if "--skip-intro" in args:
+        # Opt out of the first-run intro for good; `hillclimb intro` still plays it.
+        from hillclimb.intro import mark_intro_shown
+
+        args = [arg for arg in args if arg != "--skip-intro"]
+        mark_intro_shown()
+    elif not args or args[0] != "intro":  # `hillclimb intro` plays it itself
+        from hillclimb.intro import maybe_play_intro
+
+        maybe_play_intro()
     if not args or args in (["--help"], ["-h"]):
         print_banner()
         args = ["--help"]

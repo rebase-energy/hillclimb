@@ -3,5 +3,8 @@ metric: sum-radii
 higher_is_better: true
 description: description.md
 baseline: 0.5  # one big circle
+chart_baselines:
+  OpenEvolve: 2.6359773947566274
+  AlphaEvolve: 2.6359830849176067
 time_budget_s: 900
 allow_network: false

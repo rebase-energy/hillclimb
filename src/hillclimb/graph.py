@@ -420,6 +420,19 @@ def graph_at(graph: KnowledgeGraph, t: str | None) -> KnowledgeGraph:
     )
 
 
+def change_events(graph: KnowledgeGraph) -> list[str]:
+    """Every distinct moment the graph changed: a node or edge appearing
+    (first_seen) or a claim being displaced (superseded_at). The fine
+    timeline for the graph view's scrubber — with claims backdated to their
+    evidencing candidate (claims.backdate_claims), one tick per candidate
+    that taught us something."""
+    stamps = {n.first_seen for n in graph.nodes} | {e.first_seen for e in graph.edges}
+    stamps |= {n.superseded_at for n in graph.nodes if n.superseded_at}
+    stamps |= {e.superseded_at for e in graph.edges if e.superseded_at}
+    stamps.discard("")
+    return sorted(stamps)
+
+
 def load_graph(path: Path) -> KnowledgeGraph | None:
     if not path.exists():
         return None

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -322,3 +323,43 @@ class TestPersistence:
     def test_stats(self, knowledge_dir):
         text = graph_stats(load_or_build_graph(knowledge_dir))
         assert "nodes" in text and "search=2" in text
+
+
+def test_change_events_lists_every_distinct_moment(knowledge_dir):
+    """The fine timeline: every first_seen and superseded_at once, sorted,
+    the timeless '' dropped — a superset of the per-search events."""
+    from hillclimb.graph import change_events, rebuild_graph
+
+    # a claim backdated to its candidate's finish: a moment of its own
+    write_card(knowledge_dir, make_card(
+        run_ref="r3/s1", finished_at="2026-07-03T00:00:00Z",
+        claims=[claim(cid="cl-mid", observed="2026-07-02T12:00:00Z")],
+    ))
+    graph = rebuild_graph(knowledge_dir)
+    stamps = change_events(graph)
+    assert stamps == sorted(stamps) and len(stamps) == len(set(stamps))
+    assert "" not in stamps
+    assert set(graph.events) <= set(stamps)
+    assert len(stamps) > len(graph.events)
+
+
+def test_backdate_claims_stamps_evidence_finish():
+    from hillclimb.claims import backdate_claims
+
+    class _J:
+        candidates = {
+            "c001": SimpleNamespace(candidate_id="c001", finished_at="2026-07-01T10:00:00Z", created_at="x"),
+            "c002": SimpleNamespace(candidate_id="c002", finished_at=None, created_at="2026-07-01T11:00:00Z"),
+        }
+
+    both = claim(cid="cl-both")
+    both.evidence = ["c001", "c002"]          # last evidence wins: the claim
+    lone = claim(cid="cl-lone")               # needs both to exist
+    lone.evidence = ["c-unknown"]             # unknown evidence: stamp kept
+    none = claim(cid="cl-none")
+    none.evidence = []
+    out = backdate_claims([both, lone, none], _J())
+    assert both.observed_at == "2026-07-01T11:00:00Z"
+    assert lone.observed_at == "2026-07-01T00:00:00Z"
+    assert none.observed_at == "2026-07-01T00:00:00Z"
+    assert out == [both, lone, none]

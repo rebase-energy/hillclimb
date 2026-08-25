@@ -253,6 +253,55 @@ class TestTreePlot:
 
 
 class TestChartDetail:
+    def test_new_best_summaries_become_short_collision_free_annotations(self):
+        from hillclimb.chart import (
+            Climb,
+            ClimbEvent,
+            annotation_spans,
+            brief_improvement,
+            climb_plot_bounds,
+            improvement_annotations,
+        )
+
+        assert brief_improvement("baseline: baseline.py", "baseline") == "baseline"
+        assert brief_improvement(
+            "Affine-gauge post-processing: rebalance tied active triangles.", "improve"
+        ) == "Affine-gauge post-processing"
+        climb = Climb(events=[
+            ClimbEvent(1.0, 0.1, True, "r", "baseline", "baseline: baseline.py"),
+            ClimbEvent(2.0, 0.2, False, "r", "draft", "discarded idea"),
+            ClimbEvent(
+                3.0, 0.3, True, "r", "improve",
+                "Affine-gauge post-processing: rebalance tied active triangles.",
+            ),
+        ], extent=3.0)
+        annotations = improvement_annotations(climb)
+        assert [annotation.text for annotation in annotations] == [
+            "baseline", "Affine-gauge post-processing",
+        ]
+        spans = annotation_spans(
+            annotations, climb_plot_bounds(climb, {}), width=100, height=30
+        )
+        assert len(spans) == 2
+        by_row: dict[int, list[tuple[int, int]]] = {}
+        from hillclimb.theme import CYAN
+
+        for row, column, text, style in spans:
+            assert style.bgcolor is not None
+            assert style.color is not None and style.color.get_truecolor() == CYAN
+            by_row.setdefault(row, []).append((column, column + len(text)))
+        assert all(
+            right < next_left
+            for intervals in by_row.values()
+            for (_left, right), (next_left, _next_right) in zip(
+                sorted(intervals), sorted(intervals)[1:]
+            )
+        )
+        crowded = [annotations[0]] * 10
+        assert len(annotation_spans(
+            crowded, climb_plot_bounds(climb, {}), width=80, height=24
+        )) == len(crowded)
+
     def test_marks_edges_and_curve_agree(self):
         layout = detail_layout(
             forest(), label="r1/p", state="done", started_at="2026-08-22T10:00:00+00:00"
@@ -261,13 +310,14 @@ class TestChartDetail:
         # scored, unpruned only — c005 failed and c006 pruned are left out
         assert set(by_id) == {"c000", "c001", "c002", "c003", "c004", "c007"}
         assert layout.unscored == 2
-        assert by_id["c007"].x == 8.0 and by_id["c007"].y == 0.8 and by_id["c007"].on_path
+        assert by_id["c007"].x == 6.0 and by_id["c007"].y == 0.8 and by_id["c007"].on_path
         assert by_id["c003"].on_path is False
         edges = {((e.x0, e.y0), (e.x1, e.y1)): e.on_path for e in layout.edges}
         assert edges[((3.0, 0.6), (5.0, 0.7))] is True   # c002 -> c004
         assert edges[((3.0, 0.6), (4.0, 0.55))] is False  # c002 -> c003
         assert len(layout.edges) == 3  # c005/c006 children are not drawn
         # the staircase is the chart's own curve
+        assert layout.curve.xs == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
         assert layout.curve.ys == [0.1, 0.5, 0.6, 0.6, 0.7, 0.8]
 
     def test_empty_detail(self):
@@ -279,6 +329,102 @@ class TestChartDetail:
         layout = detail_layout(forest(), label="r1/p", state="done")
         plot = build_detail_plot(layout)
         assert plot.is_3d() is False
+
+    def test_arbitrary_named_chart_baselines_are_horizontal(self, monkeypatch):
+        from hillclimb.chart import Climb, ClimbEvent, build_climb_plot, climb_legend, legend_text
+
+        class PlotSpy:
+            def __init__(self):
+                self.lines = []
+                self.scatters = []
+
+            def add_line(self, xs, ys, **kwargs):
+                self.lines.append((xs, ys, kwargs))
+
+            def add_scatter(self, *args, **kwargs):
+                self.scatters.append((args, kwargs))
+
+        plot = PlotSpy()
+        monkeypatch.setattr("hillclimb.chart.themed_plot", lambda: plot)
+        climb = Climb(events=[ClimbEvent(1.0, 0.6, True, "r", "draft")], extent=1.0)
+        baselines = {"baseline": 0.5, "OpenEvolve best": 0.7, "AlphaEvolve best": 0.8}
+        assert build_climb_plot(climb, baselines) is plot
+        assert [(xs, ys, options["name"]) for xs, ys, options in plot.lines] == [
+            ([0.0, 1.0], [0.5, 0.5], "baseline"),
+            ([0.0, 1.0], [0.7, 0.7], "OpenEvolve best"),
+            ([0.0, 1.0], [0.8, 0.8], "AlphaEvolve best"),
+        ]
+
+        # ChartScreen draws its legend in a dedicated Textual band, so its
+        # plot traces deliberately carry no in-canvas legend names.
+        outside = PlotSpy()
+        monkeypatch.setattr("hillclimb.chart.themed_plot", lambda: outside)
+        build_climb_plot(climb, baselines, show_legend=False)
+        assert all(options["name"] is None for _xs, _ys, options in outside.lines)
+        assert all(options["name"] is None for _args, options in outside.scatters)
+        entries = climb_legend(climb, baselines)
+        assert [entry[0] for entry in entries] == [
+            "baseline", "OpenEvolve best", "AlphaEvolve best", "new best",
+        ]
+        # each entry carries its trace's glyph: reference lines and dots
+        rendered_legend = legend_text(entries).plain
+        assert "─ baseline" in rendered_legend and "● new best" in rendered_legend
+        wrapped = legend_text([
+            ("attempt", (1, 2, 3)),
+            ("best so far", (4, 5, 6)),
+            ("new best", (7, 8, 9)),
+        ], width=16).plain.splitlines()
+        assert wrapped == ["● attempt", "● best so far", "● new best"]
+
+    def test_hidden_legend_entries_drop_their_traces(self, monkeypatch):
+        from hillclimb.chart import (
+            CHART_BASELINE_PALETTE, Climb, ClimbEvent, build_climb_plot, legend_text,
+        )
+
+        class PlotSpy:
+            def __init__(self):
+                self.lines = []
+                self.scatters = []
+
+            def add_line(self, xs, ys, **kwargs):
+                self.lines.append((ys, kwargs))
+
+            def add_scatter(self, xs, ys, **kwargs):
+                self.scatters.append((ys, kwargs))
+
+        plot = PlotSpy()
+        monkeypatch.setattr("hillclimb.chart.themed_plot", lambda: plot)
+        climb = Climb(
+            events=[ClimbEvent(1.0, 0.6, True, "r", "draft"), ClimbEvent(2.0, 0.55, False, "r", "draft")],
+            extent=2.0,
+        )
+        baselines = {"baseline": 0.5, "OpenEvolve best": 0.7, "AlphaEvolve best": 0.8}
+        build_climb_plot(climb, baselines, hidden={"OpenEvolve best", "attempt", "best so far"})
+        # the hidden baseline is gone, and the survivors keep their palette slot
+        assert [(ys[0], options["color"]) for ys, options in plot.lines if options.get("name") != "best so far"] == [
+            (0.5, CHART_BASELINE_PALETTE[0]),
+            (0.8, CHART_BASELINE_PALETTE[2]),
+        ]
+        assert not any(options.get("name") == "best so far" for _ys, options in plot.lines)
+        # the miss dots are gone; the new-best dots remain
+        assert [options["name"] for _ys, options in plot.scatters] == ["new best"]
+
+        # an interactive legend entry is a click target with a 1-9 hotkey and
+        # its name in the trace's own colour, like the knowledge graph's
+        # legend; a hidden one loses its glyph and goes dim and struck through
+        text = legend_text(
+            [("new best", (1, 2, 3)), ("attempt", (4, 5, 6))],
+            hidden={"attempt"}, interactive=True,
+        )
+        assert "1 ● new best" in text.plain and "2   attempt" in text.plain
+        metas = [span.style.meta.get("@click") for span in text.spans if span.style.meta]
+        assert "screen.toggle_series('new best')" in metas
+        assert "screen.toggle_series('attempt')" in metas
+        visible_span = next(s for s in text.spans if "● new best" in text.plain[s.start:s.end])
+        assert visible_span.style.color.get_truecolor() == (1, 2, 3)
+        struck = next(s for s in text.spans if getattr(s.style, "strike", False))
+        assert "attempt" in text.plain[struck.start:struck.end]
+        assert struck.style.dim
 
 
 # --- Textual Pilot tests ---
@@ -429,19 +575,81 @@ async def test_tree_app_reports_a_missing_search(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_chart_detail_toggle(tree_workspace):
+async def test_chart_detail_toggle(tree_workspace, monkeypatch):
     from hillclimb.chart import ChartApp
     from plotui.textual import PlotWidget
+    from hillclimb.run import load_search_meta, write_search_meta
 
-    _search_dir, config = tree_workspace
+    search_dir, config = tree_workspace
+    monkeypatch.setenv("PLOTUI_RENDER", "placeholder")
+    meta = load_search_meta(search_dir)
+    meta.chart_baselines = {
+        "OpenEvolve (GPT-5, 100 candidates)": 0.7,
+        "AdaEvolve (GPT-5, 100 candidates)": 0.8,
+        "AlphaEvolve": 0.9,
+    }
+    write_search_meta(search_dir, meta)
     app = ChartApp(config, "r1/circle-packing", detail=True)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         line = str(app.screen.query_one("#chartline").render())
         assert "detail:" in line and "scored" in line
+        assert str(app.screen.query_one("#chart-x-label").render()) == "candidates"
+        legend = app.screen.query_one("#chart-legend")
+        legend_text = str(legend.render())
+        assert "Demo/circle-packing" in legend_text and "draft" in legend_text and "accepted" in legend_text
+        # Textual must not restyle the clickable entries as hyperlinks — the
+        # link colour would flatten every per-trace colour to one
+        assert legend.auto_links is False
+        stage = app.screen.query_one("#chart-stage")
+        assert legend.region.y >= stage.region.bottom  # underneath the data rectangle
+        assert legend.region.width == stage.region.width
+        assert legend.region.height > 1  # long/many entries wrap into rows
         first = app.screen.query_one("#chart-canvas", PlotWidget)
         await pilot.press("d")
         await pilot.pause()
         assert "detail:" not in str(app.screen.query_one("#chartline").render())
+        assert "new best" in str(legend.render())
+        # improvement text is hidden until `t` reveals it
+        assert not first._overlay
+        await pilot.press("t")
+        await pilot.pause()
+        annotation_text = " ".join(
+            text
+            for spans in first._overlay.values()
+            for _column, text, _style in spans
+        )
+        assert annotation_text and "╱ " in annotation_text
+        assert all(
+            style.bgcolor is not None
+            for spans in first._overlay.values()
+            for _column, _text, style in spans
+        )
+        assert "a=T,U=1,z=-1073741825" in first._transmit
+        await pilot.press("t")
+        await pilot.pause()
+        assert not first._overlay
         # the widget is reused — the plot is swapped, not remounted
         assert app.screen.query_one("#chart-canvas", PlotWidget) is first
+        # the chart is a static figure: scroll-zoom and pan are switched off
+        first.apply_zoom(0.5)
+        first.apply_pan(10.0, 10.0)
+        assert first._plot.camera_state()[2:] == (1.0, 0.0, 0.0)
+        # clicking a legend entry toggles its series; the entry itself stays,
+        # struck through, as the way to bring the series back
+        app.screen.action_toggle_series("new best")
+        await pilot.pause()
+        assert app.screen.hidden_series == {"new best"}
+        assert "new best" in str(legend.render())
+        assert app.screen.query_one("#chart-canvas", PlotWidget) is first
+        app.screen.action_toggle_series("new best")
+        await pilot.pause()
+        assert app.screen.hidden_series == set()
+        # the number keys toggle by legend position, like the graph's 1-8
+        first_label = app.screen._legend_entries[0][0]
+        await pilot.press("1")
+        await pilot.pause()
+        assert app.screen.hidden_series == {first_label}
+        await pilot.press("1")
+        await pilot.pause()
+        assert app.screen.hidden_series == set()

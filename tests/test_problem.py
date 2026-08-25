@@ -24,6 +24,9 @@ metric: score
 higher_is_better: true
 description: description.md
 time_budget_s: 123
+chart_baselines:
+  reference floor: 0.5
+  OpenEvolve best: 0.75
 """
     )
     return problem
@@ -41,6 +44,7 @@ def test_load_problem_from_directory(problem_dir, config):
     assert spec.verifier_cmd == [str(problem_dir / "verifier.sh")]
     assert spec.verifier_display == "./problem/verifier.sh"
     assert spec.time_budget_s == 123
+    assert spec.chart_baselines == {"reference floor": 0.5, "OpenEvolve best": 0.75}
     assert spec.holdout_cmd is None  # no `holdout: true`
     assert not spec.allow_network
 
@@ -204,6 +208,16 @@ def test_load_scalar_baseline(evaluator_dir, config):
     assert spec.baseline_score == 0.5
     assert spec.baseline_text is None
     assert spec.baseline_summary == "baseline: 0.5 (declared)"
+    assert spec.chart_baselines == {"baseline": 0.5}
+
+
+def test_numeric_baseline_is_authoritative_chart_reference(evaluator_dir, config):
+    (evaluator_dir / "problem.yaml").write_text(
+        "metric: sum-radii\nhigher_is_better: true\nbaseline: 0.5\n"
+        "chart_baselines:\n  baseline: 999\n  OpenEvolve best: 0.75\n"
+    )
+    spec = load_problem(evaluator_dir, config)
+    assert spec.chart_baselines == {"baseline": 0.5, "OpenEvolve best": 0.75}
 
 
 def test_declared_floor_is_scored_but_has_no_code(evaluator_dir, config, tmp_path):

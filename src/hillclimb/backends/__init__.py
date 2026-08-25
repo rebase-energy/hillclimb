@@ -17,8 +17,15 @@ def _make_dummy(auth: str) -> OperatorBackend:
     return DummyBackend()
 
 
+def _make_codex(auth: str) -> OperatorBackend:
+    from hillclimb.backends.codex_cli import CodexCliBackend
+
+    return CodexCliBackend(auth=auth)
+
+
 _BACKENDS: dict[str, Callable[[str], OperatorBackend]] = {
     "claude-code": _make_claude_code,
+    "codex": _make_codex,
     "dummy": _make_dummy,
 }
 

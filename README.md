@@ -23,11 +23,12 @@ The design is deliberately three-layered:
 ```bash
 pip install hillclimb
 claude login                   # agents run through the Claude Code CLI and bill your subscription
-hillclimb fetch circle-packing # 1. the problem: a folder you can read — the verifier IS the problem
+hillclimb problem list         # see every problem bundled with hillclimb
+hillclimb problem get circle-packing   # 1. the problem: a folder you can read — the verifier IS the problem
 hillclimb run circle-packing --budget 10m --parallel-searches 3 --parallel-operators 3   # 2. climb
 ```
 
-`hillclimb fetch` creates a `hillclimb/` dir in the current folder and copies
+`hillclimb problem get` creates a `hillclimb/` dir in the current folder and copies
 the bundled circle-packing problem into `hillclimb/problems/` (with a declared
 one-circle baseline, sum of radii 0.5, scored at t=0) — open `verifier.sh`
 and `verify.py` before running anything, that is the whole interface.
@@ -42,11 +43,15 @@ While they climb:
 ```bash
 hillclimb watch candidates   # one search's candidates: drafting, debugging, improving
 hillclimb watch              # all the searches side by side
-hillclimb chart              # the hillclimb curves: best score vs time, one line per search
+hillclimb chart              # the hillclimb: best score so far across every search, every candidate a dot
 hillclimb graph              # the knowledge graph growing as searches finish
 hillclimb tree               # one search's exploration tree: expanded vs discontinued lineages
 hillclimb chart --detail     # the curve with that tree drawn on it (every scored candidate, parent edges)
 ```
+
+Run `hillclimb problem list` to see the bundled catalog. It currently includes
+`circle-packing`, `knapsack`, and `heilbronn-convex-13`. Get one with
+`hillclimb problem get <problem>` before running it.
 
 `hillclimb stop --all` ends the demo (the best solutions stay in `runs/`); `hillclimb reset` ends it AND deletes this folder's `hillclimb/` dir — only engines pinned to that dir are killed, never another folder's;
 3 searches x 3 operators is 9 agents, capped machine-wide by `search.machine_max_operators`; each search's engine log is
@@ -161,6 +166,7 @@ the backend seam in `src/hillclimb/backends/`:
 | backend | what it is |
 |---|---|
 | `claude-code` | Claude Code in headless mode — the production backend; bills your Claude subscription |
+| `codex` | Codex CLI in non-interactive mode; uses your Codex login by default |
 | `dummy` | no model calls: a scripted operator for exercising the engine, TUIs and run layout |
 | `fake` | deterministic canned operator for the test suite |
 
@@ -301,11 +307,19 @@ Everything else is optional:
 verifier: verifier.sh            # the default
 holdout: true                    # engine also runs `verifier.sh --holdout`
 contract: contract.md            # what solution.py must be/do (prompt section)
-baseline: baseline.py            # scored at t=0 as the floor candidate (or a number: a declared floor)
+baseline: 0.5                    # scored at t=0 as the floor candidate; numeric values also become chart lines
+chart_baselines:                 # optional named horizontal lines in `hillclimb chart`
+  previous best: 0.73
 requirements: requirements.txt   # per-problem venv (default: shared csv venv)
 data_dir: data
 allow_network: false
 ```
+
+`chart_baselines` accepts any number of `label: score` entries. Each becomes
+a named horizontal reference line, in the order written. A numeric `baseline`
+automatically adds the line named `baseline`; `chart_baselines` is only needed
+for additional references. A file-based baseline is still evaluated as c000,
+but cannot become a fixed reference line until its score is known.
 
 ### The verifier contract
 
@@ -535,7 +549,10 @@ families, triangles for searches, squares for libraries, diamonds for
 techniques, open diamonds for claims) — the legend in the top-left corner
 is the key, and each entry is a toggle: click it or press its number (1–8)
 to hide that type. Click a node for the detail panel (re-click or Enter opens a
-search's candidates), scrub through time search by search, filter and
+search's candidates), scrub through time search by search or change by change (`g` flips the
+timeline between one tick per finished search and one per graph change —
+per candidate, since claims are stamped with their evidencing candidate's
+finish), filter and
 color by concept from the sidebar. `?` slides out a panel with every key and
 gesture — the footer carries only the few worth a permanent slot. Node
 positions come from a 3D spring layout cached in graph.json (`pos3`; the 2D
@@ -571,8 +588,8 @@ the run has a single search), or `latest` (the default).
 
 | command | what it does |
 |---|---|
-| `fetch [circle-packing]` | copy a bundled problem into `hillclimb/problems/` (creates the `hillclimb/` dir if needed) and list its files |
-| `demo [--budget 10m] [--parallel-searches 3] [--parallel-operators 3]` | `fetch` + `run --parallel-searches` in one command |
+| `problem get [circle-packing\|knapsack\|heilbronn-convex-13]` | copy a bundled problem into `hillclimb/problems/` (creates the `hillclimb/` dir if needed) and list its files (`fetch` is a deprecated alias) |
+| `demo [--budget 10m] [--parallel-searches 3] [--parallel-operators 3]` | `problem get` + `run --parallel-searches` in one command |
 | `init [dir]` | create the `hillclimb/` dir (config, problems/, specs/, runs/) with an example problem |
 | `verify <problem> [--repeat N] [--holdout]` | run a problem's verifier once, outside a search; `--repeat` measures the noise floor |
 | `run <target> [--name ...] [--budget 2h] [--backend ...] [--model ...]` | start a run for one problem or a suite YAML |
@@ -580,7 +597,7 @@ the run has a single search), or `latest` (the default).
 | `resume [search]` | continue a parked / stopped / crashed search |
 | `status [search]` | search state + candidate tree (text) |
 | `watch` | live TUI over runs, searches, and candidates |
-| `chart` | live chart: best score vs minutes into the search, one line per search |
+| `chart` | live chart: best score so far by tested-candidate count across the problem's searches as a staircase, every scored candidate a dot (one line per arm in an experiment) |
 | `graph` | the knowledge-graph TUI (same screen as `knowledge graph`) |
 | `show [search] <candidate-id>` | everything about one candidate: scores, evaluation breakdown, diff vs parent, output |
 | `ps` | every process hillclimb owns on this machine: engines with their agents and verifiers nested; `orphan` marks engines whose hillclimb dir was deleted |

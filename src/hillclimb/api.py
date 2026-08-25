@@ -251,6 +251,7 @@ def create_search(
             },
             metric=problem.metric_name,
             higher_is_better=problem.higher_is_better,
+            chart_baselines=problem.chart_baselines,
             budget_s=total_s,
             holdout_enabled=config.holdout.enabled and problem.holdout_cmd is not None,
             seed_from=str(seed_from) if seed_from else None,

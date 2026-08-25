@@ -1,7 +1,8 @@
 """Interactive knowledge-graph screen for the watch TUI.
 
 Strictly a *viewer* over `knowledge/graph.json` (built by graph.py): rotate,
-pan, zoom, click nodes, scrub through time (one tick per finished search),
+pan, zoom, click nodes, scrub through time (one tick per finished search,
+or per graph change — `g` toggles),
 filter and color by concept. The graph renders as a true-3D scene through
 plotui (Rust rasterizer → Kitty pixel graphics: placeholder placement in
 kitty/Ghostty, direct placement in iTerm2 ≥ 3.5/WezTerm/Konsole, a support
@@ -20,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+from bisect import bisect_right
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -477,15 +479,18 @@ SCRUBBER_STYLES = {  # component class -> fallback Rich style (outside Textual)
 def render_scrubber(
     events: list[str], index: int | None, width: int,
     styles: dict[str, str | Style] | None = None,
+    unit: str = "search",
 ) -> Text:
     """Two rows. A media-player track: the stretch up to the cursor is drawn
-    solid in the accent, the rest thin and dim, one tick per finished search
-    and `●` at the cursor (the right end is live). Under it, what the cursor
-    means — the search it rests on and its position in the sequence — with
-    the key hints right-aligned and muted."""
+    solid in the accent, the rest thin and dim, one tick per event — a
+    finished search, or every graph change when `unit` says so — and `●` at
+    the cursor (the right end is live). Under it, what the cursor means —
+    the event it rests on and its position in the sequence — with the key
+    hints right-aligned and muted."""
     st = {**SCRUBBER_STYLES, **(styles or {})}
     width = max(width, 12)
     n = len(events)
+    plural = f"{unit}es" if unit.endswith(("s", "ch")) else f"{unit}s"
     cursor = width - 1 if index is None else (0 if n <= 1 else round(index / (n - 1) * (width - 1)))
     ticks = {0 if n <= 1 else round(i / (n - 1) * (width - 1)) for i in range(n)}
     text = Text()
@@ -501,10 +506,10 @@ def render_scrubber(
         text.append("no finished searches yet", st["scrubber--hint"])
         return text
     if index is None:
-        label = f"live · {n} search{'es' if n != 1 else ''}"
+        label = f"live · {n} {plural if n != 1 else unit}"
     else:
-        label = f"as of {event_stamp(events[index])} · search {index + 1} of {n}"
-    hint = "drag · j/k step · end live"
+        label = f"as of {event_stamp(events[index])} · {unit} {index + 1} of {n}"
+    hint = "drag · j/k step · g unit · end live"
     text.append(label, st["scrubber--label"])
     gap = width - len(label) - len(hint)
     if gap >= 2:
@@ -858,9 +863,20 @@ class TimeScrubber(Static):
         super().__init__(**kwargs)
         self.events_list: list[str] = []
         self.index: int | None = None
+        self.unit = "search"
         self._scrub_active = False
 
-    def set_events(self, events_list: list[str]) -> None:
+    def set_events(self, events_list: list[str], unit: str | None = None) -> None:
+        if unit is not None and unit != self.unit:
+            # granularity flip: keep the cursor on the same moment, not the
+            # same ordinal — the last new event at or before where it stood
+            if self.index is not None and self.events_list and events_list:
+                at = self.events_list[self.index]
+                self.index = max(bisect_right(events_list, at) - 1, 0)
+            self.unit = unit
+            self.events_list = list(events_list)
+            self._refresh_scrubber()
+            return
         if events_list != self.events_list:
             # clamp a historical cursor if events changed under it
             if self.index is not None and self.index >= len(events_list):
@@ -875,7 +891,7 @@ class TimeScrubber(Static):
     def _refresh_scrubber(self) -> None:
         width = self.content_size.width or 60
         styles = {name: self.get_component_rich_style(name) for name in SCRUBBER_STYLES}
-        self.update(render_scrubber(self.events_list, self.index, width, styles))
+        self.update(render_scrubber(self.events_list, self.index, width, styles, unit=self.unit))
 
     def on_resize(self, event: events.Resize) -> None:
         self._refresh_scrubber()
@@ -1012,8 +1028,10 @@ class GraphScreen(KeysMixin, Screen):
         Binding("-", "zoom_out", "zoom out", show=False),
         Binding("f,0", "fit", "fit", show=False, tooltip="frame the whole graph"),
         Binding("slash", "search", "search"),
-        Binding("j", "scrub_back", "back in time", show=False, tooltip="one tick per finished search"),
+        Binding("j", "scrub_back", "back in time", show=False, tooltip="one tick on the timeline"),
         Binding("k", "scrub_forward", "forward", show=False),
+        Binding("g", "toggle_granularity", "timeline unit", show=False,
+                tooltip="step per finished search, or per change to the graph"),
         Binding("end", "scrub_live", "live", show=False, tooltip="jump to now"),
         Binding("c", "toggle_sidebar", "concepts"),
         # One binding per legend slot; only the first is described, so the
@@ -1042,6 +1060,7 @@ class GraphScreen(KeysMixin, Screen):
         self._graph_mtime = 0.0
         self._filters: frozenset[str] | None = None
         self._hidden_types: frozenset[str] = frozenset()
+        self._fine_timeline = False  # False: per finished search; True: per graph change
 
     def compose(self) -> ComposeResult:
         yield HillclimbHeader()
@@ -1086,7 +1105,7 @@ class GraphScreen(KeysMixin, Screen):
         self.query_one("#concept-sidebar", ConceptSidebar).set_concepts(
             [n.label for n in self._graph.nodes if n.type == "concept"]
         )
-        self.query_one("#time-scrubber", TimeScrubber).set_events(self._graph.events)
+        self.query_one("#time-scrubber", TimeScrubber).set_events(*self._timeline())
         self._apply_view()
 
     def _apply_view(self) -> None:
@@ -1198,6 +1217,26 @@ class GraphScreen(KeysMixin, Screen):
     def action_scrub_live(self) -> None:
         scrubber = self.query_one("#time-scrubber", TimeScrubber)
         scrubber.set_index(None)
+        self._apply_view()
+
+    def _timeline(self) -> tuple[list[str], str]:
+        """The scrubber's events and unit for the current granularity."""
+        from hillclimb.graph import change_events
+
+        if self._graph is None:
+            return [], "search"
+        if self._fine_timeline:
+            return change_events(self._graph), "change"
+        return list(self._graph.events), "search"
+
+    def action_toggle_granularity(self) -> None:
+        """Flip the timeline between one tick per finished search and one per
+        change to the graph (per candidate, where claims carry their
+        evidencing candidate's stamp). The cursor stays on the same moment."""
+        if self._graph is None:
+            return
+        self._fine_timeline = not self._fine_timeline
+        self.query_one("#time-scrubber", TimeScrubber).set_events(*self._timeline())
         self._apply_view()
 
     def action_toggle_help(self) -> None:
