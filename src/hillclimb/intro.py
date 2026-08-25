@@ -7,14 +7,21 @@ a depth buffer, and shaded by how much light each patch of surface catches
 (character ramp) and by altitude (cyan ramp, the CLI's palette). Two greedy
 climbers walk their gradient-ascent paths as it turns: one reaches the
 summit and the flag, one tops out on a local optimum and stays there —
-hillclimb's pitch, drawn instead of written. The wordmark fades in last.
+hillclimb's pitch, drawn instead of written. The logotype — the CLI
+banner, downscaled into quadrant-glyph pixels — sweeps in last, a blank
+band above the summit.
 
 It plays once, the first time hillclimb runs in an interactive terminal,
 then never again (marker file next to the user config). `hillclimb intro`
 replays it; `hillclimb intro --reset` re-arms the first run; `hillclimb
 --skip-intro` retires the auto-play without watching it. A non-TTY, CI,
 HILLCLIMB_NO_INTRO, a dumb or tiny terminal, or shell completion all skip
-it, and Ctrl-C skips the intro without killing the command behind it.
+it, and Enter or Ctrl-C at any point skips the rest of the animation and
+drops straight into the CLI without killing the command behind it.
+
+The palette is the product's: every altitude shade is derived from
+theme.py's `--cyan`, the flag is the theme's warning gold, the summit
+climber the theme foreground.
 """
 
 from __future__ import annotations
@@ -45,14 +52,34 @@ GRID_STEP = 0.024
 CLIMBER_STARTS = ((-0.05, 1.15), (-1.00, 0.95))
 
 CHARS = " .:-=+*#%@"  # sparse -> dense, indexed by lighting
-# 256-color teals by altitude, ending in white: the summit gets a snowcap,
-# the single strongest "this is a mountain" cue a character grid can give.
-PALETTE = (23, 30, 36, 43, 50, 87, 159, 231)
-TRAIL_COLORS = (250, 240)
-CLIMBER_COLORS = (231, 245)
-FLAG_COLOR = 220
-WORDMARK = "h i l l c l i m b"
-WORDMARK_COLOR = 51
+
+# The mountain wears the product's palette. THEME_CYAN is theme.py's
+# `--cyan` (#2EE6E6) mirrored as a literal because the intro is stdlib-only
+# and must not import the textual-backed theme module — keep them in sync.
+THEME_CYAN = (46, 230, 230)  # theme.py primary / the site's --cyan
+THEME_FG = (232, 234, 236)  # theme.py foreground #E8EAEC — the summit climber
+THEME_GOLD = (234, 179, 8)  # theme.py warning #EAB308 — the summit flag
+
+
+def _shade(t: float) -> tuple[int, int, int]:
+    """Altitude ramp derived from the theme cyan: a near-black valley floor
+    rising to the full accent, the top quarter blending on into a white
+    snowcap — the single strongest "this is a mountain" cue a character
+    grid can give."""
+    r, g, b = THEME_CYAN
+    if t < 0.75:
+        k = 0.12 + 0.88 * t / 0.75
+        return int(r * k), int(g * k), int(b * k)
+    k = (t - 0.75) / 0.25
+    return int(r + (255 - r) * k), int(g + (255 - g) * k), int(b + (255 - b) * k)
+
+
+PALETTE = tuple(_shade(i / 7) for i in range(8))
+TRAIL_COLORS = ((188, 192, 196), (120, 126, 131))
+CLIMBER_COLORS = (THEME_FG, (150, 156, 162))
+FLAG_COLOR = THEME_GOLD
+WORDMARK = "h i l l c l i m b"  # fallback when the terminal is too small for the logotype
+WORDMARK_COLOR = (127, 243, 243)  # theme.py accent #7FF3F3 — the logotype's pale cyan
 
 # Light mostly from the side, not from above: flat ground lands mid-ramp,
 # slopes facing the light go dense, slopes facing away go dark.
@@ -62,12 +89,85 @@ TOTAL_FRAMES = 200
 FRAME_S = 0.04
 HOLD_S = 1.5  # non-interactive fallback hold; a TTY waits for Enter instead
 CONTINUE_PROMPT = "Press enter to continue"
-CONTINUE_COLOR = 245
+CONTINUE_COLOR = (138, 144, 150)
 # Per-climber climb duration, as a fraction of the animation. The summit
 # climber finishes early on purpose: its north-face route swings behind the
 # ridge partway through the long rotation sweep, and by then it must already
 # be sitting on the peak — the one spot that is visible from every angle.
 CLIMB_PORTIONS = (0.40, 0.68)
+
+
+def _xterm256(rgb: tuple[int, int, int]) -> int:
+    """Nearest xterm-256 index, for terminals that don't advertise truecolor.
+    Near-neutral colors snap to the gray ramp; the rest to the 6x6x6 cube."""
+    r, g, b = rgb
+    if abs(r - g) < 12 and abs(g - b) < 12 and abs(r - b) < 12:
+        v = (r + g + b) // 3
+        if v < 8:
+            return 16
+        if v > 238:
+            return 231
+        return 232 + (v - 8) // 10
+    step = lambda v: 0 if v < 48 else 1 if v < 115 else (v - 35) // 40  # noqa: E731
+    return 16 + 36 * step(r) + 6 * step(g) + step(b)
+
+
+def _sgr_table() -> dict:
+    """Color -> escape-sequence cache for one process. Truecolor when the
+    terminal advertises it (COLORTERM), the closest 256-color index
+    otherwise, so the theme cyan survives older terminals too."""
+    truecolor = os.environ.get("COLORTERM", "") in ("truecolor", "24bit")
+    table: dict = {}
+
+    class _Table(dict):
+        def __missing__(self, rgb):
+            seq = (
+                "\x1b[38;2;%d;%d;%dm" % rgb
+                if truecolor
+                else "\x1b[38;5;%dm" % _xterm256(rgb)
+            )
+            self[rgb] = seq
+            return seq
+
+    return _Table(table)
+
+
+_LOGO_CACHE: list[str] | None = None
+
+
+def _mini_logo() -> list[str]:
+    """The CLI banner (cli.BANNER_LINES) downscaled 2x2 into quadrant
+    glyphs: every solid block cell is a pixel, the thin box-drawing shadow
+    art is dropped — the wordmark and its rising-arrow mark land as a
+    4-row pixel logotype. cli is imported lazily: it pulls typer/rich, and
+    by the time the intro plays the CLI module is loaded anyway."""
+    global _LOGO_CACHE
+    if _LOGO_CACHE is None:
+        from hillclimb.cli import BANNER_LINES
+
+        quads = " ▘▝▀▖▌▞▛▗▚▐▜▄▙▟█"
+        grid = [[ch == "█" for ch in line] for line in BANNER_LINES]
+        w = max(len(row) for row in grid)
+        for row in grid:
+            row.extend([False] * (w - len(row)))
+        if len(grid) % 2:
+            grid.append([False] * w)
+        if w % 2:
+            for row in grid:
+                row.append(False)
+        lines = []
+        for y in range(0, len(grid), 2):
+            top, bottom = grid[y], grid[y + 1]
+            lines.append(
+                "".join(
+                    quads[top[x] + 2 * top[x + 1] + 4 * bottom[x] + 8 * bottom[x + 1]]
+                    for x in range(0, w, 2)
+                ).rstrip()
+            )
+        while lines and not lines[-1]:
+            lines.pop()
+        _LOGO_CACHE = lines
+    return _LOGO_CACHE
 
 
 def _height_grad(x: float, y: float) -> tuple[float, float, float]:
@@ -134,7 +234,14 @@ def _render(
     # starting corners must stay on screen at every rotation angle
     ky = height / (2 * GRID_EXTENT) * 0.42  # gentle tilt: an elevated front view
     kz = height * 0.48  # exaggerated relief, the way trail maps draw it
-    cx, cy = width / 2, height * 0.62
+    logo = _mini_logo() if height >= 24 else None
+    logo_w = max(map(len, logo)) if logo else 0
+    if logo and logo_w + 2 > width:
+        logo, logo_w = None, 0
+    # With the logotype pinned to the top rows the whole scene drops a few
+    # rows, so a blank band separates the logo from the summit flag — the
+    # flag is the topmost thing the mountain ever draws.
+    cx, cy = width / 2, height * 0.62 + (4 if logo else 0)
     lx, ly, lz = LIGHT
     ramp = len(CHARS) - 1
 
@@ -214,7 +321,17 @@ def _render(
         stamp(px, py, pz + 0.08, "▲", FLAG_COLOR, bias=0.6)
 
     reveal = (frame - 0.72 * TOTAL_FRAMES) / (0.20 * TOTAL_FRAMES)
-    if reveal > 0:
+    if reveal > 0 and logo:
+        # the logotype sweeps in left to right across its top rows
+        shown_cols = max(0, min(logo_w, int(reveal * logo_w)))
+        col = (width - logo_w) // 2
+        for row, line in enumerate(logo):
+            for offset, char in enumerate(line[:shown_cols]):
+                if char != " ":
+                    idx = col + offset + row * width
+                    chars[idx] = char
+                    colors[idx] = WORDMARK_COLOR
+    elif reveal > 0:
         shown = WORDMARK[: max(0, min(len(WORDMARK), int(reveal * len(WORDMARK))))]
         col = (width - len(WORDMARK)) // 2
         for offset, char in enumerate(shown):
@@ -224,6 +341,7 @@ def _render(
                 colors[idx] = WORDMARK_COLOR
 
     # One string per frame, colour codes only where the colour changes.
+    sgr = _sgr_table()
     parts = ["\x1b[H", "\n" * margin_y]
     last_color = None
     pad = " " * margin_x
@@ -236,27 +354,27 @@ def _render(
                 continue
             color = colors[colm]
             if color != last_color:
-                parts.append(f"\x1b[38;5;{color}m")
+                parts.append(sgr[color])
                 last_color = color
             parts.append(char)
         parts.append("\x1b[K\n")
     return "".join(parts)
 
 
-def _wait_for_enter() -> None:
-    """Block until Enter, without echoing keys into the picture. cbreak keeps
-    ISIG, so Ctrl-C still raises KeyboardInterrupt and skips out."""
-    import termios
-    import tty
+def _enter_pressed(timeout: float) -> bool:
+    """Wait up to `timeout` for Enter on a cbreak stdin, swallowing any other
+    keys without echoing them into the picture. EOF counts as Enter so a
+    closed stdin can never hang the intro."""
+    import select
 
     fd = sys.stdin.fileno()
-    saved = termios.tcgetattr(fd)
-    try:
-        tty.setcbreak(fd)
-        while sys.stdin.read(1) not in ("\r", "\n", ""):
-            pass
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+    while True:
+        ready, _, _ = select.select([fd], [], [], timeout)
+        if not ready:
+            return False
+        if os.read(fd, 1) in (b"\r", b"\n", b""):
+            return True
+        timeout = 0.0  # drain whatever else was typed, without blocking
 
 
 def _play() -> None:
@@ -268,24 +386,46 @@ def _play() -> None:
     samples = _surface_samples()
     paths = tuple(_ascent_path(x, y) for x, y in CLIMBER_STARTS)
     out = sys.stdout
+    interactive = sys.stdin.isatty()
+    saved = None
+    if interactive:
+        # cbreak for the whole playback: Enter skips at any point, and ISIG
+        # is kept so Ctrl-C still raises KeyboardInterrupt and skips too.
+        import termios
+        import tty
+
+        saved = termios.tcgetattr(sys.stdin.fileno())
+        tty.setcbreak(sys.stdin.fileno())
     out.write("\x1b[?1049h\x1b[?25l\x1b[2J")  # alternate screen, cursor hidden
     try:
         for frame in range(TOTAL_FRAMES + 1):
             started = time.monotonic()
             out.write(_render(samples, paths, frame, width, height, margin_x, margin_y))
             out.flush()
-            time.sleep(max(0.0, FRAME_S - (time.monotonic() - started)))
+            wait = max(0.0, FRAME_S - (time.monotonic() - started))
+            if interactive:
+                # The frame pacing doubles as the keypress poll: Enter at any
+                # point ends the intro and drops straight into the CLI.
+                if _enter_pressed(wait):
+                    return
+            else:
+                time.sleep(wait)
         # Rotation has stopped: hold the finished picture until the user
         # dismisses it (or briefly, when nobody is there to press Enter).
         row = margin_y + height + 1
         col = margin_x + max(0, (width - len(CONTINUE_PROMPT)) // 2) + 1
-        out.write(f"\x1b[{row};{col}H\x1b[38;5;{CONTINUE_COLOR}m{CONTINUE_PROMPT}\x1b[0m")
+        out.write(f"\x1b[{row};{col}H{_sgr_table()[CONTINUE_COLOR]}{CONTINUE_PROMPT}\x1b[0m")
         out.flush()
-        if sys.stdin.isatty():
-            _wait_for_enter()
+        if interactive:
+            while not _enter_pressed(0.25):
+                pass
         else:
             time.sleep(HOLD_S)
     finally:
+        if saved is not None:
+            import termios
+
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, saved)
         out.write("\x1b[0m\x1b[?25h\x1b[?1049l")  # terminal exactly as it was
         out.flush()
 
