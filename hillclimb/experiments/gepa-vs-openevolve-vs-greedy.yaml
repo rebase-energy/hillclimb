@@ -29,7 +29,9 @@ arms:
   gepa:
     search.policy: gepa
     search.policy_params:
-      max_metric_calls: 100
+      # counted per instance (26 for circle-packing): 500 ~= 19 full
+      # evaluations, so the 15m wall clock binds first, not this ceiling
+      max_metric_calls: 500
       candidate_selection_strategy: pareto
       frontier_type: instance
       cache_evaluation: true
