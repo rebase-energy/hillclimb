@@ -55,9 +55,17 @@ class SearchRunner(Protocol):
 
 
 # Engine registry: search.policy names that dispatch to a full runner instead
-# of get_policy(). Factories are registered lazily (the GEPA integration adds
-# "gepa") so a greedy install never imports an optional engine.
-_ENGINES: dict[str, Callable[..., SearchRunner]] = {}
+# of get_policy(). Factories import their integration lazily so a greedy
+# install never imports an optional engine.
+
+
+def _gepa_factory(**deps) -> SearchRunner:
+    from hillclimb.integrations.gepa import build_gepa_searcher
+
+    return build_gepa_searcher(**deps)
+
+
+_ENGINES: dict[str, Callable[..., SearchRunner]] = {"gepa": _gepa_factory}
 
 
 def build_search_runner(

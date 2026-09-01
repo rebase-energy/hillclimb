@@ -29,6 +29,10 @@ emflow = [
 openevolve = [
     "openevolve>=0.3,<0.4",
 ]
+# `search.policy: gepa` — reflective Pareto search engine
+gepa = [
+    "gepa>=0.1.4,<0.2",
+]
 
 [project.scripts]
 hillclimb = "hillclimb.cli:main"
@@ -43,6 +47,7 @@ dev = [
     "plotui>=0.2",
     "emflow",
     "openevolve>=0.3,<0.4",
+    "gepa>=0.1.4,<0.2",
 ]
 
 [tool.uv.sources]

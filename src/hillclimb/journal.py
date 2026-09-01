@@ -92,6 +92,12 @@ class Journal:
         state; replay skips it."""
         self._append_line({"event": "control", "action": action, "applied_at": utcnow(), **payload})
 
+    def audit_event(self, event: str, **payload) -> None:
+        """Generic append-only audit line (e.g. an engine's failed-proposal
+        cost record). Carries no tree state; replay skips unknown events, so
+        old readers tolerate new kinds. Consumers re-read backend.records()."""
+        self._append_line({"event": event, "recorded_at": utcnow(), **payload})
+
     # --- queries ---
 
     def get(self, candidate_id: str) -> Candidate:

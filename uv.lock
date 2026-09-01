@@ -264,6 +264,15 @@ wheels = [
 ]
 
 [[package]]
+name = "gepa"
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/95/56/925779e5690971f1b022f7d107caf015c33ec09560261273ec137e23a8f2/gepa-0.1.4.tar.gz", hash = "sha256:6dd153a676ae5481764860d19286a9c0e8ddb5ef70d7f13044faf24978bdb6b8", size = 351343, upload-time = "2026-07-15T14:53:59.929Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fd/77/5b3a281cfd9caaa9e68349b434cf27f1ca448003ee0067a1ae2184dc52d1/gepa-0.1.4-py3-none-any.whl", hash = "sha256:12b971039599625c156d2231f6d72a29c31a22e9c237689459b5f1a3c353f532", size = 290167, upload-time = "2026-07-15T14:53:58.422Z" },
+]
+
+[[package]]
 name = "gymnasium"
 version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -383,6 +392,9 @@ dependencies = [
 emflow = [
     { name = "emflow" },
 ]
+gepa = [
+    { name = "gepa" },
+]
 openevolve = [
     { name = "openevolve" },
 ]
@@ -390,6 +402,7 @@ openevolve = [
 [package.dev-dependencies]
 dev = [
     { name = "emflow" },
+    { name = "gepa" },
     { name = "networkx" },
     { name = "openevolve" },
     { name = "plotui" },
@@ -402,6 +415,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "emflow", marker = "extra == 'emflow'", git = "https://github.com/rebase-energy/emflow.git?branch=main" },
+    { name = "gepa", marker = "extra == 'gepa'", specifier = ">=0.1.4,<0.2" },
     { name = "networkx", specifier = ">=3.0" },
     { name = "openevolve", marker = "extra == 'openevolve'", specifier = ">=0.3,<0.4" },
     { name = "pandas", specifier = ">=3.0.3" },
@@ -414,11 +428,12 @@ requires-dist = [
     { name = "typer", specifier = ">=0.12" },
     { name = "uv", specifier = ">=0.5" },
 ]
-provides-extras = ["tui", "emflow", "openevolve"]
+provides-extras = ["tui", "emflow", "openevolve", "gepa"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "emflow", git = "https://github.com/rebase-energy/emflow.git?branch=main" },
+    { name = "gepa", specifier = ">=0.1.4,<0.2" },
     { name = "networkx", specifier = ">=3.0" },
     { name = "openevolve", specifier = ">=0.3,<0.4" },
     { name = "plotui", editable = "../plotui" },
@@ -919,7 +934,7 @@ wheels = [
 
 [[package]]
 name = "plotui"
-version = "0.3.0"
+version = "0.4.2"
 source = { editable = "../plotui" }
 
 [package.metadata]
