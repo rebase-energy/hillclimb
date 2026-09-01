@@ -56,6 +56,10 @@ class ExperimentSpec(BaseModel):
     schedule: str = "sequential"  # sequential | parallel
     noise_floor: float | dict[str, float] | None = None
     defaults: dict = Field(default_factory=dict)
+    # one executable seed solution shared by every search (--seed-from for
+    # each child), so arms are compared from identical source, not merely the
+    # same baseline score; relative paths resolve against the spec's dir
+    seed_from: str | None = None
     spec_path: Path | None = None
 
     @field_validator("schedule")
@@ -145,8 +149,23 @@ def load_experiment(path: Path) -> ExperimentSpec:
         schedule=data.get("schedule", "sequential"),
         noise_floor=data.get("noise_floor"),
         defaults=data.get("defaults") or {},
+        seed_from=data.get("seed_from"),
         spec_path=path,
     )
+
+
+def resolved_seed(spec: ExperimentSpec) -> Path | None:
+    """The spec's shared seed as an absolute path (relative to the spec
+    file's directory), validated to exist before any run is created."""
+    if not spec.seed_from:
+        return None
+    path = Path(spec.seed_from).expanduser()
+    if not path.is_absolute() and spec.spec_path is not None:
+        path = spec.spec_path.parent / path
+    path = path.resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"experiment seed_from not found: {path}")
+    return path
 
 
 @dataclass(frozen=True)

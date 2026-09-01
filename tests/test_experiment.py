@@ -278,6 +278,81 @@ class TestCli:
         runs = list((config.paths.runs_dir).iterdir())
         assert len(runs) == 1 and yaml.safe_load((runs[0] / "run.yaml").read_text())["kind"] == "experiment"
 
+    def test_shared_seed_resolves_and_reaches_every_child(self, config, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        from hillclimb.cli import app
+        from tests.test_cli import write_problem
+
+        root = tmp_path / "problems"
+        write_problem(root, "p")
+        config.paths.problems_dir = root
+        hillclimb_dir = tmp_path / "hillclimb"
+        seed = hillclimb_dir / "experiments" / "seeds" / "p.py"
+        seed.parent.mkdir(parents=True)
+        seed.write_text("print('val_score: 0.5')\n")
+        write_spec(
+            hillclimb_dir / "experiments" / "ab.yaml",
+            "problems: [p]\nrepeats: 1\nseed_from: seeds/p.py\n"
+            "arms:\n  a: {search.policy: greedy}\n  b: {learning.enabled: false}\n",
+        )
+        config.hillclimb_dir = hillclimb_dir
+        monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
+        monkeypatch.chdir(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(app, ["experiment", "run", "ab", "--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert f"shared seed: {seed.resolve()}" in result.output
+        assert "sha256" in result.output
+
+        calls = []
+
+        class DummyProc:
+            pid = 7
+
+        monkeypatch.setattr("subprocess.Popen", lambda cmd, **kw: calls.append(cmd) or DummyProc())
+        result = runner.invoke(app, ["experiment", "run", "ab", "--parallel"])
+        assert result.exit_code == 0, result.output
+        assert len(calls) == 2
+        for argv in calls:
+            assert argv[argv.index("--seed-from") + 1] == str(seed.resolve())
+
+    def test_missing_seed_fails_before_any_run(self, config, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        from hillclimb.cli import app
+        from tests.test_cli import write_problem
+
+        write_problem(tmp_path / "problems", "p")
+        config.paths.problems_dir = tmp_path / "problems"
+        hillclimb_dir = tmp_path / "hillclimb"
+        write_spec(
+            hillclimb_dir / "experiments" / "ab.yaml",
+            "problems: [p]\nseed_from: seeds/nope.py\narms:\n  a: {}\n  b: {}\n",
+        )
+        config.hillclimb_dir = hillclimb_dir
+        monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
+        result = CliRunner().invoke(app, ["experiment", "run", "ab", "--dry-run"])
+        assert result.exit_code != 0
+        assert "seed_from not found" in result.output
+        assert not (config.paths.runs_dir).exists()
+
+    def test_resolved_seed_paths(self, tmp_path):
+        from hillclimb.experiment import ExperimentSpec, resolved_seed
+
+        spec = ExperimentSpec(
+            name="x", problems=["p"], arms={"a": {}, "b": {}},
+            seed_from=None, spec_path=tmp_path / "x.yaml",
+        )
+        assert resolved_seed(spec) is None
+        seed = tmp_path / "seeds" / "s.py"
+        seed.parent.mkdir()
+        seed.write_text("pass\n")
+        relative = spec.model_copy(update={"seed_from": "seeds/s.py"})
+        assert resolved_seed(relative) == seed.resolve()
+        absolute = spec.model_copy(update={"seed_from": str(seed)})
+        assert resolved_seed(absolute) == seed.resolve()
+
     def test_run_set_and_arm_flags_reach_the_search(self, config, tmp_path, monkeypatch):
         from hillclimb.cli import _run_problem
         from hillclimb.run import load_search_meta

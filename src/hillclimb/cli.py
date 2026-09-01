@@ -1008,12 +1008,13 @@ def experiment_run(
     slots still cap concurrency) — fine for stateless comparisons such as
     policy or model. Real agent runs — the repeat count is your cost dial.
     """
-    from hillclimb.experiment import expand, load_experiment, resolve_experiment_path
+    from hillclimb.experiment import expand, load_experiment, resolve_experiment_path, resolved_seed
 
     config = load_config()
     try:
         spec_path = resolve_experiment_path(spec, config.hillclimb_dir)
         experiment = load_experiment(spec_path)
+        seed_path = resolved_seed(experiment)
     except (FileNotFoundError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     if repeats is not None:
@@ -1028,6 +1029,11 @@ def experiment_run(
         f"Experiment {experiment.name}: {len(experiment.arms)} arms × {len(experiment.problems)} "
         f"problem(s) × {experiment.repeats} repeat(s) = {len(jobs)} searches, {schedule}"
     )
+    if seed_path is not None:
+        import hashlib
+
+        digest = hashlib.sha256(seed_path.read_bytes()).hexdigest()[:12]
+        typer.echo(f"  shared seed: {seed_path} (sha256 {digest})")
     for job in jobs:
         settings = ", ".join(f"{k}={v}" for k, v in job.overrides.items()) or "(defaults)"
         typer.echo(f"  {job.index:2d}. {job.problem} · {job.arm} · r{job.repeat}  {settings}")
@@ -1049,6 +1055,8 @@ def experiment_run(
             job.problem, "--run-id", run_id, "--run-name", run_name,
             "--experiment", experiment.name, "--arm", job.arm, "--repeat", str(job.repeat),
         ]
+        if seed_path is not None:
+            argv += ["--seed-from", str(seed_path)]
         if child_budget:
             argv += ["--budget", child_budget]
         for key, value in job.overrides.items():
