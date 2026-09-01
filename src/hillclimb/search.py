@@ -10,10 +10,12 @@ from pathlib import Path
 from hillclimb.backends.base import OperatorBackend, OperatorRequest, OperatorResult
 from hillclimb.baseline import write_baseline
 from hillclimb.budget import BudgetManager
-from hillclimb.candidate import BackendInfo, Candidate, Trial, utcnow
+from hillclimb.candidate import BackendInfo, Candidate, utcnow
 from hillclimb.config import Config
 from hillclimb.control import ControlCommand, apply_prune, drain_commands_dir, resync_best
-from hillclimb.executor import RESULT_FILE, Executor, HoldoutScorer, read_result
+from hillclimb import evaluation
+from hillclimb.evaluation import TAIL_CHARS, CandidateEvaluator, tail  # noqa: F401 — re-exported (cli imports tail from here)
+from hillclimb.executor import Executor, HoldoutScorer
 from hillclimb.journal import Journal
 from hillclimb.policies.greedy import GreedyPolicy
 from hillclimb.policy import Action, BudgetView, InflightRef, SearchPolicy, SearchView
@@ -24,8 +26,6 @@ from hillclimb.slots import MachineSlots
 from hillclimb.status import CandidateCounts, CurrentCandidate, ScoreRef, StatusWriter
 from hillclimb.problem import ProblemSpec
 from hillclimb.dirs import create_candidate_dir
-
-TAIL_CHARS = 2000
 
 
 @dataclass
@@ -63,12 +63,6 @@ class ParkedSearch(Exception):
 class StopRequested(Exception):
     """Raised on a graceful stop (control command or SIGTERM); the search can
     be resumed."""
-
-
-def tail(path: Path, chars: int = TAIL_CHARS) -> str:
-    if not path.exists():
-        return ""
-    return path.read_text(errors="replace")[-chars:]
 
 
 class GreedySearcher:
@@ -119,6 +113,9 @@ class GreedySearcher:
         self.max_candidates = max_candidates
         self.log = log
         self.holdout_scorer = holdout_scorer
+        self.evaluator = CandidateEvaluator(
+            executor=executor, problem=problem, config=config, holdout_scorer=holdout_scorer
+        )
         self.status = status
         self.slots = slots  # machine-wide agent-concurrency cap (optional)
         self.abort = abort or threading.Event()
@@ -507,10 +504,10 @@ class GreedySearcher:
         self.journal.candidate_created(candidate)
         self.log(f"seeding incumbent {seed.name} as {candidate_id}")
         exec_timeout = self.config.budget.exec_timeout_s
-        all_ok = self._run_trials(candidate, candidate_dir / "solution.py", candidate_dir, exec_timeout)
+        all_ok = self.evaluator.run_trials(candidate, candidate_dir / "solution.py", candidate_dir, exec_timeout)
         holdout_score = holdout_error = holdout_cpu = None
         if all_ok:
-            holdout_score, holdout_error, holdout_cpu = self._score_holdout(candidate_dir)
+            holdout_score, holdout_error, holdout_cpu = self.evaluator.score_holdout(candidate_dir)
         msg = OutcomeMsg(
             job=Job(candidate=candidate, request=None, candidate_dir=candidate_dir),
             kind="executed",
@@ -627,7 +624,11 @@ class GreedySearcher:
             request=request,
             candidate_dir=candidate_dir,
             ensemble_inputs=ensemble_inputs,
-            holdout_threshold=self._holdout_threshold(),
+            holdout_threshold=evaluation.holdout_threshold(
+                self.journal,
+                top_k=self.config.holdout.top_k,
+                higher_is_better=self.problem.higher_is_better,
+            ),
             backend=(
                 self.backends.get(route.backend, route.backend_auth)
                 if self.backends is not None
@@ -713,14 +714,18 @@ class GreedySearcher:
             self.config.budget.exec_timeout_s, max(60, int(self.budget.remaining() - 30))
         )
         self._set_phase(candidate.candidate_id, "exec")
-        all_ok = self._run_trials(candidate, solution, job.candidate_dir, exec_timeout)
+        all_ok = self.evaluator.run_trials(candidate, solution, job.candidate_dir, exec_timeout)
 
         holdout_score = holdout_error = holdout_cpu = None
         gated = False
         if all_ok:
-            if self._gate_passes(candidate.val_score, job.holdout_threshold):
+            if evaluation.gate_passes(
+                candidate.val_score,
+                job.holdout_threshold,
+                higher_is_better=self.problem.higher_is_better,
+            ):
                 self._set_phase(candidate.candidate_id, "holdout")
-                holdout_score, holdout_error, holdout_cpu = self._score_holdout(job.candidate_dir)
+                holdout_score, holdout_error, holdout_cpu = self.evaluator.score_holdout(job.candidate_dir)
             else:
                 gated = True  # climbs on val; not selectable via holdout
         return OutcomeMsg(
@@ -857,123 +862,6 @@ class GreedySearcher:
         if self.status is not None:
             self.status.update_current(candidate_id, phase=phase)
 
-    def _run_trials(
-        self, candidate: Candidate, solution: Path, candidate_dir: Path, exec_timeout: int
-    ) -> bool:
-        """Run n_trials validation evaluations (each in its own trial dir with
-        a distinct seed) and append the Trials in index order. Returns True
-        only if every trial passed — a seed-flaky candidate is buggy.
-
-        `search.trial_mode` decides whether they share the machine: parallel
-        for seed variance, serial when the metric is a measurement of the
-        machine itself (time, memory, throughput) and concurrent trials would
-        measure each other."""
-        n = max(1, self.config.search.n_trials)
-        if n == 1:
-            trial, ok = self._execute_one_trial(solution, candidate_dir, exec_timeout, seed=None)
-            candidate.trials.append(trial)
-            return ok
-
-        from concurrent.futures import ThreadPoolExecutor
-
-        from hillclimb.dirs import create_trial_dir
-
-        def run(index: int) -> tuple[Trial, bool]:
-            trial_dir = create_trial_dir(candidate_dir, index)
-            return self._execute_one_trial(
-                trial_dir / solution.name, trial_dir, exec_timeout, seed=index
-            )
-
-        if self.config.search.trial_mode == "serial":
-            results = [run(index) for index in range(n)]
-        else:
-            with ThreadPoolExecutor(max_workers=n, thread_name_prefix="trial") as pool:
-                results = list(pool.map(run, range(n)))
-        candidate.trials.extend(trial for trial, _ in results)
-        # trial-0 artifacts surface at the candidate-dir root so best/-sync,
-        # ensemble copies, and holdout scoring stay untouched
-        t0 = candidate_dir / "trials" / "t0"
-        for name in ("submission.csv", "eval_result.json"):
-            if (t0 / name).exists():
-                shutil.copy(t0 / name, candidate_dir / name)
-        return all(ok for _, ok in results)
-
-    def _execute_one_trial(
-        self, solution: Path, cwd: Path, exec_timeout: int, seed: int | None
-    ) -> tuple[Trial, bool]:
-        trial_started = utcnow()
-        exec_result = self.executor.execute(solution, cwd, exec_timeout, seed=seed)
-        stdout_tail = tail(Path(exec_result.stdout_path)) if exec_result.stdout_path else ""
-        if not exec_result.ok and not stdout_tail.strip():
-            # a silent crash is undebuggable from the journal (the only state
-            # synced off remote machines) — surface stderr instead
-            stderr = tail(Path(exec_result.stdout_path).with_name("exec_stderr.log"), 800)
-            if stderr.strip():
-                stdout_tail = f"[stderr] {stderr}"
-        trial = Trial(
-            seed=seed,
-            returncode=exec_result.returncode,
-            duration_s=exec_result.duration_s,
-            cpu_s=exec_result.cpu_s,
-            timed_out=exec_result.timed_out,
-            stdout_tail=stdout_tail,
-            submission_ok=exec_result.submission_ok,
-            val_score=exec_result.val_score if exec_result.ok else None,
-            report=self._read_trial_report(cwd) if exec_result.ok else None,
-            metrics=exec_result.metrics if exec_result.ok else {},
-            started_at=trial_started,
-            finished_at=utcnow(),
-        )
-        return trial, exec_result.ok
-
-    def _read_trial_report(self, cwd: Path) -> dict | None:
-        """Compact validation breakdown from the eval's eval_result.json —
-        hillclimb's evaluator report contract. Producers: the emflow eval
-        runner, a problem's verifier script (the executor discards anything
-        else on verifier problems), or the agent's own solution when the
-        problem has no verifier. The split check is the orchestrator half of
-        the leakage contract: holdout and verify results must never reach
-        prompts."""
-        # the result file may legitimately be a bare number (the simplest
-        # verifier form) — only the object form can carry a report
-        _, payload = read_result(cwd / RESULT_FILE)
-        if not isinstance(payload, dict):
-            return None
-        if payload.get("split") != "validation" or not isinstance(payload.get("report"), dict):
-            return None
-        from hillclimb.report import compact_report
-
-        try:
-            compact = compact_report(payload["report"])
-        except Exception:  # noqa: BLE001 — a malformed report must never fail a trial
-            return None
-        # provenance is stamped from problem configuration, not file contents:
-        # an agent-authored file cannot claim evaluator trust
-        compact["source"] = "evaluator" if self.problem.report_trusted else "agent"
-        return compact
-
-    def _holdout_threshold(self) -> float | None:
-        """Holdout hygiene: the k-th best val score at prepare time; a
-        candidate must beat (or tie) it to earn a holdout evaluation.
-        None = no gate (top_k disabled or fewer than k scored candidates).
-        Snapshot semantics: slightly stale under parallelism, exact in
-        serial — an acceptable heuristic for a hygiene gate."""
-        top_k = self.config.holdout.top_k
-        if top_k <= 0:
-            return None
-        scored = sorted(
-            (c.val_score for c in self.journal.scored_candidates() if c.val_score is not None),
-            reverse=self.problem.higher_is_better,
-        )
-        if len(scored) < top_k:
-            return None
-        return scored[top_k - 1]
-
-    def _gate_passes(self, val_score: float | None, threshold: float | None) -> bool:
-        if threshold is None or val_score is None:
-            return True
-        return self._improves(val_score, threshold, band=0.0) or val_score == threshold
-
     def _sync_selection(self) -> None:
         """Keep best/ pointing at the currently selected candidate. Selection
         is recomputed over the whole tree because rank-blend can shift between
@@ -991,33 +879,21 @@ class GreedySearcher:
             scores += f" holdout={selected.holdout_score:.5g}"
         self.log(f"  new selection: {selected.candidate_id} {scores}")
 
-    def _score_holdout(self, candidate_dir: Path) -> tuple[float | None, str | None, float | None]:
-        """Score the hidden split; (score, None, cpu_s) on success,
-        (None, reason, cpu_s) on contract violation, (None, None, None) when
-        this search has no holdout."""
-        if self.holdout_scorer is None:
-            return None, None, None
-        return self.holdout_scorer.score(candidate_dir)
-
     def accept_band(self) -> float:
-        """How much better a candidate must be before the engine believes it.
-
-        `min_improvement` is the author's own floor in metric units; `noise_k`
-        multiples of the measured noise floor is the search's own evidence
-        about itself. Zero (the default) is the strict comparison."""
-        band = self.config.search.min_improvement
-        if self.config.search.noise_k > 0:
-            floor = self.journal.noise_floor()
-            if floor is not None:
-                band = max(band, self.config.search.noise_k * floor)
-        return band
+        """Delegate to the shared helper (scheduler-thread only — it reads
+        the journal's noise floor)."""
+        return evaluation.accept_band(self.config, self.journal)
 
     def _improves(self, score: float, best: float, band: float | None = None) -> bool:
         """Strictly better by more than the accept band. Pass band=0.0 for a
         raw comparison (ranking and gating, where a near-tie should still be
         evaluated rather than dropped)."""
-        delta = (score - best) if self.problem.higher_is_better else (best - score)
-        return delta > (self.accept_band() if band is None else band)
+        return evaluation.improves(
+            score,
+            best,
+            higher_is_better=self.problem.higher_is_better,
+            band=self.accept_band() if band is None else band,
+        )
 
     def _draft_complexity(self) -> str:
         return self.policy.draft_complexity(self._view())
