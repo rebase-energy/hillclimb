@@ -186,6 +186,7 @@ holdout, journaling, `best/` — is harness, and a policy never touches it.
 |---|---|
 | `greedy` | debug the newest buggy tip > ensemble in the final budget window > draft until `num_drafts` branches are scored > improve the best |
 | `openevolve` | [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve)'s MAP-Elites database decides what to expand: a population kept diverse over feature dimensions, split across islands with migration; parent + inspirations sampled per island (exploration / elite archive / fitness-weighted). Hillclimb's operators do the mutating, the verifier the scoring, and the `debug` rule is kept. `pip install 'hillclimb[openevolve]'` |
+| `gepa` | [GEPA](https://github.com/gepa-ai/gepa) owns the whole loop — reflective mutation over evaluation feedback and Pareto selection over the verifier's per-instance scores — while hillclimb evaluates, journals, and holds the private holdout. A full *engine*, not a policy (see below). `pip install 'hillclimb[gepa]'` |
 
 ```yaml
 # config.yaml — OpenEvolve's quality-diversity search over hillclimb's operators
@@ -236,6 +237,45 @@ To add one: implement the protocol, register it in the `_POLICIES` dict in
 `policies/greedy.py` is 170 lines and is the reference. Beam search, MCTS,
 evolutionary populations, novelty search and bandits over operators all fit
 this shape — greedy is just the one that ships.
+
+### The GEPA engine (optional extra)
+
+Some optimizers cannot be reduced to "what next?" — they own proposal,
+reflection, and selection themselves. Those integrate one tier up, as a
+**search runner** (`src/hillclimb/search_runner.py`): dispatched by the same
+`search.policy` name, but handed the full dependency set instead of a
+`SearchView`. The architecture is `docs/optimizer-host-plan.md`; GEPA is the
+first such engine:
+
+- greedy: hillclimb chooses the parent and asks an agent to mutate;
+- `openevolve` policy: OpenEvolve supplies selection/inspirations, hillclimb's
+  agent still mutates;
+- `gepa` engine: GEPA drives reflective mutation and Pareto search, hillclimb
+  evaluates and records.
+
+```bash
+uv sync --extra gepa
+uv run hillclimb run <problem> --policy gepa --seed-from my_solution.py
+```
+
+GEPA's mutations are performed by a routed hillclimb agent (configure
+`routing.gepa`, falling back to `routing.default` and the global
+backend/model) in scratch dirs under `SEARCH_DIR/gepa/proposals/`; every
+evaluation becomes a normal journaled `cNNN` candidate, so `watch`, `tree`,
+and `chart` work unchanged (`policy_meta.optimizer == "gepa"` carries the
+lineage). GEPA checkpoints under `SEARCH_DIR/gepa/state` and `hillclimb
+resume` continues both the journal and the optimizer, with a warm evaluation
+cache so replayed proposals cost nothing.
+
+MVP limits: one mutable file (`solution.py`), serial
+(`search.parallel_operators: 1`), no merge, and a **required executable
+seed** — pass `--seed-from` or ship an executable baseline. Holdout privacy
+is strict and one-way: holdout scoring runs only after the optimizer
+finishes, and no holdout value ever reaches GEPA's prompts, feedback, or
+state (regression-tested with sentinels). When the verifier emits per-instance
+scores (below), `frontier_type: instance` (the default) tracks GEPA's Pareto
+frontier per instance; without them the frontier degenerates to the aggregate
+score.
 
 ## emflow problems (optional extra)
 
@@ -409,6 +449,23 @@ yours via `segment_label`) worst-first. Producers, by trust:
 Only `"split": "validation"` reports are ever fed back to operators — holdout
 evaluations never produce one, by construction. `report.enabled: false` in
 config disables prompt injection (data is still recorded).
+
+### Per-instance scores (optional)
+
+A third reserved key, `instances`, carries the breakdown of `score` over the
+problem's sub-instances — zones, folds, test cases — in the same metric and
+direction, with keys stable across the search:
+
+```json
+{"score": 2.158, "instances": {"circle-00": 0.083, "circle-01": 0.083}}
+```
+
+They are journaled per trial (`Trial.instance_scores`), aggregated per key by
+median like everything else, and consumed by engines whose selection is
+per-instance — GEPA keeps a candidate alive if it wins on *any* instance, not
+just on average. `problems/circle-packing/verify.py` (one instance per
+circle) is the reference producer; verifiers that emit nothing lose nothing.
+emflow per-zone and MLE-bench per-fold instances are planned follow-ups.
 
 ## Noise: not climbing your own measurement error
 
@@ -650,6 +707,13 @@ median / spread, best-of-repeat wins, minutes to best, tokens, and each arm's
 paired gap to the control judged against the noise floor — a gap inside it
 is reported as "within noise, not a result". `hillclimb chart` colours an
 experiment's curves by arm.
+
+A spec may name one shared executable seed — `seed_from: seeds/foo.py`,
+resolved against the spec's directory — which rides `--seed-from` into every
+child search, so arms are compared from identical source (the dry run prints
+the resolved path and its sha256). Mandatory for engines that require a seed
+(GEPA); see `hillclimb/experiments/gepa-vs-openevolve-vs-greedy.yaml` for the
+three-strategy comparison this shipped with.
 
 ## How runs and searches are laid out
 

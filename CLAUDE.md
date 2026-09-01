@@ -77,6 +77,24 @@ shim).
   owns only `propose`/`observe`; it must stay replay-deterministic — the
   openevolve policy seeds/restores the global RNG around every OpenEvolve call
   because that library samples via the `random` module
+- Search engines (`search_runner.py`, architecture in
+  `docs/optimizer-host-plan.md`): optimizers that own their whole loop
+  dispatch as a `SearchRunner` via `_ENGINES` before `get_policy()` is ever
+  called — `gepa` (`integrations/gepa/`, extra `hillclimb[gepa]`) is the
+  first: a routed hillclimb agent is its mutation proposer
+  (`SEARCH_DIR/gepa/proposals/`), every evaluation is a canonical journaled
+  candidate (`policy_meta.optimizer: gepa`), checkpoints in
+  `SEARCH_DIR/gepa/state`, holdout only after the optimizer finishes and
+  never visible to it. `driver.py` is the only module importing gepa
+  (`skip_perfect_score=False` is mandatory there — the upstream default
+  silently disables mutation for unbounded scores); the default suite drives
+  `GEPASearcher` through `tests/gepa_fakes.py`. Shared trial execution lives
+  in `evaluation.py` (`CandidateEvaluator` is journal-free by construction;
+  `EvalResult` is the projection engines consume). A verifier may write a
+  reserved `instances` key next to `score` (per-instance breakdown, stable
+  keys → `Trial.instance_scores`, median-aggregated) — GEPA's Pareto
+  frontier and future QD engines consume it; circle-packing is the
+  reference producer
 - Experiments (`experiment.py`): a spec (`hillclimb/experiments/<name>.yaml`)
   is problems × named arms (dotted config overrides, `Config.apply_overrides`)
   × repeats; searches are tagged in `SearchMeta` (`experiment`, `arm`,
