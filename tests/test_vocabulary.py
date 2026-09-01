@@ -1,7 +1,9 @@
 """The word "workspace" is banned: a candidate's directory is its
 `candidate_dir` (every level of the hierarchy is `<level>_dir`). The only
 sanctioned survivor is the legacy `HILLCLIMB_WORKSPACE` env var and the
-compat shims that map the old on-disk key onto `candidate_dir`."""
+compat shims that map the old on-disk key onto `candidate_dir`. Third-party
+CLI flag values we merely pass through (Codex's `--sandbox workspace-write`)
+are their vocabulary, not ours, and are exempt."""
 
 from __future__ import annotations
 
@@ -12,7 +14,10 @@ from hillclimb.candidate import Candidate
 from hillclimb.status import CurrentCandidate
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "hillclimb"
-ALLOWED = re.compile(r"HILLCLIMB_WORKSPACE|_legacy_workspace_key|\"workspace\"|`workspace`")
+ALLOWED = re.compile(
+    r"HILLCLIMB_WORKSPACE|_legacy_workspace_key|\"workspace\"|`workspace`"
+    r"|\"workspace-write\""  # codex --sandbox value
+)
 
 
 def test_no_workspace_in_source():

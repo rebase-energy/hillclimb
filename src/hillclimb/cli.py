@@ -1877,13 +1877,13 @@ def _summit(config: Config, problem: str | None, dest: Path):
         records = store.searches(problem_key=problem)
         if not records:
             known = sorted({r.meta.problem_key or r.meta.problem_id for r in store.searches()})
-            what = f"no searches for {problem!r}" if problem else "no searches in this workspace"
+            what = f"no searches for {problem!r}" if problem else "no searches in this hillclimb dir"
             hint = f". Problems here: {', '.join(known)}" if known else ""
             raise typer.BadParameter(f"{what}{hint}.")
         keys = sorted({r.meta.problem_key or r.meta.problem_id for r in records})
         if len(keys) > 1:
             raise typer.BadParameter(
-                f"several problems in this workspace ({', '.join(keys)}) — "
+                f"several problems in this hillclimb dir ({', '.join(keys)}) — "
                 "name one: hillclimb summit <problem>"
             )
         best: tuple[SearchRecord, object] | None = None
@@ -1918,7 +1918,7 @@ def _summit(config: Config, problem: str | None, dest: Path):
 @app.command()
 def summit(
     problem: str = typer.Argument(
-        None, help="Problem key; defaults to the only problem in the workspace"
+        None, help="Problem key; defaults to the only problem in the hillclimb dir"
     ),
     to: Path = typer.Option(
         None, "--to", help="Destination folder (default: the folder holding hillclimb/)"
