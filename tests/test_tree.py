@@ -320,6 +320,37 @@ class TestChartDetail:
         assert layout.curve.xs == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
         assert layout.curve.ys == [0.1, 0.5, 0.6, 0.6, 0.7, 0.8]
 
+    def test_holdout_split_plots_incumbent_holdout_scores(self):
+        from hillclimb.chart import climb_from_searches, curve_from_candidates
+
+        def scored(cid, val, holdout, t):
+            candidate = cand(cid, "draft", t=t)
+            candidate.trials = [Trial(val_score=val, holdout_score=holdout)]
+            return candidate
+
+        candidates = [
+            scored("c000", 0.5, 0.4, 0),   # incumbent
+            scored("c001", 0.7, 0.5, 1),   # val improves, holdout follows
+            scored("c002", 0.9, None, 2),  # val improves, no holdout yet
+            scored("c003", 0.8, 0.9, 3),   # val miss — holdout never plotted as best
+        ]
+        curve = curve_from_candidates(candidates, label="s", state="done", split="holdout")
+        # incumbency is judged on val; c002's missing holdout holds the last value
+        assert curve.xs == [1.0, 2.0, 3.0, 4.0]
+        assert curve.ys == [0.4, 0.5, 0.5, 0.5]
+        assert curve_from_candidates(candidates, label="s", state="done").ys == [0.5, 0.7, 0.9, 0.9]
+
+        climb = climb_from_searches([("s", candidates, None)])
+        holdout = climb_from_searches([("s", candidates, None)], split="holdout")
+        # the un-holdout-scored event keeps its x slot but is not drawn
+        assert [(e.x, e.y, e.best) for e in climb.events] == [
+            (1.0, 0.5, True), (2.0, 0.7, True), (3.0, 0.9, True), (4.0, 0.8, False),
+        ]
+        assert [(e.x, e.y, e.best) for e in holdout.events] == [
+            (1.0, 0.4, True), (2.0, 0.5, True), (4.0, 0.9, False),
+        ]
+        assert holdout.extent == 4.0
+
     def test_empty_detail(self):
         layout = detail_layout([cand("c001", status="buggy")], label="x", state="done")
         assert layout.marks == [] and layout.edges == [] and layout.unscored == 1
@@ -572,6 +603,56 @@ async def test_tree_app_reports_a_missing_search(tmp_path, monkeypatch):
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         assert "No search at" in str(app.screen.query_one("#treeline").render())
+
+
+@pytest.mark.asyncio
+async def test_chart_defaults_to_holdout_when_the_search_scores_one(tree_workspace):
+    """Fair by default: a holdout-scored problem opens on the holdout view
+    (the split its baselines live on); `h` toggles back to validation."""
+    from hillclimb.chart import ChartApp
+    from hillclimb.run import load_search_meta, write_search_meta
+
+    search_dir, config = tree_workspace
+    meta = load_search_meta(search_dir)
+    meta.holdout_enabled = True
+    write_search_meta(search_dir, meta)
+    journal = Journal(search_dir / "journal.jsonl")
+    journal.candidate_result(Candidate(
+        candidate_id="c100", operator="draft", status="ok",
+        trials=[Trial(val_score=0.5, holdout_score=0.6)],
+    ))
+    app = ChartApp(config, "r1/circle-packing")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        line = str(app.screen.query_one("#chartline").render())
+        assert "holdout" in line
+        await pilot.press("h")
+        line = str(app.screen.query_one("#chartline").render())
+        assert "holdout" not in line  # toggled to the validation view
+
+
+@pytest.mark.asyncio
+async def test_chart_cycles_between_problems(tree_workspace, tmp_path, monkeypatch):
+    """`p` re-anchors the chart on the folder's next problem and a refresh
+    stays there; cycling wraps back to the first problem."""
+    from hillclimb.chart import ChartApp
+
+    _search_dir, config = tree_workspace  # r1/circle-packing
+    make_run_with_search(config.paths.runs_dir, "r2", search_id="other-problem")
+    app = ChartApp(config)  # anchors on the latest search: other-problem
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        line = str(app.screen.query_one("#chartline").render())
+        assert "other-problem" in line
+        await pilot.press("p")
+        line = str(app.screen.query_one("#chartline").render())
+        assert "circle-packing" in line and "other-problem" not in line
+        await pilot.press("r")  # refresh must not snap back to the latest
+        line = str(app.screen.query_one("#chartline").render())
+        assert "circle-packing" in line
+        await pilot.press("p")
+        line = str(app.screen.query_one("#chartline").render())
+        assert "other-problem" in line
 
 
 @pytest.mark.asyncio

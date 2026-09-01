@@ -1,0 +1,10 @@
+problem_id: fitness-landscape
+metric: elevation
+higher_is_better: true
+description: description.md
+baseline: 2.949266  # sample submission at the origin
+chart_baselines:
+  best-decoy: 12.996735   # highest point more than 1.0 away from the needle
+  global-peak: 17.110625  # elevation at the needle, grid(2001) resolution
+time_budget_s: 300
+allow_network: false

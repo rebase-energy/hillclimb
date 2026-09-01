@@ -8,6 +8,7 @@ import threading
 import time
 from pathlib import Path
 
+from hillclimb import quota
 from hillclimb.candidate import utcnow
 from hillclimb.backends.base import OperatorRequest, OperatorResult
 
@@ -60,6 +61,14 @@ class _StreamReader(threading.Thread):
         self.stream_path = stream_path
         self.result_payload: dict | None = None
         self.rate_limited = False
+        # fully-qualified model that actually served the call (e.g.
+        # "claude-sonnet-4-5-20250929") — the CLI resolves aliases like
+        # "sonnet" internally, so the stream is the only source of truth
+        self.model_id: str | None = None
+        # per-turn usage deduped by message id (each turn streams twice,
+        # partial then final, under one id) — the token count of record when
+        # the call dies without a `result` message (timeout/abort/error)
+        self.usage_by_turn: dict[str, dict] = {}
 
     def run(self) -> None:
         with self.stream_path.open("w") as sink:
@@ -80,7 +89,19 @@ class _StreamReader(threading.Thread):
                     line = json.dumps(message) + "\n"
                 sink.write(line)
                 sink.flush()
-                if isinstance(message, dict) and message.get("type") == "result":
+                if not isinstance(message, dict):
+                    continue
+                if message.get("type") == "system":
+                    if message.get("model"):
+                        self.model_id = message["model"]
+                elif message.get("type") == "assistant":
+                    body = message.get("message") or {}
+                    # the turn's own model beats the init announcement
+                    if body.get("model"):
+                        self.model_id = body["model"]
+                    if body.get("usage") and body.get("id"):
+                        self.usage_by_turn[body["id"]] = body["usage"]
+                elif message.get("type") == "result":
                     self.result_payload = message
                     if message.get("is_error") and _has_rate_limit_marker(
                         str(message.get("result", ""))
@@ -106,6 +127,23 @@ USAGE_TOKEN_KEYS = (
 
 def usage_total_tokens(usage: dict) -> int:
     return sum(usage.get(k) or 0 for k in USAGE_TOKEN_KEYS)
+
+
+def _observed_usage(reader: "_StreamReader | None", payload: dict) -> dict[str, int]:
+    """Per-kind tokens the call burned, on every outcome: the final `result`
+    usage when the call finished, else the per-turn sum the reader streamed
+    before the call died — a failed candidate cost real tokens and must
+    journal them. Zero-valued kinds are dropped."""
+    if payload.get("usage"):
+        turns = [payload["usage"]]
+    elif reader is not None:
+        turns = list(reader.usage_by_turn.values())
+    else:
+        turns = []
+    usage = {
+        key: sum(int(turn.get(key) or 0) for turn in turns) for key in USAGE_TOKEN_KEYS
+    }
+    return {key: count for key, count in usage.items() if count}
 
 
 class ClaudeCodeBackend:
@@ -148,6 +186,9 @@ class ClaudeCodeBackend:
         stream_path = candidate_dir / STREAM_FILE
         pid_path = candidate_dir / PID_FILE
         stderr_path = candidate_dir / "agent_stderr.log"
+        # window utilization before any token is burned; the end snapshot
+        # follows the call so every candidate journals its before/after
+        quota_start = quota.snapshot() if self.auth != "api-key" else None
         start = time.monotonic()
         timed_out = False
         aborted = False
@@ -210,9 +251,19 @@ class ClaudeCodeBackend:
             )
         )
 
+        # every outcome journals the tokens it burned — failed calls too
+        token_usage = _observed_usage(reader, payload)
+        burn = {
+            "token_usage": token_usage,
+            "total_tokens": sum(token_usage.values()) or None,
+            "quota_start": quota_start,
+            "quota_end": quota.snapshot() if self.auth != "api-key" else None,
+            "model_id": reader.model_id if reader else None,
+        }
         if aborted:
             return OperatorResult(
                 ok=False,
+                **burn,
                 duration_s=duration,
                 raw_output_path=str(raw_path),
                 error_kind="aborted",
@@ -221,6 +272,7 @@ class ClaudeCodeBackend:
         if timed_out:
             return OperatorResult(
                 ok=False,
+                **burn,
                 duration_s=duration,
                 raw_output_path=str(raw_path),
                 error_kind="timeout",
@@ -230,6 +282,9 @@ class ClaudeCodeBackend:
             return OperatorResult(
                 ok=False,
                 session_id=payload.get("session_id"),
+                cost_usd=payload.get("total_cost_usd"),
+                num_turns=payload.get("num_turns"),
+                **burn,
                 duration_s=duration,
                 raw_output_path=str(raw_path),
                 error_kind="rate_limited",
@@ -239,6 +294,9 @@ class ClaudeCodeBackend:
             return OperatorResult(
                 ok=False,
                 session_id=payload.get("session_id"),
+                cost_usd=payload.get("total_cost_usd"),
+                num_turns=payload.get("num_turns"),
+                **burn,
                 duration_s=duration,
                 raw_output_path=str(raw_path),
                 error_kind="error",
@@ -247,18 +305,18 @@ class ClaudeCodeBackend:
         if not payload:
             return OperatorResult(
                 ok=False,
+                **burn,
                 duration_s=duration,
                 raw_output_path=str(raw_path),
                 error_kind="error",
                 error_message="agent exited 0 but emitted no result message",
             )
-        total_tokens = usage_total_tokens(payload.get("usage") or {}) or None
         return OperatorResult(
             ok=True,
             session_id=payload.get("session_id"),
             cost_usd=payload.get("total_cost_usd"),
             num_turns=payload.get("num_turns"),
-            total_tokens=total_tokens,
+            **burn,
             duration_s=duration,
             raw_output_path=str(raw_path),
         )

@@ -10,6 +10,7 @@ def test_render_replaces_tokens():
         time_remaining="1h 30m",
         verifier_display="./problem/verifier.sh",
         problem_contract="solution.py must define answer().",
+        interface_section="",
         holdout_clause="",
         tools_clause="",
         network_note="Assume no internet access at execution time.",
@@ -27,6 +28,7 @@ def test_render_replaces_tokens():
         time_remaining="1h 30m",
         verifier_display="./problem/verifier.sh",
         problem_contract="solution.py must define answer().",
+        interface_section="",
         tools_clause="",
         network_note="Assume no internet access at execution time.",
         holdout_clause=render("holdout_clause", metric_name="accuracy").rstrip(),
@@ -47,12 +49,31 @@ def test_self_reported_contract_still_renders():
         time_remaining="1h 30m",
         verifier_clause="- prints exactly one line `val_score: <float>` for accuracy",
         report_clause=render("report_clause").rstrip(),
+        interface_section="",
         holdout_clause="",
         tools_clause="",
         network_note="Assume no internet access at execution time.",
     )
     assert "val_score" in text
     assert "eval_result.json" in text
+    assert "{{" not in text
+
+
+def test_interface_section_renders_into_contract():
+    text = render(
+        "contract_verifier",
+        metric_name="accuracy",
+        exec_timeout_min=30,
+        runtime_pkgs="pandas, numpy",
+        time_remaining="1h 30m",
+        verifier_display="./problem/verifier.sh",
+        problem_contract="(see the problem description above)",
+        interface_section="\n## Output interface (machine-checked)\n\nFile `submission.csv` (CSV)\n",
+        holdout_clause="",
+        tools_clause="",
+        network_note="Assume no internet access at execution time.",
+    )
+    assert "## Output interface (machine-checked)" in text
     assert "{{" not in text
 
 

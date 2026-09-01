@@ -136,9 +136,10 @@ def test_holdout_scorer_hidden_dir_full_env(tmp_path, monkeypatch):
         problem_dir=problem_dir, data_dir=problem_dir,
         work_root=tmp_path / "holdout-eval", timeout_s=60,
     )
-    score, error = scorer.score(candidate_dir)
+    score, error, cpu = scorer.score(candidate_dir)
     assert error is None
     assert score == 0.5
+    assert cpu is not None and cpu >= 0.0  # holdout cpu rides along
     eval_dir = tmp_path / "holdout-eval" / "c001"
     # hidden dir recreated the run layout: solution + extras + symlinks
     assert (eval_dir / "solution.py").exists()
@@ -151,6 +152,47 @@ def test_holdout_scorer_hidden_dir_full_env(tmp_path, monkeypatch):
     assert not (candidate_dir / "eval_result.json").exists()
 
 
+def test_interface_shim_importable_on_both_splits(tmp_path, monkeypatch):
+    """A verifier can `from hillclimb import spaces` in venvs where hillclimb
+    is not installed: the shim rides PYTHONPATH on validation AND holdout.
+    (The dev interpreter has the real package, so the proof is that the
+    import resolves to the shim copy — PYTHONPATH precedes site-packages.)"""
+    monkeypatch.setenv("HILLCLIMB_CACHE_DIR", str(tmp_path / "cache"))
+    from hillclimb.runtime import ensure_interface_shim
+
+    shim = ensure_interface_shim()
+    assert (shim / "hillclimb" / "spaces.py").exists()
+    assert ensure_interface_shim() == shim  # idempotent, content-keyed
+
+    problem_dir = make_problem(tmp_path)
+    (problem_dir / "evaluate.py").write_text(textwrap.dedent(
+        """
+        import os, sys
+        from hillclimb import spaces
+        split = "holdout" if "--holdout" in sys.argv else "validation"
+        payload = '{"split": "%s", "score": 1.0}' % split
+        open(os.environ["HILLCLIMB_RESULT"], "w").write(payload)
+        print("spaces from:", spaces.__file__)
+        """
+    ))
+    candidate_dir = make_workspace(tmp_path, problem_dir)
+    executor = CommandExecutor(Path(sys.executable), COMMAND, pythonpath=str(shim))
+    result = executor.execute(candidate_dir / "solution.py", candidate_dir, timeout_s=60)
+    assert result.ok, Path(result.stderr_path).read_text()[-300:]
+    assert str(shim) in Path(result.stdout_path).read_text()
+
+    scorer = CommandHoldoutScorer(
+        Path(sys.executable), COMMAND + ["--holdout"],
+        problem_dir=problem_dir, data_dir=problem_dir,
+        work_root=tmp_path / "holdout-eval", timeout_s=60, pythonpath=str(shim),
+    )
+    score, error, _cpu = scorer.score(candidate_dir)
+    assert error is None
+    assert score == 1.0
+    stdout = (tmp_path / "holdout-eval" / "c001" / "exec_stdout.log").read_text()
+    assert str(shim) in stdout
+
+
 def test_holdout_scorer_failure_mapping(tmp_path):
     problem_dir = make_problem(tmp_path)
     candidate_dir = make_workspace(
@@ -160,16 +202,17 @@ def test_holdout_scorer_failure_mapping(tmp_path):
         Path(sys.executable), COMMAND, problem_dir=problem_dir, data_dir=problem_dir,
         work_root=tmp_path / "holdout-eval", timeout_s=60,
     )
-    score, error = scorer.score(candidate_dir)
+    score, error, cpu = scorer.score(candidate_dir)
     assert score is None
     assert "holdout evaluation failed" in error
+    assert cpu is not None  # burned even though scoring failed
 
     scorer_no_score = CommandHoldoutScorer(
         Path(sys.executable), ["{python}", "-c", "print(42)"],
         problem_dir=problem_dir, data_dir=problem_dir,
         work_root=tmp_path / "holdout-eval-2", timeout_s=60,
     )
-    score, error = scorer_no_score.score(candidate_dir)
+    score, error, _cpu = scorer_no_score.score(candidate_dir)
     assert score is None
     assert "produced no score" in error
 

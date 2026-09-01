@@ -320,6 +320,60 @@ def build_graph(knowledge_dir: Path, previous: KnowledgeGraph | None = None) -> 
             )
             add_edge(claim_id, scope_target, "applies_to", first_seen=claim.observed_at)
 
+    # paper-derived claims: a paper is a knowledge source like a search —
+    # its claims join the same supersession/retrieval/credit economy, wired
+    # to a `paper:` node instead of a `search:` node. A scoped paper also
+    # materializes its family/problem anchors so the linkage is inspectable
+    # BEFORE any search has run on that problem.
+    from hillclimb.papers import load_papers
+
+    for paper in load_papers(knowledge_dir):
+        t = paper.added_at
+        paper_node_id = f"paper:{paper.slug}"
+        add_node(GraphNode(
+            id=paper_node_id, type="paper", label=paper.title or paper.slug, first_seen=t,
+            data={
+                "file": paper.file, "family": paper.family,
+                "problem_id": paper.problem_id, "n_claims": len(paper.claims),
+            },
+        ))
+        paper_family_id = f"family:{paper.family}" if paper.family else ""
+        paper_problem_id = f"problem:{paper.problem_id}" if paper.problem_id else ""
+        if paper_family_id:
+            add_node(GraphNode(id=paper_family_id, type="family", label=paper.family, first_seen=t))
+        if paper_problem_id:
+            add_node(GraphNode(
+                id=paper_problem_id, type="problem", label=paper.problem_id, first_seen=t,
+            ))
+            if paper_family_id:
+                add_edge(paper_problem_id, paper_family_id, "belongs_to", first_seen=t)
+        anchor = paper_problem_id or paper_family_id
+        if anchor:
+            add_edge(paper_node_id, anchor, "applies_to", first_seen=t)
+        for claim in paper.claims:
+            all_claims.append(claim)
+            claim_id = f"claim:{claim.claim_id}"
+            subject = entity_by_slug.get(claim.subject)
+            label = f"{claim.subject} {claim.relation}" + (f" {claim.object}" if claim.object else "")
+            add_node(GraphNode(
+                id=claim_id, type="claim", label=label,
+                concepts=subject.concepts if subject else [],
+                first_seen=claim.observed_at,
+                data={
+                    "subject": claim.subject, "relation": claim.relation,
+                    "object": claim.object, "confidence": claim.confidence,
+                    "evidence": claim.evidence, "scope": claim.scope,
+                    "paper": paper.slug,
+                },
+            ))
+            add_edge(claim_id, f"entity:{claim.subject}", "about", first_seen=claim.observed_at)
+            object_slug = alias_to_slug.get(claim.object.lower())
+            if object_slug:
+                add_edge(claim_id, f"entity:{object_slug}", "about", first_seen=claim.observed_at)
+            add_edge(claim_id, paper_node_id, "derived_from", first_seen=claim.observed_at)
+            if anchor:
+                add_edge(claim_id, anchor, "applies_to", first_seen=claim.observed_at)
+
     # generalized (consolidated) claims: scoped to a concept, linked down to
     # the family-scoped claims they were lifted from
     from hillclimb.claims import load_consolidated_claims

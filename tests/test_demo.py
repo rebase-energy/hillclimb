@@ -34,7 +34,8 @@ def test_bundled_problem_loads_and_mirrors_repo_problem(tmp_path, config):
     # the bundled verifier is the repo's verifier — the two must not drift
     repo = Path("problems") / DEMO_PROBLEM_ID
     bundled = Path("src/hillclimb/demo") / DEMO_PROBLEM_ID
-    for name in ("verifier.sh", "verify.py", "description.md", "sample_submission.csv"):
+    for name in ("verifier.sh", "verify.py", "description.md", "sample_submission.csv",
+                 "interface.py"):
         assert (bundled / name).read_text() == (repo / name).read_text(), name
 
 

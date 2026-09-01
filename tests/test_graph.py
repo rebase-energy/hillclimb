@@ -198,7 +198,7 @@ class TestRetrieval:
         config.learning.dir = knowledge_dir
         problem = SimpleNamespace(
             problem_id="spaceship-titanic", metric_name="accuracy",
-            higher_is_better=True, kind="csv",
+            higher_is_better=True, runtime="csv",
         )
         with_graph, _, injected = build_knowledge_context(config, problem, "", lambda m: None)
         assert "Distilled claims" in with_graph

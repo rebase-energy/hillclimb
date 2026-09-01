@@ -50,7 +50,7 @@ SUPERNODE_SIZE_CAP = 9.0
 NODE_COLORS = {
     "problem": "yellow", "family": "bold yellow", "search": "blue",
     "operator": "bright_black", "concept": "magenta", "claim": "green",
-    "technique": "cyan", "library": "bold cyan", "model_family": "cyan",
+    "technique": "cyan", "library": "bold cyan", "model_family": "cyan", "paper": "bold blue",
     "feature": "cyan", "practice": "cyan", "supernode": "bold magenta",
 }
 EDGE_COLORS = {
@@ -67,12 +67,13 @@ EDGE_COLORS = {
 NODE_SHAPES = {
     "family": "ring", "problem": "ring", "search": "triangle", "library": "square",
     "concept": "disc", "technique": "diamond", "claim": "diamond-open", "operator": "dot",
+    "paper": "square",
     "supernode": "disc",
 }
 # The legend row, in the website's order. Each entry toggles its type off and
 # on; the glyph is the closest text stand-in for the plotui marker.
 LEGEND_TYPES = (
-    "claim", "concept", "family", "library", "operator", "problem", "search", "technique",
+    "claim", "concept", "family", "library", "operator", "paper", "problem", "search", "technique",
 )
 LEGEND_GLYPHS = {
     "disc": "●", "ring": "◉", "square": "■", "triangle": "▲",
@@ -1036,7 +1037,7 @@ class GraphScreen(KeysMixin, Screen):
         Binding("c", "toggle_sidebar", "concepts"),
         # One binding per legend slot; only the first is described, so the
         # `?` panel shows a single "1-8" row for the lot.
-        Binding("1", "toggle_type(0)", "hide/show a type", show=False, key_display="1-8"),
+        Binding("1", "toggle_type(0)", "hide/show a type", show=False, key_display="1-9"),
         *(Binding(str(i + 1), f"toggle_type({i})", show=False) for i in range(1, len(LEGEND_TYPES))),
         KEYS_BINDING,
         *QUIT_BINDINGS,

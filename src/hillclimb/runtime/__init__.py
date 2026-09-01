@@ -23,6 +23,46 @@ def requirements_resource(kind: str = "csv"):
     return resources.files(__package__) / f"requirements-{kind}.txt"
 
 
+def ensure_interface_shim() -> Path:
+    """A PYTHONPATH dir that makes `from hillclimb import spaces` work inside
+    the runtime venvs, where hillclimb itself is not installed (they stay
+    lean; the convention for hillclimb-owned runtime code is invoke-by-path).
+
+    Contains a generated two-line `hillclimb/__init__.py` stub — NOT the real
+    one, whose lazy attributes would dangle without the full package — plus a
+    verbatim copy of spaces.py. Content-keyed like the venvs, so editing
+    spaces.py (or upgrading hillclimb) re-materializes automatically; the
+    build lands in a temp dir first and renames into place, so concurrent
+    searches can only ever see a complete shim."""
+    import hashlib
+    import shutil
+    import tempfile
+
+    source = (Path(__file__).parent.parent / "spaces.py").read_bytes()
+    digest = hashlib.sha256(source).hexdigest()[:12]
+    from hillclimb.project import machine_cache_dir
+
+    shim = machine_cache_dir() / "interface-shim" / digest
+    if (shim / "hillclimb" / "spaces.py").exists():
+        return shim
+    shim.parent.mkdir(parents=True, exist_ok=True)
+    build = Path(tempfile.mkdtemp(dir=shim.parent, prefix=".build-"))
+    try:
+        package = build / "hillclimb"
+        package.mkdir()
+        (package / "__init__.py").write_text(
+            '"""Runtime-venv shim: only `hillclimb.spaces` lives here."""\n'
+        )
+        (package / "spaces.py").write_bytes(source)
+        try:
+            build.rename(shim)
+        except OSError:
+            pass  # a concurrent search won the race; its shim is identical
+    finally:
+        shutil.rmtree(build, ignore_errors=True)
+    return shim
+
+
 def _parse_requirements(text: str) -> list[str]:
     return [
         line.strip()

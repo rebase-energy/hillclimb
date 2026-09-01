@@ -54,6 +54,22 @@ class ProblemSpec(BaseModel):
     # --- prompt assembly ---
     contract_template: str = "contract_verifier"  # prompts/<name>.md
     contract: str | None = None  # problem-authored solution-contract section
+    # optional machine-checkable I/O declaration (`interface.py`, spaces.py
+    # vocabulary): the path is what verifiers/agents re-load to run checks,
+    # the text is its rendered describe() for prompts — objects themselves
+    # never ride on the spec (it stays serializable)
+    interface_path: Path | None = None
+    interface_text: str | None = None
+
+    # --- surface view (`hillclimb surface`) ---
+    # optional terrain module (`landscape.py`, picked up by default like
+    # `contract.md`): exposes `elevation(x, y)` and `grid(n)`. The verifier
+    # journals each candidate's position by writing the `surface_metrics`
+    # keys as extra numeric keys next to `score` (they land in
+    # Trial.metrics), which is what lets the surface view drop candidates
+    # onto the terrain. No landscape module = no surface view.
+    landscape_path: Path | None = None
+    surface_metrics: list[str] = Field(default_factory=lambda: ["x", "y"])
 
     # --- t=0 floor ---
     baseline_text: str | None = None  # solution.py source scored as c000
@@ -170,6 +186,18 @@ def _provider_calls(scheme: str):
     return provider.load_mlebench_problem, provider.resolve_mlebench_target
 
 
+def provider_chart_baselines(target: str) -> dict[str, float]:
+    """Chart reference lines for a provider target, resolved lazily without
+    materializing any data. Empty when the target is not a provider's or the
+    provider publishes no reference scores."""
+    scheme = _split_scheme(target)
+    if scheme is None:
+        return {}
+    if scheme[0] == "emflow":
+        return _emflow_provider().chart_baselines_for(scheme[1])
+    return {}
+
+
 def _read_yaml(path: Path) -> dict:
     data = yaml.safe_load(path.read_text()) or {}
     if not isinstance(data, dict):
@@ -215,6 +243,24 @@ def _optional_file(problem_dir: Path, meta: dict, key: str, default: str | None 
             return None
         raise FileNotFoundError(f"{key} file not found: {path}")
     return path
+
+
+def load_interface_fields(problem_dir: Path, meta: dict) -> tuple[Path | None, str | None]:
+    """(interface_path, rendered describe text) for a problem dir's optional
+    `interface.py` (same optional-default semantics as `contract.md`).
+    Imported eagerly so an unloadable interface fails at problem load, with
+    the file named — not mid-search. Reused by providers that synthesize an
+    interface into their materialized problem dirs."""
+    interface_path = _optional_file(problem_dir, meta, "interface", default="interface.py")
+    if interface_path is None:
+        return None, None
+    from hillclimb import spaces
+
+    try:
+        module = spaces.load_interface(interface_path)
+    except spaces.InterfaceError as exc:
+        raise ValueError(f"invalid interface file {interface_path}: {exc}") from exc
+    return interface_path, spaces.describe_interface(module)
 
 
 def _verifier_argv(problem_yaml: Path, problem_dir: Path, meta: dict) -> list[str]:
@@ -273,6 +319,7 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
     )
     verifier_cmd = _verifier_argv(problem_yaml, problem_dir, meta)
     contract_path = _optional_file(problem_dir, meta, "contract", default="contract.md")
+    interface_path, interface_text = load_interface_fields(problem_dir, meta)
     baseline_raw = meta.get("baseline")
     baseline_score = float(baseline_raw) if isinstance(baseline_raw, (int, float)) and not isinstance(baseline_raw, bool) else None
     chart_baselines = dict(meta.get("chart_baselines") or {})
@@ -297,6 +344,10 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
         holdout_cmd=(verifier_cmd + ["--holdout"]) if meta.get("holdout") else None,
         verifier_display=f"./problem/{Path(verifier_cmd[0]).name}",
         contract=contract_path.read_text() if contract_path else None,
+        interface_path=interface_path,
+        interface_text=interface_text,
+        landscape_path=_optional_file(problem_dir, meta, "landscape", default="landscape.py"),
+        surface_metrics=list(meta.get("surface_metrics") or ["x", "y"]),
         requirements_file=_optional_file(problem_dir, meta, "requirements"),
         baseline_text=baseline_path.read_text() if baseline_path else None,
         baseline_score=baseline_score,

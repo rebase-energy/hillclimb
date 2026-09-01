@@ -68,7 +68,7 @@ class Curve:
     label: str
     state: str
     xs: list[float] = field(default_factory=list)  # 1-based scored-candidate count
-    ys: list[float] = field(default_factory=list)  # best-so-far val score
+    ys: list[float] = field(default_factory=list)  # best-so-far score (val, or its holdout)
     arm: str | None = None  # experiment arm, when the search is one
 
     @property
@@ -85,6 +85,17 @@ def _parse_ts(value: str | None) -> datetime | None:
         return None
 
 
+def _landing_time(cand: Candidate) -> datetime | None:
+    return _parse_ts(cand.finished_at) or _parse_ts(cand.created_at)
+
+
+def _counts_as_scored(cand: Candidate) -> bool:
+    """The one predicate for "this candidate occupies an x slot on the climb".
+    `climb_from_searches` and `cost_series` must agree on it exactly, or the
+    cost overlay's x values drift off the staircase's."""
+    return not cand.pruned and cand.val_score is not None and _landing_time(cand) is not None
+
+
 def curve_from_candidates(
     candidates: list[Candidate],
     *,
@@ -92,11 +103,18 @@ def curve_from_candidates(
     state: str,
     higher_is_better: bool = True,
     started_at: str | None = None,
+    split: str = "val",
 ) -> Curve:
     """Best-so-far curve for one search. A point per scored, unpruned
     candidate in finish order; the 1-based x value is how many candidates
-    have been tested. The y value only ever moves in the metric's good
-    direction, so the line is the staircase the search climbed.
+    have been tested.
+
+    `split="val"` (default) plots the score the search climbs on, so the line
+    only ever moves in the metric's good direction. `split="holdout"` keeps
+    incumbency judged on validation — the search never selects on holdout —
+    but plots each incumbent's holdout score: the line may move the wrong way
+    where a validation gain did not transfer, which is the point of the view.
+    Incumbents without a holdout score keep the previous plotted value.
 
     `started_at` remains accepted for callers reading older search metadata;
     candidate count no longer depends on the search's wall-clock origin.
@@ -110,26 +128,34 @@ def curve_from_candidates(
         when = _parse_ts(cand.finished_at) or _parse_ts(cand.created_at)
         if when is None:
             continue
-        scored.append((when, cand.val_score))
+        scored.append((when, cand.val_score, cand.holdout_score))
     scored.sort(key=lambda item: item[0])
     if not scored:
         return curve
     best: float | None = None
-    for experiment, (_when, score) in enumerate(scored, start=1):
-        if best is None or better(score, best, higher):
-            best = score
+    plotted: float | None = None
+    for experiment, (_when, val, holdout) in enumerate(scored, start=1):
+        if best is None or better(val, best, higher):
+            best = val
+            if split == "holdout":
+                plotted = holdout if holdout is not None else plotted
+            else:
+                plotted = val
+        if plotted is None:
+            continue
         curve.xs.append(float(experiment))
-        curve.ys.append(best)
+        curve.ys.append(plotted)
     return curve
 
 
-def _record_curve(store: DataStore, record: SearchRecord, label: str) -> Curve:
+def _record_curve(store: DataStore, record: SearchRecord, label: str, split: str = "val") -> Curve:
     curve = curve_from_candidates(
         list(Journal(store.journal(record.key)).candidates.values()),
         label=label,
         state=record.state,
         higher_is_better=bool(record.meta.higher_is_better),
         started_at=record.meta.started_at,
+        split=split,
     )
     curve.arm = record.meta.arm if record.meta.experiment else None
     return curve
@@ -162,7 +188,9 @@ def climb_curve(search_dir: Path, label: str | None = None, meta: SearchMeta | N
     return _record_curve(store, record, label or search_ref(search_dir))
 
 
-def climb_curves(store: DataStore | Path, problem_key: str, limit: int = MAX_CURVES) -> list[Curve]:
+def climb_curves(
+    store: DataStore | Path, problem_key: str, limit: int = MAX_CURVES, split: str = "val"
+) -> list[Curve]:
     """Curves for every search of `problem_key` across runs, oldest first so
     the palette assigns colors in start order (the newest gets the last one).
     Labelled by run name, which is what the user chose — plus the search id
@@ -174,13 +202,16 @@ def climb_curves(store: DataStore | Path, problem_key: str, limit: int = MAX_CUR
     per_run: dict[str, int] = {}
     for record in records:
         per_run[record.run_id] = per_run.get(record.run_id, 0) + 1
-    return [_record_curve(store, record, curve_label(record, per_run)) for record in records[-limit:]]
+    return [
+        _record_curve(store, record, curve_label(record, per_run), split)
+        for record in records[-limit:]
+    ]
 
 
 @dataclass(frozen=True)
 class ClimbEvent:
     x: float            # 1-based scored-candidate count across the climb
-    y: float            # val score
+    y: float            # plotted score (val, or the candidate's holdout in the holdout view)
     best: bool          # set a new best across every search, when it landed
     search: str         # label of the search it came from
     operator: str
@@ -233,37 +264,47 @@ def climb_from_searches(
     searches: list[tuple[str, list[Candidate], str | None]],
     *,
     higher_is_better: bool = True,
+    split: str = "val",
 ) -> Climb:
     """Fold every search's scored, unpruned candidates into one climb.
     `searches` is (label, candidates, started_at) per search; `started_at` is
     retained in that shape for callers but x is the 1-based candidate count.
     `best` is judged against everything that landed before, whichever search
-    it came from."""
+    it came from — always on the validation score, the signal the searches
+    climb on. `split="holdout"` plots each event at its candidate's holdout
+    score instead (candidates without one keep their x slot but are not
+    drawn), so the staircase reads as the incumbent's held-out result and may
+    move the wrong way where a validation gain did not transfer."""
     higher = higher_is_better
-    landed: list[tuple[datetime, float, str, str, str]] = []
+    landed: list[tuple[datetime, float, float | None, str, str, str]] = []
     for label, candidates, _ in searches:
         for cand in candidates:
-            if cand.pruned or cand.val_score is None:
+            if not _counts_as_scored(cand):
                 continue
-            when = _parse_ts(cand.finished_at) or _parse_ts(cand.created_at)
-            if when is None:
-                continue
-            landed.append((when, cand.val_score, label, cand.operator or "", cand.summary or ""))
+            landed.append((
+                _landing_time(cand), cand.val_score, cand.holdout_score,
+                label, cand.operator or "", cand.summary or "",
+            ))
     landed.sort(key=lambda item: item[0])
     climb = Climb(searches=len(searches))
     if not landed:
         return climb
     best: float | None = None
-    for experiment, (_when, score, label, operator, summary) in enumerate(landed, start=1):
-        improved = best is None or better(score, best, higher)
+    for experiment, (_when, val, holdout, label, operator, summary) in enumerate(landed, start=1):
+        improved = best is None or better(val, best, higher)
         if improved:
-            best = score
-        climb.events.append(ClimbEvent(float(experiment), score, improved, label, operator, summary))
-    climb.extent = climb.events[-1].x
+            best = val
+        y = holdout if split == "holdout" else val
+        if y is None:
+            continue
+        climb.events.append(ClimbEvent(float(experiment), y, improved, label, operator, summary))
+    climb.extent = float(len(landed))
     return climb
 
 
-def climb_for_problem(store: DataStore | Path, problem_key: str, limit: int = MAX_CURVES) -> Climb:
+def climb_for_problem(
+    store: DataStore | Path, problem_key: str, limit: int = MAX_CURVES, split: str = "val"
+) -> Climb:
     """The climb across every search of `problem_key` (the newest `limit`)."""
     if isinstance(store, Path):
         store = FileDataStore(store)
@@ -281,6 +322,94 @@ def climb_for_problem(store: DataStore | Path, problem_key: str, limit: int = MA
             for record in records[-limit:]
         ],
         higher_is_better=bool(records[-1].meta.higher_is_better) if records else True,
+        split=split,
+    )
+
+
+@dataclass(frozen=True)
+class CostSeries:
+    """What the climb cost, cumulatively, sampled at the climb's own x slots:
+    agent tokens and verifier CPU-minutes (holdout runs included)."""
+
+    xs: list[float] = field(default_factory=list)       # ClimbEvent.x slots
+    tokens: list[float] = field(default_factory=list)   # cumulative agent tokens
+    cpu_min: list[float] = field(default_factory=list)  # cumulative CPU-minutes
+    total_tokens: float = 0.0
+    total_cpu_min: float = 0.0
+
+
+def _candidate_cost(cand: Candidate) -> tuple[float, float]:
+    """(tokens, cpu seconds) one candidate burned. CPU falls back to trial
+    wall-clock where cpu_s predates the journal field — verifier envs are
+    single-threaded, so wall ≈ cpu there. Holdout CPU has no such fallback:
+    old journals never measured it, so it is simply absent."""
+    tokens = float(cand.backend.total_tokens or 0)
+    cpu = sum(
+        (t.cpu_s if t.cpu_s is not None else t.duration_s or 0.0) + (t.holdout_cpu_s or 0.0)
+        for t in cand.trials
+    )
+    return tokens, cpu
+
+
+def cost_series(searches: list[tuple[str, list[Candidate], str | None]]) -> CostSeries:
+    """Cumulative cost across the same searches the climb is built from.
+
+    Every candidate is walked — buggy, pruned, agent-failed included: they
+    burned tokens and CPU even though they never became climb events. Only a
+    candidate that `climb_from_searches` counts (`_counts_as_scored`) advances
+    x and emits the running totals, so `xs` lands 1:1 on `ClimbEvent.x`; a
+    failure's cost surfaces at the next scored slot. Cost trailing the last
+    scored candidate lands as one final point at the same x (a vertical step
+    to the true total). Timestampless candidates sort first, attaching their
+    cost to slot 1."""
+    landed: list[tuple[tuple[bool, datetime], Candidate]] = []
+    for _label, candidates, _ in searches:
+        for cand in candidates:
+            when = _landing_time(cand)
+            # (has-timestamp, time) sorts the timestampless first without
+            # ever comparing a naive datetime.min against aware timestamps
+            landed.append(((when is not None, when or datetime.min), cand))
+    landed.sort(key=lambda item: item[0])
+    xs: list[float] = []
+    token_points: list[float] = []
+    cpu_points: list[float] = []
+    tokens = cpu = 0.0
+    slot = 0
+    for _key, cand in landed:
+        cand_tokens, cand_cpu = _candidate_cost(cand)
+        tokens += cand_tokens
+        cpu += cand_cpu
+        if _counts_as_scored(cand):
+            slot += 1
+            xs.append(float(slot))
+            token_points.append(tokens)
+            cpu_points.append(cpu / 60.0)
+    if xs and (tokens > token_points[-1] or cpu / 60.0 > cpu_points[-1]):
+        xs.append(float(slot))
+        token_points.append(tokens)
+        cpu_points.append(cpu / 60.0)
+    return CostSeries(
+        xs=xs,
+        tokens=token_points,
+        cpu_min=cpu_points,
+        total_tokens=tokens,
+        total_cpu_min=cpu / 60.0,
+    )
+
+
+def cost_for_problem(
+    store: DataStore | Path, problem_key: str, limit: int = MAX_CURVES
+) -> CostSeries:
+    """The cost of every search of `problem_key` — the same records window
+    `climb_for_problem` folds, so the two views share x slots."""
+    if isinstance(store, Path):
+        store = FileDataStore(store)
+    records = store.searches(problem_key=problem_key)
+    return cost_series(
+        [
+            ("", list(Journal(store.journal(record.key)).candidates.values()), None)
+            for record in records[-limit:]
+        ]
     )
 
 
@@ -288,7 +417,7 @@ def climb_for_problem(store: DataStore | Path, problem_key: str, limit: int = MA
 class DetailMark:
     id: str
     x: float            # 1-based scored-candidate count
-    y: float            # val score
+    y: float            # plotted score (val, or holdout in the holdout view)
     operator: str
     fate: str
     on_path: bool       # part of the accepted lineage
@@ -319,14 +448,18 @@ def detail_layout(
     state: str,
     higher_is_better: bool = True,
     started_at: str | None = None,
+    split: str = "val",
 ) -> DetailLayout:
     """The curve plus the tree behind it. A mark per scored, unpruned
     candidate; an edge from its parent when the parent is scored too (a
-    failed parent leaves its children rootless rather than inventing a y)."""
+    failed parent leaves its children rootless rather than inventing a y).
+    `split="holdout"` places marks at holdout scores; candidates without one
+    join the unscored count."""
     from hillclimb.tree import build_tree
 
     curve = curve_from_candidates(
-        candidates, label=label, state=state, higher_is_better=higher_is_better, started_at=started_at
+        candidates, label=label, state=state, higher_is_better=higher_is_better,
+        started_at=started_at, split=split,
     )
     layout = DetailLayout(curve=curve)
     tree = build_tree(candidates, higher_is_better)
@@ -354,8 +487,12 @@ def detail_layout(
         x = experiment_by_id.get(node.id)
         if x is None:
             continue
-        at[node.id] = (x, node.score)
-        layout.marks.append(DetailMark(node.id, x, node.score, node.operator, node.fate, node.id in on_path))
+        y = cand.holdout_score if split == "holdout" else node.score
+        if y is None:
+            layout.unscored += 1
+            continue
+        at[node.id] = (x, y)
+        layout.marks.append(DetailMark(node.id, x, y, node.operator, node.fate, node.id in on_path))
     by_id = {n.id: n for n in tree.nodes}
     for edge in tree.edges:
         if edge.kind != "parent" or edge.src not in at or edge.dst not in at:
@@ -363,16 +500,6 @@ def detail_layout(
         (x0, y0), (x1, y1) = at[edge.src], at[edge.dst]
         layout.edges.append(DetailEdge(x0, y0, x1, y1, by_id[edge.dst].operator, edge.on_path))
     return layout
-
-
-def record_detail(store: DataStore, record: SearchRecord, label: str) -> DetailLayout:
-    return detail_layout(
-        list(Journal(store.journal(record.key)).candidates.values()),
-        label=label,
-        state=record.state,
-        higher_is_better=bool(record.meta.higher_is_better),
-        started_at=record.meta.started_at,
-    )
 
 
 def chart_problem(config: Config, search: str | None = None) -> SearchMeta | None:
@@ -388,6 +515,11 @@ def chart_problem(config: Config, search: str | None = None) -> SearchMeta | Non
         store.close()
 
 
+# provider reference lines resolved once per target — a live chart refreshes
+# every few seconds and must not re-import the provider each tick
+_provider_baselines: dict[str, dict[str, float]] = {}
+
+
 def chart_baselines(config: Config, meta: SearchMeta) -> dict[str, float]:
     """Current problem-config reference lines, falling back to the snapshot
     in search metadata when the original local problem is unavailable.
@@ -400,7 +532,18 @@ def chart_baselines(config: Config, meta: SearchMeta) -> dict[str, float]:
     from hillclimb.problem import load_problem
 
     if "://" in meta.problem:
-        return dict(meta.chart_baselines)
+        if meta.chart_baselines:
+            return dict(meta.chart_baselines)
+        # Searches that predate the provider snapshot: ask the provider for
+        # its reference lines lazily (cheap — no data materialization).
+        if meta.problem not in _provider_baselines:
+            from hillclimb.problem import provider_chart_baselines
+
+            try:
+                _provider_baselines[meta.problem] = provider_chart_baselines(meta.problem)
+            except Exception:  # noqa: BLE001 — a chart must render without the extra installed
+                _provider_baselines[meta.problem] = {}
+        return dict(_provider_baselines[meta.problem])
     try:
         return dict(load_problem(meta.problem, config).chart_baselines)
     except (ImportError, KeyError, OSError, ValueError):
@@ -420,7 +563,7 @@ from hillclimb.header import HillclimbHeader, TimezoneMixin  # noqa: E402
 from hillclimb.keys import KEYS_BINDING, QUIT_BINDINGS  # noqa: E402
 
 from hillclimb.theme import CYAN, HILLCLIMB_CSS, PLOT_BG, apply_theme, themed_plot  # noqa: E402
-from hillclimb.watch import STATE_STYLE, LiveScreen  # noqa: E402
+from hillclimb.watch import STATE_STYLE, LiveScreen, _fmt_tokens  # noqa: E402
 
 
 class ChartPlotWidget(PlotWidget):
@@ -442,19 +585,23 @@ class ChartPlotWidget(PlotWidget):
         *,
         annotations: list[ImprovementAnnotation] | None = None,
         annotation_bounds: tuple[float, float, float, float] | None = None,
+        annotation_right_margin: int = 2,
         **kwargs,
     ):
         self._annotations = list(annotations or [])
         self._annotation_bounds = annotation_bounds
+        self._annotation_right_margin = annotation_right_margin
         super().__init__(plot, **kwargs)
 
     def set_annotations(
         self,
         annotations: list[ImprovementAnnotation],
         bounds: tuple[float, float, float, float] | None,
+        right_margin: int = 2,
     ) -> None:
         self._annotations = list(annotations)
         self._annotation_bounds = bounds
+        self._annotation_right_margin = right_margin
         self._sync_annotations()
 
     def _sync_annotations(self) -> None:
@@ -467,6 +614,7 @@ class ChartPlotWidget(PlotWidget):
                 self.size.height,
                 camera_state=self._plot.camera_state(),
                 cell_px=(self._cell_w, self._cell_h),
+                right_margin=self._annotation_right_margin,
             )
         self.set_overlay(spans)
 
@@ -601,6 +749,64 @@ def _mix(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[in
 # and the attempts stay the ground.
 MISS_RGB = _mix(PLOT_BG, CYAN, 0.45)
 
+# The cost overlay: cumulative agent tokens (y2, amber) and cumulative
+# verifier CPU-minutes (y3, violet) — ARM_PALETTE hues distinct from the
+# cyan staircase and the neutral baseline gray. plotui tints each right
+# axis's tick labels to its series colour, so these also label the columns.
+COST_TOKENS_RGB = (201, 133, 0)
+COST_CPU_RGB = (144, 133, 233)
+COST_TOKENS_LABEL = "agent tokens"
+COST_CPU_LABEL = "cpu min"
+
+
+def _plot_supports_axis() -> bool:
+    """Whether the installed plotui has right-hand axes (0.3.0+). Checked the
+    way themed_plot feature-guards set_chrome, so the chart still renders —
+    minus the overlay — against an older wheel."""
+    import inspect
+
+    try:
+        return "axis" in inspect.signature(Plot.add_line).parameters
+    except (TypeError, ValueError):  # builtins without introspectable signatures
+        return False
+
+
+def add_cost_overlay(
+    plot: Plot,
+    cost: CostSeries | None,
+    *,
+    show_legend: bool = True,
+    hidden: frozenset[str] | set[str] = frozenset(),
+) -> None:
+    """Draw the cumulative cost lines on their own right-hand axes: tokens on
+    y2, CPU-minutes on y3. Straight lines, not steps — cost accrues
+    continuously between scoring instants and only ever rises. A hidden or
+    all-zero series is not added, and plotui then reserves no column for its
+    axis. No-ops on plotui builds without `axis=` support."""
+    if cost is None or not cost.xs or not _plot_supports_axis():
+        return
+    if COST_TOKENS_LABEL not in hidden and cost.total_tokens > 0:
+        plot.add_line(
+            cost.xs, cost.tokens, color=COST_TOKENS_RGB, width=1.0,
+            name=COST_TOKENS_LABEL if show_legend else None, axis="y2",
+        )
+    if COST_CPU_LABEL not in hidden and cost.total_cpu_min > 0:
+        plot.add_line(
+            cost.xs, cost.cpu_min, color=COST_CPU_RGB, width=1.0,
+            name=COST_CPU_LABEL if show_legend else None, axis="y3",
+        )
+
+
+def _cost_legend(cost: CostSeries | None) -> list[LegendEntry]:
+    if cost is None or not cost.xs or not _plot_supports_axis():
+        return []
+    entries: list[LegendEntry] = []
+    if cost.total_tokens > 0:
+        entries.append((COST_TOKENS_LABEL, COST_TOKENS_RGB, "─"))
+    if cost.total_cpu_min > 0:
+        entries.append((COST_CPU_LABEL, COST_CPU_RGB, "─"))
+    return entries
+
 
 def build_climb_plot(
     climb: Climb,
@@ -608,10 +814,12 @@ def build_climb_plot(
     *,
     show_legend: bool = True,
     hidden: frozenset[str] | set[str] = frozenset(),
+    cost: CostSeries | None = None,
 ) -> Plot:
     """The website's figure: the staircase in cyan, a bright dot where a
     candidate set a new best, a dim one where it scored but did not.
-    `hidden` names legend entries toggled off — their traces are left out."""
+    `hidden` names legend entries toggled off — their traces are left out.
+    `cost` overlays the cumulative token/CPU lines on right-hand axes."""
     plot = themed_plot()
     _add_chart_baselines(plot, baselines or {}, climb.extent, show_legend=show_legend, hidden=hidden)
     misses = [e for e in climb.events if not e.best]
@@ -632,6 +840,7 @@ def build_climb_plot(
             [e.x for e in hits], [e.y for e in hits], color=CYAN, size=3.0,
             name="new best" if show_legend else None,
         )
+    add_cost_overlay(plot, cost, show_legend=show_legend, hidden=hidden)
     return plot
 
 
@@ -641,6 +850,7 @@ def build_detail_plot(
     *,
     show_legend: bool = True,
     hidden: frozenset[str] | set[str] = frozenset(),
+    cost: CostSeries | None = None,
 ) -> Plot:
     """The curve as in build_plot, then the tree: one thin line per edge
     (dim, the child's operator colour; bold on the accepted lineage) and a
@@ -677,6 +887,7 @@ def build_detail_plot(
             color=(255, 255, 255), size=4.0,
             name="accepted" if show_legend else None,
         )
+    add_cost_overlay(plot, cost, show_legend=show_legend, hidden=hidden)
     return plot
 
 
@@ -707,7 +918,9 @@ def plot_legend(curves: list[Curve], baselines: Mapping[str, float]) -> list[Leg
     return entries
 
 
-def climb_legend(climb: Climb, baselines: Mapping[str, float]) -> list[LegendEntry]:
+def climb_legend(
+    climb: Climb, baselines: Mapping[str, float], cost: CostSeries | None = None
+) -> list[LegendEntry]:
     entries = _baseline_legend(baselines)
     if any(not event.best for event in climb.events):
         entries.append(("attempt", MISS_RGB, "●"))
@@ -715,10 +928,13 @@ def climb_legend(climb: Climb, baselines: Mapping[str, float]) -> list[LegendEnt
         entries.append(("best so far", CYAN, "─"))
     if any(event.best for event in climb.events):
         entries.append(("new best", CYAN, "●"))
+    entries.extend(_cost_legend(cost))
     return entries
 
 
-def detail_legend(layout: DetailLayout, baselines: Mapping[str, float]) -> list[LegendEntry]:
+def detail_legend(
+    layout: DetailLayout, baselines: Mapping[str, float], cost: CostSeries | None = None
+) -> list[LegendEntry]:
     from hillclimb.treeview import OPERATOR_RGB
 
     entries = plot_legend([layout.curve], baselines)
@@ -726,6 +942,7 @@ def detail_legend(layout: DetailLayout, baselines: Mapping[str, float]) -> list[
         entries.append((operator, OPERATOR_RGB.get(operator, (160, 160, 160)), "●"))
     if any(mark.on_path for mark in layout.marks):
         entries.append(("accepted", (255, 255, 255), "●"))
+    entries.extend(_cost_legend(cost))
     return entries
 
 
@@ -808,8 +1025,13 @@ def annotation_spans(
     *,
     camera_state: tuple[float, float, float, float, float] = (0.0, 0.0, 1.0, 0.0, 0.0),
     cell_px: tuple[int, int] = (12, 24),
+    right_margin: int = 2,
 ) -> list[OverlaySpan]:
-    """Place short new-best labels near their dots, using collision lanes."""
+    """Place short new-best labels near their dots, using collision lanes.
+    `right_margin` approximates the cells the plot's right gutter occupies —
+    the cost overlay's tick-label columns shift the true plot rect left, and
+    without this the labels drift off their dots. Approximate until plotui
+    exposes its computed plot rect."""
     if not annotations or width < 20 or height < 8:
         return []
     from rich.style import Style
@@ -818,7 +1040,7 @@ def annotation_spans(
     if xhi <= xlo or yhi <= ylo:
         return []
     left = max(7, min(14, width // 16))
-    right = max(left + 4, width - 2)
+    right = max(left + 4, width - right_margin)
     top, bottom = 1, max(5, height - 3)
     _yaw, _pitch, zoom, pan_x, pan_y = camera_state
     cx, cy = (left + right) / 2, (top + bottom) / 2
@@ -958,8 +1180,20 @@ class ChartScreen(LiveScreen):
     BINDINGS = [
         Binding("d", "toggle_detail", "detail", tooltip="overlay the exploration tree"),
         Binding(
+            "h", "toggle_holdout", "holdout",
+            tooltip="toggle holdout vs validation scores",
+        ),
+        Binding(
             "t", "toggle_annotations", "text",
             tooltip="show or hide improvement text", priority=True,
+        ),
+        Binding(
+            "c", "toggle_cost", "cost",
+            tooltip="overlay cumulative tokens and cpu-minutes",
+        ),
+        Binding(
+            "p", "next_problem", "problem",
+            tooltip="switch to the next problem in this folder",
         ),
         Binding("r", "refresh", "refresh", show=False),
         # One binding per legend slot, like the knowledge graph's 1-8; only
@@ -983,11 +1217,24 @@ class ChartScreen(LiveScreen):
     }
     """
 
-    def __init__(self, config: Config, search: str | None = None, detail: bool = False):
+    def __init__(
+        self,
+        config: Config,
+        search: str | None = None,
+        detail: bool = False,
+        holdout: bool | None = None,
+        cost: bool = False,
+    ):
         super().__init__()
         self.config = config
         self.search = search
         self.detail = detail  # one search, with its exploration tree on the curve
+        # plot holdout scores (incumbency stays judged on val). None = decide
+        # from the anchor: a problem that scores a holdout defaults to the
+        # holdout view — the reference baselines are holdout numbers, and
+        # pears must compare with pears
+        self.holdout = holdout
+        self.show_cost = cost  # `c` overlays cumulative tokens/cpu on y2/y3
         self.show_annotations = False  # `t` reveals the improvement labels
         self.hidden_series: set[str] = set()  # legend entries toggled off by click
         self._legend_entries: list[LegendEntry] = []  # what 1-9 index into
@@ -1017,8 +1264,21 @@ class ChartScreen(LiveScreen):
         self._key = None
         self.refresh_data()
 
+    def action_toggle_holdout(self) -> None:
+        self.holdout = not bool(self.holdout)
+        self._key = None
+        self.refresh_data()
+
     def action_toggle_annotations(self) -> None:
         self.show_annotations = not self.show_annotations
+        self._key = None
+        self.refresh_data()
+
+    def action_toggle_cost(self) -> None:
+        if not _plot_supports_axis():
+            self.notify("the cost overlay needs plotui 0.3+ (secondary axes)")
+            return
+        self.show_cost = not self.show_cost
         self._key = None
         self.refresh_data()
 
@@ -1033,6 +1293,35 @@ class ChartScreen(LiveScreen):
         if 0 <= index < len(self._legend_entries):
             self.action_toggle_series(self._legend_entries[index][0])
 
+    def action_next_problem(self) -> None:
+        """Re-anchor the chart on the next problem worked in this folder,
+        cycling through the distinct problem keys in first-seen order."""
+        if self._store is None:
+            self._store = open_store(self.config)
+        if self._anchor is None:
+            self._anchor = chart_problem(self.config, self.search)
+        anchor = self._anchor
+        records = self._store.searches()  # oldest first
+        keys: list[str] = []
+        for record in records:
+            if record.meta.problem_key not in keys:
+                keys.append(record.meta.problem_key)
+        if anchor is None or len(keys) < 2:
+            self.notify("only one problem in this folder")
+            return
+        current = anchor.problem_key
+        target = keys[(keys.index(current) + 1) % len(keys)] if current in keys else keys[0]
+        of_target = [r for r in records if r.meta.problem_key == target]
+        newest = max(of_target, key=lambda r: (r.activity_at, r.ref))
+        self._anchor = newest.meta
+        # `r` re-resolves the anchor from self.search — pin it to the chosen
+        # problem so a refresh does not snap back to the folder's latest
+        self.search = newest.ref
+        self.hidden_series.clear()  # legend toggles are per-problem
+        self.holdout = None  # re-decide the fair split for the new problem
+        self._key = None
+        self.refresh_data()
+
     def refresh_data(self) -> None:
         if self._anchor is None:
             self._anchor = chart_problem(self.config, self.search)
@@ -1044,25 +1333,45 @@ class ChartScreen(LiveScreen):
             return
         if self._store is None:
             self._store = open_store(self.config)
+        if self.holdout is None:
+            # fair by default: a holdout-scored problem opens on the holdout
+            # view, the split its reference baselines live on (`h` toggles)
+            self.holdout = bool(anchor.holdout_enabled)
         # The website's climb head, word for word, so both renderings of the
         # figure introduce it the same way.
         direction = "higher" if anchor.higher_is_better else "lower"
-        parts = [f"[bold]{anchor.problem_key}[/] — best {anchor.metric} so far ({direction} is better)"]
+        split = "holdout" if self.holdout else "val"
+        parts = [
+            f"[bold]{anchor.problem_key}[/] — holdout {anchor.metric} of the best-so-far "
+            f"candidate ({direction} is better)"
+            if self.holdout
+            else f"[bold]{anchor.problem_key}[/] — best {anchor.metric} so far ({direction} is better)"
+        ]
         baselines = chart_baselines(self.config, anchor)
         layout: DetailLayout | None = None
+        cost: CostSeries | None = None
         if self.detail:
             record = self._store.search((anchor.run_id, anchor.search_id))
             if record is None:
                 layout = DetailLayout(curve=Curve(label=f"{anchor.run_id}/{anchor.search_id}", state="unknown"))
             else:
-                layout = record_detail(self._store, record, f"{record.run_name}/{record.search_id}")
+                label = f"{record.run_name}/{record.search_id}"
+                # one journal read feeds the tree layout and the cost fold
+                cands = list(Journal(self._store.journal(record.key)).candidates.values())
+                layout = detail_layout(
+                    cands, label=label, state=record.state,
+                    higher_is_better=bool(record.meta.higher_is_better),
+                    started_at=record.meta.started_at, split=split,
+                )
+                cost = cost_series([(label, cands, None)])
             curves = [layout.curve]
             parts.append(
                 f"detail: {len(layout.marks)} scored · {len(layout.edges)} edges"
                 + (f" · {layout.unscored} unscored" if layout.unscored else "")
             )
         else:
-            curves = climb_curves(self._store, anchor.problem_key)
+            curves = climb_curves(self._store, anchor.problem_key, split=split)
+            cost = cost_for_problem(self._store, anchor.problem_key)
         climb: Climb | None = None
         if layout is not None or any(c.arm for c in curves):
             # one line per search: the detail overlay, or an experiment
@@ -1072,7 +1381,7 @@ class ChartScreen(LiveScreen):
                 best = f"{curve.best:.5g}" if curve.best is not None else "-"
                 parts.append(f"{curve.label} [{style}]{curve.state}[/] best={best}")
         else:
-            climb = climb_for_problem(self._store, anchor.problem_key)
+            climb = climb_for_problem(self._store, anchor.problem_key, split=split)
             best = f"{climb.best:.5g}" if climb.best is not None else "-"
             n = climb.searches
             running = sum(1 for c in curves if c.state == "running")
@@ -1081,14 +1390,21 @@ class ChartScreen(LiveScreen):
                 + (f" ([{STATE_STYLE.get('running', '')}]{running} running[/])" if running else "")
                 + f" · {climb.hits} of {len(climb.events)} candidates improved"
             )
+        if cost is not None and (cost.total_tokens > 0 or cost.total_cpu_min > 0):
+            # what the climb has cost so far, always on view
+            parts.append(f"{_fmt_tokens(int(cost.total_tokens))} tok · {cost.total_cpu_min:.3g} cpu-min")
         self.query_one("#chartline", Label).update("  ·  ".join(parts))
         key: tuple = (
             self.detail,
+            self.holdout,
             self.show_annotations,
+            self.show_cost,
             tuple(sorted(self.hidden_series)),
             tuple((c.label, tuple(c.xs), tuple(c.ys)) for c in curves),
         )
         key += (tuple(baselines.items()),)
+        if cost is not None:
+            key += (tuple(cost.xs), tuple(cost.tokens), tuple(cost.cpu_min))
         if layout is not None:
             key += (tuple((m.id, m.x, m.y) for m in layout.marks),)
         if climb is not None:
@@ -1100,14 +1416,19 @@ class ChartScreen(LiveScreen):
         legend = self.query_one("#chart-legend", ChartLegend)
         if any(c.xs for c in curves):
             hidden = self.hidden_series
+            overlay = cost if self.show_cost else None
             annotations: list[ImprovementAnnotation] = []
             annotation_bounds = None
             if layout is not None:
-                plot = build_detail_plot(layout, baselines, show_legend=False, hidden=hidden)
-                entries = detail_legend(layout, baselines)
+                plot = build_detail_plot(
+                    layout, baselines, show_legend=False, hidden=hidden, cost=overlay
+                )
+                entries = detail_legend(layout, baselines, overlay)
             elif climb is not None:
-                plot = build_climb_plot(climb, baselines, show_legend=False, hidden=hidden)
-                entries = climb_legend(climb, baselines)
+                plot = build_climb_plot(
+                    climb, baselines, show_legend=False, hidden=hidden, cost=overlay
+                )
+                entries = climb_legend(climb, baselines, overlay)
                 # The labels annotate the new-best dots; they hide with them.
                 if self.show_annotations and "new best" not in hidden:
                     annotations = improvement_annotations(climb)
@@ -1115,6 +1436,12 @@ class ChartScreen(LiveScreen):
             else:
                 plot = build_plot(curves, baselines, show_legend=False, hidden=hidden)
                 entries = plot_legend(curves, baselines)
+            # each visible cost series adds a tick-label column (~7 cells) on
+            # the right, shifting the true plot rect the annotations map into
+            visible_cost = sum(
+                1 for label, _rgb, _glyph in _cost_legend(overlay) if label not in hidden
+            )
+            annotation_margin = 2 + 7 * visible_cost
             self._legend_entries = entries
             legend.set_entries(entries, hidden)
             canvas = stage.query(PlotWidget)
@@ -1124,7 +1451,7 @@ class ChartScreen(LiveScreen):
                 widget = canvas.first()
                 widget._plot = plot
                 if isinstance(widget, ChartPlotWidget):
-                    widget.set_annotations(annotations, annotation_bounds)
+                    widget.set_annotations(annotations, annotation_bounds, annotation_margin)
                 widget.invalidate()
             else:
                 stage.remove_children()
@@ -1132,6 +1459,7 @@ class ChartScreen(LiveScreen):
                     plot,
                     annotations=annotations,
                     annotation_bounds=annotation_bounds,
+                    annotation_right_margin=annotation_margin,
                     id="chart-canvas",
                 ))
         elif not stage.query("#chart-empty"):
@@ -1150,13 +1478,27 @@ class ChartApp(TimezoneMixin, App):
     ]
     CSS = HILLCLIMB_CSS
 
-    def __init__(self, config: Config | None = None, search: str | None = None, detail: bool = False):
+    def __init__(
+        self,
+        config: Config | None = None,
+        search: str | None = None,
+        detail: bool = False,
+        holdout: bool | None = None,  # None = holdout view when the problem scores one
+        cost: bool = False,
+    ):
         super().__init__()
         self.config = config or Config.load()
         self.search = search
         self.detail = detail
+        self.holdout = holdout
+        self.cost = cost
 
     def on_mount(self) -> None:
         apply_theme(self)
         self._init_timezone()
-        self.push_screen(ChartScreen(self.config, self.search, detail=self.detail))
+        self.push_screen(
+            ChartScreen(
+                self.config, self.search,
+                detail=self.detail, holdout=self.holdout, cost=self.cost,
+            )
+        )

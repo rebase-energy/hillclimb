@@ -23,6 +23,19 @@ def _slug(name: str) -> str:
     return name.replace(":", "-").replace("_", "-")
 
 
+def reference_baselines(problem) -> dict[str, float]:
+    """The problem's published leaderboard as chart reference lines, best
+    first — drawn as horizontal baselines by `hillclimb chart`."""
+    refs = sorted(problem.reference_scores or [], key=lambda r: r.rank)
+    return {f"#{ref.rank} {ref.team}": float(ref.score) for ref in refs}
+
+
+def chart_baselines_for(name: str) -> dict[str, float]:
+    """Reference lines for a registry name without materializing any data —
+    cheap enough for chart-time resolution of pre-snapshot searches."""
+    return reference_baselines(ef.load_problem(name))
+
+
 def _find_baseline(name: str) -> str | None:
     """Module path of the benchmark's baseline (`<pkg>.baseline.get_model`),
     or None when the problem ships no reference model."""
@@ -113,6 +126,7 @@ def load_emflow_problem(name: str, config: Config) -> ProblemSpec:
         metric_name=problem.objective.name,
         higher_is_better=not problem.objective.lower_is_better,  # legacy-key: emflow's own field
         time_budget_s=config.budget.total_s,
+        chart_baselines=reference_baselines(problem),
         verifier_cmd=verifier_cmd,
         holdout_cmd=holdout_cmd,
         # cache pre-warmed at resolve time; offline keeps agent-side evals

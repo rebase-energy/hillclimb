@@ -63,3 +63,88 @@ entities:
   concepts:
   - geometric-optimization
   first_seen: '2026-08-22T11:54:44.316934+00:00'
+- slug: quantile-regression-forests
+  kind: model_family
+  aliases:
+  - Meinshausen-2006
+  - QRF
+  - leaf-quantile-forests
+  concepts:
+  - decision-trees
+  - probabilistic
+  first_seen: '2026-08-25T12:24:44.607866+00:00'
+- slug: zone-stratified-forests
+  kind: practice
+  aliases:
+  - location-stratified-modeling
+  - per-farm-forests
+  - per-zone-forests
+  concepts:
+  - feature-engineering
+  - preprocessing
+  first_seen: '2026-08-25T12:24:44.607868+00:00'
+- slug: pooled-forests-with-zone-id
+  kind: practice
+  aliases:
+  - global-forest
+  - zone-as-feature
+  concepts:
+  - preprocessing
+  - tuning
+  first_seen: '2026-08-25T12:24:44.607870+00:00'
+- slug: regional-wind-statistics
+  kind: feature
+  aliases:
+  - cross-zone-aggregation
+  - synoptic-features
+  concepts:
+  - feature-engineering
+  - time-series
+  first_seen: '2026-08-25T12:24:44.607872+00:00'
+- slug: quantile-forest-ensemble-size
+  kind: technique
+  aliases:
+  - bootstrap-aggregation-depth
+  - n-estimators-tuning
+  - tree-diversity
+  concepts:
+  - ensemble
+  - tuning
+  first_seen: '2026-08-25T12:24:44.607873+00:00'
+- slug: post-hoc-quantile-calibration
+  kind: technique
+  aliases:
+  - CQR-shifts
+  - leaf-based-tuning
+  - quantile-recalibration
+  concepts:
+  - post-processing
+  - probabilistic
+  first_seen: '2026-08-25T12:24:44.607875+00:00'
+- slug: lightgbm
+  kind: library
+  aliases: []
+  concepts:
+  - decision-trees
+  first_seen: '2026-08-25T12:24:44.607877+00:00'
+- slug: lag-difference-features
+  kind: feature
+  aliases:
+  - hourly-gradients
+  - lagged-differences
+  - trend-differences
+  concepts:
+  - feature-engineering
+  - tabular
+  - time-series
+  first_seen: '2026-08-25T12:31:12.344425+00:00'
+- slug: excessive-feature-subsampling
+  kind: practice
+  aliases:
+  - high-max-features
+  - large-feature-fractions
+  - reduced-tree-diversity
+  concepts:
+  - decision-trees
+  - tuning
+  first_seen: '2026-08-25T12:31:12.344428+00:00'

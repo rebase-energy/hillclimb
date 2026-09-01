@@ -52,6 +52,7 @@ class OutcomeMsg:
     all_ok: bool = False
     holdout_score: float | None = None
     holdout_error: str | None = None
+    holdout_cpu_s: float | None = None  # burned even when holdout errored
     holdout_gated: bool = False
 
 
@@ -349,7 +350,7 @@ class GreedySearcher:
     def _target(self) -> str:
         """Problem target string for family grouping (same convention as the
         knowledge backfill: empty for non-emflow problems)."""
-        if getattr(self.problem, "kind", "csv") == "emflow":
+        if self.problem.runtime == "emflow":
             return f"emflow://{self.problem.emflow_problem}"
         return ""
 
@@ -507,15 +508,16 @@ class GreedySearcher:
         self.log(f"seeding incumbent {seed.name} as {candidate_id}")
         exec_timeout = self.config.budget.exec_timeout_s
         all_ok = self._run_trials(candidate, candidate_dir / "solution.py", candidate_dir, exec_timeout)
-        holdout_score = holdout_error = None
+        holdout_score = holdout_error = holdout_cpu = None
         if all_ok:
-            holdout_score, holdout_error = self._score_holdout(candidate_dir)
+            holdout_score, holdout_error, holdout_cpu = self._score_holdout(candidate_dir)
         msg = OutcomeMsg(
             job=Job(candidate=candidate, request=None, candidate_dir=candidate_dir),
             kind="executed",
             all_ok=all_ok,
             holdout_score=holdout_score,
             holdout_error=holdout_error,
+            holdout_cpu_s=holdout_cpu,
         )
         committed = self._commit(msg)
         score = f"val={committed.val_score}" if committed.val_score is not None else "buggy"
@@ -677,10 +679,14 @@ class GreedySearcher:
         candidate.backend = BackendInfo(
             name=backend.name,
             model=job.request.model,
+            model_id=result.model_id,
             session_id=result.session_id,
             cost_usd=result.cost_usd,
             num_turns=result.num_turns,
             total_tokens=result.total_tokens,
+            token_usage=result.token_usage,
+            quota_start=result.quota_start,
+            quota_end=result.quota_end,
             agent_duration_s=result.duration_s,
             error_kind=result.error_kind,
         )
@@ -709,12 +715,12 @@ class GreedySearcher:
         self._set_phase(candidate.candidate_id, "exec")
         all_ok = self._run_trials(candidate, solution, job.candidate_dir, exec_timeout)
 
-        holdout_score = holdout_error = None
+        holdout_score = holdout_error = holdout_cpu = None
         gated = False
         if all_ok:
             if self._gate_passes(candidate.val_score, job.holdout_threshold):
                 self._set_phase(candidate.candidate_id, "holdout")
-                holdout_score, holdout_error = self._score_holdout(job.candidate_dir)
+                holdout_score, holdout_error, holdout_cpu = self._score_holdout(job.candidate_dir)
             else:
                 gated = True  # climbs on val; not selectable via holdout
         return OutcomeMsg(
@@ -724,6 +730,7 @@ class GreedySearcher:
             all_ok=all_ok,
             holdout_score=holdout_score,
             holdout_error=holdout_error,
+            holdout_cpu_s=holdout_cpu,
             holdout_gated=gated,
         )
 
@@ -783,6 +790,8 @@ class GreedySearcher:
                 # kind == "executed"
                 if msg.all_ok:
                     last = candidate.trials[-1]
+                    # holdout CPU is spent whether or not scoring succeeded
+                    last.holdout_cpu_s = msg.holdout_cpu_s
                     if msg.holdout_error is not None:
                         candidate.status = "buggy"
                         last.holdout_error = msg.holdout_error
@@ -905,6 +914,7 @@ class GreedySearcher:
             seed=seed,
             returncode=exec_result.returncode,
             duration_s=exec_result.duration_s,
+            cpu_s=exec_result.cpu_s,
             timed_out=exec_result.timed_out,
             stdout_tail=stdout_tail,
             submission_ok=exec_result.submission_ok,
@@ -981,11 +991,12 @@ class GreedySearcher:
             scores += f" holdout={selected.holdout_score:.5g}"
         self.log(f"  new selection: {selected.candidate_id} {scores}")
 
-    def _score_holdout(self, candidate_dir: Path) -> tuple[float | None, str | None]:
-        """Score the hidden split; (score, None) on success, (None, reason) on
-        contract violation, (None, None) when this search has no holdout."""
+    def _score_holdout(self, candidate_dir: Path) -> tuple[float | None, str | None, float | None]:
+        """Score the hidden split; (score, None, cpu_s) on success,
+        (None, reason, cpu_s) on contract violation, (None, None, None) when
+        this search has no holdout."""
         if self.holdout_scorer is None:
-            return None, None
+            return None, None, None
         return self.holdout_scorer.score(candidate_dir)
 
     def accept_band(self) -> float:
@@ -1053,6 +1064,7 @@ class GreedySearcher:
             quantile_note=self._quantile_note(),
             verifier_display=self.problem.verifier_display,
             problem_contract=self.problem.contract or "(see the problem description above)",
+            interface_section=self._interface_section(),
             tools_clause=tools_clause,
         )
         direction = "higher is better" if self.problem.higher_is_better else "lower is better"
@@ -1190,6 +1202,30 @@ class GreedySearcher:
             f"    quantiles = {literal}  # {len(q)} levels — prediction columns must match exactly"
         )
 
+    def _interface_section(self) -> str:
+        """Contract section rendered from the problem's optional interface.py
+        (spaces.py declaration): the machine-checked I/O contract plus the
+        exact self-check command. Spelled out in full — agents inherit the
+        orchestrator's env, not the runtime venv's, so nothing can be
+        assumed importable or exported on their side."""
+        if not self.problem.interface_text:
+            return ""
+        section = (
+            "\n## Output interface (machine-checked)\n\n"
+            f"{self.problem.interface_text}\n"
+        )
+        # the executor protocol has fakes without these attributes; the shim
+        # may also have failed to materialize — then the section is text-only
+        python = getattr(self.executor, "python", None)
+        shim = getattr(self.executor, "pythonpath", None)
+        if python and shim:
+            section += (
+                "\nSelf-check your output format after running your solution "
+                "(cheap, no scoring):\n\n"
+                f"    PYTHONPATH={shim} {python} problem/interface.py\n"
+            )
+        return section
+
     def _verifier_clause(self) -> str:
         """How the agent's script is expected to surface its score, for the
         self-reported contract (the verifier-owned one says nothing)."""
@@ -1275,9 +1311,8 @@ class GreedySearcher:
     def _runtime_pkgs(self) -> str:
         from hillclimb.runtime import runtime_packages
 
-        kind = getattr(self.problem, "kind", "csv")
         requirements = getattr(self.problem, "requirements_file", None)
-        return ", ".join(runtime_packages(kind, requirements_file=requirements))
+        return ", ".join(runtime_packages(self.problem.runtime, requirements_file=requirements))
 
 
 def _human_size(size: int) -> str:

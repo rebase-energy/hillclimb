@@ -1,0 +1,17 @@
+schema_version: 1
+problem_id: gefcom2014-solar
+family: gefcom2014
+concepts:
+- tabular
+- regression
+metric: PinballLoss
+higher_is_better: false
+score: 0.011425994020898009
+holdout: 0.012450081035921792
+libraries:
+- sklearn
+summary: Weighted average ensemble of candidate_1 (700-tree QRF, weight 0.6) and candidate_2
+  (400-tree QRF, weight 0.4); candidate_3 dropped because it lacks the night-zeroing
+  post-processing that both stronger candidates share.
+run_ref: 20260825-122320-gefcom2014-solar/gefcom2014-solar
+created_at: '2026-08-25T12:31:12.367059+00:00'

@@ -19,6 +19,13 @@ def local_executor() -> CommandExecutor:
     return CommandExecutor(Path(sys.executable), SELF_REPORT_CMD)
 
 
+@pytest.fixture(autouse=True)
+def _quota_off(monkeypatch):
+    """Real backends snapshot subscription quota around every call — tests
+    must never reach the network or the developer's keychain for it."""
+    monkeypatch.setenv("HILLCLIMB_QUOTA", "off")
+
+
 def executor_for(problem) -> CommandExecutor:
     """The problem's own verifier command, run by the dev interpreter."""
     return CommandExecutor(Path(sys.executable), problem.verifier_cmd, problem.verifier_env)

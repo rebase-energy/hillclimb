@@ -151,6 +151,20 @@ def ensure_runtime_venv(
     return python
 
 
+def interface_shim(log: Log = print) -> str | None:
+    """PYTHONPATH entry making `from hillclimb import spaces` importable in
+    the runtime venvs (always-on: one seam beats a conditional). Best-effort:
+    a shim failure degrades to None — verifiers then simply lack the spaces
+    library — rather than failing the search."""
+    from hillclimb.runtime import ensure_interface_shim
+
+    try:
+        return str(ensure_interface_shim())
+    except OSError as exc:
+        log(f"interface shim unavailable ({exc}); verifiers run without hillclimb.spaces")
+        return None
+
+
 def build_executor(config: Config, problem: ProblemSpec, log: Log = print):
     """The problem's verifier command, wired to the runtime venv it needs."""
     from hillclimb.executor import CommandExecutor
@@ -161,6 +175,7 @@ def build_executor(config: Config, problem: ProblemSpec, log: Log = print):
         ),
         problem.verifier_cmd,
         env_extra=problem.verifier_env,
+        pythonpath=interface_shim(log),
     )
 
 
@@ -169,15 +184,19 @@ def build_holdout_scorer(config: Config, problem: ProblemSpec, search_dir: Path,
     selection then climbs on validation alone."""
     if not config.holdout.enabled or problem.holdout_cmd is None:
         return None
-    if problem.holdout_needs_credentials and not (
-        os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
-    ):
-        # fail fast: without credentials every holdout eval nans out and the
-        # search burns debug cycles diagnosing the environment
-        raise RuntimeError(
-            "holdout scoring for this problem needs private data credentials: "
-            "export HF_TOKEN (or HUGGINGFACE_TOKEN), or run with --no-holdout"
-        )
+    if problem.holdout_needs_credentials:
+        if not (os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")):
+            # fail fast: without credentials every holdout eval nans out and
+            # the search burns debug cycles diagnosing the environment
+            raise RuntimeError(
+                "holdout scoring for this problem needs private data credentials: "
+                "export HF_TOKEN (or HUGGINGFACE_TOKEN), or run with --no-holdout"
+            )
+        if not os.environ.get("HF_TOKEN"):
+            # huggingface_hub only reads HF_TOKEN; without the mirror the
+            # loader hits private datasets unauthenticated and the holdout
+            # silently scores nan
+            os.environ["HF_TOKEN"] = os.environ["HUGGINGFACE_TOKEN"]
     from hillclimb.executor import CommandHoldoutScorer
 
     return CommandHoldoutScorer(
@@ -189,6 +208,7 @@ def build_holdout_scorer(config: Config, problem: ProblemSpec, search_dir: Path,
         data_dir=problem.data_dir,
         work_root=search_dir / "holdout-eval",
         timeout_s=config.budget.exec_timeout_s,
+        pythonpath=interface_shim(log),
     )
 
 
@@ -311,7 +331,7 @@ def build_knowledge_context(
             from hillclimb.claims import problem_concepts, render_claims
             from hillclimb.graph import load_or_build_graph, node_to_claim, retrieve_claims
 
-            kind = "emflow" if target.startswith("emflow://") else getattr(problem, "kind", "csv")
+            kind = problem.runtime
             concepts = problem_concepts(kind, problem.metric_name)
             playbooks = []
             if config.learning.playbooks:
@@ -533,7 +553,7 @@ def execute_search(
                 from hillclimb.knowledge import problem_family
                 from hillclimb.skills import SKILL_CODE_FILENAME, select_skill
 
-                kind = "emflow" if target.startswith("emflow://") else getattr(problem, "kind", "csv")
+                kind = problem.runtime
                 match = select_skill(
                     _kdir,
                     family=problem_family(problem.problem_id, target),

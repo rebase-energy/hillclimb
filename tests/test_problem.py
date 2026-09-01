@@ -162,6 +162,36 @@ baseline: baseline.py
     assert spec.holdout_cmd is None  # holdout is opt-in
 
 
+def test_interface_absent_leaves_spec_untouched(problem_dir, config):
+    spec = load_problem(problem_dir, config)
+    assert spec.interface_path is None
+    assert spec.interface_text is None
+
+
+def test_interface_picked_up_by_default(problem_dir, config):
+    (problem_dir / "interface.py").write_text(
+        "from hillclimb import spaces\n"
+        "output = spaces.Table('submission.csv',"
+        " columns={'id': spaces.Int(unique=True)}, n_rows=1)\n"
+    )
+    spec = load_problem(problem_dir, config)
+    assert spec.interface_path == problem_dir / "interface.py"
+    assert "`submission.csv`" in spec.interface_text
+    assert "exactly 1 row" in spec.interface_text
+
+
+def test_interface_errors(problem_dir, config):
+    yaml_text = (problem_dir / "problem.yaml").read_text()
+    (problem_dir / "problem.yaml").write_text(yaml_text + "interface: nope.py\n")
+    with pytest.raises(FileNotFoundError, match="interface file not found"):
+        load_problem(problem_dir, config)
+
+    (problem_dir / "problem.yaml").write_text(yaml_text)
+    (problem_dir / "interface.py").write_text("raise ValueError('broken')\n")
+    with pytest.raises(ValueError, match="invalid interface file.*broken"):
+        load_problem(problem_dir, config)
+
+
 def test_load_problem_validation_errors(evaluator_dir, config):
     yaml_path = evaluator_dir / "problem.yaml"
 

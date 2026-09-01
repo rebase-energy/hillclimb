@@ -86,7 +86,12 @@ uv run hillclimb stop <search>                    # graceful: finishes current o
 uv run hillclimb kill <search>                    # SIGTERM now; state is finalized, still resumable
 uv run hillclimb prune <search> <candidate-id>    # cut a candidate + its whole subtree from the search
 uv run hillclimb resume <search>                  # continue a parked/stopped/crashed search
+uv run hillclimb resume --all                     # resume everything resumable, each detached
 ```
+
+Pause/resume flow for changing code or env under a live project:
+`stop --all` → make the change → `resume --all` (each search restarts as a
+fresh detached engine, so it picks up new code and environment variables).
 
 Prune when a branch is clearly overfitting (val ≫ holdout), wasting budget, or the
 user asks to cut it. Works both while the engine runs (queued, applied between
@@ -120,6 +125,8 @@ uv run hillclimb knowledge distill [search]     # claims pass for one search (--
 uv run hillclimb knowledge consolidate          # sleep phase: generalize claims + rewrite playbooks (agent calls)
 uv run hillclimb knowledge query "<terms>"      # read-only memory lookup (no agent calls)
 uv run hillclimb knowledge show <target>        # prior-experience block a new search would get
+uv run hillclimb paper add <pdf> --problem <t>  # distill a PDF paper into claims (before a run: inspect wiring with `hillclimb graph`)
+uv run hillclimb paper list                     # ingested papers with scope and claim counts
 uv run hillclimb experiment run <spec> [--dry-run] [--parallel]  # arms × problems × repeats (real searches; --dry-run lists jobs)
 uv run hillclimb experiment report [spec]       # compare the arms on holdout, gap vs control judged against the noise floor
 uv run hillclimb run <problem> --set search.policy=openevolve --experiment E --arm A  # one arm by hand (counts in the report)

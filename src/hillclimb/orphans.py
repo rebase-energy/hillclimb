@@ -20,9 +20,9 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-# the launcher's argv: `<python> -m hillclimb.cli run ...` (anchored, so a
-# shell whose command line merely mentions it is not an engine)
-ENGINE_RE = re.compile(r"^\S*python\S*\s+-m\s+hillclimb\.cli\s+run\b")
+# the launcher's argv: `<python> -m hillclimb.cli run|resume ...` (anchored,
+# so a shell whose command line merely mentions it is not an engine)
+ENGINE_RE = re.compile(r"^\S*python\S*\s+-m\s+hillclimb\.cli\s+(?:run|resume)\b")
 _DIR_RE = re.compile(r"HILLCLIMB_DIR=(\S+)")
 
 

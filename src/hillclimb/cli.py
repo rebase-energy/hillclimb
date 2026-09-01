@@ -12,6 +12,7 @@ from datetime import datetime
 from itertools import zip_longest
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Annotated
 
 import typer
 import typer.core
@@ -207,6 +208,7 @@ time_budget_s: 900
 # holdout: true           # engine also runs `verifier.sh --holdout`
 # baseline: baseline.py   # scored at t=0 as the floor to beat (or a number, e.g. 0.5)
 # requirements: requirements.txt
+# interface: interface.py  # optional machine-checked I/O declaration (hillclimb spaces)
 """
 
 INIT_PROBLEM_DESCRIPTION = """\
@@ -401,6 +403,7 @@ PROBLEM_FILES = (
     ("problem.yaml", "metric, direction, budget — the problem's identity"),
     ("description.md", "what the agents read before drafting"),
     ("contract.md", "the interface solution.py must implement"),
+    ("interface.py", "machine-checked I/O declaration (hillclimb spaces)"),
     ("verifier.sh", "the ONLY process hillclimb starts: drives solution.py and reports the score"),
     ("verify.py", "the scorer — writes the score to $HILLCLIMB_RESULT"),
     ("baseline.py", "the starting solution scored at t=0"),
@@ -495,12 +498,27 @@ def verify(
                 raise typer.Exit(1)
             scores.append(result.val_score)
             typer.echo(f"  run {index}: {problem.metric_name} = {result.val_score:.6g}")
+            if index == 0 and problem.interface_path:
+                # authoring lint: the baseline the verifier just accepted must
+                # also satisfy the declared interface — the two drifting apart
+                # is exactly the bug this catches
+                from hillclimb import spaces
+
+                module = spaces.load_interface(problem.interface_path)
+                violations = module.output.check(candidate_dir) if getattr(
+                    module, "output", None
+                ) else []
+                if violations:
+                    for violation in violations:
+                        typer.echo(f"  interface: {violation}", err=True)
+                    raise typer.Exit(1)
+                typer.echo("  interface: OK")
             if holdout:
                 scorer = build_holdout_scorer(config, problem, root)
                 if scorer is None:
                     typer.echo("  holdout: not configured for this problem")
                 else:
-                    value, error = scorer.score(candidate_dir)
+                    value, error, _cpu = scorer.score(candidate_dir)
                     typer.echo(f"  holdout: {error if error else format(value, '.6g')}")
     if len(scores) > 1:
         centre = statistics.median(scores)
@@ -857,6 +875,82 @@ def knowledge_rebuild():
     graph = rebuild_graph(knowledge_dir)
     typer.echo(f"rebuilt {graph_path(knowledge_dir)}")
     typer.echo(graph_stats(graph))
+
+
+paper_app = typer.Typer(
+    cls=HillclimbGroup,
+    help="Distill PDF papers into knowledge claims that seed future searches",
+)
+app.add_typer(paper_app, name="paper")
+
+
+def _paper_knowledge_dir() -> tuple[Config, Path]:
+    from hillclimb.api import resolve_knowledge_dir
+
+    config = load_config()
+    knowledge_dir = resolve_knowledge_dir(config)
+    if knowledge_dir is None:
+        typer.echo("learning is disabled or no hillclimb/knowledge dir resolvable", err=True)
+        raise typer.Exit(1)
+    return config, knowledge_dir
+
+
+@paper_app.command("add")
+def paper_add(
+    pdfs: list[Path] = typer.Argument(..., help="PDF paper(s) to distill into claims"),
+    problem: str = typer.Option(
+        None, "--problem", help="Scope the claims: emflow://pkg:name or a local problem id. "
+        "Omitted, claims are global and reach searches through concept overlap only"
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Re-distill even when this exact PDF was already ingested"
+    ),
+):
+    """Distill papers into typed claims and rebuild the knowledge graph.
+
+    One agent pass per paper (routing key `paper`, default model sonnet)
+    writes knowledge/papers/<slug>.yaml; the claims then ride the normal
+    retrieval and credit paths — inspect the wiring with `hillclimb graph`
+    before starting a run.
+    """
+    from hillclimb.graph import rebuild_graph
+    from hillclimb.papers import distill_paper
+
+    config, knowledge_dir = _paper_knowledge_dir()
+    ingested = 0
+    for pdf in pdfs:
+        if not pdf.exists():
+            typer.echo(f"no such file: {pdf}", err=True)
+            raise typer.Exit(1)
+        record = distill_paper(
+            config, knowledge_dir, pdf, problem=problem, force=force, log=typer.echo
+        )
+        if record is not None:
+            ingested += 1
+    if ingested:
+        rebuild_graph(knowledge_dir)
+        typer.echo("knowledge graph rebuilt")
+    if ingested < len(pdfs):
+        raise typer.Exit(1)
+
+
+@paper_app.command("list")
+def paper_list():
+    """Ingested papers: slug, scope, claim count, and ingestion date."""
+    from hillclimb.papers import load_papers
+
+    _config, knowledge_dir = _paper_knowledge_dir()
+    papers = load_papers(knowledge_dir)
+    if not papers:
+        typer.echo("no papers ingested yet — add one with `hillclimb paper add <pdf>`")
+        return
+    for paper in papers:
+        scope = paper.problem_id or paper.family or "global"
+        title = f"  {paper.title!r}" if paper.title else ""
+        typer.echo(
+            f"{paper.slug}  [{scope}]  {len(paper.claims)} claim(s)  "
+            f"added {paper.added_at[:10]}{title}"
+        )
 
 
 @knowledge_app.command("graph")
@@ -1420,14 +1514,61 @@ def _parse_set(pairs: list[str]) -> dict:
         raise typer.BadParameter(str(exc)) from exc
 
 
+RESUMABLE_STATES = ("parked", "stopped", "crashed")
+
+
+def _spawn_resume(config: Config, record: SearchRecord) -> tuple[int, Path]:
+    """Start a detached `hillclimb resume <ref>` engine for this search,
+    logging to <run>/logs/resume-<search-id>.log. Returns (pid, log path)."""
+    run_dir = record.search_dir.parents[1]
+    log_dir = run_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"resume-{record.meta.search_id}.log"
+    cwd, env = _child_launch_context(config)
+    cmd = [sys.executable, "-m", "hillclimb.cli", "resume", record.ref]
+    with log_path.open("a") as out:
+        proc = subprocess.Popen(
+            cmd, cwd=cwd, env=env,
+            stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    return proc.pid, log_path
+
+
 @app.command()
-def resume(search: str = typer.Argument("latest")):
+def resume(
+    search: str = typer.Argument("latest"),
+    all_: Annotated[
+        bool, typer.Option("--all", help="Resume every parked/stopped/crashed search, each detached")
+    ] = False,
+    detach: Annotated[
+        bool,
+        typer.Option("--detach", help="Resume in a detached background engine instead of the foreground"),
+    ] = False,
+):
     """Resume a parked or interrupted search.
 
-    SEARCH is `<run-id>/<search-id>`, `<run-id>`, or `latest`.
+    SEARCH is `<run-id>/<search-id>`, `<run-id>`, or `latest`. `--all` resumes
+    everything resumable (the counterpart of `hillclimb stop --all`), each as
+    its own detached engine — the pause/resume flow for changing code or env
+    under a live project.
     """
     config = load_config()
+    if all_:
+        store = open_store(config)
+        targets = [r for r in store.searches() if r.state in RESUMABLE_STATES]
+        if not targets:
+            typer.echo("No parked, stopped, or crashed searches to resume.")
+            raise typer.Exit(1)
+        for record in targets:
+            pid, log_path = _spawn_resume(config, record)
+            typer.echo(f"Resuming {record.ref} ({record.state}) detached: pid {pid}, log {log_path}")
+        return
     store, record = open_search(config, search)
+    if detach:
+        pid, log_path = _spawn_resume(config, record)
+        typer.echo(f"Resuming {record.ref} ({record.state}) detached: pid {pid}, log {log_path}")
+        return
     meta, search_dir = record.meta, record.search_dir
     config = load_config(backend=meta.backend, model=meta.model)
     config.holdout.enabled = meta.holdout_enabled
@@ -1995,6 +2136,15 @@ def chart(
     detail: bool = typer.Option(
         False, "--detail", "-d", help="One search only, with its exploration tree drawn on the curve"
     ),
+    holdout: bool = typer.Option(
+        False, "--holdout", help="Force the holdout view. Default: a holdout-scored problem "
+        "opens on holdout (the split its reference baselines live on), others on validation; "
+        "h toggles either way"
+    ),
+    cost: bool = typer.Option(
+        False, "--cost", help="Overlay cumulative agent tokens and verifier CPU-minutes "
+        "on right-hand axes — what the climb cost as it climbed"
+    ),
 ):
     """Live hillclimb chart: best score so far vs tested candidates.
 
@@ -2004,7 +2154,7 @@ def chart(
     Refreshes as candidates land.
     Keys: r=refresh, t=toggle improvement text, d=detail
     (every scored candidate as a mark, parent edges, accepted lineage bold),
-    q=quit.
+    h=toggle holdout/validation, c=cost overlay, p=switch problem, q=quit.
     """
     try:
         from hillclimb.chart import ChartApp
@@ -2013,7 +2163,8 @@ def chart(
             "`hillclimb chart` needs the TUI extra: pip install 'hillclimb[tui]'"
         ) from exc
 
-    ChartApp(load_config(), search, detail=detail).run()
+    # --holdout forces the view; omitted, the chart decides per problem
+    ChartApp(load_config(), search, detail=detail, holdout=holdout or None, cost=cost).run()
 
 
 @app.command()
@@ -2036,6 +2187,78 @@ def tree(
         ) from exc
 
     TreeApp(load_config(), search).run()
+
+
+@app.command()
+def surface(
+    search: str = typer.Argument(None, help="latest (default), <run-id>, or <run-id>/<search-id>"),
+):
+    """Live 3D fitness surface of one search: candidates on the problem's terrain.
+
+    Needs a problem that ships `landscape.py` (elevation(x, y) + grid(n)) and
+    journals each candidate's position as extra numeric keys next to the
+    score (`surface_metrics` in problem.yaml, default x/y). Candidates are
+    coloured by their tree fate, the accepted lineage is draped along the
+    terrain, a white marker sits on the summit. Drag rotates, scroll zooms,
+    n/p switch search, q quits.
+    """
+    try:
+        from hillclimb.surfaceview import SurfaceApp, surface_unavailable
+    except ModuleNotFoundError as exc:
+        raise typer.BadParameter(
+            "`hillclimb surface` needs the TUI extra: pip install 'hillclimb[tui]'"
+        ) from exc
+
+    config = load_config()
+    _, record = open_search(config, search)
+    try:
+        problem = load_problem(record.meta.problem, config)
+    except Exception as exc:  # noqa: BLE001 — a moved/deleted problem dir
+        typer.echo(f"Cannot load problem {record.meta.problem!r}: {exc}")
+        return
+    if problem.landscape_path is None:
+        typer.echo(surface_unavailable(problem))
+        return
+    SurfaceApp(config, search).run()
+
+
+@app.command()
+def similarity(
+    search: str = typer.Argument(None, help="latest (default), <run-id>, or <run-id>/<search-id>"),
+):
+    """Live 3D distance scatter of one search: how far each candidate moved.
+
+    Every candidate sits at (behavioral, structural, lineage) distance from
+    a reference candidate — the baseline by default, `c` toggles to the
+    current champion — coloured by score rank (cold to hot; the champion is
+    gold, the reference white). Distances are derived from what candidates
+    already produced (submission or evaluator report, solution.py, the
+    journal); nothing extra is stored. Drag rotates, scroll zooms, n/p
+    switch search, q quits.
+    """
+    try:
+        from hillclimb.similarity import build_similarity
+        from hillclimb.similarityview import SimilarityApp
+    except ModuleNotFoundError as exc:
+        raise typer.BadParameter(
+            "`hillclimb similarity` needs the TUI extra: pip install 'hillclimb[tui]'"
+        ) from exc
+
+    config = load_config()
+    store, record = open_search(config, search)
+    journal = Journal(store.journal(record.key))
+    candidates = list(journal.candidates.values())
+    higher = bool(record.meta.higher_is_better)
+    # open on a reference that has something to measure against (a declared
+    # baseline ships no artifacts); nothing from either -> print why, return
+    for reference in ("baseline", "champion"):
+        view = build_similarity(candidates, record.search_dir, higher, reference=reference)
+        if view.unavailable is None:
+            break
+    else:
+        typer.echo(view.unavailable)
+        return
+    SimilarityApp(config, search, reference=reference).run()
 
 
 @app.command()

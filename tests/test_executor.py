@@ -180,6 +180,36 @@ def test_verifier_env_and_render(tmp_path):
                     "--out", "/w/eval_result.json"]
 
 
+def test_pythonpath_reaches_verifier_env(tmp_path):
+    """The interface shim rides PYTHONPATH into the verifier process; without
+    one the env is untouched."""
+    from hillclimb.executor import CommandExecutor, prepend_pythonpath
+    from tests.conftest import SELF_REPORT_CMD
+
+    code = (
+        "import os\n"
+        'print("pythonpath:", os.environ.get("PYTHONPATH", "(unset)"))\n'
+        'open("submission.csv", "w").write("id\\n")\n'
+        'print("val_score: 1.0")\n'
+    )
+    script = tmp_path / "solution.py"
+    script.write_text(code)
+
+    with_shim = CommandExecutor(Path(sys.executable), SELF_REPORT_CMD, pythonpath="/shim")
+    result = with_shim.execute(script, tmp_path, 30)
+    assert "pythonpath: /shim" in Path(result.stdout_path).read_text()
+
+    result = local_executor().execute(script, tmp_path, 30)
+    first = Path(result.stdout_path).read_text().splitlines()[0]
+    assert first == "pythonpath: (unset)" or "/shim" not in first  # parent value survives
+
+    import os
+
+    env = {"PYTHONPATH": "/existing"}
+    assert prepend_pythonpath(env, "/shim")["PYTHONPATH"] == f"/shim{os.pathsep}/existing"
+    assert prepend_pythonpath({"A": "b"}, None) == {"A": "b"}
+
+
 def test_solution_and_agent_envs_are_single_threaded(monkeypatch):
     from hillclimb.backends.claude_code import subscription_env
     from hillclimb.executor import SINGLE_THREAD_ENV
@@ -190,3 +220,36 @@ def test_solution_and_agent_envs_are_single_threaded(monkeypatch):
         assert env["OMP_NUM_THREADS"] == "1" and env["OPENBLAS_NUM_THREADS"] == "1"
         assert env["MKL_NUM_THREADS"] == "4"
     assert set(SINGLE_THREAD_ENV) >= {"OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"}
+
+
+def test_cpu_captured(executor, tmp_path):
+    """cpu_s is the child's real CPU time via os.wait4 — a busy loop burns
+    at least what it spins, a trivial script close to nothing."""
+    code = (
+        'import time\n'
+        'while time.process_time() < 0.2:\n'
+        '    pass\n'
+        'open("submission.csv", "w").write("id\\n")\n'
+        'print("val_score: 0.5")\n'
+    )
+    result = run_script(executor, tmp_path, code)
+    assert result.ok
+    assert result.cpu_s is not None
+    assert result.cpu_s >= 0.15
+
+    trivial = run_script(executor, tmp_path, 'print("val_score: 0.5")')
+    assert trivial.cpu_s is not None
+    assert trivial.cpu_s < 5.0
+
+
+def test_killed_child_reports_cpu(executor, tmp_path):
+    """The kill path reaps through wait4 too: a timed-out run still reports
+    cpu_s and keeps the negative-signal returncode. Only the direct child's
+    CPU survives a SIGKILL — its unreaped grandchildren (here the solution
+    process the verifier wrapper spawned) are the documented loss."""
+    result = run_script(executor, tmp_path, "while True:\n    pass", timeout=2)
+    assert result.timed_out
+    assert not result.ok
+    assert result.returncode is not None and result.returncode < 0
+    assert result.cpu_s is not None
+    assert result.cpu_s >= 0.0

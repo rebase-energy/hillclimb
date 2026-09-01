@@ -41,7 +41,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import IO, Protocol
+from typing import IO, NamedTuple, Protocol
 
 from pydantic import BaseModel
 
@@ -81,6 +81,16 @@ def single_threaded(env: dict[str, str]) -> dict[str, str]:
     return env
 
 
+def prepend_pythonpath(env: dict[str, str], path: str | None) -> dict[str, str]:
+    """`env` with `path` prepended to PYTHONPATH (no-op when path is None).
+    Carries the interface shim (`runtime.ensure_interface_shim`) into verifier
+    runs so `from hillclimb import spaces` resolves inside the runtime venvs."""
+    if path:
+        existing = env.get("PYTHONPATH")
+        env["PYTHONPATH"] = f"{path}{os.pathsep}{existing}" if existing else path
+    return env
+
+
 def scrubbed_env(**extra: str) -> dict[str, str]:
     """Parent env minus credentials, single-threaded, for running
     agent-authored code."""
@@ -96,6 +106,10 @@ def scrubbed_env(**extra: str) -> dict[str, str]:
 class ExecResult(BaseModel):
     returncode: int | None = None
     duration_s: float = 0.0
+    # CPU seconds (user+system) the verifier process actually burned — the
+    # cost signal duration_s only approximates (wall-clock counts I/O waits).
+    # None where the platform can't report it (no os.wait4).
+    cpu_s: float | None = None
     timed_out: bool = False
     stdout_path: str = ""
     stderr_path: str = ""
@@ -119,7 +133,7 @@ class ExecResult(BaseModel):
 
 
 class HoldoutScorer(Protocol):
-    def score(self, candidate_dir: Path) -> tuple[float | None, str | None]: ...
+    def score(self, candidate_dir: Path) -> tuple[float | None, str | None, float | None]: ...
 
 
 class Executor(Protocol):
@@ -214,12 +228,37 @@ def render_argv(argv: list[str], python: Path, solution: Path, result: Path) -> 
     ]
 
 
-def _kill_group(proc: subprocess.Popen) -> None:
+class RunResult(NamedTuple):
+    returncode: int | None
+    timed_out: bool  # an abort reports as timed_out
+    # ru_utime + ru_stime of the direct child; None where unavailable
+    cpu_s: float | None
+
+
+def _reap(proc: subprocess.Popen) -> float | None:
+    """Blocking reap of the direct child via os.wait4, returning its CPU
+    seconds. Sets proc.returncode by hand so subprocess never re-waitpids a
+    pid the kernel has already recycled."""
+    if not hasattr(os, "wait4") or proc.returncode is not None:
+        proc.wait()
+        return None
+    try:
+        _pid, status, ru = os.wait4(proc.pid, 0)
+    except ChildProcessError:  # someone else reaped it — cpu time is gone
+        proc.wait()
+        return None
+    proc.returncode = os.waitstatus_to_exitcode(status)
+    return ru.ru_utime + ru.ru_stime
+
+
+def _kill_group(proc: subprocess.Popen) -> float | None:
+    """SIGKILL the whole process group, then reap the direct child. Returns
+    its CPU seconds (None where unavailable)."""
     try:
         os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
     except ProcessLookupError:
         pass
-    proc.wait()
+    return _reap(proc)
 
 
 def run_logged(
@@ -230,10 +269,17 @@ def run_logged(
     err: IO,
     env: dict[str, str] | None = None,
     abort: "threading.Event | None" = None,
-) -> tuple[int | None, bool]:
+) -> RunResult:
     """Run cmd in its own process group with logs redirected; kill the whole
-    group on timeout or abort so stray workers don't linger. Returns
-    (returncode, timed_out) — an abort reports as timed_out."""
+    group on timeout or abort so stray workers don't linger.
+
+    The child is reaped with os.wait4 so its CPU time (user+system) rides
+    along in the result. Per-pid wait4 — not RUSAGE_CHILDREN deltas, which
+    are process-wide and would mix the concurrent trials and operators this
+    engine runs. Grandchildren count only when the child reaps them; the
+    orphans of a killed group are lost. Platforms without os.wait4 (Windows)
+    fall back to a plain wait and report cpu_s=None.
+    """
     proc = subprocess.Popen(
         cmd,
         cwd=candidate_dir,
@@ -243,29 +289,50 @@ def run_logged(
         start_new_session=True,
     )
     deadline = time.monotonic() + timeout_s
+    if not hasattr(os, "wait4"):
+        while True:
+            try:
+                proc.wait(timeout=1.0)
+                return RunResult(proc.returncode, False, None)
+            except subprocess.TimeoutExpired:
+                if (abort is not None and abort.is_set()) or time.monotonic() >= deadline:
+                    _kill_group(proc)
+                    return RunResult(proc.returncode, True, None)
     while True:
         try:
-            proc.wait(timeout=1.0)
-            return proc.returncode, False
-        except subprocess.TimeoutExpired:
-            if abort is not None and abort.is_set():
-                _kill_group(proc)
-                return proc.returncode, True
-            if time.monotonic() >= deadline:
-                _kill_group(proc)
-                return proc.returncode, True
+            pid, status, ru = os.wait4(proc.pid, os.WNOHANG)
+        except ChildProcessError:  # reaped elsewhere — exit status and cpu lost
+            proc.wait()
+            return RunResult(proc.returncode, False, None)
+        if pid == proc.pid:
+            proc.returncode = os.waitstatus_to_exitcode(status)
+            return RunResult(proc.returncode, False, ru.ru_utime + ru.ru_stime)
+        if (abort is not None and abort.is_set()) or time.monotonic() >= deadline:
+            cpu = _kill_group(proc)
+            return RunResult(proc.returncode, True, cpu)
+        time.sleep(0.2)
 
 
 class CommandExecutor:
     """Executor-protocol impl: runs the problem's verifier command on the
     validation split, in the candidate (or trial) candidate_dir."""
 
-    def __init__(self, python: Path, argv: list[str], env_extra: dict[str, str] | None = None):
+    def __init__(
+        self,
+        python: Path,
+        argv: list[str],
+        env_extra: dict[str, str] | None = None,
+        pythonpath: str | None = None,
+    ):
         # absolute() not resolve(): a venv python must be invoked via its
         # symlink path or the interpreter escapes the venv's site-packages
         self.python = python.absolute()
         self.argv = list(argv)
         self.env_extra = dict(env_extra or {})
+        # deliberately not part of env_extra: that is the problem's
+        # "validation runs only" env, while the interface shim is engine
+        # infrastructure applied symmetrically here and on the holdout scorer
+        self.pythonpath = pythonpath
 
     def execute(
         self,
@@ -285,9 +352,10 @@ class CommandExecutor:
         # the orchestrator's environment can never leak into a later run
         env = scrubbed_env(**self.env_extra)
         env.update(verifier_env(self.python, script, result_path, "validation", seed))
+        prepend_pythonpath(env, self.pythonpath)
         start = time.monotonic()
         with stdout_path.open("w") as out, stderr_path.open("w") as err:
-            returncode, timed_out = run_logged(
+            returncode, timed_out, cpu_s = run_logged(
                 render_argv(self.argv, self.python, script, result_path),
                 candidate_dir, timeout_s, out, err, env,
             )
@@ -296,6 +364,7 @@ class CommandExecutor:
         return ExecResult(
             returncode=returncode,
             duration_s=duration,
+            cpu_s=cpu_s,
             timed_out=timed_out,
             stdout_path=str(stdout_path),
             stderr_path=str(stderr_path),
@@ -319,6 +388,7 @@ class CommandHoldoutScorer:
         data_dir: Path,
         work_root: Path,
         timeout_s: int,
+        pythonpath: str | None = None,
     ):
         self.python = python.absolute()
         self.argv = list(argv)
@@ -326,12 +396,15 @@ class CommandHoldoutScorer:
         self.data_dir = data_dir
         self.work_root = work_root
         self.timeout_s = timeout_s
+        self.pythonpath = pythonpath
 
-    def score(self, candidate_dir: Path) -> tuple[float | None, str | None]:
+    def score(self, candidate_dir: Path) -> tuple[float | None, str | None, float | None]:
+        """Returns (score, error, cpu_s). CPU seconds are reported on every
+        exit — a failed or timed-out holdout run burned them all the same."""
         candidate_dir = candidate_dir.absolute()
         solution = candidate_dir / "solution.py"
         if not solution.exists():
-            return None, "solution.py missing at holdout time"
+            return None, "solution.py missing at holdout time", None
         eval_dir = self.work_root.absolute() / candidate_dir.name
         eval_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy(solution, eval_dir / "solution.py")
@@ -348,19 +421,20 @@ class CommandHoldoutScorer:
         env.update(
             verifier_env(self.python, eval_dir / "solution.py", result_path, "holdout")
         )
+        prepend_pythonpath(env, self.pythonpath)
         stdout_path = eval_dir / "exec_stdout.log"
         stderr_path = eval_dir / "exec_stderr.log"
         with stdout_path.open("w") as out, stderr_path.open("w") as err:
-            returncode, timed_out = run_logged(
+            returncode, timed_out, cpu_s = run_logged(
                 render_argv(self.argv, self.python, eval_dir / "solution.py", result_path),
                 eval_dir, self.timeout_s, out, err, env,
             )
         if timed_out:
-            return None, "holdout evaluation timed out"
+            return None, "holdout evaluation timed out", cpu_s
         if returncode != 0:
             tail = stderr_path.read_text(errors="replace")[-300:].strip()
-            return None, f"holdout evaluation failed: {tail or f'exit {returncode}'}"
+            return None, f"holdout evaluation failed: {tail or f'exit {returncode}'}", cpu_s
         score, _ = read_result(result_path)
         if score is None:
-            return None, "holdout evaluation produced no score"
-        return score, None
+            return None, "holdout evaluation produced no score", cpu_s
+        return score, None, cpu_s

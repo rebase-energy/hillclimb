@@ -103,7 +103,7 @@ def test_holdout_scorer_hidden_dir(spec, candidate_dir, tmp_path):
         Path(sys.executable), spec.holdout_cmd, problem_dir=spec.problem_dir,
         data_dir=spec.data_dir, work_root=tmp_path / "holdout-eval", timeout_s=300,
     )
-    score, error = scorer.score(candidate_dir)
+    score, error, _cpu = scorer.score(candidate_dir)
     assert error is None
     assert isinstance(score, float)
     # evaluation ran outside the agent-visible candidate_dir
@@ -122,6 +122,6 @@ def test_holdout_scorer_maps_failure_to_error(spec, candidate_dir, tmp_path):
         Path(sys.executable), spec.holdout_cmd, problem_dir=spec.problem_dir,
         data_dir=spec.data_dir, work_root=tmp_path / "holdout-eval", timeout_s=120,
     )
-    score, error = scorer.score(candidate_dir)
+    score, error, _cpu = scorer.score(candidate_dir)
     assert score is None
     assert "holdout evaluation failed" in error

@@ -24,6 +24,18 @@ with `--holdout` in a directory agents never see. Providers (`emflow://`,
 `mlebench://`) supply their own argv for the same contract. Never read a score
 off stdout — agent code shares that stream.
 
+A problem may optionally ship `interface.py` (Gym-spaces-style Python objects
+from `hillclimb.spaces`, picked up by default like `contract.md`): its
+`describe()` renders into the contract prompt, `check()` gives verifiers and
+agents located format violations, `sample()` writes a format-valid artifact,
+and `hillclimb verify` lints the baseline's output against it. The engine
+never runs the check itself — a PYTHONPATH shim
+(`runtime.ensure_interface_shim`, wired always-on in `api.build_executor`)
+just makes `from hillclimb import spaces` importable inside the runtime venvs
+so the verifier or agent can call it voluntarily. `spaces.py` must stay
+self-contained (stdlib top-level imports only; it is copied verbatim into the
+shim).
+
 - The hillclimb dir: all data lives in a `hillclimb/` folder (config.yaml
   marker, problems/, specs/, runs/) found by upward search; this repo overrides
   runs/problems to its legacy top-level dirs in `hillclimb/config.yaml`.
@@ -76,7 +88,21 @@ off stdout — agent code shares that stream.
   `chart` (best score vs time per search; `--detail`/`d` overlays one search's
   exploration tree on the curve), `tree` (one search's exploration tree —
   `tree.py` is the pure layout + fates, `treeview.py` the plotui screen with a
-  face-on locked camera), `graph` (knowledge graph)
+  face-on locked camera), `surface` (one search's candidates on the problem's
+  3D terrain — needs the problem to ship `landscape.py` (`elevation(x, y)` +
+  `grid(n)`, picked up by default like `contract.md`) and journal each
+  candidate's position as `surface_metrics` keys (default x/y) in
+  `Trial.metrics`; `surface.py` pure layer, `surfaceview.py` the free-orbit
+  screen — start the camera at negative pitch, plotui's default views a
+  surface from underneath; no landscape = prints why and returns;
+  `problems/fitness-landscape/` is the reference problem), `similarity` (one
+  search's candidates as a 3D scatter at behavioral/structural/lineage
+  distance from a reference — baseline by default, `c` toggles the current
+  champion — coloured by score rank; distances are derived at render time
+  from existing artifacts (submission.csv or trial-0's evaluator report,
+  solution.py tokens, parent chains) and NEVER stored; `similarity.py` pure
+  layer with fingerprint caches, `similarityview.py` the screen; no usable
+  reference = prints why and returns), `graph` (knowledge graph)
 - `hillclimb demo`: zero-setup demo (N parallel detached `hillclimb run`s, `stop --all` ends it) — bundled circle-packing problem in
   `src/hillclimb/demo/` (package data, a copy of `problems/circle-packing`
   with a lean `requirements.txt`); keep the two in sync
@@ -94,14 +120,17 @@ in every backend: `candidates/`, `best/`, agent streams/logs, `injected_claims.j
 
 `hillclimb/knowledge/graph.json` is a **derived index** (gitignored) rebuilt
 deterministically from the knowledge YAML (cards, entities.yaml,
-concepts.yaml, credit/, consolidated.yaml) — never hand-edit it;
+concepts.yaml, credit/, consolidated.yaml, papers/) — never hand-edit it;
 `hillclimb knowledge rebuild` regenerates it. The YAML files are the source
 of truth and are git-versioned; `knowledge/credit/` holds append-only
 per-search outcome events (one file per search — never merge or rewrite
 them). `knowledge/playbooks/`, `knowledge/consolidated.yaml`, and
 `knowledge/skills/` are consolidation/harvest outputs — regenerate via
 `hillclimb knowledge consolidate` rather than hand-editing (playbook edits
-are legitimate but land as reviewed git diffs). Schema v2: nodes carry both
+are legitimate but land as reviewed git diffs). `knowledge/papers/` holds
+paper-derived claims (`hillclimb paper add <pdf> [--problem <target>]`, one
+sonnet agent pass per PDF, content-hash cached); paper claims ride the same
+retrieval/credit economy as search claims, wired to `paper:` graph nodes. Schema v2: nodes carry both
 `pos` (2D, consumed by hillclimb-go) and `pos3` (3D, the plotui viewer) —
 keep `pos` byte-stable when touching layout code.
 

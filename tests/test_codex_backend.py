@@ -76,6 +76,7 @@ def test_codex_success_parses_usage_and_normalizes_stream(tmp_path: Path):
     assert result.num_turns == 1
     # cached_input_tokens is a subset of input_tokens, not an extra charge.
     assert result.total_tokens == 125
+    assert result.token_usage == {"input_tokens": 100, "output_tokens": 25}
     assert not (request.candidate_dir / "agent.pid").exists()
     stream = [
         json.loads(line)
@@ -144,3 +145,25 @@ def test_codex_subscription_auth_ignores_inherited_api_key(tmp_path: Path, monke
 
     assert "OPENAI_API_KEY" not in codex_env("subscription")
     assert codex_env("api-key")["OPENAI_API_KEY"] == "should-not-leak"
+
+
+STUB_TURN_THEN_ERROR = f"""#!{sys.executable}
+import json, sys
+sys.stdin.read()
+print(json.dumps({{"type": "thread.started", "thread_id": "thread-err"}}))
+print(json.dumps({{"type": "turn.completed", "usage": {{"input_tokens": 400, "cached_input_tokens": 100, "output_tokens": 50}}}}))
+print(json.dumps({{"type": "error", "message": "server exploded mid-call"}}))
+sys.exit(1)
+"""
+
+
+def test_codex_error_path_keeps_streamed_usage(tmp_path: Path):
+    """A call that completed a turn before dying burned real tokens; the
+    error result must journal them, not drop them with the failure."""
+    backend = CodexCliBackend(codex_bin=make_stub(tmp_path, STUB_TURN_THEN_ERROR))
+    result = backend.invoke(make_request(tmp_path))
+
+    assert not result.ok
+    assert result.error_kind == "error"
+    # input_tokens already includes the cached subset (see _normalized_usage)
+    assert result.total_tokens == 400 + 50

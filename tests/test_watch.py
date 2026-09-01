@@ -215,6 +215,44 @@ def test_search_row_counts_in_flight_tokens(tmp_path: Path):
     assert row.tokens == "1.74M"
 
 
+def test_search_row_shows_resolved_model_id(tmp_path: Path):
+    """The model cell upgrades from the route alias to the fully-qualified
+    id once a journaled candidate reports one (vendor prefix stripped)."""
+    from hillclimb.watch import _search_row
+
+    import json
+
+    from hillclimb.status import CurrentCandidate, SearchStatus, write_status
+
+    runs_dir = tmp_path / "runs"
+    search_dir = make_run_with_search(runs_dir, "20260701-run")
+    store = FileDataStore(runs_dir)
+    row = _search_row(store, store.search(key_for(search_dir)))
+    assert row.model == "sonnet"  # nothing resolved yet -> alias
+
+    # an in-flight operator whose live stream has announced the model
+    live = search_dir / "candidates" / "c003"
+    live.mkdir(parents=True)
+    (live / "agent_stream.jsonl").write_text(
+        json.dumps({"type": "system", "subtype": "init", "model": "claude-sonnet-4-5-20250929"}) + "\n"
+    )
+    write_status(search_dir, SearchStatus(
+        search_id="circle-packing", run_id="20260701-run", state="running",
+        current=[CurrentCandidate(candidate_id="c003", operator="draft", phase="agent",
+                                  candidate_dir=str(live))],
+    ))
+    row = _search_row(store, store.search(key_for(search_dir)))
+    assert row.model == "sonnet-4-5-20250929"  # live stream, journal not yet
+
+    journal = Journal(search_dir / "journal.jsonl")
+    c003 = make_candidate("c003", operator="draft", status="ok")
+    c003.backend = BackendInfo(name="claude-code", model="sonnet",
+                               model_id="claude-sonnet-4-5-20250929")
+    journal.candidate_result(c003)
+    row = _search_row(store, store.search(key_for(search_dir)))
+    assert row.model == "sonnet-4-5-20250929"
+
+
 def test_scan_searches_detects_crash(tmp_path: Path):
     make_run_with_search(
         tmp_path / "runs",
@@ -241,9 +279,24 @@ def test_candidate_rows_tree_order_and_pruned(tmp_path: Path):
     search_dir = make_run_with_search(tmp_path / "runs", "r")
     rows = candidate_rows(Journal(search_dir / "journal.jsonl"))
     assert [r.candidate_id for r in rows] == ["c000", "c001", "c002"]
-    assert rows[2].label == "  c002"  # child indented under c001
+    assert rows[2].label == "└─ c002"  # child connected under c001
+    assert rows[2].guide == "└─ "
+    assert rows[0].guide == "" and rows[1].guide == ""  # roots stay flush
     assert "PRUNED" in rows[2].marks
     assert "strike" in rows[2].style
+
+
+def test_candidate_rows_branch_guides(tmp_path: Path):
+    """Siblings get ├─/└─ and a │ continuation runs past an open branch."""
+    search_dir = make_run_with_search(tmp_path / "runs", "r")
+    journal = Journal(search_dir / "journal.jsonl")
+    journal.candidate_created(make_candidate("c003", parent_id="c001", status="ok"))
+    journal.candidate_created(make_candidate("c004", parent_id="c002", status="ok"))
+    journal = Journal(search_dir / "journal.jsonl")
+    labels = {r.candidate_id: r.label for r in candidate_rows(journal)}
+    assert labels["c002"] == "├─ c002"  # no longer the last child of c001
+    assert labels["c004"] == "│  └─ c004"  # under c002, with c003 still below
+    assert labels["c003"] == "└─ c003"
 
 
 def test_candidate_rows_show_pending_as_running_or_stale(tmp_path: Path):
@@ -708,6 +761,54 @@ async def test_t_opens_the_tree_panel_and_follows_the_cursor(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_a_opens_the_gantt_panel(tmp_path: Path):
+    search_dir, config = make_demo_search(tmp_path, "gantt-run")
+    second = make_run_with_search(
+        tmp_path / "runs", "gantt-run",
+        SearchStatus(search_id="cp-2", run_id="gantt-run", state="done"),
+        search_id="cp-2",
+    )
+    journal2 = Journal(second / "journal.jsonl")
+    for i, (cid, kwargs) in enumerate([
+        ("c000", dict(operator="baseline", status="ok")),
+        ("c777", dict(operator="improve", status="ok", val_score=0.9)),
+    ]):
+        candidate = make_candidate(cid, **kwargs)
+        candidate.created_at = f"2026-08-23T10:0{i}:00+00:00"
+        candidate.finished_at = f"2026-08-23T10:0{i + 2}:00+00:00"
+        journal2.candidate_result(candidate)
+
+    app = WatchApp(config)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.press("enter")  # runs -> searches
+        await pilot.press("a")
+        await pilot.pause()
+        gantt = app.screen.query_one("#search-gantt")
+        assert str(gantt.styles.display) != "none"
+        assert app.screen._detail_height == app.screen._fit_detail_height(max_table_rows=8)
+        assert app.screen._gantt_fingerprint[0] == "circle-packing"
+        await pilot.press("down")  # cursor to the second search: the panel follows
+        await pilot.pause()
+        assert app.screen._gantt_fingerprint[0] == "cp-2"
+
+        await pilot.press("t")  # the tree takes the shared lower panel over
+        await pilot.pause()
+        assert app.screen._gantt_open is False
+        assert str(gantt.styles.display) == "none"
+        assert str(app.screen.query_one("#search-tree").styles.display) != "none"
+        await pilot.press("a")  # and the gantt takes it back
+        await pilot.pause()
+        assert app.screen._tree_open is False
+        assert str(gantt.styles.display) != "none"
+
+        await pilot.press("escape")  # closes the panel, focus back on the table
+        await pilot.pause()
+        assert app.screen._gantt_open is False
+        assert str(gantt.styles.display) == "none"
+        assert app.screen.focused is app.screen.query_one("#searches")
+
+
+@pytest.mark.asyncio
 async def test_tree_panel_caps_the_searches_table_at_eight_rows(tmp_path: Path):
     _, config = make_demo_search(tmp_path, "cap-run")
     for i in range(11):  # 12 searches in all
@@ -1023,7 +1124,7 @@ async def test_searches_screen_inline_candidates_panel(tmp_path: Path):
         assert screen._panel_search_id == "circle-packing"
         assert str(panel.styles.display) == "block"
         assert panel.row_count == 3
-        assert [str(panel.get_cell_at((i, 0))).strip() for i in range(3)] == ["c000", "c001", "c002"]
+        assert [str(panel.get_cell_at((i, 0))).strip() for i in range(3)] == ["c000", "c001", "└─ c002"]
 
         screen._set_detail_height(DETAIL_MIN_HEIGHT_FOR_TESTS)  # leave room to grow
         await pilot.pause()
@@ -1084,7 +1185,7 @@ async def test_searches_panel_cursor_survives_refresh_with_several_searches(tmp_
         panel = screen.query_one("#search-candidates")
         screen._set_detail_height(20)
         await pilot.pause()
-        rows = [str(panel.get_cell_at((i, 0))).strip() for i in range(panel.row_count)]
+        rows = [str(panel.get_cell_at((i, 0))).strip("│├└─ ") for i in range(panel.row_count)]
         target = rows.index("c007")  # beyond search a's row count
         await pilot.click(offset=(panel.region.x + 3, panel.region.y + 1 + target))
         await pilot.pause()

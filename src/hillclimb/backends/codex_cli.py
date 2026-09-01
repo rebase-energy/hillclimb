@@ -319,6 +319,13 @@ class CodexCliBackend:
                 error_message=f"could not start Codex CLI: {spawn_error}",
                 **common,
             )
+        # `turn.completed` events carry usage as turns land, so every outcome
+        # below journals the tokens the call actually burned before it died
+        if reader is not None:
+            common["total_tokens"] = usage_total_tokens(reader.usage) or None
+            common["token_usage"] = {
+                key: count for key, count in reader.usage.items() if count
+            }
         if aborted:
             return OperatorResult(
                 ok=False,
@@ -338,6 +345,7 @@ class CodexCliBackend:
             return OperatorResult(
                 ok=False,
                 session_id=reader.session_id,
+                num_turns=reader.num_turns,
                 error_kind="rate_limited",
                 error_message=(reader.error_message or stderr_text)[:500],
                 **common,
@@ -346,6 +354,7 @@ class CodexCliBackend:
             return OperatorResult(
                 ok=False,
                 session_id=reader.session_id,
+                num_turns=reader.num_turns,
                 error_kind="error",
                 error_message=(reader.error_message or stderr_text)[:500],
                 **common,
@@ -354,6 +363,7 @@ class CodexCliBackend:
             return OperatorResult(
                 ok=False,
                 session_id=reader.session_id,
+                num_turns=reader.num_turns,
                 error_kind="error",
                 error_message="Codex exited 0 without a completed turn",
                 **common,
@@ -362,6 +372,5 @@ class CodexCliBackend:
             ok=True,
             session_id=reader.session_id,
             num_turns=reader.num_turns,
-            total_tokens=usage_total_tokens(reader.usage) or None,
             **common,
         )

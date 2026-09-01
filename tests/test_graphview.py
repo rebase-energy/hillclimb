@@ -250,7 +250,7 @@ class TestSearchAndScrub:
             return [out[r] for r in sorted(out)]
 
         plain = lines(frozenset())
-        assert plain[0] == "1 ◇ claim" and plain[2] == "3 ◉ family" and plain[6] == "7 ▲ search"
+        assert plain[0] == "1 ◇ claim" and plain[2] == "3 ◉ family" and plain[7] == "8 ▲ search"
         assert len(plain) == len(LEGEND_TYPES)
         assert max(len(line) for line in plain) <= LEGEND_WIDTH
         # each line's cells hit its entry; around the legend is nothing
@@ -262,7 +262,7 @@ class TestSearchAndScrub:
         assert legend_entry_at(LEGEND_COL, LEGEND_ROW - 1) is None
         # a hidden type keeps its line and hotkey but loses its glyph
         hidden = lines(frozenset({"search"}))
-        assert hidden[6] == "7   search" and len(hidden) == len(LEGEND_TYPES)
+        assert hidden[7] == "8   search" and len(hidden) == len(LEGEND_TYPES)
 
     def test_place_labels_by_node_pairs_each_span_with_its_node(self):
         from hillclimb.graphview import VNode, place_labels_by_node
@@ -531,14 +531,14 @@ async def test_legend_toggles_node_types_by_key_and_click(graph_workspace):
         assert "search" in types() and canvas.hidden_types == frozenset()
         assert "▲ search" in overlay_text(), "the legend is drawn on the canvas overlay"
 
-        await pilot.press("7")  # search is the 7th legend entry
+        await pilot.press("8")  # search is the 8th legend entry
         await pilot.pause()
         assert "search" not in types()
         assert canvas.hidden_types == frozenset({"search"})
         assert "▲ search" not in overlay_text() and "  search" in overlay_text()
 
         # clicking the entry's line on the canvas brings it back
-        await pilot.click("#graph-canvas", offset=(LEGEND_COL + 3, LEGEND_ROW + 6))
+        await pilot.click("#graph-canvas", offset=(LEGEND_COL + 3, LEGEND_ROW + 7))
         await pilot.pause()
         assert "search" in types() and canvas.hidden_types == frozenset()
 
@@ -548,7 +548,7 @@ async def test_legend_toggles_node_types_by_key_and_click(graph_workspace):
         await pilot.press("question_mark")
         await pilot.pause()
         rows = dict(app.screen.query_one(GraphKeys).rows())
-        assert rows["1-8"] == "hide/show a type" and "2" not in rows
+        assert rows["1-9"] == "hide/show a type" and "2" not in rows
         assert rows["click legend"] == "hide a type"
 
 

@@ -486,14 +486,27 @@ def _distill(
         problem_id=card.problem_id,
         budget_s=card.budget_s,
     )
+    return absorb_parsed(knowledge_dir, claims, new_entities, proposed, log)
+
+
+def absorb_parsed(
+    knowledge_dir: Path,
+    claims: list[Claim],
+    new_entities: list[Entity],
+    proposed: list[Concept],
+    log,
+) -> list[Claim]:
+    """Fold one parsed claims file into the registries: merge proposed
+    concepts and entities, then keep only claims whose subject is a
+    registered entity — an unregistered subject can't be linked in the
+    graph. The shared tail of every distill pass (searches and papers)."""
+    concepts = ensure_concepts(knowledge_dir)
     if proposed:
         concepts = merge_concepts(concepts, proposed)
         save_concepts(knowledge_dir, concepts)
     if new_entities:
         known = {c.slug for c in concepts}
-        save_entities(knowledge_dir, merge_entities(entities, new_entities, known))
-    # keep only claims whose subject is a registered entity after the merge —
-    # an unregistered subject can't be linked in the graph
+        save_entities(knowledge_dir, merge_entities(load_entities(knowledge_dir), new_entities, known))
     registered = {e.slug for e in load_entities(knowledge_dir)}
     kept = [c for c in claims if c.subject in registered]
     if len(kept) < len(claims):

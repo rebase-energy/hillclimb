@@ -173,3 +173,27 @@ def test_trial_report_roundtrip_and_prefeature_replay(tmp_path: Path):
     reloaded = Journal(path)
     assert reloaded.get("c001").trials[-1].report == report
     assert reloaded.get("c000").trials[-1].report is None
+
+
+def test_trial_cpu_roundtrip_and_prefeature_replay(tmp_path: Path):
+    """New journals carry Trial.cpu_s/holdout_cpu_s; pre-feature lines (no cpu
+    keys on the trial) must replay unchanged under extra="forbid"."""
+    path = tmp_path / "j.jsonl"
+    journal = Journal(path)
+    candidate = make_candidate("c001", status="ok")
+    candidate.trials.append(Trial(val_score=0.5, cpu_s=1.25, holdout_cpu_s=0.5))
+    journal.candidate_result(candidate)
+
+    record = json.loads(path.read_text().splitlines()[0])
+    record["candidate_id"] = "c000"
+    for trial in record["trials"]:
+        trial.pop("cpu_s")  # what a pre-feature engine wrote
+        trial.pop("holdout_cpu_s")
+    with path.open("a") as fh:
+        fh.write(json.dumps(record) + "\n")
+
+    reloaded = Journal(path)
+    assert reloaded.get("c001").trials[-1].cpu_s == 1.25
+    assert reloaded.get("c001").trials[-1].holdout_cpu_s == 0.5
+    assert reloaded.get("c000").trials[-1].cpu_s is None
+    assert reloaded.get("c000").trials[-1].holdout_cpu_s is None

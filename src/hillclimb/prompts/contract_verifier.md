@@ -14,6 +14,7 @@ Work only inside the current working directory. Before you finish, these two fil
 ## Problem-specific solution contract
 
 {{problem_contract}}
+{{interface_section}}
 {{holdout_clause}}
 
 Rules:

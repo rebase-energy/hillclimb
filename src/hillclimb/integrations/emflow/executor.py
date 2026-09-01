@@ -42,8 +42,10 @@ def official_verify(
         shutil.copy(extra, out_dir / extra.name)
     stdout_path = out_dir / "verify_stdout.log"
     stderr_path = out_dir / "verify_stderr.log"
+    # cpu_s is discarded: this once-per-search submission produces no Trial
+    # record to carry it, so its CPU stays outside the cost accounting.
     with stdout_path.open("w") as out, stderr_path.open("w") as err:
-        returncode, timed_out = run_logged(
+        returncode, timed_out, _cpu_s = run_logged(
             [
                 str(python.absolute()), str(EVAL_RUNNER), str(out_dir / "solution.py"),
                 "--problem", problem_name,

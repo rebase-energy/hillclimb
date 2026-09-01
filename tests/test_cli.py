@@ -254,6 +254,32 @@ def test_resume_restores_policy_and_routing(config, tmp_path, monkeypatch):
     assert restored.routing["draft"].backend is None
 
 
+def test_resume_all_spawns_only_resumable_searches(config, tmp_path, monkeypatch):
+    """`resume --all` restarts every parked/stopped/crashed search detached
+    and leaves running/done ones alone."""
+    import os
+
+    from hillclimb.cli import resume
+    from hillclimb.status import SearchStatus, write_status
+
+    config.paths.runs_dir = tmp_path / "runs"
+    states = {"a": "stopped", "b": "parked", "c": "done", "d": "running"}
+    for search_id, state in states.items():
+        search_dir = make_search(config.paths.runs_dir, "run-1", search_id)
+        pid = os.getpid() if state == "running" else None
+        write_status(search_dir, SearchStatus(search_id=search_id, run_id="run-1", state=state, pid=pid))
+    monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config.model_copy(deep=True))
+    spawned = []
+    monkeypatch.setattr(
+        "hillclimb.cli._spawn_resume",
+        lambda cfg, record: spawned.append(record.ref) or (123, tmp_path / "log"),
+    )
+
+    resume(all_=True)
+
+    assert sorted(spawned) == ["run-1/a", "run-1/b"]
+
+
 def test_resolve_search_dir_exact_and_bare_run(config, tmp_path):
     config.paths.runs_dir = tmp_path / "runs"
     s1 = make_search(config.paths.runs_dir, "run-1", "a")
@@ -652,6 +678,7 @@ def test_is_engine_matches_the_launcher_argv_only():
     from hillclimb.orphans import is_engine
 
     assert is_engine("/venv/bin/python3 -m hillclimb.cli run circle-packing")
+    assert is_engine("/venv/bin/python3 -m hillclimb.cli resume run-1/search-1")
     assert not is_engine("/bin/zsh -c 'grep hillclimb.cli run'")
     assert not is_engine("/venv/bin/python3 -m hillclimb.cli watch")
 
@@ -757,3 +784,66 @@ def test_summit_with_no_scored_candidate_explains_itself(config, tmp_path):
 
     with pytest.raises(typer.BadParameter, match="no scored candidate"):
         _summit(config, None, dest)
+
+
+# --- hillclimb verify: interface lint ---
+
+VERIFY_BASELINE_OK = (
+    'open("submission.csv", "w").write("x\\n0.1\\n0.9\\n")\n'
+)
+VERIFY_BASELINE_BAD = (
+    'open("submission.csv", "w").write("x\\n0.1\\n5.0\\n")\n'
+)
+
+
+def _lintable_problem(tmp_path, baseline_code: str, with_interface: bool = True):
+    problem = tmp_path / "problems" / "fmt"
+    problem.mkdir(parents=True)
+    (problem / "description.md").write_text("format demo")
+    verifier = problem / "verifier.sh"
+    verifier.write_text(
+        '#!/bin/sh\n"$HILLCLIMB_PYTHON" "$HILLCLIMB_SOLUTION"\n'
+        'echo \'{"score": 1.0}\' > "$HILLCLIMB_RESULT"\n'
+    )
+    verifier.chmod(0o755)
+    (problem / "baseline.py").write_text(baseline_code)
+    (problem / "problem.yaml").write_text(
+        "metric: score\nhigher_is_better: true\nbaseline: baseline.py\n"
+    )
+    if with_interface:
+        (problem / "interface.py").write_text(
+            "from hillclimb import spaces\n"
+            "output = spaces.Table('submission.csv',"
+            " columns={'x': spaces.Float(low=0.0, high=1.0)}, n_rows=2)\n"
+        )
+    return problem
+
+
+def _run_verify(config, tmp_path, monkeypatch):
+    from hillclimb.cli import verify
+
+    config.paths.problems_dir = tmp_path / "problems"
+    monkeypatch.setattr(
+        "hillclimb.cli.load_config", lambda **kw: config.model_copy(deep=True)
+    )
+    verify("fmt", solution=None, repeat=1, holdout=False)
+
+
+def test_verify_lints_declared_interface(config, tmp_path, monkeypatch, capsys):
+    _lintable_problem(tmp_path, VERIFY_BASELINE_OK)
+    _run_verify(config, tmp_path, monkeypatch)
+    assert "interface: OK" in capsys.readouterr().out
+
+
+def test_verify_reports_interface_violations(config, tmp_path, monkeypatch, capsys):
+    _lintable_problem(tmp_path, VERIFY_BASELINE_BAD)
+    with pytest.raises(typer.Exit):
+        _run_verify(config, tmp_path, monkeypatch)
+    err = capsys.readouterr().err
+    assert "interface:" in err and "above high=1" in err
+
+
+def test_verify_without_interface_stays_silent(config, tmp_path, monkeypatch, capsys):
+    _lintable_problem(tmp_path, VERIFY_BASELINE_OK, with_interface=False)
+    _run_verify(config, tmp_path, monkeypatch)
+    assert "interface:" not in capsys.readouterr().out

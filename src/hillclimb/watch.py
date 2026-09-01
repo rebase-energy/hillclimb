@@ -22,7 +22,7 @@ from hillclimb.control import request_prune, request_stop
 from hillclimb.journal import Journal
 from hillclimb.run import RunMeta, SearchMeta, run_display_name
 from hillclimb.run import search_ref as _search_ref
-from hillclimb.status import live_remaining_s
+from hillclimb.status import SearchStatus, live_remaining_s
 from hillclimb.store import DataStore, FileDataStore, SearchRecord, key_for, open_store
 from hillclimb.theme import HILLCLIMB_CSS, apply_theme
 
@@ -86,7 +86,8 @@ class SearchRow:
 @dataclass
 class CandidateRow:
     candidate_id: str
-    label: str  # indent + id
+    label: str  # guide + id
+    guide: str  # tree-branch prefix (├─ └─ │), empty for roots
     operator: str
     status: str
     val: str
@@ -191,6 +192,51 @@ def _state_summary(states: list[str]) -> str:
     return states[0]
 
 
+def _display_model(alias: str | None, model_id: str | None) -> str:
+    """The model cell: the fully-qualified id the agent stream reported
+    (sans the redundant vendor prefix), falling back to the route alias."""
+    if model_id:
+        return model_id.removeprefix("claude-")
+    return alias or "-"
+
+
+def _stream_model_id(candidate_dir: Path) -> str | None:
+    """The model an in-flight operator's live stream announced: the init
+    message names it within the first lines of `agent_stream.jsonl` (only
+    the head is scanned — this runs every refresh tick)."""
+    path = candidate_dir / "agent_stream.jsonl"
+    try:
+        with path.open() as stream:
+            for _ in range(20):
+                line = stream.readline()
+                if not line:
+                    return None
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if msg.get("type") == "system" and msg.get("model"):
+                    return msg["model"]
+    except OSError:
+        return None
+    return None
+
+
+def _resolved_model_id(journal: Journal, status: SearchStatus | None) -> str | None:
+    """The most recently journaled fully-qualified model id, else the one an
+    in-flight operator's stream is announcing right now."""
+    resolved = None
+    for candidate in journal.candidates.values():
+        if candidate.backend.model_id:
+            resolved = candidate.backend.model_id
+    if resolved is None and status is not None:
+        for current in status.current:
+            resolved = _stream_model_id(Path(current.candidate_dir))
+            if resolved:
+                break
+    return resolved
+
+
 def _search_row(store: DataStore, record: SearchRecord) -> SearchRow:
     meta, search_dir, state = record.meta, record.search_dir, record.state
     status = store.read_status(record.key)
@@ -216,7 +262,7 @@ def _search_row(store: DataStore, record: SearchRecord) -> SearchRow:
     return SearchRow(
         search_id=search_dir.name,
         problem=meta.problem_id,
-        model=meta.model,
+        model=_display_model(meta.model, _resolved_model_id(journal, status)),
         tokens=_fmt_tokens(tokens),
         state=state,
         candidates=f"{len(journal.candidates)} ({n_ok} ok)",
@@ -276,24 +322,32 @@ def scan_runs(store: DataStore | Path) -> list[RunRow]:
     return sorted(rows, key=lambda row: row.started if row.started != "-" else "", reverse=True)
 
 
-def _tree_order(journal: Journal) -> list[tuple[Candidate, int]]:
-    """Depth-first (candidate, depth) pairs so children render under parents."""
+def _tree_order(journal: Journal) -> list[tuple[Candidate, str]]:
+    """Depth-first (candidate, guide) pairs so children render under parents;
+    the guide is the branch prefix (├─ └─ │) connecting a child to its parent,
+    empty for roots."""
     by_parent: dict[str | None, list[Candidate]] = {}
     for candidate in journal.candidates.values():
         by_parent.setdefault(candidate.parent_id, []).append(candidate)
     for children in by_parent.values():
         children.sort(key=lambda c: c.candidate_id)
-    ordered: list[tuple[Candidate, int]] = []
+    ordered: list[tuple[Candidate, str]] = []
 
-    def visit(parent_id: str | None, depth: int) -> None:
-        for candidate in by_parent.get(parent_id, []):
-            ordered.append((candidate, depth))
-            visit(candidate.candidate_id, depth + 1)
+    def visit(parent_id: str | None, prefix: str) -> None:
+        children = by_parent.get(parent_id, [])
+        for candidate in children:
+            last = candidate is children[-1]
+            if parent_id is None:  # roots are independent lineages: no connector
+                ordered.append((candidate, ""))
+                visit(candidate.candidate_id, "")
+            else:
+                ordered.append((candidate, prefix + ("└─ " if last else "├─ ")))
+                visit(candidate.candidate_id, prefix + ("   " if last else "│  "))
 
-    visit(None, 0)
+    visit(None, "")
     # orphans (parent vanished from the journal) still get shown
     seen = {c.candidate_id for c, _ in ordered}
-    ordered.extend((c, 0) for c in journal.candidates.values() if c.candidate_id not in seen)
+    ordered.extend((c, "") for c in journal.candidates.values() if c.candidate_id not in seen)
     return ordered
 
 
@@ -313,6 +367,19 @@ def _candidate_cells(row: CandidateRow, holdout: bool) -> tuple[str, ...]:
     return cells if holdout else cells[:4] + cells[5:]
 
 
+def _styled_candidate_cells(row: CandidateRow, holdout: bool) -> list[Text]:
+    """DataTable cells for one candidate; tree guides stay dim scaffolding so
+    the id keeps its status color (and pruned strike never crosses the guide)."""
+    from rich.text import Text
+
+    cells = [Text(v, style=row.style) for v in _candidate_cells(row, holdout)]
+    if row.guide:
+        label = Text(row.guide, style="dim")
+        label.append(row.candidate_id, style=row.style)
+        cells[0] = label
+    return cells
+
+
 def _set_candidate_columns(table, holdout: bool) -> None:
     """(Re)build a candidate table's columns for this search's layout; a
     no-op when the layout is unchanged, so the cursor and scroll survive."""
@@ -325,7 +392,7 @@ def _set_candidate_columns(table, holdout: bool) -> None:
 
 def candidate_rows(journal: Journal, live: bool = True) -> list[CandidateRow]:
     rows = []
-    for candidate, depth in _tree_order(journal):
+    for candidate, guide in _tree_order(journal):
         marks = []
         if candidate.is_selected and not candidate.pruned:
             marks.append("SELECTED")
@@ -340,7 +407,8 @@ def candidate_rows(journal: Journal, live: bool = True) -> list[CandidateRow]:
         rows.append(
             CandidateRow(
                 candidate_id=candidate.candidate_id,
-                label="  " * depth + candidate.candidate_id,
+                label=guide + candidate.candidate_id,
+                guide=guide,
                 operator=candidate.operator
                 + (f"/{candidate.complexity}" if candidate.complexity else ""),
                 status=shown,
@@ -785,7 +853,8 @@ def candidate_detail_renderables(
     elif backend.name or backend.session_id or backend.error_kind:
         cost = f"${backend.cost_usd:.2f}" if backend.cost_usd is not None else "-"
         agent_s = f"{backend.agent_duration_s:.0f}s" if backend.agent_duration_s is not None else "-"
-        model = f"  model={backend.model}" if backend.model else ""
+        shown = backend.model_id or backend.model
+        model = f"  model={shown}" if shown else ""
         overview.add_row(
             "backend",
             Text(f"{backend.name or '-'}{model}  session={backend.session_id or '-'}"),
@@ -1381,8 +1450,7 @@ class CandidateScreen(ResizableDetail, LiveScreen):
         snapshot = _snapshot_table(table)
         table.clear()
         for row in candidate_rows(journal, live=state == "running"):
-            styled = [Text(v, style=row.style) for v in _candidate_cells(row, holdout)]
-            table.add_row(*styled, key=row.candidate_id)
+            table.add_row(*_styled_candidate_cells(row, holdout), key=row.candidate_id)
         _restore_table(table, snapshot)
 
         if self._detail_candidate_id is not None:
@@ -1574,6 +1642,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         Binding("s", "stop_search", "stop search", show=False),
         Binding("g", "open_graph", "knowledge graph", show=False),
         Binding("t", "toggle_tree", "tree panel", show=False),
+        Binding("a", "toggle_gantt", "operator timeline", show=False),
         Binding("j", "scrub_back", "tree: back in time", show=False),
         Binding("k", "scrub_forward", "tree: forward", show=False),
         Binding("end", "scrub_live", "tree: live", show=False),
@@ -1593,6 +1662,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
     }
     SearchesScreen #search-candidates { min-height: 6; }
     SearchesScreen #search-tree { min-height: 6; }
+    SearchesScreen #search-gantt { min-height: 6; padding: 0 1; }
     SearchesScreen #search-scrubber { height: 2; background: $surface; padding: 0 1; }
     SearchesScreen #search-node-detail { dock: right; width: 80; display: none; padding: 0 1; }
     """
@@ -1606,11 +1676,13 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         self._panel_search_id: str | None = None
         self._tree_open = False           # the topology panel, toggled with t
         self._tree_fingerprint: tuple | None = None
+        self._gantt_open = False          # the operator timeline, toggled with a
+        self._gantt_fingerprint: tuple | None = None
         self._init_detail()
 
     @property
     def _detail_open(self) -> bool:
-        return self._panel_search_id is not None or self._tree_open
+        return self._panel_search_id is not None or self._tree_open or self._gantt_open
 
     def compose(self) -> ComposeResult:
         yield HillclimbHeader()
@@ -1619,11 +1691,13 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         yield DetailDivider(" drag to resize candidates ", id="detail-divider")
         yield DataTable(id="search-candidates", cursor_type="row")
         # imported here: treeview imports back into watch (LiveScreen et al)
+        from hillclimb.ganttview import GanttPanel
         from hillclimb.graphview import TimeScrubber
         from hillclimb.treeview import TreePlotWidget
 
         yield TreePlotWidget(id="search-tree")
         yield TimeScrubber(id="search-scrubber")
+        yield GanttPanel(id="search-gantt")
         yield RichLog(id="search-node-detail", wrap=True, markup=False, auto_scroll=False, min_width=1)
         yield Footer()
 
@@ -1644,6 +1718,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         _set_candidate_columns(panel, holdout=True)
         self.query_one("#search-tree").styles.display = "none"
         self.query_one("#search-scrubber").styles.display = "none"
+        self.query_one("#search-gantt").styles.display = "none"
         self._set_detail_visible(False)
         self.start_live()
 
@@ -1665,6 +1740,8 @@ class SearchesScreen(ResizableDetail, LiveScreen):
             self._render_panel()
         if self._tree_open:
             self._render_tree()
+        if self._gantt_open:
+            self._render_gantt()
 
     def _render_panel(self) -> None:
         from rich.text import Text
@@ -1682,8 +1759,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         holdout = _shows_holdout(record, journal)
         _set_candidate_columns(panel, holdout)
         for row in candidate_rows(journal, live=live):
-            styled = [Text(v, style=row.style) for v in _candidate_cells(row, holdout)]
-            panel.add_row(*styled, key=row.candidate_id)
+            panel.add_row(*_styled_candidate_cells(row, holdout), key=row.candidate_id)
         _restore_table(panel, snapshot)
 
     def _selected_search_id(self) -> str | None:
@@ -1719,8 +1795,10 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         if self._tree_open:
             self._close_tree()
             return
-        if self._panel_search_id is not None:  # the two share the lower panel
+        if self._panel_search_id is not None:  # the three share the lower panel
             self._close_panel()
+        if self._gantt_open:
+            self._close_gantt()
         self.DETAIL_WIDGET = "#search-tree"
         self._tree_open = True
         # all the room the searches leave; past 8 searches the tree wins
@@ -1728,6 +1806,30 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         self._set_detail_visible(True)
         self.query_one("#search-scrubber").styles.display = "block"
         self._render_tree()
+
+    def action_toggle_gantt(self) -> None:
+        """`a`: the highlighted search's operator timeline under the table —
+        one lane per agent slot, bars coloured by operator, `◆` where each
+        candidate scored; `a` again (or escape) closes it."""
+        if self._gantt_open:
+            self._close_gantt()
+            return
+        if self._panel_search_id is not None:  # the three share the lower panel
+            self._close_panel()
+        if self._tree_open:
+            self._close_tree()
+        self.DETAIL_WIDGET = "#search-gantt"
+        self._gantt_open = True
+        self._detail_height = self._fit_detail_height(max_table_rows=8)
+        self._set_detail_visible(True)
+        self._render_gantt()
+
+    def _close_gantt(self) -> None:
+        self._gantt_open = False
+        self._gantt_fingerprint = None
+        self._set_detail_visible(False)
+        self.DETAIL_WIDGET = "#search-candidates"
+        self.query_one("#searches", DataTable).focus()
 
     def _close_tree(self) -> None:
         self._tree_open = False
@@ -1743,9 +1845,11 @@ class SearchesScreen(ResizableDetail, LiveScreen):
 
     def on_screen_resume(self) -> None:
         # back from a drilled-in candidate screen: land on the plain searches
-        # view, not a stale tree panel
+        # view, not a stale tree or timeline panel
         if self._tree_open:
             self._close_tree()
+        if self._gantt_open:
+            self._close_gantt()
         super().on_screen_resume()
 
     def _render_tree(self) -> None:
@@ -1784,6 +1888,43 @@ class SearchesScreen(ResizableDetail, LiveScreen):
             until = scrubber.events_list[scrubber.index]
         shown = build_tree(candidates_until(candidates, until), higher, layout=live_tree)
         canvas.set_tree(shown, frame=live_tree)
+
+    def _render_gantt(self) -> None:
+        from hillclimb.candidate import utcnow
+        from hillclimb.gantt import build_gantt
+        from hillclimb.ganttview import GanttPanel
+
+        search_id = self._selected_search_id()
+        if search_id is None:
+            return
+        record = self.store.search((self.run_dir.name, search_id))
+        if record is None:
+            return
+        journal = Journal(self.store.journal(record.key))
+        candidates = list(journal.candidates.values())
+        status = self.store.read_status(record.key)
+        live = record.state == "running"
+        phases = {c.candidate_id: c.phase for c in status.current} if status else {}
+        layout = build_gantt(
+            candidates,
+            origin=status.started_at if status else None,
+            now=utcnow() if live else None,
+            phases=phases,
+        )
+        panel = self.query_one("#search-gantt", GanttPanel)
+        fingerprint = (
+            search_id,
+            panel.content_size.width,
+            tuple((c.candidate_id, c.status, c.finished_at) for c in candidates),
+            tuple(sorted(phases.items())),
+            # live bars advance every tick; a tenth of a minute keeps the
+            # repaint cadence without redrawing an unchanged finished search
+            round(layout.extent_min, 1) if layout.live else None,
+        )
+        if fingerprint == self._gantt_fingerprint:
+            return
+        self._gantt_fingerprint = fingerprint
+        panel.set_layout(layout)
 
     def action_scrub_back(self) -> None:
         if self._tree_open:
@@ -1854,6 +1995,9 @@ class SearchesScreen(ResizableDetail, LiveScreen):
             elif self._tree_open:
                 self._render_tree()
                 event.stop()
+            elif self._gantt_open:
+                self._render_gantt()
+                event.stop()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         if event.data_table.id == "search-candidates":
@@ -1899,6 +2043,8 @@ class SearchesScreen(ResizableDetail, LiveScreen):
             self._show_node_detail(None)
         elif self._tree_open:
             self._close_tree()
+        elif self._gantt_open:
+            self._close_gantt()
         elif self._panel_search_id is not None:
             self._close_panel()
         else:

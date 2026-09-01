@@ -265,13 +265,13 @@ print("val_score: {val}")
 
 class FileHoldoutScorer:
     """Stand-in for a problem's `verifier.sh --holdout`: scores the candidate
-    out of sight and reports (score, error) the same way."""
+    out of sight and reports (score, error, cpu_s) the same way."""
 
     def score(self, candidate_dir):
         path = Path(candidate_dir) / "holdout_predictions.csv"
         if not path.exists():
-            return None, "`holdout_predictions.csv` was not written"
-        return float(path.read_text()), None
+            return None, "`holdout_predictions.csv` was not written", 0.01
+        return float(path.read_text()), None, 0.01
 
 
 def make_holdout_searcher(task, config, backend, tmp_path, max_candidates=10):
@@ -302,6 +302,8 @@ def test_selection_by_holdout_not_val(task, config):
     assert overfit.val_score == 0.99 and overfit.holdout_score == 0.0  # fits val only
     assert overfit.is_best  # it IS the val-best (climbing signal)
     assert not overfit.is_selected
+    # the scorer's cpu lands on the trial holdout ran against
+    assert overfit.last_trial.holdout_cpu_s == 0.01
     assert selected.holdout_score == 1.0
     assert selected.candidate_id in ("c001", "c003")
     # best/ holds the selected node's submission, not the val-best's
@@ -318,6 +320,8 @@ def test_failed_holdout_evaluation_is_buggy(task, config):
     bad = journal.get("c001")
     assert bad.status == "buggy"
     assert "holdout_predictions.csv" in bad.last_trial.holdout_error
+    # an errored holdout still burned its cpu — recorded despite the failure
+    assert bad.last_trial.holdout_cpu_s == 0.01
     # and the debug prompt explains it
     assert any("holdout_predictions.csv" in r.prompt for r in backend.requests if r.operator == "debug")
 

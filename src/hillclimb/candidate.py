@@ -18,11 +18,24 @@ class BackendInfo(BaseModel):
     Lives on the Candidate (not a Trial): it describes creation, not execution."""
 
     name: str = ""
-    model: str | None = None  # resolved model that ran the call (bandit arm on replay)
+    model: str | None = None  # requested model/route alias (bandit arm on replay)
+    # fully-qualified model that served the call, from the agent stream
+    # (e.g. "claude-sonnet-4-5-20250929"); None on old journals and backends
+    # that only know the alias
+    model_id: str | None = None
     session_id: str | None = None
     cost_usd: float | None = None
     num_turns: int | None = None
     total_tokens: int | None = None
+    # total_tokens split per kind (input_tokens, output_tokens,
+    # cache_creation_input_tokens, cache_read_input_tokens); empty on
+    # journals predating the field or when nothing was observed
+    token_usage: dict[str, int] = Field(default_factory=dict)
+    # subscription limit-window utilization (%) snapshotted at agent-call
+    # start/end (see quota.py). Account-wide — parallel operators and other
+    # sessions move it too, so the delta is telemetry, not accounting.
+    quota_start: dict | None = None
+    quota_end: dict | None = None
     agent_duration_s: float | None = None
     error_kind: str | None = None
 
@@ -40,10 +53,17 @@ class Trial(BaseModel):
     seed: int | None = None
     returncode: int | None = None
     duration_s: float | None = None
+    # verifier CPU seconds (user+system, via os.wait4); None on journals
+    # predating the field or platforms without wait4 — consumers fall back to
+    # duration_s there (verifier envs are single-threaded, wall ≈ cpu)
+    cpu_s: float | None = None
     timed_out: bool = False
     stdout_tail: str = ""
     submission_ok: bool = False
     holdout_error: str | None = None  # why holdout predictions couldn't be scored
+    # CPU seconds of this trial's holdout run (set even when it errored —
+    # the cost was paid); None where holdout didn't run or predates the field
+    holdout_cpu_s: float | None = None
     val_score: float | None = None
     holdout_score: float | None = None  # orchestrator-computed, hidden from agent
     # compact VALIDATION-split breakdown from eval_result.json (never holdout —
