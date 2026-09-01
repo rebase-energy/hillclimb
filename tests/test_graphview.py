@@ -409,7 +409,9 @@ async def test_drag_rotates_and_pan_moves_camera(graph_workspace):
         yaw_before = canvas._plot.camera_state()[0]
         await pilot.mouse_down("#graph-canvas", offset=(40, 10))
         await pilot.hover("#graph-canvas", offset=(50, 10))
-        assert canvas._plot.camera_state()[0] > yaw_before  # dragged right -> yaw
+        # plotui drags as a trackball: dragging right turns the OBJECT right,
+        # which is the camera orbiting the other way, so yaw decreases
+        assert canvas._plot.camera_state()[0] < yaw_before
         assert canvas.dragging
         await pilot.mouse_up("#graph-canvas", offset=(50, 10))
         assert not canvas.dragging

@@ -84,8 +84,12 @@ def node_label(node: TreeNode) -> str:
     return f"{name} {node.score:.4g}"
 
 
+# The tree is drawn in the plot's y=0 plane: face-on (yaw 0, pitch 0) plotui
+# puts +x across the screen and +z up it, with +y running into it. `world_xy`
+# is that screen plane in tree units — the two calls that hand coordinates to
+# the plot below spread it over (x, 0, y).
 def world_xy(node: TreeNode) -> tuple[float, float]:
-    """Tree column/depth → plot plane; +y is up on screen, so depth goes down."""
+    """Tree column/depth → the screen plane; +y is up, so depth goes down."""
     return node.x * COL_W, -node.depth * ROW_H
 
 
@@ -98,7 +102,7 @@ def tree_extent(tree: SearchTree) -> tuple[tuple[float, float], tuple[float, flo
 
 
 def build_tree_plot(tree: SearchTree, *, selected: str | None = None, frame: SearchTree | None = None):
-    """SearchTree → a fresh plotui Plot (one Graph3d trace in the z=0 plane,
+    """SearchTree → a fresh plotui Plot (one Graph3d trace in the y=0 plane,
     camera face-on at zoom 1) plus the flat-index → node-id list. Zoom and
     pan are the caller's to restore. `frame` pins the view to another tree's
     extent (the live tree, while scrubbing), so drawing a subset of its
@@ -114,7 +118,7 @@ def build_tree_plot(tree: SearchTree, *, selected: str | None = None, frame: Sea
     extent = tree_extent(frame) if frame is not None else None
     if extent is not None:
         (x0, y0), (x1, y1) = extent
-        plot.set_bounds((x0, y0, 0.0), (x1, y1, 0.0))
+        plot.set_bounds((x0, 0.0, y0), (x1, 0.0, y1))
     if tree.nodes:
         xs, ys = zip(*(world_xy(n) for n in tree.nodes))
         edges = [e for e in tree.edges if e.src in index_of and e.dst in index_of]
@@ -132,7 +136,7 @@ def build_tree_plot(tree: SearchTree, *, selected: str | None = None, frame: Sea
             else:
                 edge_colors.append(dim_rgb(rgb))
         plot.add_graph3d(
-            list(xs), list(ys), [0.0] * len(ids),
+            list(xs), [0.0] * len(ids), list(ys),
             edges=[(index_of[e.src], index_of[e.dst]) for e in edges],
             node_colors=[node_rgb(n, n.id in on_path) for n in tree.nodes],
             size=NODE_SIZE,
@@ -255,6 +259,14 @@ from hillclimb.watch import (  # noqa: E402
 )
 
 
+def _lock_face_on(plot) -> None:
+    """Bind dragging to panning on `plot`. A tree is drawn flat and read
+    face-on, so a drag should slide it under the pointer, never tilt it —
+    and the binding has to live on the plot because that is what the drag
+    gesture consults."""
+    plot.set_input_map("pan_x", "pan_y")
+
+
 class TreePlotWidget(PlotWidget):
     """The flat plotui view of one search tree. Camera is face-on and stays
     that way (a drag pans instead of rotating); scroll and +/- zoom, click
@@ -280,6 +292,7 @@ class TreePlotWidget(PlotWidget):
 
     def __init__(self, **kwargs):
         super().__init__(themed_plot(), **kwargs)
+        _lock_face_on(self._plot)
         self.selected: str | None = None
         self.hidden: frozenset[str] = frozenset()
         self._tree: SearchTree | None = None      # unfiltered (legend counts)
@@ -320,6 +333,7 @@ class TreePlotWidget(PlotWidget):
             else:
                 self._hover = None
         plot.set_camera_state(0.0, 0.0, zoom, pan_x, pan_y)  # face-on, always
+        _lock_face_on(plot)  # every rebuild is a new plot, so re-lock it
         self._plot = plot
         self._refresh_overlay()
         self.invalidate()
@@ -376,13 +390,15 @@ class TreePlotWidget(PlotWidget):
         super().apply_zoom(factor)
         self._refresh_overlay()
 
-    # PlotWidget turns one dragged cell (or an arrow key) into this much yaw/
-    # pitch; undoing it recovers the cell delta so a plain drag pans exactly
-    # as far as the pointer moved — the tree stays under the mouse.
+    # The arrow keys are hardwired to rotate in PlotWidget — they do not go
+    # through the gesture map — so the tree still converts that yaw/pitch back
+    # into a pan. PlotWidget turns one key press into this much rotation;
+    # undoing it recovers the cell delta. (Dragging needs none of this: the
+    # gesture map above binds it straight to a pan.)
     ROTATE_PER_CELL = 0.03
 
     def apply_rotate(self, d_yaw: float, d_pitch: float) -> None:
-        # a tree is flat: a drag pans instead of tilting it
+        # a tree is flat: an arrow key pans instead of tilting it
         self.apply_pan(
             d_yaw / self.ROTATE_PER_CELL * self._cell_w,
             d_pitch / self.ROTATE_PER_CELL * self._cell_h,
