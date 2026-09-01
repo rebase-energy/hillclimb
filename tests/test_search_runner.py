@@ -86,6 +86,18 @@ def test_registered_engine_bypasses_get_policy(task, config, tmp_path, monkeypat
     assert "journal" in seen and "budget" in seen and "search_dir" in seen
 
 
+def test_greedy_class_resolves_per_call_for_monkeypatching(task, config, tmp_path, monkeypatch):
+    """test_knowledge/test_skills patch hillclimb.search.GreedySearcher to cap
+    max_candidates; the factory's function-local import must see the patch."""
+
+    class Capped(GreedySearcher):
+        pass
+
+    monkeypatch.setattr("hillclimb.search.GreedySearcher", Capped)
+    runner = build(task, config, tmp_path)
+    assert type(runner) is Capped
+
+
 def test_exceptions_are_the_same_objects_via_both_homes():
     from hillclimb import search, search_runner
 

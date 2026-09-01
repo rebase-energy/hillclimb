@@ -27,7 +27,7 @@ from hillclimb.config import Config
 from hillclimb.journal import Journal
 from hillclimb.problem import ProblemSpec, load_problem
 from hillclimb.run import RunMeta, SearchMeta, new_search_uid
-from hillclimb.search import GreedySearcher, ParkedSearch, StopRequested
+from hillclimb.search_runner import ParkedSearch, SearchRunner, StopRequested, build_search_runner
 from hillclimb.status import SearchStatus, StatusWriter
 from hillclimb.store import key_for, open_store
 from hillclimb.dirs import allocate_search_dir, create_run_dir
@@ -579,9 +579,7 @@ def execute_search(
 
     machine_max = config.search.effective_machine_max_operators()
     slots = MachineSlots(machine_cache_dir() / "agent-slots", machine_max) if machine_max > 0 else None
-    from hillclimb.policies import get_policy
-
-    searcher = GreedySearcher(
+    searcher: SearchRunner = build_search_runner(
         problem=problem,
         config=config,
         journal=journal,
@@ -599,9 +597,6 @@ def execute_search(
         reference_solution=reference_solution,
         reference_note=reference_note,
         complexity_start=_offset,
-        policy=get_policy(
-            config.search.policy, config.search.policy_params, complexity_start=_offset
-        ),
         router=Router(config),
         backends=backends,
         drain_commands=lambda: store.drain_commands(key),

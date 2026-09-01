@@ -149,7 +149,7 @@ class TestInjection:
         backend = FakeBackend()
         monkeypatch.setattr("hillclimb.api.get_backend", lambda *a, **k: backend)
         monkeypatch.setattr(
-            "hillclimb.api.GreedySearcher",
+            "hillclimb.search.GreedySearcher",
             lambda **kw: GreedySearcher(**{**kw, "max_candidates": 3}),
         )
 

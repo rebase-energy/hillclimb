@@ -193,7 +193,7 @@ class TestLiveSharing:
         backend = FakeBackend()
         monkeypatch.setattr("hillclimb.api.get_backend", lambda *a, **k: backend)
         monkeypatch.setattr(  # baseline + draft + improve, then stop
-            "hillclimb.api.GreedySearcher",
+            "hillclimb.search.GreedySearcher",
             lambda **kw: GreedySearcher(**{**kw, "max_candidates": 3}),
         )
         run_dir = create_run_dir(config.paths.runs_dir, "suite-run")
@@ -244,7 +244,7 @@ class TestEndToEnd:
         config.holdout.enabled = False
         monkeypatch.setattr("hillclimb.api.get_backend", lambda *a, **k: backend)
         monkeypatch.setattr(  # stop after baseline + one draft
-            "hillclimb.api.GreedySearcher",
+            "hillclimb.search.GreedySearcher",
             lambda **kw: GreedySearcher(**{**kw, "max_candidates": 2}),
         )
 
