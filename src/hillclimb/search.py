@@ -22,6 +22,7 @@ from hillclimb.policy import Action, BudgetView, InflightRef, SearchPolicy, Sear
 from hillclimb.prompts.render import COMPLEXITY_CUES, render
 from hillclimb.routing import BackendPool, ResolvedRoute, Router
 from hillclimb.run import SEARCHES_DIRNAME
+from hillclimb.search_runner import ParkedSearch, StopRequested  # noqa: F401 — re-exported (their historic home)
 from hillclimb.slots import MachineSlots
 from hillclimb.status import CandidateCounts, CurrentCandidate, ScoreRef, StatusWriter
 from hillclimb.problem import ProblemSpec
@@ -54,15 +55,6 @@ class OutcomeMsg:
     holdout_error: str | None = None
     holdout_cpu_s: float | None = None  # burned even when holdout errored
     holdout_gated: bool = False
-
-
-class ParkedSearch(Exception):
-    """Raised when the backend hits a rate limit; the search can be resumed."""
-
-
-class StopRequested(Exception):
-    """Raised on a graceful stop (control command or SIGTERM); the search can
-    be resumed."""
 
 
 class GreedySearcher:
