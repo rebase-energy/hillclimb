@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 import typer
+from typer.testing import CliRunner
 
 from hillclimb.cli import BANNER_LINES, LOGO_LINES, WORDMARK_LINES, _run_problem, _run_suite, resolve_search_dir
 from hillclimb.cli import main as cli_main
@@ -686,7 +687,15 @@ def test_is_engine_matches_the_launcher_argv_only():
 # --- summit -----------------------------------------------------------------
 
 
-def _summit_search(runs_dir, run_id, search_id, problem_id, scores, higher_is_better=True):
+def _summit_search(
+    runs_dir,
+    run_id,
+    search_id,
+    problem_id,
+    scores,
+    higher_is_better=True,
+    output_artifacts=None,
+):
     """A finished-looking search: metadata, a journal of scored drafts, and a
     best/ dir stamped with its own address so tests can see whose files won."""
     from hillclimb.candidate import Candidate, Trial
@@ -712,6 +721,7 @@ def _summit_search(runs_dir, run_id, search_id, problem_id, scores, higher_is_be
             model="",
             metric="score",
             higher_is_better=higher_is_better,
+            output_artifacts=output_artifacts or ["submission.csv"],
         ),
     )
     journal = Journal(search_dir / "journal.jsonl")
@@ -725,7 +735,9 @@ def _summit_search(runs_dir, run_id, search_id, problem_id, scores, higher_is_be
             )
         )
     (search_dir / "best" / "solution.py").write_text(f"# {run_id}/{search_id}\n")
-    (search_dir / "best" / "submission.csv").write_text(f"id\n{run_id}/{search_id}\n")
+    for artifact in output_artifacts or ["submission.csv"]:
+        contents = f"id\n{run_id}/{search_id}\n" if artifact == "submission.csv" else f"{run_id}/{search_id}\n"
+        (search_dir / "best" / artifact).write_text(contents)
     return search_dir
 
 
@@ -758,6 +770,48 @@ def test_summit_respects_lower_is_better(config, tmp_path):
 
     assert record.run_id == "r2"
     assert candidate.val_score == 0.2
+
+
+def test_summit_copies_provider_declared_json_artifact(config, tmp_path):
+    from hillclimb.cli import _summit
+
+    _summit_search(
+        config.paths.runs_dir,
+        "r1",
+        "arena",
+        "einsteinarena://toy",
+        [0.5],
+        output_artifacts=["submission.json"],
+    )
+    dest = tmp_path / "root"
+    dest.mkdir()
+
+    _record, _candidate, copied = _summit(config, None, dest)
+
+    assert copied == ["solution.py", "submission.json"]
+    assert (dest / "submission.json").read_text() == "r1/arena\n"
+    assert not (dest / "submission.csv").exists()
+
+
+def test_summit_command_accepts_a_new_destination(config, tmp_path, monkeypatch):
+    from hillclimb import cli
+
+    _summit_search(
+        config.paths.runs_dir,
+        "r1",
+        "arena",
+        "einsteinarena://toy",
+        [0.5],
+        output_artifacts=["submission.json"],
+    )
+    dest = tmp_path / "not-created-yet"
+    monkeypatch.setattr(cli, "load_config", lambda: config)
+
+    result = CliRunner().invoke(cli.app, ["summit", "--to", str(dest)])
+
+    assert result.exit_code == 0
+    assert (dest / "solution.py").is_file()
+    assert (dest / "submission.json").is_file()
 
 
 def test_summit_requires_a_problem_when_several_exist(config, tmp_path):

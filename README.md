@@ -318,6 +318,40 @@ uv run hillclimb run mlebench://spaceship-titanic --budget 2h   # one competitio
 uv run hillclimb run mlebench://lite --budget 4h                # MLE-bench Lite
 ```
 
+## Einstein Arena problems
+
+`einsteinarena://<slug>` resolves a public
+[Einstein Arena](https://einsteinarena.com/) construction problem into a
+normal verifier-backed `ProblemSpec`. Hillclimb fetches only the public problem
+and leaderboard endpoints, hashes the fields that define evaluation, and runs
+the downloaded `evaluate(data) -> float` verifier locally. Candidates write
+`submission.json`; Hillclimb never registers an agent, submits a solution,
+downloads an incumbent, or posts to a discussion.
+
+```bash
+uv run hillclimb run einsteinarena://circle-packing --budget 10m
+uv run hillclimb run einsteinarena://smoke --budget 10m  # three-problem pilot suite
+```
+
+The first resolution caches a content-addressed snapshot under
+`~/.cache/hillclimb/benchmark-problems/einsteinarena/`. `search.yaml` records
+the pinned `@sha256:<revision>` target, so resume is reproducible and can run
+offline. The verifier source is public but untrusted code: it runs in the
+managed local runtime with credentials scrubbed, not in Einstein Arena's E2B
+sandbox. Override the API root for a mirror or test deployment with:
+
+```yaml
+einsteinarena:
+  base_url: https://einsteinarena.com
+  request_timeout_s: 30
+```
+
+Benchmark integrations use the lazy `BenchmarkProvider` registry rather than
+adding target-specific branches to the runner. A provider implements
+`load_problem()` and `resolve_target()` (plus optional chart baselines), then
+registers a URI scheme with `hillclimb.register_benchmark_provider(...)`.
+Search engines consume the resulting `ProblemSpec` unchanged.
+
 ## Defining Problems
 
 A problem is a folder, and a problem **is its verifier**. Users define new
@@ -338,6 +372,7 @@ problem_id: my-problem
 metric: my-score
 higher_is_better: true
 description: description.md
+output_artifacts: [submission.csv]  # use [submission.json] for JSON-native tasks
 time_budget_s: 900
 ```
 

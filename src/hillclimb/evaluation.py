@@ -79,10 +79,12 @@ class CandidateEvaluator:
             with ThreadPoolExecutor(max_workers=n, thread_name_prefix="trial") as pool:
                 results = list(pool.map(run, range(n)))
         candidate.trials.extend(trial for trial, _ in results)
-        # trial-0 artifacts surface at the candidate-dir root so best/-sync,
-        # ensemble copies, and holdout scoring stay untouched
+        # Trial-0 outputs surface at the candidate-dir root so selection,
+        # pruning, summit, and engine-specific consumers all see the same
+        # declared artifact set. eval_result.json is evaluator infrastructure,
+        # not a shippable problem artifact, but is hoisted for report reading.
         t0 = candidate_dir / "trials" / "t0"
-        for name in ("submission.csv", "eval_result.json"):
+        for name in [*self.problem.output_artifacts, "eval_result.json"]:
             if (t0 / name).exists():
                 shutil.copy(t0 / name, candidate_dir / name)
         return all(ok for _, ok in results)

@@ -268,7 +268,14 @@ def test_search_meta_problem_key_backfills_like_hillclimb_go():
     assert meta(problem="/x/toy", problem_id="toy", problem_key="toy@ab12cd34").problem_key == "toy@ab12cd34"
     assert meta(problem="emflow://gefcom2014:solar", problem_id="gefcom2014-solar").problem_key == "emflow://gefcom2014:solar"
     assert meta(problem="mlebench://spaceship-titanic", problem_id="spaceship-titanic").problem_key == "mlebench://spaceship-titanic"
+    assert meta(
+        problem=f"einsteinarena://circle-packing@sha256:{'a' * 64}",
+        problem_id="circle-packing",
+    ).problem_key == "einsteinarena://circle-packing"
     assert meta(problem="/abs/problems/circle-packing", problem_id="circle-packing").problem_key == "circle-packing"
+
+    with pytest.raises(ValueError, match="output artifact must be a file name"):
+        meta(problem="p", problem_id="p", output_artifacts=["../escape"])
 
 
 def test_create_search_records_problem_key_and_unique_ids(tmp_path, config):

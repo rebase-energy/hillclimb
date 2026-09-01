@@ -5,7 +5,7 @@ from pathlib import Path
 import uuid
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from hillclimb.candidate import utcnow
 from hillclimb.direction import legacy_direction_key
@@ -61,6 +61,22 @@ class SearchMeta(BaseModel):
     # Snapshot of problem.yaml's named chart reference lines. The chart also
     # reloads a reachable local problem so edits apply to existing searches.
     chart_baselines: dict[str, float] = Field(default_factory=dict)
+    # Provider provenance and candidate outputs are snapshotted so offline
+    # control operations and summit never need to rematerialize the problem.
+    provider_revision: str | None = None
+    output_artifacts: list[str] = Field(default_factory=lambda: ["submission.csv"])
+
+    @field_validator("output_artifacts")
+    @classmethod
+    def _safe_output_artifacts(cls, value: list[str]) -> list[str]:
+        out: list[str] = []
+        for name in value:
+            path = Path(name)
+            if not name or path.is_absolute() or len(path.parts) != 1 or name in {".", ".."}:
+                raise ValueError(f"output artifact must be a file name, got {name!r}")
+            if name not in out:
+                out.append(name)
+        return out
 
     @model_validator(mode="before")
     @classmethod
@@ -101,6 +117,8 @@ def problem_key_for(problem: str, problem_id: str) -> str:
     `mlebench://…`) is already canonical; a local problem is its id. The one
     place this rule lives — ProblemSpec.problem_key and the search.yaml
     backfill both come here (hillclimb-go: EffectiveProblemKey)."""
+    if problem.startswith("einsteinarena://"):
+        return problem.partition("@sha256:")[0]
     return problem if "://" in problem else problem_id
 
 

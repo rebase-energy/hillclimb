@@ -83,7 +83,32 @@ class ProblemSpec(BaseModel):
     # candidate still ships something gradeable (a sample submission)
     baseline_files: dict[str, Path] = Field(default_factory=dict)
 
+    # Files produced by a valid candidate that travel with solution.py through
+    # trial hoisting, best/ selection, pruning, resume, and summit.  CSV is the
+    # historical default; JSON-native benchmark providers override it.
+    output_artifacts: list[str] = Field(default_factory=lambda: ["submission.csv"])
+
+    @field_validator("output_artifacts")
+    @classmethod
+    def _safe_output_artifacts(cls, value: list[str]) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for name in value:
+            path = Path(name)
+            if not name or path.is_absolute() or len(path.parts) != 1 or name in {".", ".."}:
+                raise ValueError(f"output artifact must be a file name, got {name!r}")
+            if name not in seen:
+                seen.add(name)
+                out.append(name)
+        return out
+
     # --- provider extras ---
+    # Generic provider identity. ``provider_target`` is the resumable source
+    # target (content-pinned where the provider supports revisions), while
+    # ``problem_key_override`` groups revisions of the same benchmark problem.
+    provider_target: str | None = None
+    provider_revision: str | None = None
+    problem_key_override: str | None = None
     emflow_problem: str | None = None   # registry name, e.g. "gefcom2014:solar"
     emflow_quantiles: list[float] | None = None  # probabilistic problems only
     # MLE-bench competition id; set only by the mlebench provider. Marks the
@@ -94,6 +119,8 @@ class ProblemSpec(BaseModel):
     @property
     def target(self) -> str | None:
         """Provider target string when the problem comes from one."""
+        if self.provider_target:
+            return self.provider_target
         if self.emflow_problem:
             return f"emflow://{self.emflow_problem}"
         if self.mlebench_comp_id:
@@ -103,6 +130,8 @@ class ProblemSpec(BaseModel):
     @property
     def problem_key(self) -> str:
         """Canonical identity of the problem across runs (SearchMeta.problem_key)."""
+        if self.problem_key_override:
+            return self.problem_key_override
         from hillclimb.run import problem_key_for
 
         return problem_key_for(self.target or "", self.problem_id)
@@ -154,13 +183,15 @@ class ResolvedTarget:
 
 # Target schemes served by optional problem providers (lazy imports so the
 # core has no hard dependency on them).
-PROVIDER_SCHEMES = ("emflow", "mlebench")
+LEGACY_PROVIDER_SCHEMES = ("emflow", "mlebench")
 
 
 def _split_scheme(target: str | Path) -> tuple[str, str] | None:
     """(scheme, rest) when the target uses a provider scheme, else None."""
     scheme, sep, rest = str(target).partition("://")
-    if sep and scheme in PROVIDER_SCHEMES:
+    from hillclimb.benchmark_providers import has_benchmark_provider
+
+    if sep and (scheme in LEGACY_PROVIDER_SCHEMES or has_benchmark_provider(scheme)):
         return scheme, rest
     return None
 
@@ -178,6 +209,11 @@ def _emflow_provider():
 
 def _provider_calls(scheme: str):
     """(load_problem, resolve_target) pair for a provider scheme."""
+    from hillclimb.benchmark_providers import get_benchmark_provider, has_benchmark_provider
+
+    if has_benchmark_provider(scheme):
+        provider = get_benchmark_provider(scheme)
+        return provider.load_problem, provider.resolve_target
     if scheme == "emflow":
         provider = _emflow_provider()
         return provider.load_emflow_problem, provider.resolve_emflow_target
@@ -193,6 +229,12 @@ def provider_chart_baselines(target: str) -> dict[str, float]:
     scheme = _split_scheme(target)
     if scheme is None:
         return {}
+    from hillclimb.benchmark_providers import get_benchmark_provider, has_benchmark_provider
+
+    if has_benchmark_provider(scheme[0]):
+        provider = get_benchmark_provider(scheme[0])
+        chart_baselines = getattr(provider, "chart_baselines", None)
+        return chart_baselines(scheme[1]) if chart_baselines is not None else {}
     if scheme[0] == "emflow":
         return _emflow_provider().chart_baselines_for(scheme[1])
     return {}
@@ -357,6 +399,11 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
             dest: (problem_dir / src).resolve()
             for dest, src in (meta.get("baseline_files") or {}).items()
         },
+        output_artifacts=(
+            list(meta["output_artifacts"])
+            if "output_artifacts" in meta
+            else ["submission.csv"]
+        ),
     )
 
 

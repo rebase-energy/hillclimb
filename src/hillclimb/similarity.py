@@ -12,12 +12,15 @@ choice and the append-only journal is untouched.
 Behavioral fingerprints come in two modes, decided per search by the
 reference candidate and never mixed (the two RMS spaces aren't comparable):
 
-- **submission mode**: the reference dir has a `submission.csv`; fingerprints
-  are its numeric columns flattened in column order, aligned across
-  candidates by column names + row count (row order is already the scoring
-  contract). Scale is one scalar — the MAD of the reference's own vector —
-  so distance 1 means "differs from the reference by as much as the
-  reference's own predictions vary".
+- **submission mode**: the reference dir has one of the problem's declared
+  `output_artifacts` (`submission.csv` for tabular problems,
+  `submission.json` for JSON-native ones). A CSV fingerprint is its numeric
+  columns flattened in column order; a JSON fingerprint is its numeric
+  leaves keyed by JSON path (`circles[0][2]`), which is the same contract
+  one value per column. Either way candidates align by key names + count
+  (order within a key is already the scoring contract). Scale is one scalar
+  — the MAD of the reference's own vector — so distance 1 means "differs
+  from the reference by as much as the reference's own predictions vary".
 - **report mode** (emflow-style problems with no submission file):
   fingerprints are labeled dicts from trial-0's evaluator report —
   `horizon:` buckets (aligned across candidates by construction), `q:`
@@ -36,7 +39,9 @@ O(N) numpy pass, and toggling the reference invalidates nothing.
 from __future__ import annotations
 
 import io
+import json
 import tokenize
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -53,7 +58,7 @@ MAX_VECTOR = 65_536    # submission vectors longer than this are stride-subsampl
 AXIS_P95 = 95.0        # each axis is normalized to [0, 1] by its 95th percentile
 N_BINS = 6             # score rank bins (the colour ramp in similarityview)
 
-SUBMISSION_FILE = "submission.csv"
+DEFAULT_ARTIFACTS = ("submission.csv",)  # problems that declare nothing
 SOLUTION_FILE = "solution.py"
 
 _STRUCTURAL_TOKENS = frozenset(
@@ -141,9 +146,48 @@ def _cached(cache: dict, path: Path, parse):
     return value
 
 
+def _flatten_json_numbers(node, prefix: str, out: dict[str, float]) -> None:
+    """Numeric leaves of a JSON document, keyed by path. Bools are flags, not
+    measurements; non-finite values would poison the RMS, so both are skipped."""
+    if isinstance(node, bool):
+        return
+    if isinstance(node, (int, float)):
+        value = float(node)
+        if value == value and abs(value) != float("inf"):
+            out[prefix or "$"] = value
+        return
+    if isinstance(node, list):
+        for i, item in enumerate(node):
+            _flatten_json_numbers(item, f"{prefix}[{i}]", out)
+        return
+    if isinstance(node, dict):
+        for key, item in node.items():
+            _flatten_json_numbers(item, f"{prefix}.{key}" if prefix else str(key), out)
+
+
+def _parse_json_submission(path: Path):
+    """Same triple as the CSV parser, one numeric leaf per column: candidates
+    that lay out the same solution shape align, ones that don't are reported
+    unalignable rather than compared across mismatched keys."""
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):  # buggy candidate output
+        return None
+    flat: dict[str, float] = {}
+    _flatten_json_numbers(data, "", flat)
+    if not flat:
+        return None
+    names = tuple(sorted(flat))
+    stride = max(1, (len(names) + MAX_VECTOR - 1) // MAX_VECTOR)
+    names = names[::stride]
+    return (names, len(names), {n: np.asarray([flat[n]], dtype=np.float32) for n in names})
+
+
 def _parse_submission(path: Path):
     """(numeric column names, original row count, {column: float32 array,
     stride-subsampled to the memory cap}) — or None if unreadable."""
+    if path.suffix.lower() == ".json":
+        return _parse_json_submission(path)
     import pandas as pd
 
     try:
@@ -161,12 +205,14 @@ def _parse_submission(path: Path):
     return (tuple(str(c) for c in frame.columns), nrows, columns)
 
 
-def submission_fingerprint(search_dir: Path, candidate: Candidate):
+def submission_fingerprint(search_dir: Path, candidate: Candidate, artifact: str):
     """The parsed submission of a candidate whose trial-0 produced a usable
-    result — the free `submission_ok` gate skips buggy output unparsed."""
+    result — the free `submission_ok` gate skips buggy output unparsed. The
+    artifact name is fixed by the reference for the whole view: two artifacts
+    are two RMS spaces, and mixing them would compare nothing."""
     if not candidate.trials or not candidate.trials[0].submission_ok:
         return None
-    return _cached(_SUBMISSIONS, dir_for(search_dir, candidate) / SUBMISSION_FILE, _parse_submission)
+    return _cached(_SUBMISSIONS, dir_for(search_dir, candidate) / artifact, _parse_submission)
 
 
 def report_fingerprint(candidate: Candidate) -> dict[str, float] | None:
@@ -292,6 +338,7 @@ def build_similarity(
     search_dir: Path,
     higher_is_better: bool,
     reference: str = "baseline",
+    output_artifacts: Sequence[str] = DEFAULT_ARTIFACTS,
 ) -> SimilarityView:
     if not candidates:
         return SimilarityView.none(reference, "no candidates yet")
@@ -307,8 +354,9 @@ def build_similarity(
             else "no baseline candidate",
         )
 
+    artifacts = tuple(output_artifacts) or DEFAULT_ARTIFACTS
     _prune_caches(
-        {dir_for(search_dir, c) / name for c in candidates for name in (SUBMISSION_FILE, SOLUTION_FILE)}
+        {dir_for(search_dir, c) / name for c in candidates for name in (*artifacts, SOLUTION_FILE)}
     )
 
     ref_tokens = token_set(search_dir, ref)
@@ -316,7 +364,15 @@ def build_similarity(
         return SimilarityView.none(
             reference, f"{reference} {ref.candidate_id} has no readable solution.py"
         )
-    ref_submission = submission_fingerprint(search_dir, ref)
+    # The reference settles which declared artifact this view measures in;
+    # every other candidate is then read through that same file.
+    submission_file = artifacts[0]
+    ref_submission = None
+    for name in artifacts:
+        ref_submission = submission_fingerprint(search_dir, ref, name)
+        if ref_submission is not None:
+            submission_file = name
+            break
     mode = "submission" if ref_submission is not None else "report"
     ref_report = report_fingerprint(ref) if mode == "report" else None
     if mode == "report" and ref_report is None:
@@ -336,7 +392,7 @@ def build_similarity(
             structural = 0.0
         else:
             if mode == "submission":
-                fp = submission_fingerprint(search_dir, cand)
+                fp = submission_fingerprint(search_dir, cand, submission_file)
                 behavioral = submission_distance(ref_submission, fp) if fp is not None else None
             else:
                 fp = report_fingerprint(cand)

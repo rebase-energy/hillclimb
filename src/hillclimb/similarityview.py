@@ -226,7 +226,10 @@ class SimilarityScreen(LiveScreen):
         self._fingerprint = fingerprint
 
         higher = bool(record.meta.higher_is_better)
-        view = build_similarity(candidates, record.search_dir, higher, reference=self.reference)
+        view = build_similarity(
+            candidates, record.search_dir, higher, reference=self.reference,
+            output_artifacts=record.meta.output_artifacts,
+        )
         if view.unavailable is not None:
             canvas.clear_view()
         else:

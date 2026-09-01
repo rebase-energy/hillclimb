@@ -11,3 +11,7 @@ paths:
 
 emflow:
   source: "-e ../emflow"  # local checkout; drop for the PyPI/git default
+
+# einsteinarena:
+#   base_url: https://einsteinarena.com
+#   request_timeout_s: 30

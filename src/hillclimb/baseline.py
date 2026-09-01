@@ -98,7 +98,7 @@ def run_scored_baseline(
         shutil.copy(solution, search_dir / "best" / "solution.py")
         # the artifacts the baseline produced (e.g. submission.csv) ship
         # alongside it, so best/ is complete from t=0
-        for name in problem.baseline_files:
+        for name in dict.fromkeys([*problem.output_artifacts, *problem.baseline_files]):
             if (candidate_dir / name).exists():
                 shutil.copy(candidate_dir / name, search_dir / "best" / name)
     else:

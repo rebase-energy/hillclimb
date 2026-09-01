@@ -208,6 +208,13 @@ class EmflowConfig(BaseModel):
     source: str = "emflow @ git+https://github.com/rebase-energy/emflow.git"
 
 
+class EinsteinArenaConfig(BaseModel):
+    """Public, read-only Einstein Arena problem-provider settings."""
+
+    base_url: str = "https://einsteinarena.com"
+    request_timeout_s: float = Field(default=30.0, gt=0, le=300)
+
+
 def _read_yaml(path: Path) -> dict:
     if not path.exists():
         return {}
@@ -239,6 +246,7 @@ class Config(BaseModel):
     paths: PathsConfig = PathsConfig()
     store: StoreConfig = StoreConfig()
     emflow: EmflowConfig = EmflowConfig()
+    einsteinarena: EinsteinArenaConfig = EinsteinArenaConfig()
     learning: LearningConfig = LearningConfig()
     report: ReportConfig = ReportConfig()
     operators: OperatorsConfig = OperatorsConfig()

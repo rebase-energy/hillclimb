@@ -1866,9 +1866,6 @@ def status(search: str = typer.Argument("latest")):
         )
 
 
-SUMMIT_FILES = ("solution.py", "submission.csv")
-
-
 def _summit(config: Config, problem: str | None, dest: Path):
     """The best solution for `problem` across every run, copied into `dest`.
 
@@ -1909,7 +1906,8 @@ def _summit(config: Config, problem: str | None, dest: Path):
         )
     record, candidate = best
     source = record.search_dir / "best"
-    copied = [name for name in SUMMIT_FILES if (source / name).is_file()]
+    summit_files = list(dict.fromkeys(["solution.py", *record.meta.output_artifacts]))
+    copied = [name for name in summit_files if (source / name).is_file()]
     if not copied:
         raise typer.BadParameter(f"{source} holds no solution files yet; try again in a moment.")
     for name in copied:
@@ -1929,13 +1927,16 @@ def summit(
     """Copy the best solution found so far next to your hillclimb/ folder.
 
     Ranks every search of the problem, across all runs, by its selected
-    candidate and copies that search's best/ files (solution.py and
-    submission.csv) into the destination. Run it at any point, even
+    candidate and copies that search's solution.py plus its declared output
+    artifacts into the destination. Run it at any point, even
     mid-climb — you always get the best discovered so far.
     """
     config = load_config()
     dest = (to or config.hillclimb_dir.parent).resolve()
-    already_there = {name for name in SUMMIT_FILES if (dest / name).exists()}
+    already_there = (
+        {path.name for path in dest.iterdir() if path.is_file()} if dest.is_dir() else set()
+    )
+    dest.mkdir(parents=True, exist_ok=True)
     record, candidate, copied = _summit(config, problem, dest)
     key = record.meta.problem_key or record.meta.problem_id
     typer.echo(
@@ -2260,7 +2261,10 @@ def similarity(
     # open on a reference that has something to measure against (a declared
     # baseline ships no artifacts); nothing from either -> print why, return
     for reference in ("baseline", "champion"):
-        view = build_similarity(candidates, record.search_dir, higher, reference=reference)
+        view = build_similarity(
+            candidates, record.search_dir, higher, reference=reference,
+            output_artifacts=record.meta.output_artifacts,
+        )
         if view.unavailable is None:
             break
     else:

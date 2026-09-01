@@ -8,13 +8,26 @@ Public API (lazy — `import hillclimb` stays dependency-light):
 
 __version__ = "0.2.0"
 
-__all__ = ["__version__", "Config", "SearchOutcome", "run_search", "execute_search"]
+__all__ = [
+    "__version__",
+    "Config",
+    "SearchOutcome",
+    "run_search",
+    "execute_search",
+    "BenchmarkProvider",
+    "register_benchmark_provider",
+]
 
 _LAZY = {
     "Config": ("hillclimb.config", "Config"),
     "SearchOutcome": ("hillclimb.api", "SearchOutcome"),
     "run_search": ("hillclimb.api", "run_search"),
     "execute_search": ("hillclimb.api", "execute_search"),
+    "BenchmarkProvider": ("hillclimb.benchmark_providers", "BenchmarkProvider"),
+    "register_benchmark_provider": (
+        "hillclimb.benchmark_providers",
+        "register_benchmark_provider",
+    ),
 }
 
 

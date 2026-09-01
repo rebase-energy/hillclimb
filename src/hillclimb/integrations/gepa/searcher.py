@@ -198,7 +198,7 @@ class GEPASearcher:
         self.finalize_holdout()
         self._selection_id = resync_best(
             self.search_dir, self.journal, self.problem.higher_is_better,
-            self.config.holdout.selection,
+            self.config.holdout.selection, self.problem.output_artifacts,
         )
         self._status()
         return self.journal.selected_candidate(

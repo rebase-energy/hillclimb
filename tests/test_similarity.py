@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -272,3 +273,87 @@ class TestBuildView:
             tmp_path, True, reference="champion",
         )
         assert view.unavailable is not None
+
+
+class TestJsonSubmissions:
+    """JSON-native problems (Einstein Arena) declare submission.json as their
+    output artifact; the behavioral axis must read it, not fall back to
+    report mode."""
+
+    JSON_ARTIFACTS = ["submission.json"]
+
+    def write_json(self, search_dir: Path, cid: str, payload: dict, solution: str = "x = 1\n") -> Path:
+        cdir = search_dir / "candidates" / cid
+        cdir.mkdir(parents=True, exist_ok=True)
+        (cdir / "solution.py").write_text(solution)
+        (cdir / "submission.json").write_text(json.dumps(payload))
+        return cdir
+
+    def build(self, tmp_path, candidates):
+        return build_similarity(
+            candidates, tmp_path, True, output_artifacts=self.JSON_ARTIFACTS
+        )
+
+    def test_json_reference_selects_submission_mode(self, tmp_path):
+        self.write_json(tmp_path, "c000", {"circles": [[0.0, 0.0, 1.0], [2.0, 0.0, 1.0]]})
+        self.write_json(tmp_path, "c001", {"circles": [[0.0, 0.0, 1.0], [2.0, 0.0, 1.0]]},
+                        solution="x = 2\n")
+        view = self.build(tmp_path, [
+            cand("c000", "baseline", score=0.5, t=0),
+            cand("c001", "draft", score=0.6, t=1),
+        ])
+        assert view.unavailable is None
+        assert view.mode == "submission"
+        # identical geometry -> zero behavioral distance, nonzero structural
+        moved = next(n for n in view.nodes if n.id == "c001")
+        assert moved.raw[0] == pytest.approx(0.0)
+        assert moved.raw[1] > 0.0
+
+    def test_moved_circle_is_behaviorally_distant(self, tmp_path):
+        self.write_json(tmp_path, "c000", {"circles": [[0.0, 0.0, 1.0], [2.0, 0.0, 1.0]]})
+        self.write_json(tmp_path, "c001", {"circles": [[0.0, 0.0, 1.0], [9.0, 0.0, 1.0]]})
+        view = self.build(tmp_path, [
+            cand("c000", "baseline", score=0.5, t=0),
+            cand("c001", "draft", score=0.6, t=1),
+        ])
+        assert view.mode == "submission"
+        assert next(n for n in view.nodes if n.id == "c001").raw[0] > 0.0
+
+    def test_different_shape_is_unalignable_not_wrongly_compared(self, tmp_path):
+        self.write_json(tmp_path, "c000", {"circles": [[0.0, 0.0, 1.0], [2.0, 0.0, 1.0]]})
+        self.write_json(tmp_path, "c001", {"circles": [[0.0, 0.0, 1.0]]})
+        view = self.build(tmp_path, [
+            cand("c000", "baseline", score=0.5, t=0),
+            cand("c001", "draft", score=0.6, t=1),
+        ])
+        assert [n.id for n in view.nodes] == ["c000"]
+        assert view.n_unpositioned == 1
+
+    def test_bools_and_non_finite_are_not_measurements(self, tmp_path):
+        self.write_json(tmp_path, "c000", {"ok": True, "n": 3.0, "bad": float("nan")})
+        payload = {"ok": False, "n": 3.0, "bad": float("nan")}
+        self.write_json(tmp_path, "c001", payload)
+        view = self.build(tmp_path, [
+            cand("c000", "baseline", score=0.5, t=0),
+            cand("c001", "draft", score=0.6, t=1),
+        ])
+        # only "n" survives flattening, and it matches
+        assert view.mode == "submission"
+        assert next(n for n in view.nodes if n.id == "c001").raw[0] == pytest.approx(0.0)
+
+    def test_unparseable_json_falls_back_to_report_mode(self, tmp_path):
+        cdir = tmp_path / "candidates" / "c000"
+        cdir.mkdir(parents=True)
+        (cdir / "solution.py").write_text("x = 1\n")
+        (cdir / "submission.json").write_text("{not json")
+        view = self.build(tmp_path, [cand("c000", "baseline", score=0.5, t=0)])
+        assert view.mode == "report" or view.unavailable is not None
+
+    def test_csv_problems_are_unaffected(self, tmp_path):
+        write_candidate(tmp_path, "c000", submission=sub_csv([1.0, 2.0, 3.0]))
+        write_candidate(tmp_path, "c001", submission=sub_csv([1.0, 2.0, 3.0]))
+        view = build_similarity(
+            [cand("c000", "baseline", score=0.5, t=0), cand("c001", "draft", score=0.5, t=1)],
+            tmp_path, True, output_artifacts=["submission.csv"],
+        )
+        assert view.mode == "submission"

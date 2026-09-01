@@ -4,7 +4,7 @@ import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 
 from pydantic import BaseModel, Field
 
@@ -103,23 +103,35 @@ def apply_prune(journal: Journal, candidate_id: str, reason: str = "", source: s
     return pruned
 
 
-def resync_best(search_dir: Path, journal: Journal, higher_is_better: bool, selection_mode: str) -> str | None:
+def resync_best(
+    search_dir: Path,
+    journal: Journal,
+    higher_is_better: bool,
+    selection_mode: str,
+    output_artifacts: Sequence[str] = ("submission.csv",),
+) -> str | None:
     """Repoint best/ at the current selection (used after prune). Falls back
     to the baseline submission when no scored candidate remains. Returns the
     newly selected candidate id, or None on baseline fallback."""
     selected = journal.selected_candidate(higher_is_better, selection_mode)
     best_dir = search_dir / "best"
+    # Clear declared outputs first: a newly selected candidate that lacks an
+    # artifact must never inherit the previous winner's file.
+    for name in output_artifacts:
+        (best_dir / name).unlink(missing_ok=True)
     if selected is None:
         baseline = journal.candidates.get("c000")
         if baseline is not None:
-            submission = Path(baseline.candidate_dir) / "submission.csv"
-            if submission.exists():
-                shutil.copy(submission, best_dir / "submission.csv")
+            for name in output_artifacts:
+                artifact = Path(baseline.candidate_dir) / name
+                if artifact.exists():
+                    shutil.copy(artifact, best_dir / name)
         (best_dir / "solution.py").unlink(missing_ok=True)
         return None
     src = Path(selected.candidate_dir)
-    if (src / "submission.csv").exists():
-        shutil.copy(src / "submission.csv", best_dir / "submission.csv")
+    for name in output_artifacts:
+        if (src / name).exists():
+            shutil.copy(src / name, best_dir / name)
     if (src / "solution.py").exists():
         shutil.copy(src / "solution.py", best_dir / "solution.py")
     if not selected.is_selected:
@@ -149,7 +161,11 @@ def request_prune(
     pruned = apply_prune(journal, candidate_id, reason, source)
     if not pruned:
         return f"{candidate_id} (and its subtree) was already pruned"
-    selected = resync_best(store.search_dir(key), journal, higher_is_better, selection_mode)
+    record = store.search(key)
+    output_artifacts = record.meta.output_artifacts if record is not None else ["submission.csv"]
+    selected = resync_best(
+        store.search_dir(key), journal, higher_is_better, selection_mode, output_artifacts
+    )
     outcome = f"pruned {', '.join(pruned)}"
     outcome += f"; best/ now {selected}" if selected else "; best/ reverted to baseline"
     return outcome

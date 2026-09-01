@@ -443,6 +443,7 @@ class GreedySearcher:
                         self.journal,
                         self.problem.higher_is_better,
                         self.config.holdout.selection,
+                        self.problem.output_artifacts,
                     )
         if stop is not None:
             self.journal.control_event("stop", reason=stop.reason, source=stop.source)
@@ -864,7 +865,11 @@ class GreedySearcher:
         if selected is None or selected.candidate_id == self._selection_id:
             return
         self._selection_id = resync_best(
-            self.search_dir, self.journal, self.problem.higher_is_better, self.config.holdout.selection
+            self.search_dir,
+            self.journal,
+            self.problem.higher_is_better,
+            self.config.holdout.selection,
+            self.problem.output_artifacts,
         )
         scores = f"val_score={selected.val_score}"
         if selected.holdout_score is not None:
