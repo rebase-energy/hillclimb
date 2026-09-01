@@ -73,6 +73,10 @@ class Trial(BaseModel):
     # auxiliary numeric measurements the verifier wrote next to `score`
     # (feature dimensions for quality-diversity policies); never a score
     metrics: dict[str, float] = Field(default_factory=dict)
+    # per-instance validation scores from the verifier's reserved `instances`
+    # key: same metric/direction as val_score, stable keys across a search;
+    # empty when the verifier emits none (old journals replay unchanged)
+    instance_scores: dict[str, float] = Field(default_factory=dict)
     started_at: str = Field(default_factory=utcnow)
     finished_at: str | None = None
 
@@ -137,6 +141,19 @@ class Candidate(BaseModel):
             if trial.val_score is None:
                 continue
             for key, value in trial.metrics.items():
+                pooled.setdefault(key, []).append(value)
+        return {key: median(values) for key, values in pooled.items()}
+
+    @property
+    def instance_scores(self) -> dict[str, float]:
+        """Per-key MEDIAN of the scored trials' per-instance scores — the
+        same aggregate rule as val_score, so an engine's per-instance
+        frontier sees the candidate, not one noisy run."""
+        pooled: dict[str, list[float]] = {}
+        for trial in self.trials:
+            if trial.val_score is None:
+                continue
+            for key, value in trial.instance_scores.items():
                 pooled.setdefault(key, []).append(value)
         return {key: median(values) for key, values in pooled.items()}
 

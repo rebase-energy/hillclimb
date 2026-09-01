@@ -121,6 +121,9 @@ class ExecResult(BaseModel):
     # extra numeric keys the verifier wrote next to `score` (see
     # result_metrics); opaque to the engine, consumed by policies
     metrics: dict[str, float] = {}
+    # per-instance breakdown of `score` from the reserved `instances` key
+    # (see result_instances); empty when the verifier does not emit one
+    instance_scores: dict[str, float] = {}
 
     @property
     def ok(self) -> bool:
@@ -179,7 +182,7 @@ def read_result(path: Path) -> tuple[float | None, dict | None]:
     return float(payload), None
 
 
-RESERVED_RESULT_KEYS = frozenset({"score", "report"})
+RESERVED_RESULT_KEYS = frozenset({"score", "report", "instances"})
 
 
 def result_metrics(payload: dict | None) -> dict[str, float]:
@@ -192,6 +195,26 @@ def result_metrics(payload: dict | None) -> dict[str, float]:
     out: dict[str, float] = {}
     for key, value in payload.items():
         if key in RESERVED_RESULT_KEYS or isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)) and value == value:
+            out[str(key)] = float(value)
+    return out
+
+
+def result_instances(payload: dict | None) -> dict[str, float]:
+    """Per-instance scores from a result object's reserved `instances` key:
+    the breakdown of `score` over the problem's sub-instances (zones, folds,
+    test cases), in the same metric and direction as `score`. Keys must stay
+    stable across a search — engines compare candidates per key. Parsing is
+    advisory like result_metrics: a malformed value degrades to empty."""
+    if not isinstance(payload, dict):
+        return {}
+    instances = payload.get("instances")
+    if not isinstance(instances, dict):
+        return {}
+    out: dict[str, float] = {}
+    for key, value in instances.items():
+        if isinstance(value, bool):
             continue
         if isinstance(value, (int, float)) and value == value:
             out[str(key)] = float(value)
@@ -372,6 +395,7 @@ class CommandExecutor:
             # completion proof: the verifier writes it only after scoring
             submission_ok=score is not None,
             metrics=result_metrics(payload),
+            instance_scores=result_instances(payload),
         )
 
 

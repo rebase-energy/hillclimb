@@ -19,7 +19,7 @@ N = 26
 TOL = 1e-9  # numerical slack on containment/overlap
 
 
-def write_report(overall_score: float, report_error=None, zones=None) -> None:
+def write_report(overall_score: float, report_error=None, zones=None, instances=None) -> None:
     report = {
         "version": 1,
         "split": "validation",
@@ -33,6 +33,11 @@ def write_report(overall_score: float, report_error=None, zones=None) -> None:
     if zones:
         report["zones"] = zones
     payload = {"split": "validation", "score": overall_score, "report": report}
+    if instances:
+        # reserved key: per-instance breakdown of `score`, same direction —
+        # each circle's radius is one instance a search engine can compare
+        # across candidates (Pareto frontiers, per-instance views)
+        payload["instances"] = instances
     result = Path(os.environ.get("HILLCLIMB_RESULT", "eval_result.json"))
     result.write_text(json.dumps(payload, indent=2))
 
@@ -88,7 +93,8 @@ def main() -> None:
         }
         for i in weakest
     ]
-    write_report(round(float(r.sum()), 6), zones=zones)
+    instances = {f"circle-{i:02d}": round(float(r[i]), 6) for i in range(N)}
+    write_report(round(float(r.sum()), 6), zones=zones, instances=instances)
     print(f"valid packing; sum of radii = {r.sum():.6f}")
     print(f"val_score: {r.sum():.6f}")
 

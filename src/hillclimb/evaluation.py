@@ -110,6 +110,7 @@ class CandidateEvaluator:
             val_score=exec_result.val_score if exec_result.ok else None,
             report=self.read_trial_report(cwd) if exec_result.ok else None,
             metrics=exec_result.metrics if exec_result.ok else {},
+            instance_scores=exec_result.instance_scores if exec_result.ok else {},
             started_at=trial_started,
             finished_at=utcnow(),
         )
@@ -261,7 +262,7 @@ def eval_result_for(candidate: Candidate, *, feedback: str = "") -> EvalResult:
         candidate_id=candidate.candidate_id,
         score=candidate.val_score,
         valid=candidate.status == "ok",
-        instance_scores={},
+        instance_scores=dict(candidate.instance_scores),
         features=dict(candidate.metrics),
         feedback=feedback,
         trials=tuple(summarize_trial(t) for t in candidate.trials),

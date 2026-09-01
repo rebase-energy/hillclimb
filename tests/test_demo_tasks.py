@@ -56,6 +56,12 @@ def test_demo_verifiers_score_the_sample_submission(config: Config, tmp_path):
         assert result.ok, Path(result.stderr_path).read_text()[-400:]
         assert result.val_score is not None
         assert "INVALID" not in Path(result.stdout_path).read_text()
+        if problem_id == "circle-packing":
+            # reference producer of the per-instance contract: one instance
+            # per circle, and the instances decompose the score exactly
+            assert len(result.instance_scores) == 26
+            assert all(k.startswith("circle-") for k in result.instance_scores)
+            assert abs(sum(result.instance_scores.values()) - result.val_score) < 1e-4
 
 
 def test_heilbronn_convex_13_loads_and_scores_baseline(config: Config, tmp_path):
