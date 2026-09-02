@@ -1,0 +1,16 @@
+schema_version: 1
+run_ref: 20260901-192003-circle-packing/circle-packing
+problem_id: circle-packing
+family: circle-packing
+claim_ids:
+- 0c6cb5763a80
+- 1c5210483d91
+- 25ca298b6687
+- 4750660b0a28
+- 9ab8704c9d94
+- a837fd38ac2d
+- da87a4dfcdca
+- f281dcea9d6a
+reward: 0.25
+basis: prior-best
+observed_at: '2026-09-01T18:32:47.957171+00:00'

@@ -1,0 +1,109 @@
+schema_version: 1
+problem_id: circle-packing
+family: circle-packing
+target: ''
+metric: sum-radii
+higher_is_better: true
+run_ref: 20260901-192003-circle-packing/circle-packing
+finished_at: '2026-09-01T18:31:44.526353+00:00'
+budget_s: 720
+cost_usd: 1.2033
+n_candidates: 5
+n_ok: 5
+n_buggy: 0
+selected_val: 2.499998
+selected_operator: improve
+operator_stats:
+  seed:
+    attempts: 1
+    ok: 1
+    best_val: 2.158
+  improve:
+    attempts: 4
+    ok: 4
+    best_val: 2.499998
+top_approaches:
+- candidate_id: c002
+  operator: improve
+  val_score: 2.499998
+  summary: ''
+  libraries:
+  - csv
+  - scipy
+- candidate_id: c003
+  operator: improve
+  val_score: 2.499998
+  summary: ''
+  libraries:
+  - csv
+  - scipy
+- candidate_id: c004
+  operator: improve
+  val_score: 2.499998
+  summary: ''
+  libraries:
+  - csv
+  - scipy
+failure_modes: []
+claims:
+- claim_id: b5664085282c
+  subject: lp-exact-radii-for-fixed-centers
+  relation: helps
+  object: ''
+  scope:
+    family: circle-packing
+    problem_id: circle-packing
+    budget_s: 720
+  confidence: 0.85
+  evidence:
+  - c001
+  - c002
+  - c003
+  - c004
+  - c005
+  observed_at: '2026-09-01T18:31:44.515274+00:00'
+- claim_id: 74f3d919ea2c
+  subject: joint-slsqp-optimization
+  relation: helps
+  object: ''
+  scope:
+    family: circle-packing
+    problem_id: circle-packing
+    budget_s: 720
+  confidence: 0.8
+  evidence:
+  - c002
+  - c003
+  - c004
+  - c005
+  observed_at: '2026-09-01T18:31:44.515274+00:00'
+- claim_id: 4b4e73acbdd3
+  subject: analytic-constraint-jacobian
+  relation: helps
+  object: ''
+  scope:
+    family: circle-packing
+    problem_id: circle-packing
+    budget_s: 720
+  confidence: 0.8
+  evidence:
+  - c002
+  - c003
+  - c004
+  - c005
+  observed_at: '2026-09-01T18:31:44.515274+00:00'
+- claim_id: 75645150b00b
+  subject: monotonic-basin-hopping
+  relation: helps
+  object: ''
+  scope:
+    family: circle-packing
+    problem_id: circle-packing
+    budget_s: 720
+  confidence: 0.75
+  evidence:
+  - c002
+  - c003
+  - c004
+  - c005
+  observed_at: '2026-09-01T18:31:44.515274+00:00'
