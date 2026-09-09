@@ -14,6 +14,8 @@ import re
 import shlex
 import signal
 import subprocess
+import sys
+import time
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
@@ -753,3 +755,184 @@ def run_search(
         knowledge_context=knowledge_context,
         target=target,
     )
+
+
+# -- fleets: N detached engines under one run -----------------------------------
+#
+# The demo's shape and the hosted platform's: independent searches on one
+# problem, each its own engine process, sharing discoveries through the run
+# dir's live knowledge cards. Processes, not threads: status.json carries the
+# engine's pid, so two searches in one process would be indistinguishable to
+# every viewer.
+
+
+def child_launch_context(config: Config) -> tuple[Path, dict[str, str]]:
+    """(cwd, env) for a child `hillclimb run`: rooted at the hillclimb dir's
+    parent with HILLCLIMB_DIR pinned, so the child never has to search."""
+    root = config.hillclimb_dir.parent if config.hillclimb_dir else Path.cwd()
+    return root, {**os.environ, "HILLCLIMB_DIR": str(config.hillclimb_dir or root / "hillclimb")}
+
+
+def spawn_search_proc(
+    config: Config, run_dir: Path, index: int, slug: str, run_argv: list[str]
+) -> tuple[subprocess.Popen, Path]:
+    """Start a detached `hillclimb run <run_argv...>` as one search of
+    `run_dir`, logging to <run>/logs/NN-<slug>.log. The one launcher behind
+    suites, the demo and fleets. Returns (child, log path)."""
+    log_dir = run_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"{index:02d}-{slug}.log"
+    cwd, env = child_launch_context(config)
+    cmd = [sys.executable, "-m", "hillclimb.cli", "run", *run_argv]
+    with log_path.open("w") as out:
+        proc = subprocess.Popen(
+            cmd, cwd=cwd, env=env,
+            stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    return proc, log_path
+
+
+def create_problem_run(config: Config, run_name: str, target: str, problem_id: str) -> Path:
+    """A new run dir + run.yaml for searches on one problem."""
+    run_id = new_run_id(run_name)
+    return create_run(
+        config,
+        RunMeta(run_id=run_id, name=run_name, kind="problem", target=target, problem_ids=[problem_id]),
+    )
+
+
+def fleet_argv(
+    target: str,
+    run_dir: Path,
+    run_name: str,
+    *,
+    budget: int | str | None = None,
+    backend: str | None = None,
+    model: str | None = None,
+    policy: str | None = None,
+    parallel_operators: int | None = None,
+    n_trials: int | None = None,
+    holdout: bool = True,
+    learning: bool = True,
+    seed_from: Path | str | None = None,
+    knowledge_context_file: Path | str | None = None,
+    overrides: list[str] | tuple[str, ...] = (),
+) -> list[str]:
+    """The `hillclimb run` arguments every engine of a fleet is started with.
+    `budget` is the CLI's wall-clock spelling (`2h`, `30m`) or plain seconds."""
+    argv = [target, "--run-id", run_dir.name, "--run-name", run_name]
+    if budget:
+        argv += ["--budget", f"{budget}s" if isinstance(budget, int) else str(budget)]
+    if backend:
+        argv += ["--backend", backend]
+    if model:
+        argv += ["--model", model]
+    if policy:
+        argv += ["--policy", policy]
+    if parallel_operators is not None:
+        argv += ["--parallel-operators", str(parallel_operators)]
+    if n_trials is not None:
+        argv += ["--n-trials", str(n_trials)]
+    if not holdout:
+        argv.append("--no-holdout")
+    if not learning:
+        argv.append("--no-learning")
+    if seed_from:
+        argv += ["--seed-from", str(seed_from)]
+    if knowledge_context_file:
+        argv += ["--knowledge-context-file", str(knowledge_context_file)]
+    for pair in overrides:
+        argv += ["--set", pair]
+    return argv
+
+
+@dataclass
+class FleetHandle:
+    """The engines of one fleet run. `wait` reaps them; exit codes follow the
+    CLI's contract (0 done, 2 parked/stopped, anything else failed)."""
+
+    run_dir: Path
+    procs: list[subprocess.Popen]
+    log_paths: list[Path]
+
+    @property
+    def run_id(self) -> str:
+        return self.run_dir.name
+
+    def alive(self) -> list[subprocess.Popen]:
+        return [proc for proc in self.procs if proc.poll() is None]
+
+    def wait(self, *, poll_s: float = 5.0, deadline_s: float | None = None) -> dict[int, int | None]:
+        """Block until every engine has exited, or `deadline_s` seconds have
+        passed. Returns pid -> exit code (None for engines still running)."""
+        started = time.monotonic()
+        while self.alive():
+            if deadline_s is not None and time.monotonic() - started >= deadline_s:
+                break
+            time.sleep(poll_s)
+        return {proc.pid: proc.poll() for proc in self.procs}
+
+    def terminate(self, *, grace_s: float = 10.0) -> None:
+        """SIGTERM every engine's process group (the engine parks its search
+        on SIGTERM), then SIGKILL whatever is still alive after `grace_s`."""
+        for proc in self.alive():
+            _signal_group(proc, signal.SIGTERM)
+        deadline = time.monotonic() + grace_s
+        while self.alive() and time.monotonic() < deadline:
+            time.sleep(0.2)
+        for proc in self.alive():
+            _signal_group(proc, signal.SIGKILL)
+
+
+def _signal_group(proc: subprocess.Popen, sig: int) -> None:
+    try:
+        os.killpg(proc.pid, sig)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        proc.send_signal(sig)
+
+
+def run_fleet(
+    target: str,
+    *,
+    config: Config,
+    parallel_searches: int,
+    run_name: str | None = None,
+    budget: int | str | None = None,
+    backend: str | None = None,
+    model: str | None = None,
+    policy: str | None = None,
+    parallel_operators: int | None = None,
+    n_trials: int | None = None,
+    holdout: bool = True,
+    learning: bool = True,
+    seed_from: Path | str | None = None,
+    knowledge_context_file: Path | str | None = None,
+    overrides: list[str] | tuple[str, ...] = (),
+    log: Log = print,
+) -> FleetHandle:
+    """N independent searches on one problem, each its own detached engine
+    under one run. Builds the solution venv once first so the engines do not
+    race for it. Returns immediately; `FleetHandle.wait` reaps the engines."""
+    if parallel_searches < 1:
+        raise ValueError("parallel_searches must be >= 1")
+    problem = load_problem(target, config)
+    ensure_runtime_venv(config, problem.runtime, log=log, requirements=problem.requirements_file)
+    name = run_name or problem.problem_id
+    run_dir = create_problem_run(config, name, target, problem.problem_id)
+    argv = fleet_argv(
+        target, run_dir, name,
+        budget=budget, backend=backend, model=model, policy=policy,
+        parallel_operators=parallel_operators, n_trials=n_trials, holdout=holdout,
+        learning=learning, seed_from=seed_from, knowledge_context_file=knowledge_context_file,
+        overrides=overrides,
+    )
+    procs: list[subprocess.Popen] = []
+    log_paths: list[Path] = []
+    for index in range(1, parallel_searches + 1):
+        proc, log_path = spawn_search_proc(config, run_dir, index, problem.problem_id, argv)
+        procs.append(proc)
+        log_paths.append(log_path)
+    return FleetHandle(run_dir=run_dir, procs=procs, log_paths=log_paths)

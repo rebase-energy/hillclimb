@@ -137,18 +137,30 @@ def effective_state(search_dir: Path) -> str:
     return derive_state(read_status(search_dir))
 
 
+REMOTE_STATE_ENV = "HILLCLIMB_REMOTE_STATE"
+
+
+def remote_state() -> bool:
+    """True when the records being read were written on another machine
+    (a mirror of a hosted search): the engine's pid means nothing here, so
+    liveness rests on the heartbeat alone. Read per call so a viewer can be
+    switched by its launcher without an import-order dance."""
+    return os.environ.get(REMOTE_STATE_ENV) == "1"
+
+
 def derive_state(status: SearchStatus | None) -> str:
     """What a reader should believe about a search from its last status record.
 
     `running` requires the engine's own claim AND a live pid AND a fresh
     heartbeat (defends against PID reuse); otherwise the search `crashed`.
-    Searches with no status record yet report `unknown`.
+    Searches with no status record yet report `unknown`. Under
+    `HILLCLIMB_REMOTE_STATE=1` the pid check is skipped (see `remote_state`).
     """
     if status is None:
         return "unknown"
     if status.state != "running":
         return status.state
-    if not pid_alive(status.pid):
+    if not remote_state() and not pid_alive(status.pid):
         return "crashed"
     try:
         stale_after = status.heartbeat_interval_s * STALE_FACTOR

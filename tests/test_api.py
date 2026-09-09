@@ -169,3 +169,61 @@ def test_evaluator_baseline_placeholder_and_scored(config, tmp_path):
     assert scored.val_score == 0.25
     assert scored.is_best
     assert (search_dir / "best" / "solution.py").exists()
+
+
+def test_fleet_argv_carries_every_engine_option(tmp_path):
+    from hillclimb.api import fleet_argv
+
+    run_dir = tmp_path / "runs" / "20260909-120000-solar"
+    argv = fleet_argv(
+        "emflow://gefcom2014:solar", run_dir, "solar",
+        budget=900, backend="dummy", model="sonnet", policy="gepa", parallel_operators=2,
+        n_trials=3, holdout=False, learning=False, seed_from=tmp_path / "seed.py",
+        knowledge_context_file=tmp_path / "kc.md", overrides=["search.num_drafts=2"],
+    )
+    assert argv[:5] == ["emflow://gefcom2014:solar", "--run-id", run_dir.name, "--run-name", "solar"]
+    assert argv[argv.index("--budget") + 1] == "900s"
+    assert fleet_argv("cp", run_dir, "cp", budget="2h")[-1] == "2h"
+    assert argv[argv.index("--policy") + 1] == "gepa"
+    assert argv[argv.index("--parallel-operators") + 1] == "2"
+    assert "--no-holdout" in argv and "--no-learning" in argv
+    assert argv[argv.index("--seed-from") + 1] == str(tmp_path / "seed.py")
+    assert argv[argv.index("--knowledge-context-file") + 1] == str(tmp_path / "kc.md")
+    assert argv[-2:] == ["--set", "search.num_drafts=2"]
+    # defaults add nothing beyond the run identity
+    assert fleet_argv("circle-packing", run_dir, "cp") == ["circle-packing", "--run-id", run_dir.name, "--run-name", "cp"]
+
+
+def test_run_fleet_spawns_one_engine_per_search(config, monkeypatch):
+    """run_fleet writes run.yaml once, builds the venv once, and starts N
+    detached engines with identical argv; the handle reaps them."""
+    import hillclimb.api as api
+
+    venv_calls: list[str] = []
+    monkeypatch.setattr(api, "ensure_runtime_venv", lambda cfg, kind, log=print, requirements=None: venv_calls.append(kind))
+    spawned: list[tuple[int, str, list[str]]] = []
+
+    class FakeProc:
+        def __init__(self, pid):
+            self.pid = pid
+            self._polls = 0
+
+        def poll(self):
+            self._polls += 1
+            return None if self._polls < 2 else 0
+
+    def fake_spawn(cfg, run_dir, index, slug, argv):
+        spawned.append((index, slug, argv))
+        return FakeProc(1000 + index), run_dir / "logs" / f"{index:02d}-{slug}.log"
+
+    monkeypatch.setattr(api, "spawn_search_proc", fake_spawn)
+
+    fleet = api.run_fleet("circle-packing", config=config, parallel_searches=3, budget="1m", backend="dummy")
+
+    assert venv_calls == ["evaluator"] or len(venv_calls) == 1
+    assert load_run_meta(fleet.run_dir) is not None
+    assert [index for index, _, _ in spawned] == [1, 2, 3]
+    assert len({tuple(argv) for _, _, argv in spawned}) == 1
+    assert spawned[0][2][1:3] == ["--run-id", fleet.run_id]
+    assert fleet.wait(poll_s=0) == {1001: 0, 1002: 0, 1003: 0}
+    assert fleet.alive() == []

@@ -362,7 +362,7 @@ class TestCli:
         config.paths.problems_dir = tmp_path / "problems"
         seen = {}
 
-        def fake_execute(config_arg, problem_arg, search_dir, budget, seed_from=None):
+        def fake_execute(config_arg, problem_arg, search_dir, budget, seed_from=None, knowledge_context=None):
             seen["config"] = config_arg
             seen["search_dir"] = search_dir
 

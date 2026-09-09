@@ -19,6 +19,8 @@ import typer.core
 import typer.rich_utils
 
 from hillclimb.api import (
+    child_launch_context,
+    create_problem_run,
     create_run,
     create_search,
     build_executor,
@@ -27,6 +29,8 @@ from hillclimb.api import (
     execute_search,
     new_run_id,
     resume_spent_seconds,
+    run_fleet,
+    spawn_search_proc,
 )
 from hillclimb.backends import get_backend
 from hillclimb.budget import BudgetManager
@@ -1174,38 +1178,26 @@ def resolve_search_dir(config: Config, ref: str | None) -> Path:
     return open_search(config, ref)[1].search_dir
 
 
-def _child_launch_context(config: Config) -> tuple[Path, dict]:
-    """(cwd, env) for a child `hillclimb run`: rooted at the hillclimb dir's
-    parent with HILLCLIMB_DIR pinned, so the child never has to search."""
-    root = config.hillclimb_dir.parent if config.hillclimb_dir else Path.cwd()
-    return root, {**os.environ, "HILLCLIMB_DIR": str(config.hillclimb_dir or root / "hillclimb")}
+# The child-engine launcher lives in api.py (hosted runs use it too); these
+# names stay for the call sites in this module.
+_child_launch_context = child_launch_context
+_spawn_search_proc = spawn_search_proc
+_create_problem_run = create_problem_run
 
 
 def _spawn_search(config: Config, run_dir: Path, index: int, slug: str, run_argv: list[str]) -> tuple[int, Path]:
-    """Start a detached `hillclimb run <run_argv...>` as one search of
-    `run_dir`, logging to <run>/logs/NN-<slug>.log. The one launcher behind
-    suites and the demo. Returns (pid, log path)."""
-    log_dir = run_dir / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"{index:02d}-{slug}.log"
-    cwd, env = _child_launch_context(config)
-    cmd = [sys.executable, "-m", "hillclimb.cli", "run", *run_argv]
-    with log_path.open("w") as out:
-        proc = subprocess.Popen(
-            cmd, cwd=cwd, env=env,
-            stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
+    """`api.spawn_search_proc` for launchers that only keep the pid."""
+    proc, log_path = _spawn_search_proc(config, run_dir, index, slug, run_argv)
     return proc.pid, log_path
 
 
-def _create_problem_run(config: Config, run_name: str, target: str, problem_id: str) -> Path:
-    """A new run dir + run.yaml for searches on one problem."""
-    run_id = new_run_id(run_name)
-    return create_run(
-        config,
-        RunMeta(run_id=run_id, name=run_name, kind="problem", target=target, problem_ids=[problem_id]),
-    )
+def _read_knowledge_context(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    try:
+        return path.read_text() or None
+    except OSError as exc:
+        raise typer.BadParameter(f"--knowledge-context-file: {exc}") from exc
 
 
 def _execute(
@@ -1214,9 +1206,13 @@ def _execute(
     search_dir: Path,
     budget: BudgetManager,
     seed_from: Path | None = None,
+    knowledge_context: str | None = None,
 ) -> None:
     """CLI shell over api.execute_search: messages + exit codes."""
-    outcome = execute_search(config, problem, search_dir, budget, log=typer.echo, seed_from=seed_from)
+    outcome = execute_search(
+        config, problem, search_dir, budget, log=typer.echo, seed_from=seed_from,
+        knowledge_context=knowledge_context,
+    )
     ref = outcome.ref
     if outcome.state == "parked":
         typer.echo(f"\nParked: {outcome.error}")
@@ -1255,6 +1251,7 @@ def _run_problem(
     arm: str | None = None,
     repeat: int = 0,
     arm_overrides: dict | None = None,
+    knowledge_context: str | None = None,
 ) -> None:
     if arm_overrides:
         try:
@@ -1284,6 +1281,7 @@ def _run_problem(
         config, problem, search_dir,
         BudgetManager(total_s, config.budget.stop_margin_s),
         seed_from=seed_from,
+        knowledge_context=knowledge_context,
     )
 
 
@@ -1414,6 +1412,10 @@ def run(
     repeat: int = typer.Option(0, "--repeat", hidden=True),
     run_id: str = typer.Option(None, "--run-id", hidden=True),
     run_name: str = typer.Option(None, "--run-name", hidden=True),
+    knowledge_context_file: Path = typer.Option(
+        None, "--knowledge-context-file", hidden=True,
+        help="Pre-built knowledge context (markdown) injected into every operator prompt",
+    ),
 ):
     """Start a run on a problem or a run-spec YAML."""
     config = load_config(backend=backend, model=model)
@@ -1439,12 +1441,13 @@ def run(
         )
         return
     if parallel_searches > 1:
-        if experiment or run_id or seed_from:
-            raise typer.BadParameter("--parallel-searches does not combine with --experiment/--seed-from")
+        if experiment or run_id:
+            raise typer.BadParameter("--parallel-searches does not combine with --experiment/--run-id")
         _run_problem_fleet(
             target, config, budget, parallel_searches, name,
             backend=backend, model=model, policy=policy, parallel_operators=parallel_operators,
             n_trials=n_trials, holdout=holdout, learning=learning, set_=set_ or [],
+            seed_from=seed_from, knowledge_context_file=knowledge_context_file,
         )
         return
     _run_problem(
@@ -1458,6 +1461,7 @@ def run(
         arm=arm,
         repeat=repeat,
         arm_overrides=overrides,
+        knowledge_context=_read_knowledge_context(knowledge_context_file),
     )
 
 
@@ -1476,41 +1480,29 @@ def _run_problem_fleet(
     holdout: bool,
     learning: bool,
     set_: list[str],
+    seed_from: Path | None = None,
+    knowledge_context_file: Path | None = None,
 ) -> Path:
-    """N independent searches on one problem, each its own detached engine
-    under one run (the demo's shape). Builds the solution venv once first so
-    the engines do not race for it. Returns the run dir."""
-    problem = load_problem(target, config)
-    ensure_runtime_venv(config, problem.runtime, log=typer.echo, requirements=problem.requirements_file)
-    run_name = name or problem.problem_id
-    run_dir = _create_problem_run(config, run_name, target, problem.problem_id)
-    argv = [target, "--run-id", run_dir.name, "--run-name", run_name]
-    if budget:
-        argv += ["--budget", budget]
-    if backend:
-        argv += ["--backend", backend]
-    if model:
-        argv += ["--model", model]
-    if policy:
-        argv += ["--policy", policy]
-    if parallel_operators is not None:
-        argv += ["--parallel-operators", str(parallel_operators)]
-    if n_trials is not None:
-        argv += ["--n-trials", str(n_trials)]
-    if not holdout:
-        argv.append("--no-holdout")
-    if not learning:
-        argv.append("--no-learning")
-    for pair in set_:
-        argv += ["--set", pair]
-    for index in range(1, parallel_searches + 1):
-        _spawn_search(config, run_dir, index, problem.problem_id, argv)
+    """CLI shell over api.run_fleet: N independent searches on one problem,
+    each its own detached engine under one run. Returns the run dir."""
+    fleet = run_fleet(
+        target,
+        config=config,
+        parallel_searches=parallel_searches,
+        run_name=name,
+        budget=budget,
+        backend=backend, model=model, policy=policy,
+        parallel_operators=parallel_operators, n_trials=n_trials,
+        holdout=holdout, learning=learning, seed_from=seed_from,
+        knowledge_context_file=knowledge_context_file, overrides=set_,
+        log=typer.echo,
+    )
     operators = parallel_operators if parallel_operators is not None else config.search.parallel_operators
     typer.echo(
-        f"Run {run_dir.name}: {parallel_searches} searches x {operators} operators "
-        f"running in the background; engine logs in {run_dir / 'logs'}"
+        f"Run {fleet.run_id}: {parallel_searches} searches x {operators} operators "
+        f"running in the background; engine logs in {fleet.run_dir / 'logs'}"
     )
-    return run_dir
+    return fleet.run_dir
 
 
 def _parse_set(pairs: list[str]) -> dict:

@@ -62,6 +62,18 @@ def test_effective_state_crashed_dead_pid(tmp_path: Path):
     assert effective_state(tmp_path) == "crashed"
 
 
+def test_effective_state_remote_ignores_pid(tmp_path: Path, monkeypatch):
+    """A mirrored status.json carries the hosted engine's pid: meaningless
+    locally, so the heartbeat alone decides under HILLCLIMB_REMOTE_STATE=1."""
+    write_status(tmp_path, SearchStatus(search_id="s", state="running", pid=DEAD_PID))
+    monkeypatch.setenv("HILLCLIMB_REMOTE_STATE", "1")
+    assert effective_state(tmp_path) == "running"
+    stale = SearchStatus(search_id="s", state="running", pid=DEAD_PID)
+    stale.updated_at = iso_ago(600)
+    write_status(tmp_path, stale)
+    assert effective_state(tmp_path) == "crashed"
+
+
 def test_effective_state_crashed_stale_heartbeat(tmp_path: Path):
     status = SearchStatus(search_id="s", state="running", pid=os.getpid())
     status.updated_at = iso_ago(600)
