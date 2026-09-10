@@ -19,7 +19,12 @@ A problem **is its verifier**: `problems/<id>/verifier.sh` is the only process
 the engine starts. It drives `solution.py` and writes the score to
 `$HILLCLIMB_RESULT` (a `{"score": …}` object or a bare number; other numeric
 keys are journaled as `Trial.metrics` — feature dimensions for policies,
-never a score); exit 0 means valid. `holdout: true` in `problem.yaml` makes the engine run the same script
+never a score); exit 0 means valid. A trial the engine kills under a
+timeout clamped by the search's *remaining budget* is journaled `abandoned`
+("cut off at the budget wall"), never `buggy`: only a non-zero exit or the
+problem's own `exec_timeout_s` makes a candidate buggy and thus a debug
+target (`watch` colours the candidates cell red/yellow/green on
+buggy/abandoned/clean). `holdout: true` in `problem.yaml` makes the engine run the same script
 with `--holdout` in a directory agents never see. Providers (`emflow://`,
 `mlebench://`) supply their own argv for the same contract. Never read a score
 off stdout — agent code shares that stream.
@@ -94,16 +99,32 @@ shim).
   reserved `instances` key next to `score` (per-instance breakdown, stable
   keys → `Trial.instance_scores`, median-aggregated) — GEPA's Pareto
   frontier and future QD engines consume it; circle-packing is the
-  reference producer
+  reference producer, and the emflow eval runner emits one instance per
+  scored origin (`<asof>/<zone>`, GEFCom2014's task x zone); a candidate
+  may miss keys (failed instances), never introduce new ones
 - Experiments (`experiment.py`): a spec (`hillclimb/experiments/<name>.yaml`)
   is problems × named arms (dotted config overrides, `Config.apply_overrides`)
   × repeats; searches are tagged in `SearchMeta` (`experiment`, `arm`,
   `repeat`, `arm_overrides`) and the report groups on those tags through the
   store — the first arm is the control, gaps are paired by repeat and judged
   against the spec's `noise_floor`. Sequential schedule (repeat-major, arms
-  round-robin) is mandatory when an arm touches shared state (memory)
+  round-robin) is mandatory when an arm touches shared state (memory);
+  otherwise `schedule: parallel` + `max_concurrent: N` (or
+  `--max-concurrent N`) — unbounded parallel starts every search at once and
+  the ones past the machine's operator slots burn their budget in
+  `waiting-slot`. `--run-id R --first-repeat K` appends repeats to a finished
+  run. `SearchMeta.seed_sha256` records the seed each search started from.
+  `problems/make_heilbronn.py` stamps the heilbronn difficulty ladder
+  (11/14/17; committed dirs must match the generator — `tests/test_heilbronn_ladder.py`)
 - CLI: `uv run hillclimb --help` (engine); live TUIs: `watch` (agents; `watch candidates` jumps to a search),
-  `chart` (best score vs time per search; `--detail`/`d` overlays one search's
+  `chart` (best score vs time per search; a bare `chart` on a folder with
+  several run×problem pairs opens `ChartPickerScreen` first — enter opens,
+  esc pops back; `watch` pushes the same `ChartScreen` with `c` via
+  `watch.push_chart`; `chart_index` is the pure row builder; an experiment
+  anchor confines the chart to its own run (`chart_run_scope`) so two runs
+  of one experiment never overlay each other's `arm rN`, while a plain
+  problem still folds every run into one climb;
+  `--detail`/`d` overlays one search's
   exploration tree on the curve), `tree` (one search's exploration tree —
   `tree.py` is the pure layout + fates, `treeview.py` the plotui screen with a
   face-on locked camera), `surface` (one search's candidates on the problem's
@@ -115,12 +136,19 @@ shim).
   surface from underneath; no landscape = prints why and returns;
   `problems/fitness-landscape/` is the reference problem), `similarity` (one
   search's candidates as a 3D scatter at behavioral/structural/lineage
-  distance from a reference — baseline by default, `c` toggles the current
-  champion — coloured by score rank; distances are derived at render time
-  from existing artifacts (submission.csv or trial-0's evaluator report,
-  solution.py tokens, parent chains) and NEVER stored; `similarity.py` pure
-  layer with fingerprint caches, `similarityview.py` the screen; no usable
-  reference = prints why and returns), `graph` (knowledge graph)
+  distance from a reference — the seed (else baseline) by default, `c`
+  toggles the current champion — coloured by score rank; distances are
+  derived at render time from existing artifacts (the problem's optional
+  `fingerprint.py` — `fingerprint(candidate_dir) -> vector`, picked up by
+  default like `landscape.py`, for outputs with equivalences the flat file
+  misses — else submission.csv or trial-0's evaluator report, solution.py
+  tokens, parent chains) and NEVER stored; an experiment arm opens the
+  **run scope** instead (`build_run_similarity`: every search of the problem
+  in the run, each measured from its own copy of the shared seed, ids
+  `<search>/<cid>`, coloured by arm with the chart's palette, `--single`
+  opts out); `similarity.py` pure layer with fingerprint caches,
+  `similarityview.py` the screens; no usable reference = prints why and
+  returns), `graph` (knowledge graph)
 - `hillclimb demo`: zero-setup demo (N parallel detached `hillclimb run`s, `stop --all` ends it) — bundled circle-packing problem in
   `src/hillclimb/demo/` (package data, a copy of `problems/circle-packing`
   with a lean `requirements.txt`); keep the two in sync
@@ -161,4 +189,8 @@ source, run `uv sync --reinstall-package plotui` here (uv won't notice `.rs`
 changes on its own). Never override PlotWidget's Textual `on_*` handlers in
 subclasses — Textual dispatches them per MRO class (both run); hook the
 `apply_zoom/apply_rotate/apply_pan/apply_reset/on_click_at` primitives
-instead.
+instead. Direct mode (iTerm2) double-buffers frames across two Kitty image
+ids, so anything that hides or covers a plot must emit
+`PlotWidget.kitty_cleanup()` (both ids), never `Plot.kitty_cleanup()` alone.
+Chart traces are always named; `show_legend=False` flips plotui's
+`legend_visible` instead so the hover readout keeps the series names.

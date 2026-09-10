@@ -3,6 +3,8 @@ and a scripted custom policy driving the harness end-to-end."""
 
 from __future__ import annotations
 
+from tests.factories import trial as mk_trial
+
 import sys
 from pathlib import Path
 
@@ -10,7 +12,7 @@ import pytest
 
 from hillclimb.backends.fake import FakeBackend
 from hillclimb.budget import BudgetManager
-from hillclimb.candidate import Candidate, Trial
+from hillclimb.candidate import Candidate
 from tests.conftest import local_executor
 from hillclimb.journal import Journal
 from hillclimb.policies import get_policy
@@ -58,7 +60,7 @@ def add_candidate(
         (ws / "solution.py").write_text(solution)
         candidate_dir = str(ws)
     trials = (
-        [Trial(val_score=val_score, submission_ok=True)] if val_score is not None else []
+        [mk_trial(val_score=val_score, submission_ok=True)] if val_score is not None else []
     )
     candidate = Candidate(
         candidate_id=candidate_id,

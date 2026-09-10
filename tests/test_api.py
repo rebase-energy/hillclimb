@@ -178,7 +178,7 @@ def test_fleet_argv_carries_every_engine_option(tmp_path):
     argv = fleet_argv(
         "emflow://gefcom2014:solar", run_dir, "solar",
         budget=900, backend="dummy", model="sonnet", policy="gepa", parallel_operators=2,
-        n_trials=3, holdout=False, learning=False, seed_from=tmp_path / "seed.py",
+        n_replicates=3, holdout=False, learning=False, seed_from=tmp_path / "seed.py",
         knowledge_context_file=tmp_path / "kc.md", overrides=["search.num_drafts=2"],
     )
     assert argv[:5] == ["emflow://gefcom2014:solar", "--run-id", run_dir.name, "--run-name", "solar"]
@@ -227,3 +227,91 @@ def test_run_fleet_spawns_one_engine_per_search(config, monkeypatch):
     assert spawned[0][2][1:3] == ["--run-id", fleet.run_id]
     assert fleet.wait(poll_s=0) == {1001: 0, 1002: 0, 1003: 0}
     assert fleet.alive() == []
+
+
+def test_mixed_fleet_names_arms_after_policies_and_repeats_them():
+    from hillclimb.api import FleetEngine, mixed_fleet
+
+    engines = mixed_fleet(["greedy", "openevolve", "gepa"], arm_overrides={"gepa": ["search.parallel_operators=1"]})
+    assert engines == [
+        FleetEngine(arm="greedy", policy="greedy"),
+        FleetEngine(arm="openevolve", policy="openevolve"),
+        FleetEngine(arm="gepa", policy="gepa", overrides=("search.parallel_operators=1",)),
+    ]
+    # a repeated policy is a second arm; repeats clone every arm, repeat-major
+    twice = mixed_fleet(["greedy", "greedy"], repeats=2)
+    assert [(e.arm, e.repeat) for e in twice] == [("greedy", 1), ("greedy-2", 1), ("greedy", 2), ("greedy-2", 2)]
+    with pytest.raises(ValueError, match="unknown arm"):
+        mixed_fleet(["greedy", "gepa"], arm_overrides={"openevolve": ["x=1"]})
+    with pytest.raises(ValueError, match="at least one policy"):
+        mixed_fleet([])
+
+
+def test_fleet_argv_tags_an_arm(tmp_path):
+    from hillclimb.api import fleet_argv
+
+    run_dir = tmp_path / "runs" / "20260910-120000-cp"
+    argv = fleet_argv("circle-packing", run_dir, "cp", experiment="exp", arm="gepa", repeat=2, policy="gepa")
+    assert argv[:9] == [
+        "circle-packing", "--run-id", run_dir.name, "--run-name", "cp", "--experiment", "exp", "--arm", "gepa",
+    ]
+    assert argv[argv.index("--repeat") + 1] == "2"
+    assert "--repeat" not in fleet_argv("circle-packing", run_dir, "cp", experiment="exp", arm="greedy")
+
+
+def test_run_fleet_mixed_engines_get_their_own_policy_and_overrides(config, monkeypatch):
+    """A mixed fleet spawns one engine per FleetEngine: the fleet-wide
+    arguments, then the engine's policy and its overrides after the shared
+    ones, tagged as an arm of the run so `experiment report` compares them."""
+    import hillclimb.api as api
+
+    monkeypatch.setattr(api, "ensure_runtime_venv", lambda cfg, kind, log=print, requirements=None: None)
+    spawned: list[tuple[int, str, list[str]]] = []
+
+    class FakeProc:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def poll(self):
+            return 0
+
+    def fake_spawn(cfg, run_dir, index, slug, argv):
+        spawned.append((index, slug, argv))
+        return FakeProc(1000 + index), run_dir / "logs" / f"{index:02d}-{slug}.log"
+
+    monkeypatch.setattr(api, "spawn_search_proc", fake_spawn)
+    engines = api.mixed_fleet(
+        ["greedy", "gepa"], arm_overrides={"gepa": ["search.parallel_operators=1"]}
+    )
+
+    fleet = api.run_fleet(
+        "circle-packing", config=config, parallel_searches=7, budget="1m", backend="dummy",
+        parallel_operators=3, overrides=["learning.enabled=false"], engines=engines,
+    )
+
+    assert [(index, slug) for index, slug, _ in spawned] == [(1, "circle-packing-greedy"), (2, "circle-packing-gepa")]
+    greedy, gepa = (argv for _, _, argv in spawned)
+    for argv in (greedy, gepa):
+        assert argv[1:3] == ["--run-id", fleet.run_id]
+        assert argv[argv.index("--experiment") + 1] == fleet.run_id  # default experiment: the run id
+        assert argv[argv.index("--parallel-operators") + 1] == "3"
+        assert "--repeat" not in argv
+    assert greedy[greedy.index("--arm") + 1] == "greedy" and greedy[greedy.index("--policy") + 1] == "greedy"
+    assert gepa[gepa.index("--arm") + 1] == "gepa" and gepa[gepa.index("--policy") + 1] == "gepa"
+    sets = [argv[i + 1] for i, tok in enumerate(gepa) if tok == "--set"]
+    assert sets == ["learning.enabled=false", "search.parallel_operators=1"]  # the arm's override last, so it wins
+    assert [argv[i + 1] for i, tok in enumerate(greedy) if tok == "--set"] == ["learning.enabled=false"]
+
+    api.run_fleet(
+        "circle-packing", config=config, engines=api.mixed_fleet(["greedy", "openevolve"], repeats=2),
+        experiment="three-way",
+    )
+    tail = spawned[2:]
+    assert [slug for _, slug, _ in tail] == [
+        "circle-packing-greedy-r1", "circle-packing-openevolve-r1",
+        "circle-packing-greedy-r2", "circle-packing-openevolve-r2",
+    ]
+    assert all(argv[argv.index("--experiment") + 1] == "three-way" for _, _, argv in tail)
+    assert tail[-1][2][tail[-1][2].index("--repeat") + 1] == "2"
+    with pytest.raises(ValueError, match="at least one FleetEngine"):
+        api.run_fleet("circle-packing", config=config, engines=[])

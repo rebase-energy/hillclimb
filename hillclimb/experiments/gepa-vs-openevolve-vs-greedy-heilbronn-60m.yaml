@@ -1,0 +1,59 @@
+# Three search strategies across the Heilbronn difficulty ladder (11, 14, 17
+# points), one shared executable seed: only the optimizer varies. Learning
+# off so no arm inherits knowledge from another. The first arm (greedy) is
+# the control. Bounded parallel: 8 searches alive at once, well under the
+# machine's operator slots, so no search burns its clock in waiting-slot.
+#
+# 60m successor of gepa-vs-openevolve-vs-greedy-heilbronn: its 15m pilot
+# (run 20260904-094621) gave every arm one finished draft (4-9 min of agent
+# time each) and one budget-killed one, so no policy ever chose a "next"
+# candidate and the arms were indistinguishable by construction. Sixty
+# minutes targets >=10 scored candidates per search. The gepa arm also
+# starts on frontier_type=instance (the objective frontier aborted there).
+#
+# Run all repeats:  hillclimb experiment run gepa-vs-openevolve-vs-greedy-heilbronn-60m
+# Then recheck noise_floor against the within-arm spread across repeats.
+name: gepa-vs-openevolve-vs-greedy-heilbronn-60m
+problems: [heilbronn-11, heilbronn-14, heilbronn-17]
+seed_from: seeds/heilbronn.py
+repeats: 3
+budget: 60m
+schedule: parallel
+max_concurrent: 8
+# the scorer is deterministic, so this is agent variance: ~5% of the best
+# known value per level, to be revisited against the pilot's spread
+noise_floor:
+  heilbronn-11: 0.002
+  heilbronn-14: 0.0012
+  heilbronn-17: 0.0008
+
+defaults:
+  backend: claude-code
+  model: claude-opus-5
+  learning.enabled: false
+  search.parallel_operators: 1
+  search.n_replicates: 1
+
+arms:
+  greedy:
+    search.policy: greedy
+    search.policy_params: {}
+
+  openevolve:
+    search.policy: openevolve
+    search.policy_params:
+      random_seed: 42
+
+  gepa:
+    search.policy: gepa
+    search.policy_params:
+      # the heilbronn scorer emits no per-instance breakdown, so the
+      # instance frontier degenerates to the aggregate score and metric
+      # calls count per search: 60 is far beyond what a 15m clock allows,
+      # the wall clock binds first
+      max_metric_calls: 60
+      candidate_selection_strategy: pareto
+      frontier_type: instance
+      cache_evaluation: true
+      use_merge: false
+      seed: 42

@@ -20,7 +20,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Mapping, Sequence
 
 from hillclimb.backends import get_backend
 from hillclimb.budget import BudgetManager
@@ -219,7 +219,8 @@ def spent_seconds(journal: Journal) -> float:
     fallback — under parallel workers this overcounts wall-clock; prefer
     resume_spent_seconds."""
     return sum(
-        (c.backend.agent_duration_s or 0) + sum(t.duration_s or 0 for t in c.trials)
+        (c.backend.agent_duration_s or 0)
+        + sum(r.duration_s or 0 for t in c.trials for r in t.replicates)
         for c in journal.candidates.values()
     )
 
@@ -233,6 +234,17 @@ def resume_spent_seconds(status, journal: Journal) -> float:
     if status is not None and status.budget.total_s > 0:
         return status.budget.spent_s
     return spent_seconds(journal)
+
+
+def _sha256(path: Path) -> str | None:
+    """Hex digest of a file's bytes; None when it cannot be read (the seed
+    is validated later, where a missing file is a proper error)."""
+    import hashlib
+
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return None
 
 
 def create_run(config: Config, meta: RunMeta) -> Path:
@@ -279,6 +291,7 @@ def create_search(
             budget_s=total_s,
             holdout_enabled=config.holdout.enabled and problem.holdout_cmd is not None,
             seed_from=str(seed_from) if seed_from else None,
+            seed_sha256=_sha256(seed_from) if seed_from else None,
             learning_enabled=config.learning.enabled,
             experiment=experiment,
             arm=arm,
@@ -655,7 +668,7 @@ def _official_verify(
             Path(selected.candidate_dir),
             search_dir / "holdout-eval" / "official",
             name=search_ref(search_dir),
-            n_trials=len(journal.candidates),
+            n_trials=len(journal.candidates),  # emflow metadata: candidates tried, not replicates
             timeout_s=config.budget.exec_timeout_s,
             log=log,
         )
@@ -812,16 +825,25 @@ def fleet_argv(
     model: str | None = None,
     policy: str | None = None,
     parallel_operators: int | None = None,
-    n_trials: int | None = None,
+    n_replicates: int | None = None,
     holdout: bool = True,
     learning: bool = True,
     seed_from: Path | str | None = None,
     knowledge_context_file: Path | str | None = None,
     overrides: list[str] | tuple[str, ...] = (),
+    experiment: str | None = None,
+    arm: str | None = None,
+    repeat: int = 0,
 ) -> list[str]:
-    """The `hillclimb run` arguments every engine of a fleet is started with.
-    `budget` is the CLI's wall-clock spelling (`2h`, `30m`) or plain seconds."""
+    """The `hillclimb run` arguments an engine of a fleet is started with.
+    `budget` is the CLI's wall-clock spelling (`2h`, `30m`) or plain seconds.
+    `experiment`/`arm` tag the search as one arm of a mixed fleet (see
+    `FleetEngine`), so `hillclimb experiment report` compares the arms."""
     argv = [target, "--run-id", run_dir.name, "--run-name", run_name]
+    if experiment:
+        argv += ["--experiment", experiment, "--arm", arm or experiment]
+        if repeat:
+            argv += ["--repeat", str(repeat)]
     if budget:
         argv += ["--budget", f"{budget}s" if isinstance(budget, int) else str(budget)]
     if backend:
@@ -832,8 +854,8 @@ def fleet_argv(
         argv += ["--policy", policy]
     if parallel_operators is not None:
         argv += ["--parallel-operators", str(parallel_operators)]
-    if n_trials is not None:
-        argv += ["--n-trials", str(n_trials)]
+    if n_replicates is not None:
+        argv += ["--n-replicates", str(n_replicates)]
     if not holdout:
         argv.append("--no-holdout")
     if not learning:
@@ -845,6 +867,54 @@ def fleet_argv(
     for pair in overrides:
         argv += ["--set", pair]
     return argv
+
+
+@dataclass(frozen=True)
+class FleetEngine:
+    """One engine of a mixed fleet: the arm it is tagged as, the policy it
+    runs, and the `--set` overrides that apply to this engine only (after the
+    fleet-wide ones, so they win). `policy=None` keeps the fleet-wide policy.
+    Overrides are the one per-arm knob — `search.parallel_operators=1` for a
+    serial engine like GEPA, `search.policy_params.seed=7`, anything
+    `Config.apply_overrides` accepts."""
+
+    arm: str
+    policy: str | None = None
+    overrides: tuple[str, ...] = ()
+    repeat: int = 0
+
+
+def mixed_fleet(
+    policies: Sequence[str],
+    *,
+    repeats: int = 1,
+    arm_overrides: Mapping[str, Sequence[str]] | None = None,
+) -> list[FleetEngine]:
+    """The engines of a fleet that runs one search per policy on the same
+    problem. Arms are named after their policy (a repeated policy gets a
+    `-2`, `-3` suffix); `repeats` > 1 clones every arm that many times,
+    repeat-major so every arm has seen the same shared state when it
+    starts. `arm_overrides` maps an arm name to that arm's `--set` pairs;
+    a name that matches no arm is an error."""
+    if repeats < 1:
+        raise ValueError("repeats must be >= 1")
+    if not policies:
+        raise ValueError("a mixed fleet needs at least one policy")
+    arms: list[tuple[str, str]] = []
+    seen: dict[str, int] = {}
+    for policy in policies:
+        count = seen.get(policy, 0) + 1
+        seen[policy] = count
+        arms.append((policy if count == 1 else f"{policy}-{count}", policy))
+    overrides = {arm: tuple(pairs) for arm, pairs in (arm_overrides or {}).items()}
+    unknown = sorted(set(overrides) - {arm for arm, _ in arms})
+    if unknown:
+        raise ValueError(f"arm override for unknown arm(s) {', '.join(unknown)}; arms are {', '.join(a for a, _ in arms)}")
+    return [
+        FleetEngine(arm=arm, policy=policy, overrides=overrides.get(arm, ()), repeat=repeat if repeats > 1 else 0)
+        for repeat in range(1, repeats + 1)
+        for arm, policy in arms
+    ]
 
 
 @dataclass
@@ -898,41 +968,64 @@ def run_fleet(
     target: str,
     *,
     config: Config,
-    parallel_searches: int,
+    parallel_searches: int = 1,
     run_name: str | None = None,
     budget: int | str | None = None,
     backend: str | None = None,
     model: str | None = None,
     policy: str | None = None,
     parallel_operators: int | None = None,
-    n_trials: int | None = None,
+    n_replicates: int | None = None,
     holdout: bool = True,
     learning: bool = True,
     seed_from: Path | str | None = None,
     knowledge_context_file: Path | str | None = None,
     overrides: list[str] | tuple[str, ...] = (),
+    engines: Sequence[FleetEngine] | None = None,
+    experiment: str | None = None,
     log: Log = print,
 ) -> FleetHandle:
     """N independent searches on one problem, each its own detached engine
     under one run. Builds the solution venv once first so the engines do not
-    race for it. Returns immediately; `FleetHandle.wait` reaps the engines."""
-    if parallel_searches < 1:
+    race for it. Returns immediately; `FleetHandle.wait` reaps the engines.
+
+    Two shapes. `parallel_searches=N`: N identical engines. `engines=[...]`
+    (see `FleetEngine`, `mixed_fleet`): one engine per entry, each with its
+    own policy and overrides on top of the fleet-wide arguments, tagged as
+    an arm of `experiment` (default: the run id) so `hillclimb experiment
+    report <run-id>` compares them — three optimizers on one problem under
+    one run. `parallel_searches` is ignored when `engines` is given."""
+    if engines is not None and not engines:
+        raise ValueError("engines must hold at least one FleetEngine")
+    if engines is None and parallel_searches < 1:
         raise ValueError("parallel_searches must be >= 1")
     problem = load_problem(target, config)
     ensure_runtime_venv(config, problem.runtime, log=log, requirements=problem.requirements_file)
     name = run_name or problem.problem_id
     run_dir = create_problem_run(config, name, target, problem.problem_id)
-    argv = fleet_argv(
-        target, run_dir, name,
-        budget=budget, backend=backend, model=model, policy=policy,
-        parallel_operators=parallel_operators, n_trials=n_trials, holdout=holdout,
+    shared = dict(
+        budget=budget, backend=backend, model=model,
+        parallel_operators=parallel_operators, n_replicates=n_replicates, holdout=holdout,
         learning=learning, seed_from=seed_from, knowledge_context_file=knowledge_context_file,
-        overrides=overrides,
     )
+    plan: list[tuple[str, list[str]]] = []  # (log slug, argv) per engine
+    if engines is None:
+        argv = fleet_argv(target, run_dir, name, policy=policy, overrides=overrides, **shared)
+        plan = [(problem.problem_id, argv)] * parallel_searches
+    else:
+        experiment = experiment or run_dir.name
+        for engine in engines:
+            argv = fleet_argv(
+                target, run_dir, name, policy=engine.policy or policy,
+                overrides=(*overrides, *engine.overrides),
+                experiment=experiment, arm=engine.arm, repeat=engine.repeat, **shared,
+            )
+            slug = f"{problem.problem_id}-{engine.arm}" + (f"-r{engine.repeat}" if engine.repeat else "")
+            plan.append((slug, argv))
     procs: list[subprocess.Popen] = []
     log_paths: list[Path] = []
-    for index in range(1, parallel_searches + 1):
-        proc, log_path = spawn_search_proc(config, run_dir, index, problem.problem_id, argv)
+    for index, (slug, argv) in enumerate(plan, 1):
+        proc, log_path = spawn_search_proc(config, run_dir, index, slug, argv)
         procs.append(proc)
         log_paths.append(log_path)
     return FleetHandle(run_dir=run_dir, procs=procs, log_paths=log_paths)

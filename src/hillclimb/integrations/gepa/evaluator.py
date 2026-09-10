@@ -126,7 +126,7 @@ class GEPAEvaluatorBridge:
         self.on_phase(candidate_id, "exec")
         try:
             exec_timeout = self.config.budget.exec_timeout_s
-            all_ok = self.evaluator.run_trials(
+            _, all_ok = self.evaluator.run_trial(
                 candidate, candidate_dir / COMPONENT, candidate_dir, exec_timeout
             )
             self._commit(candidate, all_ok)  # fitness from PRIOR candidates' floor
@@ -161,19 +161,23 @@ class GEPAEvaluatorBridge:
                 self._min_valid_fitness = fitness
 
     def _check_instance_keys(self, result: EvalResult) -> None:
+        """The instance vocabulary is fixed by the first candidate that
+        reports one. A later candidate may MISS instances — a model that
+        leaves an origin unscored (NaN) simply has no entry for it, and
+        `instance_fitness` scores that as a failure — but it may never
+        introduce a key nobody else was scored on: that is a verifier bug."""
         keys = tuple(sorted(result.instance_scores))
         if not keys:
             return  # buggy candidates and instance-less verifiers never trip this
         if self.instance_keys is None:
             self.instance_keys = keys
             return
-        if keys != self.instance_keys:
-            missing = set(self.instance_keys) - set(keys)
-            extra = set(keys) - set(self.instance_keys)
+        extra = set(keys) - set(self.instance_keys)
+        if extra:
             raise InstanceKeyMismatch(
-                "the verifier changed its per-instance keys mid-search "
-                f"(missing: {sorted(missing)}, new: {sorted(extra)}); fix the verifier "
-                "or set search.policy_params.frontier_type=objective"
+                "the verifier introduced per-instance keys mid-search "
+                f"(new: {sorted(extra)}, expected: {list(self.instance_keys)}); fix the verifier "
+                "so every candidate reports keys from the same instance set"
             )
 
     # --- fitness (the only place direction is transformed) ---
@@ -197,26 +201,33 @@ class GEPAEvaluatorBridge:
             return self._failure_fitness()
         if key in result.instance_scores:
             return self._direction(result.instance_scores[key])
+        if result.instance_scores:
+            return self._failure_fitness()  # scored the others, not this one: failed it
         return self._direction(result.score)  # degenerate single-instance fallback
 
     # --- reflective feedback (allow-list only; no holdout, ever) ---
 
     def asi(self, result: EvalResult) -> dict:
+        # one entry per replicate, flattened (GEPA's reflection prompt has no
+        # notion of parameter sets; the key stays "trials" for its payload)
         trials = [
             {
-                "seed": t.seed,
-                "val_score": t.val_score,
-                "returncode": t.returncode,
-                "timed_out": t.timed_out,
-                "duration_s": t.duration_s,
-                "stdout_tail": (t.stdout_tail or "")[-ASI_TAIL_CAP:],
+                "trial": t.index,
+                "params": t.params,
+                "seed": r.seed,
+                "val_score": r.val_score,
+                "returncode": r.returncode,
+                "timed_out": r.timed_out,
+                "duration_s": r.duration_s,
+                "stdout_tail": (r.stdout_tail or "")[-ASI_TAIL_CAP:],
             }
             for t in result.trials
+            for r in t.replicates
         ]
         report = None
         candidate = self.journal.candidates.get(result.candidate_id)
-        if candidate is not None and candidate.trials and candidate.trials[0].report:
-            report = candidate.trials[0].report
+        if candidate is not None:
+            report = candidate.report
         payload = {
             "candidate_id": result.candidate_id,
             "valid": result.valid,

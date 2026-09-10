@@ -34,6 +34,20 @@ def default_machine_max_operators() -> int:
     return max(1, min(8, (os.cpu_count() or 4) - 2))
 
 
+# pre-rename config keys, mapped on load AND by apply_overrides (which walks
+# model_fields and would otherwise reject `--set search.n_replicates=3` or an old
+# experiment spec). "agent" was overloaded (the engine noun is operator);
+# "trial" moved up a level when trials gained parameters (a trial is one
+# parameter set, a replicate one seeded execution of it).
+LEGACY_SEARCH_KEYS = {
+    "parallel_agents": "parallel_operators",
+    "machine_max_agents": "machine_max_operators",
+    "n_trials": "n_replicates",
+    "trial_mode": "replicate_mode",
+}
+LEGACY_SETTINGS = {f"search.{old}": f"search.{new}" for old, new in LEGACY_SEARCH_KEYS.items()}
+
+
 class SearchConfig(BaseModel):
     """Policy knobs for one Search (the `search:` config block), not the
     Search entity itself — that lives in run.py as SearchMeta."""
@@ -48,7 +62,7 @@ class SearchConfig(BaseModel):
         # pre-rename keys; "agent" is overloaded, the engine noun is operator
         if isinstance(data, dict):
             data = dict(data)
-            for old, new in (("parallel_agents", "parallel_operators"), ("machine_max_agents", "machine_max_operators")):
+            for old, new in LEGACY_SEARCH_KEYS.items():
                 if old in data:
                     data.setdefault(new, data.pop(old))
         return data
@@ -57,16 +71,18 @@ class SearchConfig(BaseModel):
         if self.machine_max_operators is None:
             return default_machine_max_operators()
         return self.machine_max_operators
-    n_trials: int = 1  # validation evals per candidate (median val is the climbing score)
-    # how repeated trials run. "parallel" is right for seed variance (and 3x
-    # faster); "serial" is REQUIRED for anything that measures time — trials
+    # seeded executions per trial (one parameter set); the trial's score is
+    # their MEDIAN. Replicate variance is noise, never something to climb.
+    n_replicates: int = 1
+    # how replicates run. "parallel" is right for seed variance (and 3x
+    # faster); "serial" is REQUIRED for anything that measures time — runs
     # sharing a machine contend, and the contention is the measurement.
-    trial_mode: Literal["parallel", "serial"] = "parallel"
+    replicate_mode: Literal["parallel", "serial"] = "parallel"
     # Noise guard. A candidate is only better than the incumbent when it beats
     # it by more than the band, so the search cannot climb measurement noise.
     #   min_improvement: absolute floor, in metric units
-    #   noise_k: multiples of the observed noise floor (the median per-candidate
-    #            trial spread); needs n_trials > 1 to have anything to measure
+    #   noise_k: multiples of the observed noise floor (the median per-trial
+    #            replicate spread); needs n_replicates > 1 to have anything to measure
     # Both default to 0 = off, which is the strict comparison.
     min_improvement: float = 0.0
     noise_k: float = 0.0
@@ -300,6 +316,7 @@ class Config(BaseModel):
         or `hillclimb run --set` changes a setting. Unknown paths raise
         KeyError naming the offending key."""
         for key, value in overrides.items():
+            key = LEGACY_SETTINGS.get(key, key)
             parts = key.split(".")
             target: object = self
             for part in parts[:-1]:
@@ -337,7 +354,7 @@ class Config(BaseModel):
 
 
 def _coerce(value: object, annotation: object) -> object:
-    """Parse a string override (`--set search.n_trials=3`) to the field's
+    """Parse a string override (`--set search.n_replicates=3`) to the field's
     declared type; non-strings (from YAML) pass through."""
     if not isinstance(value, str):
         return value

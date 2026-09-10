@@ -11,11 +11,15 @@ from __future__ import annotations
 
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from hillclimb.backends.claude_code import usage_total_tokens
+from hillclimb.backends.claude_code import (
+    estimate_cost_usd,
+    is_concrete_model_id,
+    usage_total_tokens,
+)
 from hillclimb.candidate import Candidate
 from hillclimb.config import Config
 from hillclimb.control import request_prune, request_stop
@@ -65,6 +69,8 @@ class RunRow:
     state: str
     searches: str
     candidates: str
+    tokens: str
+    spend: str
     selected: str
     budget_left: str
     started: str
@@ -74,13 +80,20 @@ class RunRow:
 class SearchRow:
     search_id: str
     problem: str
+    policy: str  # the optimizer driving the search: greedy, openevolve, gepa, …
+    backend: str  # the agent harness the operators run in: claude-code, codex, …
     model: str
     tokens: str  # summed agent tokens across the search's candidates
+    spend: str  # summed agent cost in USD, climbing while operators stream
     state: str
     candidates: str  # "7 (5 ok)"
     best_val: str
     selected: str
     duration: str  # time spent so far, ticking while running, with the budget alongside
+    best_score: float | None = None  # `best_val` as a number, for sorting
+    higher_is_better: bool = True
+    buggy: int = 0  # candidates whose verifier run crashed or scored invalid
+    abandoned: int = 0  # candidates the clock or a stop cut off, never shown wrong
 
 
 @dataclass
@@ -110,6 +123,14 @@ def _fmt_tokens(total: int | None) -> str:
     if total < 1_000_000:
         return f"{total / 1000:.1f}k"
     return f"{total / 1_000_000:.2f}M"
+
+
+def _fmt_cost(usd: float | None) -> str:
+    """`$12.34`; cents matter at every scale a search reaches, so no
+    compaction — and a zero reads as "-" like an empty token count."""
+    if not usd:
+        return "-"
+    return f"${usd:.2f}"
 
 
 def _format_budget_total(seconds: float) -> str:
@@ -147,18 +168,25 @@ def _format_budget_left(seconds: float | None) -> str:
     return f"{minutes}m {secs:02d}s"
 
 
-def _stream_tokens(candidate_dir: Path) -> int:
-    """Tokens burned so far by an in-flight operator, read from its live
-    `agent_stream.jsonl`. Each turn streams twice (partial then final) under
-    one message id, so turns are deduped by id, newest kept; a `result`
-    message, if the call has just finished, is authoritative. Output is only a
-    running estimate mid-call — the stream carries partial output counts — but
-    cache tokens (the bulk) reconcile exactly with the final total."""
+@dataclass
+class _StreamUsage:
+    """What an in-flight operator's `agent_stream.jsonl` says it has burned so
+    far: per-turn usage (deduped by message id — each turn streams twice,
+    partial then final — newest kept) with the model each turn ran on, plus
+    the authoritative `result` usage/cost once the call has finished."""
+
+    per_turn: dict[str, dict] = field(default_factory=dict)
+    model_by_turn: dict[str, str] = field(default_factory=dict)
+    final_usage: dict | None = None
+    final_cost_usd: float | None = None
+    announced_model: str | None = None  # the init message's model, per-turn fallback
+
+
+def _read_stream_usage(candidate_dir: Path) -> _StreamUsage:
+    usage = _StreamUsage()
     path = candidate_dir / "agent_stream.jsonl"
     if not path.exists():
-        return 0
-    per_turn: dict[str, dict] = {}
-    final: dict | None = None
+        return usage
     try:
         for line in path.read_text().splitlines():
             if not line.strip():
@@ -167,18 +195,53 @@ def _stream_tokens(candidate_dir: Path) -> int:
                 msg = json.loads(line)
             except json.JSONDecodeError:
                 continue  # a half-written trailing line while the agent streams
-            if msg.get("type") == "result" and msg.get("usage"):
-                final = msg["usage"]
-            elif msg.get("type") == "assistant":
+            kind = msg.get("type")
+            if kind == "result":
+                if msg.get("usage"):
+                    usage.final_usage = msg["usage"]
+                if isinstance(msg.get("total_cost_usd"), (int, float)):
+                    usage.final_cost_usd = float(msg["total_cost_usd"])
+            elif kind == "system" and msg.get("model"):
+                usage.announced_model = msg["model"]
+            elif kind == "assistant":
                 body = msg.get("message") or {}
-                usage = body.get("usage")
-                if usage and body.get("id"):
-                    per_turn[body["id"]] = usage
+                turn_usage = body.get("usage")
+                if turn_usage and body.get("id"):
+                    usage.per_turn[body["id"]] = turn_usage
+                    model = body.get("model") or usage.announced_model
+                    if model:
+                        usage.model_by_turn[body["id"]] = model
     except OSError:
-        return 0
-    if final is not None:
-        return usage_total_tokens(final)
-    return sum(usage_total_tokens(u) for u in per_turn.values())
+        return _StreamUsage()
+    return usage
+
+
+def _stream_tokens(candidate_dir: Path) -> int:
+    """Tokens burned so far by an in-flight operator, read from its live
+    `agent_stream.jsonl`. A `result` message, if the call has just finished,
+    is authoritative. Output is only a running estimate mid-call — the stream
+    carries partial output counts — but cache tokens (the bulk) reconcile
+    exactly with the final total."""
+    usage = _read_stream_usage(candidate_dir)
+    if usage.final_usage is not None:
+        return usage_total_tokens(usage.final_usage)
+    return sum(usage_total_tokens(u) for u in usage.per_turn.values())
+
+
+def _stream_cost_usd(candidate_dir: Path) -> float:
+    """Dollars burned so far by an in-flight operator. Claude Code's own
+    `total_cost_usd` once the call has finished; until then each streamed
+    turn priced at list rate for the model it ran on (`estimate_cost_usd`),
+    so the spend column climbs alongside the token count instead of jumping
+    once per candidate."""
+    usage = _read_stream_usage(candidate_dir)
+    if usage.final_cost_usd is not None:
+        return usage.final_cost_usd
+    total = 0.0
+    for turn_id, turn_usage in usage.per_turn.items():
+        estimate = estimate_cost_usd(turn_usage, usage.model_by_turn.get(turn_id))
+        total += estimate or 0.0
+    return total
 
 
 def _state_summary(states: list[str]) -> str:
@@ -192,12 +255,26 @@ def _state_summary(states: list[str]) -> str:
     return states[0]
 
 
+def _display_backend(default: str, journal: Journal) -> str:
+    """The backend cell: the search's configured agent harness, plus any
+    other harness a per-operator route actually authored a candidate in
+    (`routing:` can send, say, the drafts to codex), in order of first use."""
+    names = [default]
+    for candidate in journal.candidates.values():
+        name = candidate.backend.name
+        if name and name not in names:
+            names.append(name)
+    return "+".join(names)
+
+
 def _display_model(alias: str | None, model_id: str | None) -> str:
-    """The model cell: the fully-qualified id the agent stream reported
-    (sans the redundant vendor prefix), falling back to the route alias."""
-    if model_id:
-        return model_id.removeprefix("claude-")
-    return alias or "-"
+    """The model cell: the fully-qualified id the agent stream reported,
+    falling back to the route alias — either way sans the redundant vendor
+    prefix, so a search whose agent has not reported yet (GEPA's proposer
+    works outside the candidate dirs) reads the same as its neighbours.
+    Synthetic API-error messages are not model invocations."""
+    shown = model_id if is_concrete_model_id(model_id) else alias
+    return (shown or "-").removeprefix("claude-")
 
 
 def _stream_model_id(candidate_dir: Path) -> str | None:
@@ -215,20 +292,27 @@ def _stream_model_id(candidate_dir: Path) -> str | None:
                     msg = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if msg.get("type") == "system" and msg.get("model"):
-                    return msg["model"]
+                model_id = msg.get("model") if msg.get("type") == "system" else None
+                if is_concrete_model_id(model_id):
+                    return model_id
     except OSError:
         return None
     return None
 
 
 def _resolved_model_id(journal: Journal, status: SearchStatus | None) -> str | None:
-    """The most recently journaled fully-qualified model id, else the one an
-    in-flight operator's stream is announcing right now."""
+    """The latest candidate's model, preferring the served id.
+
+    Old journals may contain ``<synthetic>`` from a locally generated Claude
+    Code error message. For those, use that candidate's requested route model
+    rather than letting an error sentinel become the search's model label.
+    """
     resolved = None
     for candidate in journal.candidates.values():
-        if candidate.backend.model_id:
+        if is_concrete_model_id(candidate.backend.model_id):
             resolved = candidate.backend.model_id
+        elif candidate.backend.model_id == "<synthetic>" and candidate.backend.model:
+            resolved = candidate.backend.model
     if resolved is None and status is not None:
         for current in status.current:
             resolved = _stream_model_id(Path(current.candidate_dir))
@@ -242,11 +326,17 @@ def _search_row(store: DataStore, record: SearchRecord) -> SearchRow:
     status = store.read_status(record.key)
     journal = Journal(store.journal(record.key))
     n_ok = sum(1 for c in journal.candidates.values() if c.status == "ok")
+    n_buggy = sum(1 for c in journal.candidates.values() if c.status == "buggy")
+    n_abandoned = sum(1 for c in journal.candidates.values() if c.status == "abandoned")
     tokens = sum(c.backend.total_tokens or 0 for c in journal.candidates.values())
+    spend = sum(c.backend.cost_usd or 0.0 for c in journal.candidates.values())
     if status is not None:
         # in-flight operators are not in the journal yet: read their live
         # streams so the count climbs while the tokens are being burned
-        tokens += sum(_stream_tokens(Path(c.candidate_dir)) for c in status.current)
+        for current in status.current:
+            candidate_dir = Path(current.candidate_dir)
+            tokens += _stream_tokens(candidate_dir)
+            spend += _stream_cost_usd(candidate_dir)
         best_val = _fmt(status.best.val_score) if status.best else "-"
         selected = (
             f"{status.selected.candidate_id} "
@@ -259,17 +349,59 @@ def _search_row(store: DataStore, record: SearchRecord) -> SearchRow:
         )
     else:
         best_val, selected, duration = "-", "-", "-"
+    best_score = status.best.val_score if status is not None and status.best else None
     return SearchRow(
         search_id=search_dir.name,
-        problem=meta.problem_id,
+        # an experiment arm is what tells the searches of one run apart, so
+        # it rides along with the problem — unless it is just the policy's
+        # name (a mixed fleet, an optimizer comparison), which the policy
+        # column already shows
+        problem=(
+            f"{meta.problem_id} [{meta.arm}]" if meta.arm and meta.arm != meta.policy else meta.problem_id
+        ),
+        policy=meta.policy,
+        backend=_display_backend(meta.backend, journal),
         model=_display_model(meta.model, _resolved_model_id(journal, status)),
         tokens=_fmt_tokens(tokens),
+        spend=_fmt_cost(spend),
         state=state,
         candidates=f"{len(journal.candidates)} ({n_ok} ok)",
         best_val=best_val,
         selected=selected,
         duration=duration,
+        best_score=best_score,
+        higher_is_better=bool(meta.higher_is_better),
+        buggy=n_buggy,
+        abandoned=n_abandoned,
     )
+
+
+def candidates_style(row: SearchRow) -> str:
+    """The candidates cell doubles as the search's bug light: red as soon
+    as one candidate crashed, yellow when none did but the clock or a stop
+    cut one off (abandoned), green while every finished one verified."""
+    if row.buggy:
+        return "red"
+    return "yellow" if row.abandoned else "green"
+
+
+def sort_search_rows(rows: list[SearchRow], by_best: bool) -> list[SearchRow]:
+    """The searches table's order: creation order (the scan's), or best
+    validation score first. Best-first keeps each problem's searches
+    together, problems in the order the run started them — an experiment
+    run's problems score on different scales, so a global sort would just
+    interleave them — and parks unscored searches at the end of their
+    problem."""
+    if not by_best:
+        return rows
+    problems = list(dict.fromkeys(row.problem for row in rows))
+
+    def key(row: SearchRow) -> tuple:
+        if row.best_score is None:
+            return (problems.index(row.problem), 1, 0.0)
+        return (problems.index(row.problem), 0, -row.best_score if row.higher_is_better else row.best_score)
+
+    return sorted(rows, key=key)
 
 
 def _as_store(store: DataStore | Path) -> DataStore:
@@ -288,15 +420,23 @@ def _run_row(store: DataStore, meta: RunMeta) -> RunRow:
     records = store.searches(run_id=meta.run_id)
     states = [record.state for record in records]
     candidate_total = 0
+    token_total = 0
+    spend_total = 0.0
     selected_count = 0
     remaining_s = 0.0
     has_budget = False
     for record, state in zip(records, states):
         journal = Journal(store.journal(record.key))
         candidate_total += len(journal.candidates)
+        token_total += sum(c.backend.total_tokens or 0 for c in journal.candidates.values())
+        spend_total += sum(c.backend.cost_usd or 0.0 for c in journal.candidates.values())
         status = store.read_status(record.key)
         if status is None:
             continue
+        for current in status.current:
+            candidate_dir = Path(current.candidate_dir)
+            token_total += _stream_tokens(candidate_dir)
+            spend_total += _stream_cost_usd(candidate_dir)
         if status.selected is not None:
             selected_count += 1
         remaining_s += live_remaining_s(status, state)
@@ -310,6 +450,8 @@ def _run_row(store: DataStore, meta: RunMeta) -> RunRow:
         state=_state_summary(states),
         searches=searches,
         candidates=str(candidate_total),
+        tokens=_fmt_tokens(token_total),
+        spend=_fmt_cost(spend_total),
         selected=f"{selected_count} selected" if selected_count else "-",
         budget_left=_format_budget_left(remaining_s if has_budget else None),
         started=started[:19].replace("T", " ") if started else "-",
@@ -662,7 +804,8 @@ def candidate_detail_lines(record: SearchRecord, journal: Journal, candidate_id:
     candidate_dir = _candidate_dir(search_dir, candidate)
     children = journal.children(candidate.candidate_id, include_pruned=True)
     parent = candidate.parent_id if candidate.parent_id else "root"
-    trial = candidate.last_trial
+    trial = candidate.best_trial or candidate.last_trial
+    replicate = trial.last_replicate if trial is not None else None
 
     lines = [
         f"Candidate {candidate.candidate_id} | {operator} | "
@@ -673,14 +816,20 @@ def candidate_detail_lines(record: SearchRecord, journal: Journal, candidate_id:
         f"Parent: {parent}  Children: {len(children)}  "
         f"Path: {' -> '.join(_ancestry(journal, candidate))}",
     ]
-    if trial is not None:
-        duration = f"{trial.duration_s:.5g}s" if trial.duration_s is not None else "-"
+    if len(candidate.trials) > 1 or (trial is not None and trial.params):
+        best = candidate.best_trial
+        lines.append(
+            f"Trials: {len(candidate.trials)}"
+            + (f"  (best t{best.index}: {json.dumps(best.params, sort_keys=True)})" if best else "")
+        )
+    if replicate is not None:
+        duration = f"{replicate.duration_s:.5g}s" if replicate.duration_s is not None else "-"
         lines.append(
             "Trial: "
-            f"returncode={trial.returncode if trial.returncode is not None else '-'}  "
+            f"returncode={replicate.returncode if replicate.returncode is not None else '-'}  "
             f"duration={duration}  "
-            f"timed_out={trial.timed_out}  "
-            f"submission_ok={trial.submission_ok}"
+            f"timed_out={replicate.timed_out}  "
+            f"submission_ok={replicate.submission_ok}"
         )
         if trial.holdout_error:
             lines.append(f"Holdout error: {trial.holdout_error}")
@@ -783,7 +932,8 @@ def candidate_detail_renderables(
     candidate_dir = _candidate_dir(search_dir, candidate)
     children = journal.children(candidate.candidate_id, include_pruned=True)
     parent = candidate.parent_id if candidate.parent_id else "root"
-    trial = candidate.last_trial
+    trial = candidate.best_trial or candidate.last_trial
+    replicate = trial.last_replicate if trial is not None else None
     title_style = "dim" if candidate.pruned else STATUS_STYLE.get(candidate.status, "")
     border_style = "red" if candidate.status == "buggy" else "yellow" if candidate.pruned else "cyan"
 
@@ -814,19 +964,27 @@ def candidate_detail_renderables(
         "lineage",
         Text(" -> ".join(_ancestry(journal, candidate)), style="cyan"),
     )
-    if trial is not None:
-        duration = f"{trial.duration_s:.5g}s" if trial.duration_s is not None else "-"
+    if len(candidate.trials) > 1 or (trial is not None and trial.params):
+        best = candidate.best_trial
+        overview.add_row(
+            "trials",
+            Text(str(len(candidate.trials)), style="cyan"),
+            "best params",
+            Text(json.dumps(best.params, sort_keys=True) if best else "-", style="cyan"),
+        )
+    if replicate is not None:
+        duration = f"{replicate.duration_s:.5g}s" if replicate.duration_s is not None else "-"
         overview.add_row(
             "returncode",
-            Text(str(trial.returncode) if trial.returncode is not None else "-", style="dim"),
+            Text(str(replicate.returncode) if replicate.returncode is not None else "-", style="dim"),
             "duration",
-            Text(duration, style="cyan" if trial.duration_s is not None else "dim"),
+            Text(duration, style="cyan" if replicate.duration_s is not None else "dim"),
         )
         overview.add_row(
             "timed out",
-            Text(str(trial.timed_out), style="red" if trial.timed_out else "dim"),
+            Text(str(replicate.timed_out), style="red" if replicate.timed_out else "dim"),
             "submission",
-            Text("ok" if trial.submission_ok else "-", style="green" if trial.submission_ok else "dim"),
+            Text("ok" if replicate.submission_ok else "-", style="green" if replicate.submission_ok else "dim"),
         )
         if trial.holdout_error:
             overview.add_row("holdout error", Text(trial.holdout_error, style="yellow"), "", "")
@@ -853,7 +1011,7 @@ def candidate_detail_renderables(
     elif backend.name or backend.session_id or backend.error_kind:
         cost = f"${backend.cost_usd:.2f}" if backend.cost_usd is not None else "-"
         agent_s = f"{backend.agent_duration_s:.0f}s" if backend.agent_duration_s is not None else "-"
-        shown = backend.model_id or backend.model
+        shown = backend.model_id if is_concrete_model_id(backend.model_id) else backend.model
         model = f"  model={shown}" if shown else ""
         overview.add_row(
             "backend",
@@ -951,6 +1109,7 @@ def candidate_detail_renderables(
 
 from textual.app import App, ComposeResult  # noqa: E402
 from textual.binding import Binding  # noqa: E402
+from textual.coordinate import Coordinate  # noqa: E402
 from textual import events  # noqa: E402
 from textual.scrollbar import ScrollBar  # noqa: E402
 from textual.screen import ModalScreen, Screen  # noqa: E402
@@ -1055,6 +1214,35 @@ class LiveScreen(KeysMixin, Screen):
     def refresh_data(self) -> None:  # pragma: no cover — subclasses implement
         raise NotImplementedError
 
+    def _scroll_focused_table(self, event: events.MouseEvent, direction: str) -> None:
+        """Route trackpad gestures over empty chrome to the focused table.
+
+        Textual already scrolls when the pointer is directly over a table,
+        but short tables leave most of the terminal as inert background.
+        macOS sends two-finger swipes as these four mouse-wheel directions.
+        """
+        table = self.focused
+        if not isinstance(table, DataTable):
+            return
+        scroll = getattr(table, f"_scroll_{direction}_for_pointer")
+        if scroll(animate=False):
+            event.prevent_default()
+            event.stop()
+
+    def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        direction = "left" if event.shift or event.ctrl else "up"
+        self._scroll_focused_table(event, direction)
+
+    def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+        direction = "right" if event.shift or event.ctrl else "down"
+        self._scroll_focused_table(event, direction)
+
+    def on_mouse_scroll_left(self, event: events.MouseScrollLeft) -> None:
+        self._scroll_focused_table(event, "left")
+
+    def on_mouse_scroll_right(self, event: events.MouseScrollRight) -> None:
+        self._scroll_focused_table(event, "right")
+
     def on_screen_suspend(self) -> None:
         self._live_timer.pause()
         # Kitty-graphics placements are painted by the terminal, not Textual:
@@ -1071,9 +1259,12 @@ class LiveScreen(KeysMixin, Screen):
             return
         try:
             from plotui import Plot
-            from plotui.textual import tmux_wrap
+            from plotui.textual import PlotWidget, tmux_wrap
 
-            driver.write(tmux_wrap(Plot.kitty_cleanup()))
+            # the widget's cleanup names both direct-mode buffers; a plotui
+            # without it (single-buffered) only ever placed the default id
+            cleanup = getattr(PlotWidget, "kitty_cleanup", Plot.kitty_cleanup)
+            driver.write(tmux_wrap(cleanup()))
         except Exception:
             pass
 
@@ -1352,12 +1543,14 @@ class CandidateScreen(ResizableDetail, LiveScreen):
     BINDINGS = [
         Binding("enter", "open_detail", "details", priority=True),
         Binding("escape", "close_detail_or_back", "back"),
+        Binding("b", "close_detail_or_back", "back", show=False),
         Binding("+", "grow_detail", "larger detail", show=False),
         Binding("-", "shrink_detail", "smaller detail", show=False),
         Binding("m", "toggle_maximize_detail", "maximize detail", show=False),
         Binding("s", "stop_search", "stop search", show=False),
         Binding("x", "prune_candidate", "prune candidate", show=False),
         Binding("o", "open_candidate_dir", "open candidate dir", show=False),
+        Binding("c", "open_chart", "chart", show=False),
         KEYS_BINDING,
         *QUIT_BINDINGS,
     ]
@@ -1560,6 +1753,10 @@ class CandidateScreen(ResizableDetail, LiveScreen):
         if self._detail_candidate_id is not None:
             self._set_detail_height(self._detail_height)
 
+    def action_open_chart(self) -> None:
+        """The chart of this search's problem, anchored on it."""
+        push_chart(self.app, self.config, _search_ref(self.search_dir))
+
     def action_open_candidate_dir(self) -> None:
         """Reveal the selected candidate's working dir in the file manager."""
         candidate_id = self._detail_candidate_id or self._selected_candidate_id()
@@ -1635,11 +1832,14 @@ class SearchesScreen(ResizableDetail, LiveScreen):
     BINDINGS = [
         Binding("enter", "open_search", "candidates", priority=True),
         Binding("escape", "close_panel_or_back", "back"),
+        Binding("b", "close_panel_or_back", "back", show=False),
         Binding("o", "open_search_screen", "full candidate view", show=False),
         Binding("+", "grow_detail", "larger panel", show=False),
         Binding("-", "shrink_detail", "smaller panel", show=False),
         Binding("m", "toggle_maximize_detail", "maximize panel", show=False),
         Binding("s", "stop_search", "stop search", show=False),
+        Binding("v", "toggle_sort", "sort: best val first", show=False),
+        Binding("c", "open_chart", "chart", show=False),
         Binding("g", "open_graph", "knowledge graph", show=False),
         Binding("t", "toggle_tree", "tree panel", show=False),
         Binding("a", "toggle_gantt", "operator timeline", show=False),
@@ -1649,7 +1849,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         KEYS_BINDING,
         *QUIT_BINDINGS,
     ]
-    POINTER_HELP = [("click", "candidates"), ("drag divider", "resize panel")]
+    POINTER_HELP = [("double click", "candidates"), ("drag divider", "resize panel")]
 
     DEFAULT_CSS = """
     SearchesScreen #runline { height: 1; padding: 0 1; background: $surface; }
@@ -1678,6 +1878,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         self._tree_fingerprint: tuple | None = None
         self._gantt_open = False          # the operator timeline, toggled with a
         self._gantt_fingerprint: tuple | None = None
+        self._sort_best = False           # best val first (per problem), toggled with v
         self._init_detail()
 
     @property
@@ -1687,7 +1888,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
     def compose(self) -> ComposeResult:
         yield HillclimbHeader()
         yield Label(id="runline")
-        yield DataTable(id="searches", cursor_type="row")
+        yield DoubleClickTable(id="searches", cursor_type="row")
         yield DetailDivider(" drag to resize candidates ", id="detail-divider")
         yield DataTable(id="search-candidates", cursor_type="row")
         # imported here: treeview imports back into watch (LiveScreen et al)
@@ -1703,11 +1904,17 @@ class SearchesScreen(ResizableDetail, LiveScreen):
 
     def on_mount(self) -> None:
         table = self.query_one("#searches", DataTable)
+        # Twice the global one-cell width: this is the long, primary list and
+        # its scrollbar should be easy to acquire without touching a row.
+        table.styles.scrollbar_size_vertical = 2
         table.add_columns(
             "search",
             "problem",
+            "policy",
+            "backend",
             "model",
             "tokens",
+            "spend",
             "state",
             "candidates",
             "best val",
@@ -1725,15 +1932,19 @@ class SearchesScreen(ResizableDetail, LiveScreen):
     def refresh_data(self) -> None:
         from rich.text import Text
 
-        self.query_one("#runline", Label).update(f"run: {self.run_name}  ({self.run_dir.name})")
+        runline = f"run: {self.run_name}  ({self.run_dir.name})"
+        if self._sort_best:
+            runline += "  ·  sorted: best val first"
+        self.query_one("#runline", Label).update(runline)
         table = self.query_one("#searches", DataTable)
         snapshot = _snapshot_table(table)
         table.clear()
-        for row in scan_searches(self.store, self.run_dir.name):
+        for row in sort_search_rows(scan_searches(self.store, self.run_dir.name), self._sort_best):
             state = Text(row.state, style=STATE_STYLE.get(row.state, ""))
+            candidates = Text(row.candidates, style=candidates_style(row))
             table.add_row(
-                row.search_id, row.problem, row.model, row.tokens, state, row.candidates,
-                row.best_val, row.selected, row.duration, key=row.search_id,
+                row.search_id, row.problem, row.policy, row.backend, row.model, row.tokens, row.spend,
+                state, candidates, row.best_val, row.selected, row.duration, key=row.search_id,
             )
         _restore_table(table, snapshot)
         if self._panel_search_id is not None:
@@ -1787,6 +1998,12 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         self.query_one("#search-candidates", DataTable).clear()
         self._set_detail_visible(False)
         self.query_one("#searches", DataTable).focus()
+
+    def action_toggle_sort(self) -> None:
+        """`v`: best validation score first within each problem, or back to
+        creation order. The cursor follows its search across the re-sort."""
+        self._sort_best = not self._sort_best
+        self.refresh_data()
 
     def action_toggle_tree(self) -> None:
         """`t`: the highlighted search's exploration tree under the table,
@@ -2000,7 +2217,13 @@ class SearchesScreen(ResizableDetail, LiveScreen):
                 event.stop()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        if event.data_table.id == "search-candidates":
+        if event.data_table.id == "searches":
+            # Match Enter on a search row: reveal its candidates underneath
+            # and move focus into that panel. The full candidate screen stays
+            # an explicit drill-in via `o` or Enter on a panel candidate.
+            self._open_panel(event.row_key.value, focus=True)
+            event.stop()
+        elif event.data_table.id == "search-candidates":
             self._open_candidate(event.row_key.value)
             event.stop()
 
@@ -2030,10 +2253,23 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         # enter opens the panel and moves the cursor into it
         self._open_panel(search_id, focus=True)
 
-    def action_open_search_screen(self) -> None:
-        search_dir = self._selected_search_dir()
+    def _open_search_screen(self, search_id: str | None = None) -> None:
+        search_dir = (
+            self._selected_search_dir()
+            if search_id is None
+            else self.run_dir / "searches" / search_id
+        )
         if search_dir is not None:
             self.app.push_screen(CandidateScreen(self.config, search_dir))
+
+    def action_open_search_screen(self) -> None:
+        self._open_search_screen()
+
+    def action_open_chart(self) -> None:
+        """The chart of the highlighted search's problem, anchored on it."""
+        search_dir = self._selected_search_dir()
+        if search_dir is not None:
+            push_chart(self.app, self.config, _search_ref(search_dir))
 
     def action_close_panel_or_back(self) -> None:
         if self._tree_open and self.query_one("#search-tree").selected is not None:
@@ -2073,11 +2309,36 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         )
 
 
+class DoubleClickTable(DataTable):
+    """Picker table: one click moves the cursor; a double click activates it."""
+
+    async def _on_click(self, event: events.Click) -> None:
+        meta = event.style.meta
+        if (
+            self.show_cursor
+            and self.cursor_type == "row"
+            and "row" in meta
+            and "column" in meta
+            and not meta.get("out_of_bounds", False)
+            and meta["row"] >= 0
+            and meta["column"] >= 0
+        ):
+            self.cursor_coordinate = Coordinate(meta["row"], meta["column"])
+            if event.chain >= 2:
+                self._post_selected_message()
+            self._scroll_cursor_into_view(animate=True)
+            event.prevent_default()
+            event.stop()
+            return
+        await super()._on_click(event)
+
+
 class RunsScreen(LiveScreen):
     """Top-level runs."""
 
     BINDINGS = [
         Binding("enter", "open_run", "open", priority=True),
+        Binding("c", "open_chart", "chart", show=False),
         Binding("g", "open_graph", "knowledge graph", show=False),
         KEYS_BINDING,
         *QUIT_BINDINGS,
@@ -2091,7 +2352,7 @@ class RunsScreen(LiveScreen):
 
     def compose(self) -> ComposeResult:
         yield HillclimbHeader()
-        yield DataTable(id="runs", cursor_type="row")
+        yield DoubleClickTable(id="runs", cursor_type="row")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -2101,6 +2362,8 @@ class RunsScreen(LiveScreen):
             "state",
             "searches",
             "candidates",
+            "tokens",
+            "spend",
             "selected",
             "budget left",
             "started",
@@ -2122,6 +2385,8 @@ class RunsScreen(LiveScreen):
                 state,
                 row.searches,
                 row.candidates,
+                row.tokens,
+                row.spend,
                 row.selected,
                 row.budget_left,
                 row.started,
@@ -2137,12 +2402,37 @@ class RunsScreen(LiveScreen):
         run_id = row_key.value
         return run_id, self._names.get(run_id, run_id)
 
+    def _open_run(self, run_id: str | None = None) -> None:
+        if run_id is None:
+            selected = self._selected_run()
+            if selected is None:
+                return
+            run_id, name = selected
+        else:
+            name = self._names.get(run_id, run_id)
+        self.app.push_screen(SearchesScreen(self.config, self.config.paths.runs_dir / run_id, name))
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        if event.data_table.id != "runs":
+            return
+        self._open_run(event.row_key.value)
+        event.stop()
+
     def action_open_run(self) -> None:
+        self._open_run()
+
+    def action_open_chart(self) -> None:
+        """The chart anchored on the highlighted run's most recently active
+        search (`p` inside it steps through the folder's other problems)."""
         selected = self._selected_run()
         if selected is None:
             return
-        run_id, name = selected
-        self.app.push_screen(SearchesScreen(self.config, self.config.paths.runs_dir / run_id, name))
+        records = self.store.searches(run_id=selected[0])
+        if not records:
+            self.notify("no searches in this run yet")
+            return
+        newest = max(records, key=lambda r: (r.activity_at, r.ref))
+        push_chart(self.app, self.config, newest.ref)
 
     def action_open_graph(self) -> None:
         from hillclimb.graphview import GraphScreen
@@ -2150,10 +2440,23 @@ class RunsScreen(LiveScreen):
         self.app.push_screen(GraphScreen(self.config))
 
 
+def push_chart(app: App, config: Config, search_ref: str) -> None:
+    """Push the chart anchored on `search_ref` over the current screen; esc
+    in the chart pops back. Imported lazily: chart imports LiveScreen from
+    here."""
+    from hillclimb.chart import ChartScreen
+
+    app.push_screen(ChartScreen(config, search_ref))
+
+
 class WatchApp(TimezoneMixin, App):
     """Read-mostly dashboard over runs/; control actions go through the
     same command queue as the CLI."""
 
+    # Dragging just beside a narrow scrollbar should not paint a text
+    # selection across table rows. Terminal-native selection remains
+    # available through the terminal emulator's modifier when needed.
+    ALLOW_SELECT = False
     BINDINGS = [
         Binding("t", "choose_timezone", "time zone", show=False),
         Binding("ctrl+c", "quit", "quit", show=False, priority=True),

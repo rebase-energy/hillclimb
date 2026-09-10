@@ -23,9 +23,11 @@ class GEPAParams(BaseModel):
     reflection_minibatch_size: int | None = Field(default=None, gt=0)
     candidate_selection_strategy: str = "pareto"
     # 'instance' = Pareto frontier over the verifier's per-instance scores
-    # (degenerates to one instance when the verifier emits none);
-    # 'objective' = frontier over the aggregate score only
-    frontier_type: Literal["instance", "objective"] = "instance"
+    # (degenerates to one instance — the aggregate score — when the
+    # verifier emits none). Upstream's 'objective' frontier needs the
+    # evaluator to hand back objective_scores, which this bridge does not
+    # produce, so it is rejected here rather than at the first evaluation.
+    frontier_type: Literal["instance"] = "instance"
     cache_evaluation: bool = True
     use_merge: Literal[False] = False  # merge lineage is post-MVP
     failure_fitness: float = -1.0e100

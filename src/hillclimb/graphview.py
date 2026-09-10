@@ -1024,6 +1024,7 @@ class GraphScreen(KeysMixin, Screen):
     BINDING_GROUP_TITLE = "graph"
     BINDINGS = [
         Binding("escape", "dismiss_or_back", "back"),
+        Binding("b", "dismiss_or_back", "back", show=False),
         Binding("enter", "activate", "open", show=False, priority=True),
         Binding("+,=", "zoom_in", "zoom in", show=False),
         Binding("-", "zoom_out", "zoom out", show=False),

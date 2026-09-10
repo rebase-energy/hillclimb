@@ -133,15 +133,15 @@ class Journal:
         return [c for c in self.candidates.values() if c.operator == "draft" and not c.pruned]
 
     def noise_floor(self) -> float | None:
-        """How much an identical candidate moves between identical
-        evaluations, measured from the search's own repeated trials: the
-        median of the per-candidate trial spreads. None when no candidate has
-        been evaluated twice (n_trials = 1), which is the honest answer — the
-        search has no evidence about its own noise."""
+        """How much identical code and params move between identical
+        evaluations, measured from the search's own repeated replicates: the
+        median of the per-trial replicate spreads. None when no trial has
+        been evaluated twice (n_replicates = 1), which is the honest answer —
+        the search has no evidence about its own noise."""
         spreads = [
-            candidate.trial_spread
+            spread
             for candidate in self.candidates.values()
-            if candidate.trial_spread is not None
+            for spread in candidate.replicate_spreads
         ]
         return median(spreads) if spreads else None
 

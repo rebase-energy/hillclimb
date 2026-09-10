@@ -5,8 +5,9 @@ search of it, against the number of tested candidate solutions, with every
 scored candidate as a dot on the same axes — bright where it set a new best,
 dim where it missed. The demo's three parallel searches are one climb, not
 three; a search only gets its own line in an experiment, where the arms are
-the comparison (build_plot). Same figure as the website's, in the same
-colours. Strictly a viewer like watch.py: everything is read through the configured store
+the comparison (build_plot) — and there the chart stays inside the anchor's
+run, so two runs of one experiment on the same problem never overlay each
+other's "greedy r1". Same figure as the website's, in the same colours. Strictly a viewer like watch.py: everything is read through the configured store
 (store.py — the hillclimb folder by default, or the SQLite index), and the
 pure data functions at the top stay testable without Textual.
 
@@ -32,8 +33,9 @@ from hillclimb.journal import Journal
 from hillclimb.store import DataStore, FileDataStore, SearchRecord, key_for, open_store, resolve_search
 
 # Searches drawn at once; older ones of the same problem fall off the chart
-# rather than turning it into a haystack.
-MAX_CURVES = 8
+# rather than turning it into a haystack. Sized so a three-arm experiment
+# with three repeats (nine curves) fits with room to spare.
+MAX_CURVES = 12
 
 
 # plotui's line palette, mirrored so curves of one experiment arm can share
@@ -188,17 +190,29 @@ def climb_curve(search_dir: Path, label: str | None = None, meta: SearchMeta | N
     return _record_curve(store, record, label or search_ref(search_dir))
 
 
+def chart_run_scope(anchor: SearchMeta) -> str | None:
+    """The run the chart confines itself to: an experiment search's own run
+    (its arms are the comparison, and another run of the same experiment
+    would repeat every `arm rN` label), else None — a plain problem's climb
+    is one staircase across every run that worked it."""
+    return anchor.run_id if anchor.experiment else None
+
+
 def climb_curves(
-    store: DataStore | Path, problem_key: str, limit: int = MAX_CURVES, split: str = "val"
+    store: DataStore | Path,
+    problem_key: str,
+    limit: int = MAX_CURVES,
+    split: str = "val",
+    run_id: str | None = None,
 ) -> list[Curve]:
-    """Curves for every search of `problem_key` across runs, oldest first so
-    the palette assigns colors in start order (the newest gets the last one).
-    Labelled by run name, which is what the user chose — plus the search id
-    when a run holds several searches on the problem. Accepts a runs dir as
-    shorthand for its FileDataStore."""
+    """Curves for every search of `problem_key` across runs (or inside
+    `run_id`), oldest first so the palette assigns colors in start order
+    (the newest gets the last one). Labelled by run name, which is what the
+    user chose — plus the search id when a run holds several searches on
+    the problem. Accepts a runs dir as shorthand for its FileDataStore."""
     if isinstance(store, Path):
         store = FileDataStore(store)
-    records = store.searches(problem_key=problem_key)  # already oldest first
+    records = store.searches(problem_key=problem_key, run_id=run_id)  # already oldest first
     per_run: dict[str, int] = {}
     for record in records:
         per_run[record.run_id] = per_run.get(record.run_id, 0) + 1
@@ -303,12 +317,17 @@ def climb_from_searches(
 
 
 def climb_for_problem(
-    store: DataStore | Path, problem_key: str, limit: int = MAX_CURVES, split: str = "val"
+    store: DataStore | Path,
+    problem_key: str,
+    limit: int = MAX_CURVES,
+    split: str = "val",
+    run_id: str | None = None,
 ) -> Climb:
-    """The climb across every search of `problem_key` (the newest `limit`)."""
+    """The climb across every search of `problem_key` (the newest `limit`),
+    across runs or inside `run_id`."""
     if isinstance(store, Path):
         store = FileDataStore(store)
-    records = store.searches(problem_key=problem_key)
+    records = store.searches(problem_key=problem_key, run_id=run_id)
     per_run: dict[str, int] = {}
     for record in records:
         per_run[record.run_id] = per_run.get(record.run_id, 0) + 1
@@ -345,7 +364,8 @@ def _candidate_cost(cand: Candidate) -> tuple[float, float]:
     old journals never measured it, so it is simply absent."""
     tokens = float(cand.backend.total_tokens or 0)
     cpu = sum(
-        (t.cpu_s if t.cpu_s is not None else t.duration_s or 0.0) + (t.holdout_cpu_s or 0.0)
+        sum((r.cpu_s if r.cpu_s is not None else r.duration_s or 0.0) for r in t.replicates)
+        + (t.holdout_cpu_s or 0.0)
         for t in cand.trials
     )
     return tokens, cpu
@@ -398,13 +418,14 @@ def cost_series(searches: list[tuple[str, list[Candidate], str | None]]) -> Cost
 
 
 def cost_for_problem(
-    store: DataStore | Path, problem_key: str, limit: int = MAX_CURVES
+    store: DataStore | Path, problem_key: str, limit: int = MAX_CURVES, run_id: str | None = None
 ) -> CostSeries:
     """The cost of every search of `problem_key` — the same records window
-    `climb_for_problem` folds, so the two views share x slots."""
+    `climb_for_problem` folds (same `run_id` scope), so the two views share
+    x slots."""
     if isinstance(store, Path):
         store = FileDataStore(store)
-    records = store.searches(problem_key=problem_key)
+    records = store.searches(problem_key=problem_key, run_id=run_id)
     return cost_series(
         [
             ("", list(Journal(store.journal(record.key)).candidates.values()), None)
@@ -515,6 +536,59 @@ def chart_problem(config: Config, search: str | None = None) -> SearchMeta | Non
         store.close()
 
 
+@dataclass(frozen=True)
+class ChartRow:
+    """One chart the folder can show: a problem worked in a run. `anchor` is
+    the ref the chart opens on (the newest search of that pair). An
+    experiment row's chart stays inside that run; a plain problem's chart
+    still folds every search of the problem across runs (chart_run_scope)."""
+
+    run_id: str
+    run_name: str
+    problem_key: str
+    anchor: str
+    searches: int
+    running: int
+    arms: tuple[str, ...]
+    state: str
+    best: float | None
+    activity_at: str
+
+
+def chart_index(store: DataStore) -> list[ChartRow]:
+    """Every (run, problem) pair with a search, newest activity first — what
+    a bare `hillclimb chart` lists when the folder holds more than one."""
+    groups: dict[tuple[str, str], list[SearchRecord]] = {}
+    for record in store.searches():  # oldest first
+        groups.setdefault((record.run_id, record.meta.problem_key), []).append(record)
+    rows: list[ChartRow] = []
+    for (run_id, problem_key), records in groups.items():
+        newest = max(records, key=lambda r: (r.activity_at, r.ref))
+        states = [r.state for r in records]
+        arms: list[str] = []
+        best: float | None = None
+        for record in records:
+            if record.meta.arm and record.meta.arm not in arms:
+                arms.append(record.meta.arm)
+            status = store.read_status(record.key)
+            score = status.best.val_score if status and status.best else None
+            if score is not None and (best is None or better(score, best, newest.meta.higher_is_better)):
+                best = score
+        rows.append(ChartRow(
+            run_id=run_id,
+            run_name=newest.run_name,
+            problem_key=problem_key,
+            anchor=newest.ref,
+            searches=len(records),
+            running=states.count("running"),
+            arms=tuple(arms),
+            state=_state_summary(states),
+            best=best,
+            activity_at=newest.activity_at,
+        ))
+    return sorted(rows, key=lambda row: (row.activity_at, row.anchor), reverse=True)
+
+
 # provider reference lines resolved once per target — a live chart refreshes
 # every few seconds and must not re-import the provider each tick
 _provider_baselines: dict[str, dict[str, float]] = {}
@@ -557,13 +631,15 @@ from plotui.textual import OverlaySpan, PlotWidget  # noqa: E402
 from textual.app import App, ComposeResult  # noqa: E402
 from textual.binding import Binding  # noqa: E402
 from textual.containers import Vertical  # noqa: E402
-from textual.widgets import Footer, Label  # noqa: E402
+from textual.widgets import DataTable, Footer, Label  # noqa: E402
 
 from hillclimb.header import HillclimbHeader, TimezoneMixin  # noqa: E402
 from hillclimb.keys import KEYS_BINDING, QUIT_BINDINGS  # noqa: E402
 
 from hillclimb.theme import CYAN, HILLCLIMB_CSS, PLOT_BG, apply_theme, themed_plot  # noqa: E402
-from hillclimb.watch import STATE_STYLE, LiveScreen, _fmt_tokens  # noqa: E402
+from hillclimb.watch import (  # noqa: E402
+    STATE_STYLE, LiveScreen, _fmt, _fmt_tokens, _restore_table, _snapshot_table, _state_summary,
+)
 
 
 class ChartPlotWidget(PlotWidget):
@@ -679,6 +755,17 @@ def curve_colors(curves: list[Curve]) -> list[tuple[int, int, int] | None]:
     return [ARM_PALETTE[arms.index(c.arm) % len(ARM_PALETTE)] if c.arm else None for c in curves]
 
 
+def _hide_plot_legend(plot: Plot, show_legend: bool) -> None:
+    """The ChartScreen draws its legend in a Textual band under the plot, so
+    the in-canvas box is switched off — but the traces keep their names, so
+    the hover readout says `greedy r1  0.0115` rather than `series 3`. Older
+    plotui builds without the switch fall back to unnamed traces."""
+    if show_legend:
+        return
+    if hasattr(type(plot), "legend_visible"):
+        plot.legend_visible = False
+
+
 def _add_chart_baselines(
     plot: Plot,
     baselines: Mapping[str, float],
@@ -700,7 +787,7 @@ def _add_chart_baselines(
             [value, value],
             color=CHART_BASELINE_PALETTE[index % len(CHART_BASELINE_PALETTE)],
             width=1.0,
-            name=label if show_legend else None,
+            name=label,
         )
 
 
@@ -715,6 +802,7 @@ def build_plot(
     series of its own, and the base of the detail overlay. `hidden` names
     legend entries toggled off: their traces are left out of the plot."""
     plot = themed_plot()
+    _hide_plot_legend(plot, show_legend)
     extent = max((max(c.xs, default=0.0) for c in curves), default=0.0)
     _add_chart_baselines(plot, baselines or {}, extent, show_legend=show_legend, hidden=hidden)
     trace_index = len(baselines or {})
@@ -732,11 +820,11 @@ def build_plot(
             # invisible, so render that first evaluation as a dot.
             plot.add_scatter(
                 curve.xs, curve.ys, color=rgb, size=3.0,
-                name=curve.label if show_legend else None,
+                name=curve.label,
             )
         else:
             xs, ys = step_points(curve.xs, curve.ys)
-            plot.add_line(xs, ys, color=rgb, name=curve.label if show_legend else None)
+            plot.add_line(xs, ys, color=rgb, name=curve.label)
     return plot
 
 
@@ -788,12 +876,12 @@ def add_cost_overlay(
     if COST_TOKENS_LABEL not in hidden and cost.total_tokens > 0:
         plot.add_line(
             cost.xs, cost.tokens, color=COST_TOKENS_RGB, width=1.0,
-            name=COST_TOKENS_LABEL if show_legend else None, axis="y2",
+            name=COST_TOKENS_LABEL, axis="y2",
         )
     if COST_CPU_LABEL not in hidden and cost.total_cpu_min > 0:
         plot.add_line(
             cost.xs, cost.cpu_min, color=COST_CPU_RGB, width=1.0,
-            name=COST_CPU_LABEL if show_legend else None, axis="y3",
+            name=COST_CPU_LABEL, axis="y3",
         )
 
 
@@ -821,24 +909,25 @@ def build_climb_plot(
     `hidden` names legend entries toggled off — their traces are left out.
     `cost` overlays the cumulative token/CPU lines on right-hand axes."""
     plot = themed_plot()
+    _hide_plot_legend(plot, show_legend)
     _add_chart_baselines(plot, baselines or {}, climb.extent, show_legend=show_legend, hidden=hidden)
     misses = [e for e in climb.events if not e.best]
     if misses and "attempt" not in hidden:
         plot.add_scatter(
             [e.x for e in misses], [e.y for e in misses], color=MISS_RGB, size=2.4,
-            name="attempt" if show_legend else None,
+            name="attempt",
         )
     xs, ys = climb.staircase()
     if len(xs) > 1 and "best so far" not in hidden:
         plot.add_line(
             xs, ys, color=CYAN, width=2.0,
-            name="best so far" if show_legend else None,
+            name="best so far",
         )
     hits = [e for e in climb.events if e.best]
     if hits and "new best" not in hidden:
         plot.add_scatter(
             [e.x for e in hits], [e.y for e in hits], color=CYAN, size=3.0,
-            name="new best" if show_legend else None,
+            name="new best",
         )
     add_cost_overlay(plot, cost, show_legend=show_legend, hidden=hidden)
     return plot
@@ -878,14 +967,14 @@ def build_detail_plot(
         plot.add_scatter(
             [m.x for m in marks], [m.y for m in marks],
             color=OPERATOR_RGB.get(operator, (160, 160, 160)), size=2.5,
-            name=operator if show_legend else None,
+            name=operator,
         )
     accepted = [m for m in layout.marks if m.on_path]
     if accepted and "accepted" not in hidden:
         plot.add_scatter(
             [m.x for m in accepted], [m.y for m in accepted],
             color=(255, 255, 255), size=4.0,
-            name="accepted" if show_legend else None,
+            name="accepted",
         )
     add_cost_overlay(plot, cost, show_legend=show_legend, hidden=hidden)
     return plot
@@ -1196,6 +1285,10 @@ class ChartScreen(LiveScreen):
             tooltip="switch to the next problem in this folder",
         ),
         Binding("r", "refresh", "refresh", show=False),
+        # only live when a list (the chart picker, the watch tables) pushed
+        # this screen — see check_action
+        Binding("escape", "back", "back"),
+        Binding("b", "back", "back", show=False),
         # One binding per legend slot, like the knowledge graph's 1-8; only
         # the first is described, so the `?` panel shows a single "1-9" row.
         Binding("1", "toggle_entry(0)", "hide/show a series", show=False, key_display="1-9"),
@@ -1253,6 +1346,18 @@ class ChartScreen(LiveScreen):
 
     def on_mount(self) -> None:
         self.start_live()
+
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        if action == "back":
+            # the app's default screen sits at the bottom of the stack; a
+            # standalone chart is the only screen above it and has nowhere
+            # to go back to — hide the key rather than show a dead one
+            return True if len(self.app.screen_stack) > 2 else None
+        return True
+
+    def action_back(self) -> None:
+        if len(self.app.screen_stack) > 2:
+            self.app.pop_screen()
 
     def action_refresh(self) -> None:
         self._anchor = None
@@ -1370,8 +1475,9 @@ class ChartScreen(LiveScreen):
                 + (f" · {layout.unscored} unscored" if layout.unscored else "")
             )
         else:
-            curves = climb_curves(self._store, anchor.problem_key, split=split)
-            cost = cost_for_problem(self._store, anchor.problem_key)
+            scope = chart_run_scope(anchor)
+            curves = climb_curves(self._store, anchor.problem_key, split=split, run_id=scope)
+            cost = cost_for_problem(self._store, anchor.problem_key, run_id=scope)
         climb: Climb | None = None
         if layout is not None or any(c.arm for c in curves):
             # one line per search: the detail overlay, or an experiment
@@ -1381,7 +1487,9 @@ class ChartScreen(LiveScreen):
                 best = f"{curve.best:.5g}" if curve.best is not None else "-"
                 parts.append(f"{curve.label} [{style}]{curve.state}[/] best={best}")
         else:
-            climb = climb_for_problem(self._store, anchor.problem_key, split=split)
+            climb = climb_for_problem(
+                self._store, anchor.problem_key, split=split, run_id=chart_run_scope(anchor)
+            )
             best = f"{climb.best:.5g}" if climb.best is not None else "-"
             n = climb.searches
             running = sum(1 for c in curves if c.state == "running")
@@ -1469,8 +1577,78 @@ class ChartScreen(LiveScreen):
             stage.mount(Label("waiting for the first scored candidate…", id="chart-empty"))
 
 
+class ChartPickerScreen(LiveScreen):
+    """The charts this folder can show, one row per problem worked in a
+    run: enter opens the chart anchored on that row, esc in the chart comes
+    back here. Refreshes like the watch tables so a running experiment's
+    rows keep moving."""
+
+    BINDINGS = [
+        Binding("enter", "open_chart", "chart", priority=True),
+        KEYS_BINDING,
+        *QUIT_BINDINGS,
+    ]
+
+    def __init__(
+        self,
+        config: Config,
+        detail: bool = False,
+        holdout: bool | None = None,
+        cost: bool = False,
+    ):
+        super().__init__()
+        self.config = config
+        self.detail = detail
+        self.holdout = holdout
+        self.cost = cost
+        self.store = open_store(config)
+
+    def compose(self) -> ComposeResult:
+        yield HillclimbHeader()
+        yield DataTable(id="charts", cursor_type="row")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        table = self.query_one("#charts", DataTable)
+        table.add_columns("run", "problem", "arms", "searches", "state", "best val", "last activity")
+        self.start_live()
+
+    def refresh_data(self) -> None:
+        from rich.text import Text
+
+        table = self.query_one("#charts", DataTable)
+        snapshot = _snapshot_table(table)
+        table.clear()
+        for row in chart_index(self.store):
+            searches = str(row.searches) + (f" ({row.running} running)" if row.running else "")
+            table.add_row(
+                row.run_name,
+                row.problem_key,
+                ", ".join(row.arms) or "-",
+                searches,
+                Text(row.state, style=STATE_STYLE.get(row.state, "")),
+                _fmt(row.best),
+                row.activity_at[:19].replace("T", " ") if row.activity_at else "-",
+                key=row.anchor,  # unique per row: the search ref enter opens
+            )
+        _restore_table(table, snapshot)
+
+    def action_open_chart(self) -> None:
+        table = self.query_one("#charts", DataTable)
+        if not table.row_count:
+            return
+        row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
+        self.app.push_screen(
+            ChartScreen(
+                self.config, row_key.value,
+                detail=self.detail, holdout=self.holdout, cost=self.cost,
+            )
+        )
+
+
 class ChartApp(TimezoneMixin, App):
-    """Standalone shell for `hillclimb chart`."""
+    """Standalone shell for `hillclimb chart`: a bare invocation on a folder
+    with several charts to show opens the picker, otherwise the chart."""
 
     BINDINGS = [
         Binding("t", "choose_timezone", "time zone", show=False),
@@ -1496,9 +1674,23 @@ class ChartApp(TimezoneMixin, App):
     def on_mount(self) -> None:
         apply_theme(self)
         self._init_timezone()
+        if self.search is None and self._has_several_charts():
+            self.push_screen(
+                ChartPickerScreen(
+                    self.config, detail=self.detail, holdout=self.holdout, cost=self.cost,
+                )
+            )
+            return
         self.push_screen(
             ChartScreen(
                 self.config, self.search,
                 detail=self.detail, holdout=self.holdout, cost=self.cost,
             )
         )
+
+    def _has_several_charts(self) -> bool:
+        store = open_store(self.config)
+        try:
+            return len(chart_index(store)) > 1
+        finally:
+            store.close()

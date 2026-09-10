@@ -196,3 +196,34 @@ class TestBreakdown:
         assert eval_runner._round(float("inf")) is None
         assert eval_runner._round("x") is None
         assert not math.isnan(eval_runner._round(0.0))
+
+
+class TestInstances:
+    def test_one_instance_per_scored_origin(self):
+        records = [
+            make_record("2010-10-01 00:30", "z1", score=2.0),
+            make_record("2010-10-01 00:30", "z2", score=4.0),
+            make_record("2010-11-01 00:30", "z1", score=3.0),
+        ]
+        _, analyzer = build(records)
+        instances = eval_runner.build_instances(analyzer)
+        assert instances == {
+            "2010-10-01T00:30/z1": 2.0,
+            "2010-10-01T00:30/z2": 4.0,
+            "2010-11-01T00:30/z1": 3.0,
+        }
+
+    def test_unscored_origin_is_absent_not_nan(self):
+        records = [
+            make_record("2010-10-01 00:30", "z1", score=float("nan")),
+            make_record("2010-11-01 00:30", "z1", score=1.23456789),
+        ]
+        _, analyzer = build(records)
+        assert eval_runner.build_instances(analyzer) == {"2010-11-01T00:30/z1": 1.2346}  # 5 sig figs
+
+    def test_repeated_origin_gets_a_suffix(self):
+        records = [make_record("2010-10-01 00:30", "z1", score=s) for s in (1.0, 2.0, 3.0)]
+        _, analyzer = build(records)
+        assert list(eval_runner.build_instances(analyzer)) == [
+            "2010-10-01T00:30/z1", "2010-10-01T00:30/z1#2", "2010-10-01T00:30/z1#3",
+        ]

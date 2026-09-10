@@ -1,3 +1,4 @@
+from tests.factories import trial as mk_trial
 from hillclimb.prompts.render import COMPLEXITY_CUES, render
 
 
@@ -93,15 +94,15 @@ def test_all_complexity_cues_distinct():
 
 def test_build_tree_marks_best_and_edges(tmp_path):
     from hillclimb.journal import Journal
-    from hillclimb.candidate import Candidate, Trial
+    from hillclimb.candidate import Candidate
     from hillclimb.viz import build_tree
 
     journal = Journal(tmp_path / "j.jsonl")
     journal.candidate_result(Candidate(candidate_id="c001", operator="draft", status="ok",
-                                       trials=[Trial(val_score=0.6)]))
+                                       trials=[mk_trial(val_score=0.6)]))
     journal.candidate_result(Candidate(candidate_id="c002", operator="debug", parent_id="c001", status="buggy"))
     journal.candidate_result(Candidate(candidate_id="c003", operator="improve", parent_id="c001",
-                                       status="ok", trials=[Trial(val_score=0.8)],
+                                       status="ok", trials=[mk_trial(val_score=0.8)],
                                        summary="one change"))
     graph = build_tree(journal, higher_is_better=True)
     unq = lambda s: str(s).strip('"')

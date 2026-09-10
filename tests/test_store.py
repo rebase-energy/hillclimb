@@ -5,6 +5,8 @@ queue — and the engine must run entirely through whichever is configured."""
 
 from __future__ import annotations
 
+from tests.factories import trial as mk_trial
+
 import os
 import threading
 from pathlib import Path
@@ -12,7 +14,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from hillclimb.candidate import Candidate, Trial
+from hillclimb.candidate import Candidate
 from hillclimb.chart import climb_curves
 from hillclimb.config import Config
 from hillclimb.control import ControlCommand
@@ -45,7 +47,7 @@ def _populate(store: DataStore) -> None:
             cand = Candidate(candidate_id=f"c{index:03d}", operator="draft")
             journal.candidate_created(cand)
             cand.status = "ok"
-            cand.trials = [Trial(val_score=score)]
+            cand.trials = [mk_trial(val_score=score)]
             cand.finished_at = f"2026-08-22T10:0{index + 1}:00+00:00"
             journal.candidate_result(cand)
 

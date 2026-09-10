@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.factories import trial as mk_trial
+
 import json
 import os
 from pathlib import Path
@@ -9,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from hillclimb.candidate import Candidate, Trial
+from hillclimb.candidate import Candidate
 from hillclimb.similarity import (
     N_BINS,
     build_similarity,
@@ -37,7 +39,7 @@ def cand(
 ) -> Candidate:
     trials = []
     if score is not None or report is not None:
-        trials = [Trial(val_score=score, submission_ok=submission_ok,
+        trials = [mk_trial(val_score=score, submission_ok=submission_ok,
                         report=report, metrics=metrics or {})]
     return Candidate(
         candidate_id=cid, operator=operator, parent_id=parent, status=status, trials=trials,

@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+from tests.factories import trial as mk_trial
+
 from pathlib import Path
 
 import pytest
 from rich.style import Style
 
-from hillclimb.candidate import Candidate, Trial
+from hillclimb.candidate import Candidate
 from hillclimb.chart import build_detail_plot, detail_layout
 from hillclimb.config import Config
 from hillclimb.journal import Journal
@@ -41,7 +43,7 @@ def cand(
     """A candidate created at minute `t` and finished a minute later."""
     return Candidate(
         candidate_id=cid, operator=operator, parent_id=parent, status=status,
-        trials=[Trial(val_score=score)] if score is not None else [],
+        trials=[mk_trial(val_score=score)] if score is not None else [],
         created_at=f"2026-08-22T10:{t:02d}:00+00:00",
         finished_at=f"2026-08-22T10:{t + 1:02d}:00+00:00",
         **kwargs,
@@ -325,7 +327,7 @@ class TestChartDetail:
 
         def scored(cid, val, holdout, t):
             candidate = cand(cid, "draft", t=t)
-            candidate.trials = [Trial(val_score=val, holdout_score=holdout)]
+            candidate.trials = [mk_trial(val_score=val, holdout_score=holdout)]
             return candidate
 
         candidates = [
@@ -365,6 +367,8 @@ class TestChartDetail:
         from hillclimb.chart import Climb, ClimbEvent, build_climb_plot, climb_legend, legend_text
 
         class PlotSpy:
+            legend_visible = True  # plotui's in-canvas legend switch
+
             def __init__(self):
                 self.lines = []
                 self.scatters = []
@@ -386,13 +390,18 @@ class TestChartDetail:
             ([0.0, 1.0], [0.8, 0.8], "AlphaEvolve best"),
         ]
 
-        # ChartScreen draws its legend in a dedicated Textual band, so its
-        # plot traces deliberately carry no in-canvas legend names.
+        # ChartScreen draws its legend in a dedicated Textual band, so the
+        # in-canvas box is switched off — but the traces keep their names,
+        # which is what the hover readout labels its rows with.
+        assert plot.legend_visible is True
         outside = PlotSpy()
         monkeypatch.setattr("hillclimb.chart.themed_plot", lambda: outside)
         build_climb_plot(climb, baselines, show_legend=False)
-        assert all(options["name"] is None for _xs, _ys, options in outside.lines)
-        assert all(options["name"] is None for _args, options in outside.scatters)
+        assert outside.legend_visible is False
+        assert [options["name"] for _xs, _ys, options in outside.lines] == [
+            "baseline", "OpenEvolve best", "AlphaEvolve best",
+        ]
+        assert [options["name"] for _args, options in outside.scatters] == ["new best"]
         entries = climb_legend(climb, baselines)
         assert [entry[0] for entry in entries] == [
             "baseline", "OpenEvolve best", "AlphaEvolve best", "new best",
@@ -619,7 +628,7 @@ async def test_chart_defaults_to_holdout_when_the_search_scores_one(tree_workspa
     journal = Journal(search_dir / "journal.jsonl")
     journal.candidate_result(Candidate(
         candidate_id="c100", operator="draft", status="ok",
-        trials=[Trial(val_score=0.5, holdout_score=0.6)],
+        trials=[mk_trial(val_score=0.5, holdout_score=0.6)],
     ))
     app = ChartApp(config, "r1/circle-packing")
     async with app.run_test(size=(120, 40)) as pilot:
@@ -639,7 +648,9 @@ async def test_chart_cycles_between_problems(tree_workspace, tmp_path, monkeypat
 
     _search_dir, config = tree_workspace  # r1/circle-packing
     make_run_with_search(config.paths.runs_dir, "r2", search_id="other-problem")
-    app = ChartApp(config)  # anchors on the latest search: other-problem
+    # two problems in the folder: a bare ChartApp would open the picker
+    # (test_chart_picker.py), so anchor explicitly on the latest search
+    app = ChartApp(config, "r2/other-problem")
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         line = str(app.screen.query_one("#chartline").render())

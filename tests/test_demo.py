@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from tests.factories import trial as mk_trial
+
 import os
 from pathlib import Path
 
 import pytest
 
-from hillclimb.candidate import Candidate, Trial
+from hillclimb.candidate import Candidate
 from hillclimb.chart import climb_curve, climb_curves
 from hillclimb.cli import main as cli_main
 from hillclimb.demo import DEMO_PROBLEM_ID, install_demo_problem
@@ -52,7 +54,7 @@ def _search(runs_dir: Path, run_id: str, name: str, scores: list[tuple[str, floa
     for index, (finished, score) in enumerate(scores):
         journal.candidate_result(Candidate(
             candidate_id=f"c{index:03d}", operator="draft", status="ok",
-            trials=[Trial(val_score=score)], finished_at=finished,
+            trials=[mk_trial(val_score=score)], finished_at=finished,
         ))
     return search_dir
 
@@ -350,7 +352,7 @@ def test_chart_groups_searches_by_problem_key_across_runs(tmp_path):
     ))
     Journal(second / "journal.jsonl").candidate_result(Candidate(
         candidate_id="c000", operator="draft", status="ok",
-        trials=[Trial(val_score=2.0)], finished_at="2026-08-22T10:02:00+00:00",
+        trials=[mk_trial(val_score=2.0)], finished_at="2026-08-22T10:02:00+00:00",
     ))
     curves = climb_curves(runs, "p")
     # a run with several searches on the problem labels each by search id

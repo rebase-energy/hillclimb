@@ -117,7 +117,7 @@ uv run hillclimb knowledge graph                # interactive TUI (zoom/pan/clic
 uv run hillclimb watch candidates [search]      # TUI straight on a search's candidates — don't run headless
 uv run hillclimb stop --all                     # stop every running search (e.g. a demo)
 uv run hillclimb reset --yes                  # kill this folder's engines AND delete its hillclimb/ dir (other folders untouched)
-uv run hillclimb chart                          # live hillclimb curve TUI (best score vs time) — don't run headless
+uv run hillclimb chart                          # live hillclimb curve TUI (best score vs time; several charts = a picker table first, enter/esc) — don't run headless
 uv run hillclimb chart --detail [search]        # same, one search with its exploration tree on the curve — don't run headless
 uv run hillclimb tree [search]                  # exploration tree TUI (expanded / discontinued / failed lineages) — don't run headless
 uv run hillclimb knowledge rebuild              # regenerate the derived graph.json
@@ -130,6 +130,7 @@ uv run hillclimb paper list                     # ingested papers with scope and
 uv run hillclimb experiment run <spec> [--dry-run] [--parallel]  # arms × problems × repeats (real searches; --dry-run lists jobs)
 uv run hillclimb experiment report [spec]       # compare the arms on holdout, gap vs control judged against the noise floor
 uv run hillclimb run <problem> --set search.policy=openevolve --experiment E --arm A  # one arm by hand (counts in the report)
+uv run hillclimb run <problem> --policy greedy --policy openevolve --policy gepa --arm-set gepa:search.parallel_operators=1  # mixed fleet: one search per optimizer under one run; `experiment report <run-id>` compares
 ```
 
 ## Rules

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.factories import trial as mk_trial
+
 import sys
 from pathlib import Path
 
@@ -267,8 +269,13 @@ class FileHoldoutScorer:
     """Stand-in for a problem's `verifier.sh --holdout`: scores the candidate
     out of sight and reports (score, error, cpu_s) the same way."""
 
-    def score(self, candidate_dir):
-        path = Path(candidate_dir) / "holdout_predictions.csv"
+    def __init__(self):
+        self.trials: list[tuple[str, object]] = []  # (candidate dir name, trial) per call
+
+    def score(self, candidate_dir, trial=None):
+        self.trials.append((Path(candidate_dir).name, trial))
+        index = trial.index if trial is not None else 0
+        path = Path(candidate_dir) / "trials" / f"t{index}" / "replicates" / "r0" / "holdout_predictions.csv"
         if not path.exists():
             return None, "`holdout_predictions.csv` was not written", 0.01
         return float(path.read_text()), None, 0.01
@@ -436,6 +443,41 @@ def test_buggy_ensemble_gets_debugged_and_counts_as_success(task, config):
     fixed = searcher.run_operator(op2, tgt2)
     assert fixed.status == "ok"
     assert searcher._ensemble_succeeded() is True  # via the debug chain root
+
+
+def test_trial_killed_at_the_budget_wall_is_abandoned_not_buggy(task, config):
+    """A verifier timeout clamped by the search's remaining budget says
+    nothing about the code: the candidate is abandoned (no debug target),
+    with the cut spelled out in its summary. The same kill under the
+    problem's own execution limit stays buggy."""
+    from hillclimb.candidate import Candidate
+    from hillclimb.search import Job, OutcomeMsg
+
+    backend = FakeBackend()
+    searcher, journal, search_dir = make_searcher(task, config, backend, max_candidates=3)
+
+    def cut(cid: str, clamped: bool) -> Candidate:
+        cand = Candidate(candidate_id=cid, operator="draft", candidate_dir=str(search_dir), summary="softmin homotopy")
+        journal.candidate_created(cand)
+        cand.trials = [mk_trial(returncode=-9, duration_s=313.0, timed_out=True)]
+        searcher._inflight[cid] = object()
+        msg = OutcomeMsg(
+            job=Job(candidate=cand, request=None, candidate_dir=search_dir),
+            kind="executed", all_ok=False, budget_clamped=clamped,
+        )
+        return searcher._commit(msg)
+
+    wall = cut("c001", clamped=True)
+    assert wall.status == "abandoned"
+    assert wall.summary.startswith("cut off at the budget wall: verifier killed after 313s")
+    assert "softmin homotopy" in wall.summary
+    assert journal.get("c001").status == "abandoned"
+    assert searcher.decide() == ("draft", None)  # not a debug target
+
+    limit = cut("c002", clamped=False)
+    assert limit.status == "buggy"
+    operator, target = searcher.decide()
+    assert (operator, target.candidate_id) == ("debug", "c002")
 
 
 def test_stale_pending_node_recovered_on_resume(task, config):
@@ -763,7 +805,7 @@ def test_evaluator_kind_full_loop(config, tmp_path):
     assert "unscored placeholder" in journal.get("c000").summary
     draft = journal.get("c001")
     assert draft.val_score == 0.6
-    assert draft.trials[0].report["source"] == "evaluator"  # trusted by kind
+    assert draft.report["source"] == "evaluator"  # trusted by kind
     assert best.val_score == 0.7
 
     draft_prompt = backend.requests[0].prompt
@@ -801,14 +843,15 @@ def test_evaluator_missing_result_json_wording(config, tmp_path):
 
 def test_evaluator_multi_trial_seeds(config, tmp_path):
     config.search.num_drafts = 1
-    config.search.n_trials = 2
+    config.search.n_replicates = 2
     backend = FakeBackend()
     backend.queue(script="def answer():\n    return 0.6\n", notes="draft\n")
     searcher, journal, _ = make_evaluator_searcher(config, tmp_path, backend, max_candidates=2)
     searcher.run()
     draft = journal.get("c001")
-    assert [t.seed for t in draft.trials] == [0, 1]
-    assert draft.trials[0].val_score == 0.6
-    assert draft.trials[1].val_score == 0.601  # HILLCLIMB_TRIAL_SEED reached the evaluator
+    replicates = draft.trials[0].replicates
+    assert [r.seed for r in replicates] == [0, 1]
+    assert replicates[0].val_score == 0.6
+    assert replicates[1].val_score == 0.601  # HILLCLIMB_TRIAL_SEED reached the evaluator
     assert draft.val_score == pytest.approx(0.6005)  # mean climbs
-    assert draft.trials[0].report is not None  # per-trial reports survive trial dirs
+    assert draft.report is not None  # per-replicate reports survive replicate dirs

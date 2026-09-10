@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from tests.factories import trial as mk_trial
+
 from pathlib import Path
 
 import pytest
 
-from hillclimb.candidate import Candidate, Trial
+from hillclimb.candidate import Candidate
 from hillclimb.journal import Journal
 from hillclimb.knowledge import KnowledgeCard
 from hillclimb.skills import (
@@ -37,7 +39,7 @@ def winner_journal(tmp_path, val=0.8, operator="improve", code="import sklearn\n
     (ws / "solution.py").write_text(code)
     return make_journal(tmp_path, [dict(
         candidate_id="c001", operator=operator, status="ok", candidate_dir=str(ws),
-        summary="gradient boosting", trials=[Trial(val_score=val)],
+        summary="gradient boosting", trials=[mk_trial(val_score=val)],
     )])
 
 

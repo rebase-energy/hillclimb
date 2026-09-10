@@ -55,6 +55,10 @@ class OutcomeMsg:
     holdout_error: str | None = None
     holdout_cpu_s: float | None = None  # burned even when holdout errored
     holdout_gated: bool = False
+    # the verifier ran under a timeout clamped by the search's remaining
+    # budget rather than the problem's own execution limit: a trial killed
+    # by that timeout was cut off by the clock, not shown to be buggy
+    budget_clamped: bool = False
 
 
 class GreedySearcher:
@@ -497,10 +501,12 @@ class GreedySearcher:
         self.journal.candidate_created(candidate)
         self.log(f"seeding incumbent {seed.name} as {candidate_id}")
         exec_timeout = self.config.budget.exec_timeout_s
-        all_ok = self.evaluator.run_trials(candidate, candidate_dir / "solution.py", candidate_dir, exec_timeout)
+        trial, all_ok = self.evaluator.run_trial(
+            candidate, candidate_dir / "solution.py", candidate_dir, exec_timeout
+        )
         holdout_score = holdout_error = holdout_cpu = None
         if all_ok:
-            holdout_score, holdout_error, holdout_cpu = self.evaluator.score_holdout(candidate_dir)
+            holdout_score, holdout_error, holdout_cpu = self.evaluator.score_holdout(candidate_dir, trial)
         msg = OutcomeMsg(
             job=Job(candidate=candidate, request=None, candidate_dir=candidate_dir),
             kind="executed",
@@ -706,8 +712,9 @@ class GreedySearcher:
         exec_timeout = min(
             self.config.budget.exec_timeout_s, max(60, int(self.budget.remaining() - 30))
         )
+        budget_clamped = exec_timeout < self.config.budget.exec_timeout_s
         self._set_phase(candidate.candidate_id, "exec")
-        all_ok = self.evaluator.run_trials(candidate, solution, job.candidate_dir, exec_timeout)
+        trial, all_ok = self.evaluator.run_trial(candidate, solution, job.candidate_dir, exec_timeout)
 
         holdout_score = holdout_error = holdout_cpu = None
         gated = False
@@ -718,7 +725,9 @@ class GreedySearcher:
                 higher_is_better=self.problem.higher_is_better,
             ):
                 self._set_phase(candidate.candidate_id, "holdout")
-                holdout_score, holdout_error, holdout_cpu = self.evaluator.score_holdout(job.candidate_dir)
+                holdout_score, holdout_error, holdout_cpu = self.evaluator.score_holdout(
+                    job.candidate_dir, trial
+                )
             else:
                 gated = True  # climbs on val; not selectable via holdout
         return OutcomeMsg(
@@ -730,6 +739,7 @@ class GreedySearcher:
             holdout_error=holdout_error,
             holdout_cpu_s=holdout_cpu,
             holdout_gated=gated,
+            budget_clamped=budget_clamped,
         )
 
     def _commit(self, msg: OutcomeMsg) -> Candidate:
@@ -787,7 +797,7 @@ class GreedySearcher:
 
                 # kind == "executed"
                 if msg.all_ok:
-                    last = candidate.trials[-1]
+                    last = candidate.best_trial or candidate.trials[-1]
                     # holdout CPU is spent whether or not scoring succeeded
                     last.holdout_cpu_s = msg.holdout_cpu_s
                     if msg.holdout_error is not None:
@@ -814,6 +824,20 @@ class GreedySearcher:
                                 f"({previous_best.val_score:.5g}) by less than the accept band "
                                 f"({self.accept_band():.3g}): within noise, not promoted"
                             )
+                elif msg.budget_clamped and any(
+                    r.timed_out for t in candidate.trials for r in t.replicates
+                ):
+                    # the search's clock ran out under the verifier: the
+                    # candidate was never shown to be wrong, so it is not a
+                    # debug target — abandoned, like a candidate an abort
+                    # stopped mid-operator
+                    candidate.status = "abandoned"
+                    cut = next(r for t in candidate.trials for r in t.replicates if r.timed_out)
+                    candidate.summary = (
+                        f"cut off at the budget wall: verifier killed after {cut.duration_s:.0f}s"
+                        + (f" — {candidate.summary}" if candidate.summary else "")
+                    )
+                    self.log(f"  {candidate.candidate_id} cut off at the budget wall (not buggy)")
                 else:
                     candidate.status = "buggy"
                 candidate.finished_at = utcnow()
@@ -976,13 +1000,13 @@ class GreedySearcher:
             assert target is not None
             chain = self.journal.debug_chain(target.candidate_id)
             root, attempts = chain[0], chain[1:]
-            last_trial = target.last_trial
+            last_replicate = target.last_replicate
             return render(
                 "debug",
                 parent_summary=root.summary or "(no summary)",
                 failure_reason=self._failure_reason(target),
                 stderr_tail=tail(Path(target.candidate_dir) / "exec_stderr.log"),
-                stdout_tail=last_trial.stdout_tail if last_trial else "",
+                stdout_tail=last_replicate.stdout_tail if last_replicate else "",
                 debug_history=self._candidate_summaries(attempts) or "(none — this is the first fix attempt)",
                 contract=contract,
             )
@@ -1003,7 +1027,7 @@ class GreedySearcher:
             )
         if operator == "improve":
             assert target is not None
-            last_trial = target.last_trial
+            last_replicate = target.last_replicate
             live = self._live_experience()
             ablation_cue = (
                 render("ablation_cue").rstrip() + "\n"
@@ -1016,7 +1040,7 @@ class GreedySearcher:
                 metric_name=self.problem.metric_name,
                 direction=direction,
                 best_score=target.val_score,
-                stdout_tail=last_trial.stdout_tail if last_trial else "",
+                stdout_tail=last_replicate.stdout_tail if last_replicate else "",
                 sibling_summaries=self._candidate_summaries(self.journal.children(target.candidate_id))
                 or "(nothing tried from this solution yet)",
                 evaluation_report=self._report_section(target),
@@ -1031,14 +1055,15 @@ class GreedySearcher:
 
     def _failure_reason(self, candidate: Candidate) -> str:
         trial = candidate.last_trial
-        if trial is None:
+        replicate = candidate.last_replicate
+        if trial is None or replicate is None:
             return "The script failed."
-        if trial.timed_out:
+        if replicate.timed_out:
             return "The script exceeded its execution time limit and was killed."
-        if trial.returncode not in (0, None):
-            return f"The script crashed (exit code {trial.returncode})."
+        if replicate.returncode not in (0, None):
+            return f"The script crashed (exit code {replicate.returncode})."
         problems = []
-        if trial.val_score is None:
+        if replicate.val_score is None:
             problems.append(
                 "the verifier reported no score — it exited 0 but wrote no usable "
                 "`eval_result.json` (a `{\"score\": <float>}` object, or a bare number)"

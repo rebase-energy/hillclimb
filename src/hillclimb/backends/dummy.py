@@ -76,7 +76,7 @@ import os
 
 # a tiny bit of movement per call so successive candidates differ
 print("dummy solution")
-print(round(0.5 + 0.01 * int(os.environ.get("HILLCLIMB_TRIAL_SEED", 0)), 4))
+print(round(0.5 + 0.01 * int(os.environ.get("HILLCLIMB_REPLICATE_SEED", 0)), 4))
 '''
 
 

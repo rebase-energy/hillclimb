@@ -71,6 +71,14 @@ class ProblemSpec(BaseModel):
     landscape_path: Path | None = None
     surface_metrics: list[str] = Field(default_factory=lambda: ["x", "y"])
 
+    # --- similarity view (`hillclimb similarity`) ---
+    # optional behavioral fingerprint module (`fingerprint.py`, picked up by
+    # default): exposes `fingerprint(candidate_dir) -> Sequence[float] | None`,
+    # a vector that captures what a candidate's output *is* (invariant to
+    # whatever the problem considers equivalent — point order, symmetry).
+    # Without it the view falls back to the flattened submission file.
+    fingerprint_path: Path | None = None
+
     # --- t=0 floor ---
     baseline_text: str | None = None  # solution.py source scored as c000
     # declared floor (`baseline: 0.5` in problem.yaml): c000 carries this
@@ -149,15 +157,17 @@ class SuiteEntry(BaseModel):
     backend: str | None = None
     budget: str | None = None  # "2h" / "30m" / seconds — parsed by the CLI
     parallel_operators: int | None = None
-    n_trials: int | None = None
+    n_replicates: int | None = None
     seed_from: str | None = None  # incumbent solution.py, relative to the spec file
 
     @model_validator(mode="before")
     @classmethod
-    def _legacy_parallel_agents(cls, data):
-        if isinstance(data, dict) and "parallel_agents" in data:
+    def _legacy_keys(cls, data):
+        if isinstance(data, dict):
             data = dict(data)
-            data.setdefault("parallel_operators", data.pop("parallel_agents"))
+            for old, new in (("parallel_agents", "parallel_operators"), ("n_trials", "n_replicates")):
+                if old in data:
+                    data.setdefault(new, data.pop(old))
         return data
 
 
@@ -390,6 +400,7 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
         interface_text=interface_text,
         landscape_path=_optional_file(problem_dir, meta, "landscape", default="landscape.py"),
         surface_metrics=list(meta.get("surface_metrics") or ["x", "y"]),
+        fingerprint_path=_optional_file(problem_dir, meta, "fingerprint", default="fingerprint.py"),
         requirements_file=_optional_file(problem_dir, meta, "requirements"),
         baseline_text=baseline_path.read_text() if baseline_path else None,
         baseline_score=baseline_score,

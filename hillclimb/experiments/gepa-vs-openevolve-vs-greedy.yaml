@@ -14,7 +14,7 @@ defaults:
   model: sonnet
   learning.enabled: false
   search.parallel_operators: 1
-  search.n_trials: 1
+  search.n_replicates: 1
 
 arms:
   greedy:

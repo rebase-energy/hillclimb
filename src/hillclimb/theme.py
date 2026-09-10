@@ -91,6 +91,13 @@ DataTable > .datatable--header {
 DataTable:focus > .datatable--header {
     background-tint: $foreground 0%;
 }
+
+/* Textual already tracks the row under the pointer separately from its
+   keyboard cursor. Give that hover row the site's subtle panel lift so it is
+   easy to aim at, while leaving the cyan cursor as the stronger selection. */
+DataTable > .datatable--hover {
+    background: $panel;
+}
 """
 
 

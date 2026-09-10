@@ -4,9 +4,11 @@ lives in test_watch.py."""
 
 from __future__ import annotations
 
+from tests.factories import trial as mk_trial
+
 import random
 
-from hillclimb.candidate import Candidate, Trial
+from hillclimb.candidate import Candidate
 from hillclimb.gantt import GanttLayout, GanttSpan, build_gantt, minute_to_col
 from hillclimb.ganttview import LANE_LABEL_W, render_gantt
 
@@ -18,7 +20,7 @@ def stamp(minute: float) -> str:
 
 
 def trial(started: float, finished: float, score: float | None = None) -> Trial:
-    return Trial(val_score=score, started_at=stamp(started), finished_at=stamp(finished))
+    return mk_trial(val_score=score, started_at=stamp(started), finished_at=stamp(finished))
 
 
 def cand(

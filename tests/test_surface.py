@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from tests.factories import trial as mk_trial
+
 from pathlib import Path
 
 import pytest
 
-from hillclimb.candidate import Candidate, Trial
+from hillclimb.candidate import Candidate
 from hillclimb.problem import load_problem
 from hillclimb.surface import LIFT, LandscapeError, build_surface, load_landscape
 from hillclimb.tree import build_tree
@@ -47,7 +49,7 @@ def cand(
     trials = []
     if score is not None:
         metrics = {"x": pos[0], "y": pos[1]} if pos is not None else {}
-        trials = [Trial(val_score=score, metrics=metrics)]
+        trials = [mk_trial(val_score=score, metrics=metrics)]
     return Candidate(
         candidate_id=cid, operator=operator, parent_id=parent, status=status, trials=trials,
         created_at=f"2026-08-28T10:{t:02d}:00+00:00",
@@ -91,9 +93,9 @@ class TestBuildSurface:
         noisy = noisy.model_copy(
             update={
                 "trials": [
-                    Trial(val_score=1.0, metrics={"x": 0.0, "y": 1.0}),
-                    Trial(val_score=1.1, metrics={"x": 2.0, "y": 1.0}),
-                    Trial(val_score=0.9, metrics={"x": 1.0, "y": 1.0}),
+                    mk_trial(val_score=1.0, metrics={"x": 0.0, "y": 1.0}),
+                    mk_trial(val_score=1.1, metrics={"x": 2.0, "y": 1.0}),
+                    mk_trial(val_score=0.9, metrics={"x": 1.0, "y": 1.0}),
                 ]
             }
         )
@@ -123,7 +125,7 @@ class TestBuildSurface:
 
     def test_metric_keys_are_configurable(self, landscape):
         c = cand("c001", "draft", score=1.0, t=1)
-        c = c.model_copy(update={"trials": [Trial(val_score=1.0, metrics={"lat": 1.0, "lon": 2.0})]})
+        c = c.model_copy(update={"trials": [mk_trial(val_score=1.0, metrics={"lat": 1.0, "lon": 2.0})]})
         view = build_surface([c], True, landscape, metric_keys=("lat", "lon"))
         assert (view.nodes[0].x, view.nodes[0].y) == (1.0, 2.0)
 

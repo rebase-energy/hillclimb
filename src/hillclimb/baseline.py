@@ -3,9 +3,9 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from hillclimb.candidate import Candidate, Trial, utcnow
+from hillclimb.candidate import Candidate, Replicate, Trial, utcnow
 from hillclimb.problem import ProblemSpec
-from hillclimb.dirs import create_candidate_dir
+from hillclimb.dirs import create_candidate_dir, create_replicate_dir, create_trial_dir, hoist_replicate
 
 
 def unscored_placeholder(search_dir: Path, files: dict[str, Path] | None = None) -> Candidate:
@@ -44,7 +44,11 @@ def declared_floor(search_dir: Path, score: float, summary: str) -> Candidate:
         status="ok",
         candidate_dir=str(candidate_dir),
         summary=summary,
-        trials=[Trial(returncode=0, duration_s=0.0, submission_ok=True, val_score=score, finished_at=now)],
+        trials=[Trial(
+            is_best=True,
+            finished_at=now,
+            replicates=[Replicate(returncode=0, duration_s=0.0, submission_ok=True, val_score=score, finished_at=now)],
+        )],
         is_best=True,
         finished_at=now,
     )
@@ -77,20 +81,24 @@ def run_scored_baseline(
     solution.write_text(solution_text)
     (candidate_dir / "notes.md").write_text(summary + "\n")
 
-    exec_result = executor.execute(solution, candidate_dir, timeout_s)
-    trial = Trial(
+    rdir = create_replicate_dir(create_trial_dir(candidate_dir, 0), 0)
+    exec_result = executor.execute(rdir / "solution.py", rdir, timeout_s)
+    replicate = Replicate(
         returncode=exec_result.returncode,
         duration_s=exec_result.duration_s,
         cpu_s=exec_result.cpu_s,
         timed_out=exec_result.timed_out,
         submission_ok=exec_result.submission_ok,
         val_score=exec_result.val_score,
+        finished_at=utcnow(),
     )
+    hoist_replicate(candidate_dir, rdir, problem.output_artifacts)
     (search_dir / "best").mkdir(parents=True, exist_ok=True)
     if exec_result.ok:
+        trial = Trial(is_best=True, replicates=[replicate])
         if holdout_scorer is not None:
             trial.holdout_score, trial.holdout_error, trial.holdout_cpu_s = (
-                holdout_scorer.score(candidate_dir)
+                holdout_scorer.score(candidate_dir, trial)
             )
         trial.finished_at = utcnow()
         candidate.trials.append(trial)

@@ -43,6 +43,10 @@ print({RESULT_LINE!r})
 STUB_RATE_LIMITED = f"""#!{sys.executable}
 import json, sys
 sys.stdin.read()
+print(json.dumps({{"type": "system", "subtype": "init", "model": "claude-opus-5"}}))
+print(json.dumps({{"type": "assistant", "message": {{"model": "<synthetic>",
+                   "id": "synthetic-error", "usage": {{"input_tokens": 0, "output_tokens": 0}},
+                   "content": [{{"type": "text", "text": "Usage limit reached, try later"}}]}}}}))
 print(json.dumps({{"type": "result", "subtype": "error", "is_error": True,
                    "session_id": "sess-rl", "result": "Usage limit reached, try later"}}))
 sys.exit(1)
@@ -112,6 +116,7 @@ def test_rate_limit_detected_in_stream(tmp_path: Path):
     assert not result.ok
     assert result.error_kind == "rate_limited"
     assert "limit" in result.error_message.lower()
+    assert result.model_id == "claude-opus-5"  # synthetic error must not replace it
 
 
 def test_timeout_kills_and_cleans_pid(tmp_path: Path):

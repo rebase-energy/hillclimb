@@ -107,7 +107,7 @@ def test_holdout_scorer_hidden_dir(spec, candidate_dir, tmp_path):
     assert error is None
     assert isinstance(score, float)
     # evaluation ran outside the agent-visible candidate_dir
-    eval_dir = tmp_path / "holdout-eval" / "c001"
+    eval_dir = tmp_path / "holdout-eval" / "c001" / "t0"
     assert (eval_dir / "eval_result.json").exists()
     holdout_payload = json.loads((eval_dir / "eval_result.json").read_text())
     assert holdout_payload["split"] == "holdout"

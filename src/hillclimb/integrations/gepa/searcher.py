@@ -335,12 +335,12 @@ class GEPASearcher:
                 scored += 1
                 continue
             self._on_phase(candidate.candidate_id, "holdout")
+            last = candidate.best_trial or candidate.trials[-1]
             try:
-                score, error, cpu_s = self.holdout_scorer.score(Path(candidate.candidate_dir))
+                score, error, cpu_s = self.holdout_scorer.score(Path(candidate.candidate_dir), last)
             finally:
                 if self.status is not None:
                     self.status.remove_current(candidate.candidate_id)
-            last = candidate.trials[-1]
             last.holdout_cpu_s = cpu_s
             if error is not None:
                 last.holdout_error = error

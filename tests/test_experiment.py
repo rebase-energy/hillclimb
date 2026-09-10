@@ -80,8 +80,8 @@ class TestSpec:
             resolve_experiment_path("nope", hillclimb_dir)
 
     def test_flatten_keeps_dict_valued_settings_whole(self):
-        assert flatten_overrides({"search": {"policy_params": {"k": 1}, "n_trials": 2}}) == {
-            "search.policy_params": {"k": 1}, "search.n_trials": 2,
+        assert flatten_overrides({"search": {"policy_params": {"k": 1}, "n_replicates": 2}}) == {
+            "search.policy_params": {"k": 1}, "search.n_replicates": 2,
         }
 
 
@@ -89,12 +89,12 @@ class TestOverrides:
     def test_apply_overrides_walks_dotted_paths_with_coercion(self):
         config = Config()
         config.apply_overrides(parse_set_overrides([
-            "search.policy=openevolve", "learning.enabled=false", "search.n_trials=3",
+            "search.policy=openevolve", "learning.enabled=false", "search.n_replicates=3",
             "search.policy_params={population_size: 50}", "search.policy_params.seed=7", "model=opus",
         ]))
         assert config.search.policy == "openevolve"
         assert config.learning.enabled is False
-        assert config.search.n_trials == 3
+        assert config.search.n_replicates == 3
         assert config.search.policy_params == {"population_size": 50, "seed": 7}
         assert config.model == "opus"
         with pytest.raises(KeyError, match="search.nope"):
@@ -381,3 +381,188 @@ class TestCli:
 
 
 
+
+
+class TestBoundedLaunch:
+    """`experiment run --max-concurrent N`: detached launches in job order,
+    never more than N alive, exit codes read off the Popen objects."""
+
+    @staticmethod
+    def _setup(config, tmp_path, monkeypatch, spec_text):
+        from tests.test_cli import write_problem
+
+        root = tmp_path / "problems"
+        write_problem(root, "p")
+        config.paths.problems_dir = root
+        hillclimb_dir = tmp_path / "hillclimb"
+        spec = write_spec(hillclimb_dir / "experiments" / "ab.yaml", spec_text)
+        config.hillclimb_dir = hillclimb_dir
+        monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
+        monkeypatch.setattr("hillclimb.cli._REAP_POLL_S", 0)
+        monkeypatch.chdir(tmp_path)
+        return spec
+
+    @staticmethod
+    def _fake_popen(monkeypatch, exit_codes: dict[str, int] | None = None):
+        """Every launched child exits on its first poll (the arm's code from
+        `exit_codes`, else 0); records the argv and how many were alive."""
+        calls: list[list[str]] = []
+        alive: list[int] = []
+        peak = [0]
+
+        class DummyProc:
+            def __init__(self, cmd):
+                self.pid = 100 + len(calls)
+                self.cmd = cmd
+                alive.append(self.pid)
+                peak[0] = max(peak[0], len(alive))
+
+            def poll(self):
+                alive.remove(self.pid)
+                arm = self.cmd[self.cmd.index("--arm") + 1]
+                return (exit_codes or {}).get(arm, 0)
+
+        monkeypatch.setattr("subprocess.Popen", lambda cmd, **kw: calls.append(cmd) or DummyProc(cmd))
+        return calls, peak
+
+    def test_spec_max_concurrent_parsed(self, tmp_path):
+        spec = load_experiment(write_spec(tmp_path / "x.yaml", "problems: [p]\nschedule: parallel\nmax_concurrent: 3\narms: {a: {}, b: {}}\n"))
+        assert spec.max_concurrent == 3
+        with pytest.raises(ValueError, match="max_concurrent"):
+            load_experiment(write_spec(tmp_path / "y.yaml", "problems: [p]\nmax_concurrent: 0\narms: {a: {}, b: {}}\n"))
+
+    def test_expand_numbers_repeats_from_first(self):
+        from hillclimb.experiment import ExperimentSpec
+
+        spec = ExperimentSpec(name="e", problems=["p"], arms={"a": {}, "b": {}}, repeats=2)
+        assert [(j.arm, j.repeat) for j in expand(spec, first_repeat=3)] == [
+            ("a", 3), ("b", 3), ("a", 4), ("b", 4),
+        ]
+        assert [j.index for j in expand(spec, first_repeat=3)] == [1, 2, 3, 4]
+        with pytest.raises(ValueError):
+            expand(spec, first_repeat=0)
+
+    def test_bounded_launch_keeps_order_and_bound(self, config, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        from hillclimb.cli import app
+
+        spec = self._setup(
+            config, tmp_path, monkeypatch,
+            "problems: [p]\nrepeats: 2\nschedule: parallel\nmax_concurrent: 2\n"
+            "arms:\n  a: {search.policy: greedy}\n  b: {learning.enabled: false}\n  c: {}\n",
+        )
+        calls, peak = self._fake_popen(monkeypatch)
+        result = CliRunner().invoke(app, ["experiment", "run", str(spec)])
+        assert result.exit_code == 0, result.output
+        assert "= 6 searches, parallel (at most 2 at once)" in result.output
+        assert len(calls) == 6
+        assert [(c[c.index("--arm") + 1], c[c.index("--repeat") + 1]) for c in calls] == [
+            ("a", "1"), ("b", "1"), ("c", "1"), ("a", "2"), ("b", "2"), ("c", "2"),
+        ]
+        assert peak[0] <= 2
+        assert result.output.count("finished:") == 6
+        assert "6 searches finished, 0 with a non-zero exit" in result.output
+        runs = list(config.paths.runs_dir.iterdir())
+        assert len(runs) == 1
+
+    def test_flag_overrides_spec_and_exit_codes(self, config, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        from hillclimb.cli import app
+
+        spec = self._setup(
+            config, tmp_path, monkeypatch,
+            "problems: [p]\nrepeats: 1\nmax_concurrent: 4\narms:\n  a: {}\n  b: {}\n  c: {}\n",
+        )
+        # spec max_concurrent without schedule: parallel is ignored (sequential)
+        result = CliRunner().invoke(app, ["experiment", "run", str(spec), "--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert "3 searches, sequential" in result.output and "at most" not in result.output
+        # the flag implies parallel and overrides the spec's bound
+        calls, peak = self._fake_popen(monkeypatch, exit_codes={"b": 2})
+        result = CliRunner().invoke(app, ["experiment", "run", str(spec), "--max-concurrent", "1"])
+        assert result.exit_code == 2, result.output  # a parked child, nothing failed
+        assert "(at most 1 at once)" in result.output and peak[0] == 1
+        assert "p-b-r1: parked" in result.output
+        calls, peak = self._fake_popen(monkeypatch, exit_codes={"b": 2, "c": 1})
+        result = CliRunner().invoke(app, ["experiment", "run", str(spec), "--max-concurrent", "3"])
+        assert result.exit_code == 1, result.output
+        assert peak[0] == 3
+
+    def test_sequential_and_max_concurrent_contradict(self, config, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        from hillclimb.cli import app
+
+        spec = self._setup(config, tmp_path, monkeypatch, "problems: [p]\narms:\n  a: {}\n  b: {}\n")
+        result = CliRunner().invoke(app, ["experiment", "run", str(spec), "--sequential", "--max-concurrent", "2"])
+        assert result.exit_code != 0
+        assert "contradict" in result.output
+
+    def test_run_id_appends_repeats_to_an_existing_run(self, config, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        from hillclimb.cli import app
+
+        spec = self._setup(
+            config, tmp_path, monkeypatch,
+            "problems: [p]\nrepeats: 1\nschedule: parallel\nmax_concurrent: 8\narms:\n  a: {}\n  b: {}\n",
+        )
+        runner = CliRunner()
+        calls, _ = self._fake_popen(monkeypatch)
+        assert runner.invoke(app, ["experiment", "run", str(spec)]).exit_code == 0
+        (run_dir,) = list(config.paths.runs_dir.iterdir())
+        run_id = run_dir.name
+        calls, _ = self._fake_popen(monkeypatch)
+        result = runner.invoke(
+            app, ["experiment", "run", str(spec), "--run-id", run_id, "--first-repeat", "2", "--repeats", "2"],
+        )
+        assert result.exit_code == 0, result.output
+        assert "repeats 2..3 = 4 searches" in result.output
+        assert f"Appending to run {run_id}" in result.output
+        assert [c[c.index("--repeat") + 1] for c in calls] == ["2", "2", "3", "3"]
+        assert all(c[c.index("--run-id") + 1] == run_id for c in calls)
+        assert [d.name for d in config.paths.runs_dir.iterdir()] == [run_id]  # no new run
+        result = runner.invoke(app, ["experiment", "run", str(spec), "--run-id", "nope"])
+        assert result.exit_code != 0 and "not an existing experiment run" in result.output
+
+
+def test_run_records_the_seed_and_its_hash(config, tmp_path):
+    """`hillclimb run --seed-from` lands in search.yaml as the path and the
+    sha256 of the file — the identity the run-scope similarity view checks."""
+    import hashlib
+
+    from hillclimb.api import create_run, create_search
+    from hillclimb.problem import load_problem
+    from hillclimb.run import load_search_meta
+    from tests.test_cli import write_problem
+
+    root = tmp_path / "problems"
+    write_problem(root, "p")
+    config.paths.problems_dir = root
+    seed = tmp_path / "seed.py"
+    seed.write_text("print('seed')\n")
+    run_dir = create_run(config, RunMeta(run_id="r1", name="r1", kind="experiment", target="x", problem_ids=["p"]))
+    search_dir = create_search(config, load_problem("p", config), run_dir, "r1", 60, seed_from=seed)
+    meta = load_search_meta(search_dir)
+    assert meta.seed_from == str(seed)
+    assert meta.seed_sha256 == hashlib.sha256(seed.read_bytes()).hexdigest()
+
+
+class TestLegacyReplicateKeys:
+    """`n_trials`/`trial_mode` predate the Trial (params) → Replicate (seed)
+    split; old specs, `--set` lines and config files keep working."""
+
+    def test_config_load_maps_old_keys(self):
+        from hillclimb.config import SearchConfig
+
+        search = SearchConfig.model_validate({"n_trials": 2, "trial_mode": "serial"})
+        assert search.n_replicates == 2
+        assert search.replicate_mode == "serial"
+
+    def test_apply_overrides_maps_old_keys(self):
+        config = Config()
+        config.apply_overrides(parse_set_overrides(["search.n_trials=3", "search.trial_mode=serial"]))
+        assert config.search.n_replicates == 3
+        assert config.search.replicate_mode == "serial"

@@ -32,8 +32,8 @@ class BudgetStatus(BaseModel):
 
 
 class CandidateCounts(BaseModel):
-    """Counts candidates, not trials — revisit if a tuning loop adds
-    multiple trials per candidate."""
+    """Counts candidates, not trials or replicates: a tuned candidate with
+    eight trials is still one candidate here."""
 
     total: int = 0
     ok: int = 0

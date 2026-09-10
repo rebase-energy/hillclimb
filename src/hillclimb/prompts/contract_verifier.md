@@ -21,6 +21,6 @@ Rules:
 - You may run the verifier yourself during development as a sanity check, but do NOT run long training; the orchestrator runs the real evaluation after you finish.
 - The verifier run (including everything it does with `solution.py`) must finish within {{exec_timeout_min}} minutes.
 - Available packages: {{runtime_pkgs}}. Nothing else is installed. {{network_note}}
-- Set random seeds for reproducibility (the orchestrator sets `HILLCLIMB_TRIAL_SEED` when running trials).
+- Set random seeds for reproducibility (the orchestrator sets `HILLCLIMB_REPLICATE_SEED` when it runs repeated replicates).
 {{tools_clause}}
 - Total hillclimb time remaining for this problem: {{time_remaining}}.

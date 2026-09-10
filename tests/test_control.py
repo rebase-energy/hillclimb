@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from tests.factories import trial as mk_trial
+
 from pathlib import Path
 
 import pytest
 
-from hillclimb.candidate import Candidate, Trial
+from hillclimb.candidate import Candidate
 from hillclimb.control import (
     ControlCommand,
     apply_prune,
@@ -21,7 +23,7 @@ from hillclimb.store import FileDataStore, key_for
 def make_candidate(candidate_id: str, **kwargs) -> Candidate:
     val_score = kwargs.pop("val_score", None)
     if val_score is not None:
-        kwargs["trials"] = [Trial(val_score=val_score)]
+        kwargs["trials"] = [mk_trial(val_score=val_score)]
     return Candidate(candidate_id=candidate_id, operator=kwargs.pop("operator", "draft"), **kwargs)
 
 

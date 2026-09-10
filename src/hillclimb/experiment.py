@@ -11,6 +11,7 @@ all the same experiment with different arms. A spec is a YAML file:
     repeats: 3
     budget: 15m
     schedule: sequential            # sequential | parallel
+    max_concurrent: 8               # parallel only: searches alive at once
     noise_floor: 0.02               # a number, or {problem-id: number}
     defaults: {model: sonnet}       # overrides every arm starts from
     arms:
@@ -54,6 +55,11 @@ class ExperimentSpec(BaseModel):
     repeats: int = 1
     budget: str | None = None
     schedule: str = "sequential"  # sequential | parallel
+    # parallel only: at most this many searches alive at once — the launcher
+    # waits on its children before starting the next. Without it every job
+    # starts at once and, past the machine's operator slots, burns its wall
+    # clock in `waiting-slot`. None = unbounded (the old behaviour)
+    max_concurrent: int | None = None
     noise_floor: float | dict[str, float] | None = None
     defaults: dict = Field(default_factory=dict)
     # one executable seed solution shared by every search (--seed-from for
@@ -77,6 +83,13 @@ class ExperimentSpec(BaseModel):
         for name, overrides in value.items():
             if not isinstance(overrides, dict):
                 raise ValueError(f"arm {name!r} must map config settings to values")
+        return value
+
+    @field_validator("max_concurrent")
+    @classmethod
+    def _max_concurrent(cls, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise ValueError("max_concurrent must be >= 1")
         return value
 
     @field_validator("repeats")
@@ -147,6 +160,7 @@ def load_experiment(path: Path) -> ExperimentSpec:
         repeats=data.get("repeats", 1),
         budget=data.get("budget"),
         schedule=data.get("schedule", "sequential"),
+        max_concurrent=data.get("max_concurrent"),
         noise_floor=data.get("noise_floor"),
         defaults=data.get("defaults") or {},
         seed_from=data.get("seed_from"),
@@ -177,12 +191,15 @@ class Job:
     overrides: dict
 
 
-def expand(spec: ExperimentSpec) -> list[Job]:
+def expand(spec: ExperimentSpec, first_repeat: int = 1) -> list[Job]:
     """Problems × arms × repeats as jobs in launch order: repeat-major,
     arms round-robin inside, so every arm has seen the same shared state
-    (knowledge, cache) when its k-th repeat starts."""
+    (knowledge, cache) when its k-th repeat starts. `first_repeat` numbers
+    the repeats from K — how a finished run gains repeats K.. later."""
+    if first_repeat < 1:
+        raise ValueError("first_repeat must be >= 1")
     jobs: list[Job] = []
-    for repeat in range(1, spec.repeats + 1):
+    for repeat in range(first_repeat, first_repeat + spec.repeats):
         for problem in spec.problems:
             for arm in spec.arms:
                 jobs.append(Job(len(jobs) + 1, problem, arm, repeat, spec.arm_overrides(arm)))

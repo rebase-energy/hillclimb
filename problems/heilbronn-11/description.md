@@ -10,17 +10,17 @@ Constraints (verified programmatically):
 - exactly 11 rows
 - no 3 points may be exactly collinear (that makes the minimum area 0)
 
-This is a classic hard continuous optimization problem. The best known value
-for n = 11 is about **0.0326**. Regular grids are terrible (many nearly
-collinear triples). Good approaches: random/structured starts + local
-optimization of the max-min objective (e.g. maximize the smallest area with
-SLSQP or a soft-min surrogate), simulated annealing on point positions, and
-restarts. `numpy` and `scipy` are available.
+This is a classic hard continuous optimization problem. The best known value for n = 11 is about **0.0370** (Goldberg 1972).
+Regular grids are terrible (many nearly collinear triples). Good approaches:
+random/structured starts + local optimization of the max-min objective (e.g.
+maximize the smallest area with SLSQP or a soft-min surrogate), simulated
+annealing on point positions, and restarts. `numpy` and `scipy` are available.
 
 ## Submission format
 
 Write `submission.csv` in the working directory with the header `id,x,y` and 11
-rows (`id` = 0..10), like `sample_submission.csv` (a weak valid baseline).
+rows (`id` = 0..10), like `sample_submission.csv` (a weak valid baseline:
+points on a parabola).
 
 ## Scoring
 

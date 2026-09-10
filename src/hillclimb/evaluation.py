@@ -16,11 +16,10 @@ holding its state lock).
 
 from __future__ import annotations
 
-import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from hillclimb.candidate import Candidate, Trial, utcnow
+from hillclimb.candidate import Candidate, Replicate, Trial, utcnow
 from hillclimb.config import Config
 from hillclimb.executor import RESULT_FILE, Executor, HoldoutScorer, read_result
 from hillclimb.journal import Journal
@@ -37,7 +36,7 @@ def tail(path: Path, chars: int = TAIL_CHARS) -> str:
 
 @dataclass
 class CandidateEvaluator:
-    """Trial execution and report reading for one search. Journal-free:
+    """Trial/replicate execution and report reading for one search. Journal-free:
     reads `config`/`problem` per call (they may be mutated by tests), writes
     only into the candidate dir it is given."""
 
@@ -46,53 +45,78 @@ class CandidateEvaluator:
     config: Config
     holdout_scorer: HoldoutScorer | None = None
 
-    def run_trials(
-        self, candidate: Candidate, solution: Path, candidate_dir: Path, exec_timeout: int
-    ) -> bool:
-        """Run n_trials validation evaluations (each in its own trial dir with
-        a distinct seed) and append the Trials in index order. Returns True
-        only if every trial passed — a seed-flaky candidate is buggy.
+    def run_trial(
+        self,
+        candidate: Candidate,
+        solution: Path,
+        candidate_dir: Path,
+        exec_timeout: int,
+        *,
+        params: dict | None = None,
+        params_doc: dict | None = None,
+        index: int | None = None,
+    ) -> tuple[Trial, bool]:
+        """Run one trial — one parameter set — as `search.n_replicates`
+        seeded executions, each in its own replicate dir, and append it to
+        the candidate. Returns (trial, all_ok); all_ok is True only if every
+        replicate passed — a seed-flaky trial is buggy.
 
-        `search.trial_mode` decides whether they share the machine: parallel
-        for seed variance, serial when the metric is a measurement of the
-        machine itself (time, memory, throughput) and concurrent trials would
-        measure each other."""
-        n = max(1, self.config.search.n_trials)
-        if n == 1:
-            trial, ok = self.execute_one_trial(solution, candidate_dir, exec_timeout, seed=None)
-            candidate.trials.append(trial)
-            return ok
+        `params` are the trial's concrete values (journaled), `params_doc`
+        the params.json document written into the trial dir (the declared
+        space with a `value` per entry); both None for an undeclared
+        candidate. `index` defaults to the next free slot.
 
+        `search.replicate_mode` decides whether replicates share the machine:
+        parallel for seed variance, serial when the metric is a measurement
+        of the machine itself (time, memory, throughput) and concurrent runs
+        would measure each other."""
         from concurrent.futures import ThreadPoolExecutor
 
-        from hillclimb.dirs import create_trial_dir
+        from hillclimb.dirs import create_replicate_dir, create_trial_dir, hoist_replicate, replicate_dir
 
-        def run(index: int) -> tuple[Trial, bool]:
-            trial_dir = create_trial_dir(candidate_dir, index)
-            return self.execute_one_trial(
-                trial_dir / solution.name, trial_dir, exec_timeout, seed=index
+        if index is None:
+            index = len(candidate.trials)
+        tdir = create_trial_dir(candidate_dir, index, params_doc)
+        trial = Trial(index=index, params=dict(params or {}))
+        n = max(1, self.config.search.n_replicates)
+
+        def run(j: int) -> tuple[Replicate, bool]:
+            rdir = create_replicate_dir(tdir, j)
+            # a single replicate keeps seed=None: existing verifiers see no
+            # env change; repeated replicates get distinct seeds
+            return self.execute_replicate(
+                rdir / solution.name, rdir, exec_timeout, seed=j if n > 1 else None
             )
 
-        if self.config.search.trial_mode == "serial":
-            results = [run(index) for index in range(n)]
+        if n == 1 or self.config.search.replicate_mode == "serial":
+            results = [run(j) for j in range(n)]
         else:
-            with ThreadPoolExecutor(max_workers=n, thread_name_prefix="trial") as pool:
+            with ThreadPoolExecutor(max_workers=n, thread_name_prefix="replicate") as pool:
                 results = list(pool.map(run, range(n)))
-        candidate.trials.extend(trial for trial, _ in results)
-        # Trial-0 outputs surface at the candidate-dir root so selection,
-        # pruning, summit, and engine-specific consumers all see the same
-        # declared artifact set. eval_result.json is evaluator infrastructure,
-        # not a shippable problem artifact, but is hoisted for report reading.
-        t0 = candidate_dir / "trials" / "t0"
-        for name in [*self.problem.output_artifacts, "eval_result.json"]:
-            if (t0 / name).exists():
-                shutil.copy(t0 / name, candidate_dir / name)
-        return all(ok for _, ok in results)
+        trial.replicates.extend(r for r, _ in results)
+        trial.finished_at = utcnow()
+        candidate.trials.append(trial)
+        candidate.stamp_best_trial(self.problem.higher_is_better)
+        # r0 of the FIRST trial surfaces at the candidate root right away
+        # (the engine re-hoists when a later trial becomes the best one)
+        if index == 0:
+            hoist_replicate(candidate_dir, replicate_dir(tdir, 0), self.problem.output_artifacts)
+        return trial, all(ok for _, ok in results)
 
-    def execute_one_trial(
+    def hoist_trial(self, candidate_dir: Path, trial: Trial) -> None:
+        """Re-surface a trial's r0 outputs at the candidate root — called by
+        engines when a later trial becomes the candidate's best."""
+        from hillclimb.dirs import hoist_replicate, replicate_dir, trial_dir
+
+        hoist_replicate(
+            candidate_dir, replicate_dir(trial_dir(candidate_dir, trial.index), 0),
+            self.problem.output_artifacts,
+        )
+
+    def execute_replicate(
         self, solution: Path, cwd: Path, exec_timeout: int, seed: int | None
-    ) -> tuple[Trial, bool]:
-        trial_started = utcnow()
+    ) -> tuple[Replicate, bool]:
+        started = utcnow()
         exec_result = self.executor.execute(solution, cwd, exec_timeout, seed=seed)
         stdout_tail = tail(Path(exec_result.stdout_path)) if exec_result.stdout_path else ""
         if not exec_result.ok and not stdout_tail.strip():
@@ -101,7 +125,7 @@ class CandidateEvaluator:
             stderr = tail(Path(exec_result.stdout_path).with_name("exec_stderr.log"), 800)
             if stderr.strip():
                 stdout_tail = f"[stderr] {stderr}"
-        trial = Trial(
+        replicate = Replicate(
             seed=seed,
             returncode=exec_result.returncode,
             duration_s=exec_result.duration_s,
@@ -110,15 +134,15 @@ class CandidateEvaluator:
             stdout_tail=stdout_tail,
             submission_ok=exec_result.submission_ok,
             val_score=exec_result.val_score if exec_result.ok else None,
-            report=self.read_trial_report(cwd) if exec_result.ok else None,
+            report=self.read_replicate_report(cwd) if exec_result.ok else None,
             metrics=exec_result.metrics if exec_result.ok else {},
             instance_scores=exec_result.instance_scores if exec_result.ok else {},
-            started_at=trial_started,
+            started_at=started,
             finished_at=utcnow(),
         )
-        return trial, exec_result.ok
+        return replicate, exec_result.ok
 
-    def read_trial_report(self, cwd: Path) -> dict | None:
+    def read_replicate_report(self, cwd: Path) -> dict | None:
         """Compact validation breakdown from the eval's eval_result.json —
         hillclimb's evaluator report contract. Producers: the emflow eval
         runner, a problem's verifier script (the executor discards anything
@@ -144,13 +168,16 @@ class CandidateEvaluator:
         compact["source"] = "evaluator" if self.problem.report_trusted else "agent"
         return compact
 
-    def score_holdout(self, candidate_dir: Path) -> tuple[float | None, str | None, float | None]:
-        """Score the hidden split; (score, None, cpu_s) on success,
-        (None, reason, cpu_s) on contract violation, (None, None, None) when
-        this search has no holdout."""
+    def score_holdout(
+        self, candidate_dir: Path, trial: Trial | None = None
+    ) -> tuple[float | None, str | None, float | None]:
+        """Score the hidden split with `trial`'s params (the candidate's
+        immutable code, that trial's values); (score, None, cpu_s) on
+        success, (None, reason, cpu_s) on contract violation, (None, None,
+        None) when this search has no holdout."""
         if self.holdout_scorer is None:
             return None, None, None
-        return self.holdout_scorer.score(candidate_dir)
+        return self.holdout_scorer.score(candidate_dir, trial)
 
 
 # --- score-comparison semantics (pure; band always explicit — no journal) ---
@@ -216,8 +243,8 @@ def holdout_threshold(journal: Journal, *, top_k: int, higher_is_better: bool) -
 
 
 @dataclass(frozen=True)
-class TrialSummary:
-    """One trial, flattened for engine feedback."""
+class ReplicateSummary:
+    """One seeded execution, flattened for engine feedback."""
 
     seed: int | None
     val_score: float | None
@@ -228,15 +255,34 @@ class TrialSummary:
     stdout_tail: str
 
 
+@dataclass(frozen=True)
+class TrialSummary:
+    """One parameter set and its replicates, flattened for engine feedback."""
+
+    index: int
+    params: dict
+    val_score: float | None
+    replicates: tuple[ReplicateSummary, ...] = ()
+
+
+def summarize_replicate(replicate: Replicate) -> ReplicateSummary:
+    return ReplicateSummary(
+        seed=replicate.seed,
+        val_score=replicate.val_score,
+        returncode=replicate.returncode,
+        timed_out=replicate.timed_out,
+        duration_s=replicate.duration_s,
+        submission_ok=replicate.submission_ok,
+        stdout_tail=replicate.stdout_tail,
+    )
+
+
 def summarize_trial(trial: Trial) -> TrialSummary:
     return TrialSummary(
-        seed=trial.seed,
+        index=trial.index,
+        params=dict(trial.params),
         val_score=trial.val_score,
-        returncode=trial.returncode,
-        timed_out=trial.timed_out,
-        duration_s=trial.duration_s,
-        submission_ok=trial.submission_ok,
-        stdout_tail=trial.stdout_tail,
+        replicates=tuple(summarize_replicate(r) for r in trial.replicates),
     )
 
 

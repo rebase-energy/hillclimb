@@ -4,7 +4,8 @@ Pure-function tests: no Textual, no rendering — the plot side goes through a
 PlotSpy the way test_tree.py drives build_climb_plot.
 """
 
-from hillclimb.candidate import BackendInfo, Candidate, Trial
+from tests.factories import trial as mk_trial
+from hillclimb.candidate import BackendInfo, Candidate
 from hillclimb.chart import (
     Climb,
     ClimbEvent,
@@ -31,7 +32,7 @@ def cand(
 ) -> Candidate:
     trials = []
     if score is not None or cpu is not None or duration is not None:
-        trials = [Trial(
+        trials = [mk_trial(
             val_score=score, cpu_s=cpu, duration_s=duration, holdout_cpu_s=holdout_cpu,
         )]
     return Candidate(

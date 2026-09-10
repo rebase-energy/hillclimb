@@ -140,7 +140,7 @@ def test_holdout_scorer_hidden_dir_full_env(tmp_path, monkeypatch):
     assert error is None
     assert score == 0.5
     assert cpu is not None and cpu >= 0.0  # holdout cpu rides along
-    eval_dir = tmp_path / "holdout-eval" / "c001"
+    eval_dir = tmp_path / "holdout-eval" / "c001" / "t0"
     # hidden dir recreated the run layout: solution + extras + symlinks
     assert (eval_dir / "solution.py").exists()
     assert (eval_dir / "candidate_1.py").exists()
@@ -189,7 +189,7 @@ def test_interface_shim_importable_on_both_splits(tmp_path, monkeypatch):
     score, error, _cpu = scorer.score(candidate_dir)
     assert error is None
     assert score == 1.0
-    stdout = (tmp_path / "holdout-eval" / "c001" / "exec_stdout.log").read_text()
+    stdout = (tmp_path / "holdout-eval" / "c001" / "t0" / "exec_stdout.log").read_text()
     assert str(shim) in stdout
 
 

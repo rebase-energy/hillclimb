@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+from tests.factories import trial as mk_trial
+
 import json
 import os
 from pathlib import Path
 
 import pytest
 
-from hillclimb.candidate import BackendInfo, Candidate, Trial
+from hillclimb.candidate import BackendInfo, Candidate
 from hillclimb.config import Config
 from hillclimb.control import read_commands
 from hillclimb.store import FileDataStore, key_for
 from hillclimb.journal import Journal
-from hillclimb.run import RunMeta, SearchMeta, write_run_meta, write_search_meta
+from hillclimb.run import RunMeta, SearchMeta, load_search_meta, write_run_meta, write_search_meta
 from hillclimb.status import SearchStatus, write_status
 from hillclimb.watch import (
     DETAIL_MIN_HEIGHT,
@@ -37,7 +39,7 @@ def _record(search_dir):
 def make_candidate(candidate_id: str, **kwargs) -> Candidate:
     val_score = kwargs.pop("val_score", None)
     if val_score is not None:
-        kwargs["trials"] = [Trial(val_score=val_score)]
+        kwargs["trials"] = [mk_trial(val_score=val_score)]
     return Candidate(candidate_id=candidate_id, operator=kwargs.pop("operator", "draft"), **kwargs)
 
 
@@ -74,10 +76,10 @@ def make_run_with_search(
     journal = Journal(search_dir / "journal.jsonl")
     journal.candidate_result(make_candidate("c000", operator="baseline", status="ok"))
     c001 = make_candidate("c001", operator="draft", status="ok", val_score=0.7)
-    c001.backend = BackendInfo(name="claude-code", total_tokens=240_000)
+    c001.backend = BackendInfo(name="claude-code", total_tokens=240_000, cost_usd=0.5)
     journal.candidate_result(c001)
     c002 = make_candidate("c002", operator="improve", parent_id="c001", status="buggy", pruned=True)
-    c002.backend = BackendInfo(name="claude-code", total_tokens=1_000_000)
+    c002.backend = BackendInfo(name="claude-code", total_tokens=1_000_000, cost_usd=1.75)
     journal.candidate_result(c002)
     if status is not None:
         write_status(search_dir, status)
@@ -134,12 +136,29 @@ def test_scan_runs_and_searches_with_status(tmp_path: Path):
     assert rows[0].name == "Demo"
     assert rows[0].searches == "1"
     assert rows[0].candidates == "3"
+    assert rows[0].tokens == "1.24M"
+    assert rows[0].spend == "$2.25"
 
     search_rows = scan_searches(runs_dir, "20260701-run")
     assert len(search_rows) == 1
     assert search_rows[0].problem == "circle-packing"
+    assert search_rows[0].policy == "greedy"  # the default optimizer
+    assert search_rows[0].backend == "claude-code"
     assert search_rows[0].candidates == "3 (2 ok)"
+    assert search_rows[0].buggy == 1  # c002 crashed: the cell goes red
     assert search_rows[0].tokens == "1.24M"  # 240k + 1.0M, summed across candidates
+    assert search_rows[0].spend == "$2.25"  # 0.5 + 1.75, summed the same way
+
+
+def test_run_row_sums_usage_across_searches(tmp_path: Path):
+    runs_dir = tmp_path / "runs"
+    make_run_with_search(runs_dir, "run", search_id="p1")
+    make_run_with_search(runs_dir, "run", search_id="p2")
+
+    row = scan_runs(runs_dir)[0]
+    assert row.searches == "2"
+    assert row.tokens == "2.48M"
+    assert row.spend == "$4.50"
 
 
 def test_fmt_tokens():
@@ -150,6 +169,76 @@ def test_fmt_tokens():
     assert _fmt_tokens(812) == "812"
     assert _fmt_tokens(24_500) == "24.5k"
     assert _fmt_tokens(1_240_000) == "1.24M"
+
+
+def test_fmt_cost():
+    from hillclimb.watch import _fmt_cost
+
+    assert _fmt_cost(None) == "-"
+    assert _fmt_cost(0.0) == "-"
+    assert _fmt_cost(0.004) == "$0.00"
+    assert _fmt_cost(12.345) == "$12.35"
+    assert _fmt_cost(1234.5) == "$1234.50"
+
+
+def test_estimate_cost_usd_prices_each_token_kind():
+    from hillclimb.backends.claude_code import estimate_cost_usd
+
+    usage = {
+        "input_tokens": 1_000_000, "output_tokens": 1_000_000,
+        "cache_creation_input_tokens": 1_000_000, "cache_read_input_tokens": 1_000_000,
+    }
+    # opus: $5 in, $25 out, cache write 1.25x in, cache read 0.1x in
+    assert estimate_cost_usd(usage, "claude-opus-5") == pytest.approx(5 + 25 + 6.25 + 0.5)
+    # sonnet-4-6 keeps its own rate; sonnet-5 the cheaper one
+    assert estimate_cost_usd({"output_tokens": 1_000_000}, "claude-sonnet-4-6") == pytest.approx(15)
+    assert estimate_cost_usd({"output_tokens": 1_000_000}, "claude-sonnet-5") == pytest.approx(10)
+    assert estimate_cost_usd({"output_tokens": 1_000_000}, "claude-haiku-4-5") == pytest.approx(5)
+    # missing kinds count as zero; an unknown model is None, not a guess
+    assert estimate_cost_usd({}, "claude-opus-5") == 0.0
+    assert estimate_cost_usd(usage, None) is None
+    assert estimate_cost_usd(usage, "gpt-5") is None
+
+
+def test_stream_cost_live_estimate_then_final(tmp_path: Path):
+    import json
+
+    from hillclimb.watch import _stream_cost_usd
+
+    ws = tmp_path / "cand"
+    ws.mkdir()
+    assert _stream_cost_usd(ws) == 0.0  # no stream yet
+    stream = ws / "agent_stream.jsonl"
+    lines = [json.dumps({"type": "system", "subtype": "init", "model": "claude-opus-5"})]
+    # two turns, each streamed twice under one id (partial then final) — the
+    # newest version of each turn is what gets priced
+    for mid, out in (("m1", 100), ("m1", 1000), ("m2", 2000)):
+        lines.append(json.dumps({"type": "assistant", "message": {
+            "id": mid, "model": "claude-opus-5",
+            "usage": {"input_tokens": 0, "output_tokens": out,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 1_000_000}}}))
+    stream.write_text("\n".join(lines) + "\n")
+    # m1: 1000 out + 1M cache read; m2: 2000 out + 1M cache read, at opus rates
+    expected = (1000 + 2000) * 25 / 1e6 + 2 * 1_000_000 * 5 / 1e6 * 0.1
+    assert _stream_cost_usd(ws) == pytest.approx(expected)
+
+    # the final result's own cost wins over the estimate once the call ends
+    with stream.open("a") as fh:
+        fh.write(json.dumps({"type": "result", "subtype": "success", "total_cost_usd": 3.21,
+                             "usage": {"input_tokens": 1, "output_tokens": 1}}) + "\n")
+    assert _stream_cost_usd(ws) == pytest.approx(3.21)
+
+
+def test_stream_cost_unknown_model_contributes_nothing(tmp_path: Path):
+    import json
+
+    from hillclimb.watch import _stream_cost_usd
+
+    ws = tmp_path / "cand"
+    ws.mkdir()
+    (ws / "agent_stream.jsonl").write_text(json.dumps({"type": "assistant", "message": {
+        "id": "m1", "usage": {"input_tokens": 1_000_000, "output_tokens": 1_000_000}}}) + "\n")
+    assert _stream_cost_usd(ws) == 0.0
 
 
 def test_stream_tokens_live_and_final(tmp_path: Path):
@@ -199,7 +288,7 @@ def test_search_row_counts_in_flight_tokens(tmp_path: Path):
     # an in-flight candidate the journal does not know about yet
     live = search_dir / "candidates" / "c003"
     live.mkdir(parents=True)
-    (live / "agent_stream.jsonl").write_text(json.dumps({"type": "result", "usage": {
+    (live / "agent_stream.jsonl").write_text(json.dumps({"type": "result", "total_cost_usd": 0.25, "usage": {
         "input_tokens": 0, "output_tokens": 0,
         "cache_creation_input_tokens": 0, "cache_read_input_tokens": 500_000}}) + "\n")
     status = SearchStatus(
@@ -213,6 +302,11 @@ def test_search_row_counts_in_flight_tokens(tmp_path: Path):
     row = _search_row(store, store.search(key_for(search_dir)))
     # 240k + 1.0M finished (from make_run_with_search) + 500k in-flight = 1.74M
     assert row.tokens == "1.74M"
+    # $0.50 + $1.75 finished + $0.25 in-flight
+    assert row.spend == "$2.50"
+    run_row = scan_runs(runs_dir)[0]
+    assert run_row.tokens == "1.74M"
+    assert run_row.spend == "$2.50"
 
 
 def test_search_row_shows_resolved_model_id(tmp_path: Path):
@@ -251,6 +345,107 @@ def test_search_row_shows_resolved_model_id(tmp_path: Path):
     journal.candidate_result(c003)
     row = _search_row(store, store.search(key_for(search_dir)))
     assert row.model == "sonnet-4-5-20250929"
+
+
+def test_display_model_strips_vendor_prefix_from_alias_too():
+    """A search whose agent has not reported a model yet (GEPA's proposer
+    works outside the candidate dirs) falls back to the configured alias —
+    which must read like its resolved neighbours, not `claude-opus-5` next
+    to `opus-5`."""
+    from hillclimb.watch import _display_model
+
+    assert _display_model("claude-opus-5", None) == "opus-5"
+    assert _display_model("claude-opus-5", "claude-opus-5") == "opus-5"
+    assert _display_model("claude-opus-5", "<synthetic>") == "opus-5"
+    assert _display_model("sonnet", None) == "sonnet"
+    assert _display_model(None, None) == "-"
+
+
+def test_search_row_shows_requested_model_after_synthetic_error(tmp_path: Path):
+    """A persisted Claude Code API-error marker is not a model identity."""
+    from hillclimb.watch import _search_row
+
+    runs_dir = tmp_path / "runs"
+    search_dir = make_run_with_search(runs_dir, "20260701-run")
+    failed = make_candidate("c003", operator="draft", status="abandoned")
+    failed.backend = BackendInfo(
+        name="claude-code",
+        model="claude-opus-5",
+        model_id="<synthetic>",
+        error_kind="rate_limited",
+    )
+    Journal(search_dir / "journal.jsonl").candidate_result(failed)
+
+    store = FileDataStore(runs_dir)
+    row = _search_row(store, store.search(key_for(search_dir)))
+    assert row.model == "opus-5"
+
+
+def test_scan_searches_shows_the_policy_and_the_arm_when_it_differs(tmp_path: Path):
+    """An optimizer comparison names its arms after the policies, so the
+    policy column carries it and the problem cell stays bare; an arm that
+    means something else (a model comparison) still tags the problem."""
+    runs_dir = tmp_path / "runs"
+    search_dir = make_run_with_search(runs_dir, "exp-run")
+    meta = load_search_meta(search_dir)
+    meta.policy, meta.experiment, meta.arm = "gepa", "optimizers", "gepa"
+    write_search_meta(search_dir, meta)
+    row = scan_searches(runs_dir, "exp-run")[0]
+    assert (row.problem, row.policy) == ("circle-packing", "gepa")
+
+    meta.policy, meta.arm = "greedy", "opus"
+    write_search_meta(search_dir, meta)
+    row = scan_searches(runs_dir, "exp-run")[0]
+    assert (row.problem, row.policy) == ("circle-packing [opus]", "greedy")
+
+
+def test_scan_searches_backend_lists_every_harness_a_route_used(tmp_path: Path):
+    """The configured harness first, then any other one a per-operator
+    route authored a candidate in (candidates without a backend name,
+    such as the baseline, add nothing)."""
+    runs_dir = tmp_path / "runs"
+    search_dir = make_run_with_search(runs_dir, "routed-run")
+    journal = Journal(search_dir / "journal.jsonl")
+    c003 = make_candidate("c003", operator="improve", parent_id="c001", status="ok", val_score=0.8)
+    c003.backend = BackendInfo(name="codex", model="gpt-5")
+    journal.candidate_result(c003)
+    assert scan_searches(runs_dir, "routed-run")[0].backend == "claude-code+codex"
+
+
+def test_sort_search_rows_best_first_within_each_problem():
+    from hillclimb.watch import SearchRow, sort_search_rows
+
+    def row(search_id: str, problem: str, score: float | None, higher: bool = True) -> SearchRow:
+        return SearchRow(
+            search_id=search_id, problem=problem, policy="greedy", backend="dummy", model="m",
+            tokens="-", spend="-", state="done", candidates="-", best_val="-", selected="-",
+            duration="-", best_score=score, higher_is_better=higher,
+        )
+
+    rows = [row("a", "p", 0.3), row("b", "p", None), row("c", "q", 1.0), row("d", "p", 0.9), row("e", "q", 2.0)]
+    assert sort_search_rows(rows, by_best=False) is rows
+    # problems keep the run's order; inside one, best first, unscored last
+    assert [r.search_id for r in sort_search_rows(rows, by_best=True)] == ["d", "a", "b", "e", "c"]
+    lower = [row("x", "p", 0.5, higher=False), row("y", "p", 0.1, higher=False)]
+    assert [r.search_id for r in sort_search_rows(lower, by_best=True)] == ["y", "x"]
+
+
+def test_candidates_cell_is_red_on_any_crash_else_green(tmp_path: Path):
+    from hillclimb.watch import candidates_style
+
+    runs_dir = tmp_path / "runs"
+    search_dir = make_run_with_search(runs_dir, "r")  # c002 is buggy
+    assert candidates_style(scan_searches(runs_dir, "r")[0]) == "red"
+    journal = Journal(search_dir / "journal.jsonl")
+    journal.candidate_result(make_candidate("c002", operator="improve", parent_id="c001", status="ok", val_score=0.8))
+    row = scan_searches(runs_dir, "r")[0]  # replay keeps the last record: healed
+    assert (row.buggy, candidates_style(row)) == (0, "green")
+    # a candidate the clock cut off is a warning, not a bug
+    journal.candidate_result(make_candidate("c003", operator="draft", status="abandoned"))
+    row = scan_searches(runs_dir, "r")[0]
+    assert (row.abandoned, candidates_style(row)) == (1, "yellow")
+    journal.candidate_result(make_candidate("c004", operator="draft", status="buggy"))
+    assert candidates_style(scan_searches(runs_dir, "r")[0]) == "red"  # a crash outranks a cut
 
 
 def test_scan_searches_detects_crash(tmp_path: Path):
@@ -520,6 +715,18 @@ async def test_detail_and_table_scrollbars_are_one_cell(tmp_path: Path):
         assert app.screen.query_one("#candidate-detail").styles.scrollbar_size_vertical == 1
 
 
+@pytest.mark.asyncio
+async def test_searches_scrollbar_is_wide_and_drag_selection_is_disabled(tmp_path: Path):
+    _, config = make_demo_search(tmp_path, "bar-run")
+    app = WatchApp(config)
+
+    async with app.run_test(size=(80, 20)) as pilot:
+        assert app.ALLOW_SELECT is False
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.screen.query_one("#searches").styles.scrollbar_size_vertical == 2
+
+
 def test_stream_tail(tmp_path: Path):
     (tmp_path / "agent_stream.jsonl").write_text(
         json.dumps({"type": "system", "subtype": "init", "session_id": "s"}) + "\n"
@@ -559,6 +766,89 @@ async def test_watch_app_lists_searches_and_stops(tmp_path: Path):
     assert len(commands) == 1
     assert commands[0][1].action == "stop"
     assert commands[0][1].source == "tui"
+
+
+@pytest.mark.asyncio
+async def test_double_clicking_run_opens_its_searches(tmp_path: Path):
+    runs_dir = tmp_path / "runs"
+    make_run_with_search(runs_dir, "run")
+    config = Config()
+    config.paths.runs_dir = runs_dir
+
+    app = WatchApp(config)
+    async with app.run_test() as pilot:
+        runs_screen = app.screen
+        await pilot.click("#runs", offset=(2, 1))
+        await pilot.pause()
+        assert app.screen is runs_screen  # one click only highlights
+
+        await pilot.click("#runs", offset=(2, 1), times=2)
+        await pilot.pause()
+        assert app.screen is not runs_screen
+        assert app.screen.query_one("#searches").row_count == 1
+
+
+@pytest.mark.asyncio
+async def test_hover_lightly_highlights_row_without_moving_cursor(tmp_path: Path):
+    runs_dir = tmp_path / "runs"
+    make_run_with_search(runs_dir, "run-1")
+    make_run_with_search(runs_dir, "run-2")
+    config = Config()
+    config.paths.runs_dir = runs_dir
+
+    app = WatchApp(config)
+    async with app.run_test() as pilot:
+        table = app.screen.query_one("#runs")
+        cursor_before = table.cursor_coordinate
+
+        await pilot.hover("#runs", offset=(2, 2))  # header, row 0, then row 1
+        await pilot.pause()
+
+        assert table.hover_coordinate.row == 1
+        assert table.cursor_coordinate == cursor_before
+        hover = table.get_component_rich_style("datatable--hover")
+        assert hover.bgcolor is not None
+        assert hover.bgcolor.triplet == (26, 32, 36)  # theme $panel
+
+
+@pytest.mark.asyncio
+async def test_double_clicking_search_opens_same_candidate_panel_as_enter(tmp_path: Path):
+    _, config = make_demo_search(tmp_path, "run")
+
+    app = WatchApp(config)
+    async with app.run_test() as pilot:
+        await pilot.press("enter")
+        searches_screen = app.screen
+
+        await pilot.click("#searches", offset=(2, 1))
+        await pilot.pause()
+        assert app.screen is searches_screen  # one click only highlights
+
+        await pilot.click("#searches", offset=(2, 1), times=2)
+        await pilot.pause()
+        assert app.screen is searches_screen
+        panel = app.screen.query_one("#search-candidates")
+        assert panel.row_count == 3
+        assert app.screen._panel_search_id == "circle-packing"
+        assert app.focused is panel
+
+
+@pytest.mark.asyncio
+async def test_watch_has_no_command_palette_or_header_trigger(tmp_path: Path):
+    from textual.widgets._header import HeaderIcon
+
+    runs_dir = tmp_path / "runs"
+    make_run_with_search(runs_dir, "run")
+    config = Config()
+    config.paths.runs_dir = runs_dir
+
+    app = WatchApp(config)
+    async with app.run_test() as pilot:
+        assert not app.query(HeaderIcon)
+        screen = app.screen
+        await pilot.press("ctrl+p")
+        await pilot.pause()
+        assert app.screen is screen
 
 
 @pytest.mark.asyncio
@@ -622,6 +912,34 @@ async def test_runs_table_refresh_preserves_scroll_offsets(tmp_path: Path):
         await pilot.pause()
 
         assert (table.scroll_x, table.scroll_y) == before
+
+
+@pytest.mark.asyncio
+async def test_trackpad_scrolls_focused_table_from_screen_chrome(tmp_path: Path):
+    from textual import events
+
+    runs_dir = tmp_path / "runs"
+    for i in range(20):
+        make_run_with_search(
+            runs_dir,
+            f"run-{i:02d}",
+            run_name=f"Long run {i:02d} with enough text to overflow horizontally",
+        )
+    config = Config()
+    config.paths.runs_dir = runs_dir
+
+    app = WatchApp(config)
+    async with app.run_test(size=(50, 10)) as pilot:
+        table = app.screen.query_one("#runs")
+        assert table.max_scroll_x > 0 and table.max_scroll_y > 0
+
+        # The header is outside the table. Gestures there still control the
+        # focused run list, which makes the large blank area useful as well.
+        await pilot._post_mouse_events([events.MouseScrollRight], offset=(10, 0))
+        await pilot._post_mouse_events([events.MouseScrollDown], offset=(10, 0))
+        await pilot.pause()
+        assert table.scroll_x > 0
+        assert table.scroll_y > 0
 
 
 @pytest.mark.asyncio
@@ -744,8 +1062,8 @@ async def test_t_opens_the_tree_panel_and_follows_the_cursor(tmp_path: Path):
         app.screen.on_tree_plot_widget_node_activated(_Msg())
         await pilot.pause()
         assert app.screen is not app.screen_stack[1]  # candidate screen pushed
-        await pilot.press("escape")  # closes the candidate screen's own detail
-        await pilot.press("escape")  # pops back to the searches screen
+        await pilot.press("b")  # `b` is back like esc: closes the candidate screen's own detail
+        await pilot.press("b")  # pops back to the searches screen
         await pilot.pause()
         searches_screen = app.screen
         assert searches_screen._tree_open is False
@@ -832,7 +1150,7 @@ async def test_tree_panel_caps_the_searches_table_at_eight_rows(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_hold_column_only_for_holdout_searches(tmp_path: Path):
-    from hillclimb.candidate import Candidate, Trial
+    from hillclimb.candidate import Candidate
 
     search_dir, config = make_demo_search(tmp_path, "hold-run")
     app = WatchApp(config)
@@ -847,7 +1165,7 @@ async def test_hold_column_only_for_holdout_searches(tmp_path: Path):
         # a holdout score on any candidate brings the column back
         Journal(search_dir / "journal.jsonl").candidate_result(
             Candidate(candidate_id="c009", operator="draft", status="ok",
-                      trials=[Trial(val_score=0.9, holdout_score=0.8)])
+                      trials=[mk_trial(val_score=0.9, holdout_score=0.8)])
         )
         app.screen.refresh_data()
         await pilot.pause()

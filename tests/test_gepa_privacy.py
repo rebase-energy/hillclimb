@@ -25,7 +25,7 @@ class SentinelHoldout:
         self.calls: list[str] = []
         self.driver_done = False
 
-    def score(self, candidate_dir: Path):
+    def score(self, candidate_dir: Path, trial=None):
         assert self.driver_done, "holdout ran while the optimizer was still live"
         self.calls.append(candidate_dir.name)
         return SENTINEL_SCORE, None, 0.1

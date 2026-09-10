@@ -3,6 +3,8 @@ and (phase 2) the worker-pool scheduler."""
 
 from __future__ import annotations
 
+from tests.factories import trial as mk_trial
+
 import sys
 from pathlib import Path
 
@@ -54,7 +56,7 @@ def make_searcher(task, config, backend, **kwargs):
 
 class TestMultiSeedTrials:
     def test_trials_recorded_and_val_is_mean(self, task, config):
-        config.search.n_trials = 3
+        config.search.n_replicates = 3
         backend = FakeBackend()
         backend.queue(script=SEEDED_SCRIPT, notes="seeded draft\n")
         searcher, journal, _ = make_searcher(task, config, backend)
@@ -62,13 +64,13 @@ class TestMultiSeedTrials:
         candidate = searcher.run_operator("draft", None)
 
         assert candidate.status == "ok"
-        assert len(candidate.trials) == 3
-        assert [t.seed for t in candidate.trials] == [0, 1, 2]
-        # seeds 0,1,2 -> scores 0.5, 0.6, 0.7 -> mean 0.6
+        assert len(candidate.trials) == 1
+        assert [r.seed for r in candidate.trials[0].replicates] == [0, 1, 2]
+        # seeds 0,1,2 -> scores 0.5, 0.6, 0.7 -> median 0.6
         assert candidate.val_score == pytest.approx(0.6)
 
     def test_trial_zero_artifacts_at_workspace_root(self, task, config):
-        config.search.n_trials = 2
+        config.search.n_replicates = 2
         backend = FakeBackend()
         backend.queue(script=SEEDED_SCRIPT, notes="seeded draft\n")
         searcher, _, _ = make_searcher(task, config, backend)
@@ -77,11 +79,14 @@ class TestMultiSeedTrials:
 
         candidate_dir = Path(candidate.candidate_dir)
         assert (candidate_dir / "submission.csv").exists()
-        assert (candidate_dir / "trials" / "t0" / "solution.py").exists()
-        assert (candidate_dir / "trials" / "t1" / "solution.py").exists()
+        t0 = candidate_dir / "trials" / "t0"
+        assert (t0 / "solution.py").exists()
+        assert (t0 / "replicates" / "r0" / "solution.py").exists()
+        assert (t0 / "replicates" / "r1" / "solution.py").exists()
+        assert not (t0 / "params.json").exists()  # nothing declared
 
     def test_seed_flaky_candidate_is_buggy(self, task, config):
-        config.search.n_trials = 2
+        config.search.n_replicates = 2
         backend = FakeBackend()
         backend.queue(script=FLAKY_SCRIPT, notes="flaky draft\n")
         searcher, _, _ = make_searcher(task, config, backend)
@@ -89,10 +94,10 @@ class TestMultiSeedTrials:
         candidate = searcher.run_operator("draft", None)
 
         assert candidate.status == "buggy"
-        assert len(candidate.trials) == 2
+        assert len(candidate.trials[0].replicates) == 2
 
-    def test_single_trial_path_unchanged(self, task, config):
-        assert config.search.n_trials == 1
+    def test_single_replicate_still_gets_a_trial_dir(self, task, config):
+        assert config.search.n_replicates == 1
         backend = FakeBackend()
         backend.queue(script=ok_script(0.7), notes="draft\n")
         searcher, _, _ = make_searcher(task, config, backend)
@@ -101,9 +106,13 @@ class TestMultiSeedTrials:
 
         assert candidate.status == "ok"
         assert len(candidate.trials) == 1
-        assert candidate.trials[0].seed is None
+        assert candidate.trials[0].replicates[0].seed is None
         assert candidate.val_score == 0.7
-        assert not (Path(candidate.candidate_dir) / "trials").exists()
+        candidate_dir = Path(candidate.candidate_dir)
+        assert (candidate_dir / "trials" / "t0" / "replicates" / "r0" / "eval_result.json").exists()
+        # r0 is hoisted: artifacts, result and exec logs at the candidate root
+        for name in ("submission.csv", "eval_result.json", "exec_stdout.log"):
+            assert (candidate_dir / name).exists()
 
 
 class TestHoldoutTopK:
@@ -533,14 +542,14 @@ class TestResumeAccounting:
 
     def test_falls_back_to_work_sum(self, tmp_path):
         from hillclimb.api import resume_spent_seconds
-        from hillclimb.candidate import BackendInfo, Candidate, Trial
+        from hillclimb.candidate import BackendInfo, Candidate
 
         journal = Journal(tmp_path / "journal.jsonl")
         journal.candidate_result(
             Candidate(
                 candidate_id="c001", operator="draft",
                 backend=BackendInfo(agent_duration_s=100.0),
-                trials=[Trial(duration_s=50.0)],
+                trials=[mk_trial(duration_s=50.0)],
             )
         )
         assert resume_spent_seconds(None, journal) == 150.0

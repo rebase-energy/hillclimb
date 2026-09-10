@@ -85,6 +85,9 @@ class SearchMeta(BaseModel):
     budget_s: int = 0
     holdout_enabled: bool = False
     seed_from: str | None = None  # incumbent solution the search was seeded with
+    # sha256 of that seed file's bytes at search start: the identity views
+    # compare when several searches claim to share one seed
+    seed_sha256: str | None = None
     # whether cross-search memory was active
     learning_enabled: bool = True
     # Experiment tags (experiment.py): which experiment and arm this search

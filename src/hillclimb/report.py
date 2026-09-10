@@ -25,14 +25,11 @@ COVERAGE_SHIFT_MIN = 0.03
 
 
 def candidate_report(candidate: Candidate | None) -> dict | None:
-    """The candidate's validation report: first trial carrying one (trial 0
-    in multi-trial mode, matching the t0 artifact-hoist convention)."""
+    """The candidate's validation report: its best trial's first replicate
+    carrying one (r0, matching the artifact-hoist convention)."""
     if candidate is None:
         return None
-    for trial in candidate.trials:
-        if trial.report:
-            return trial.report
-    return None
+    return candidate.report
 
 
 def compact_report(report: dict) -> dict:

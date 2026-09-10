@@ -16,6 +16,11 @@ per-horizon / per-quantile breakdowns accumulated during the eval, the
 feedback operators receive in improve prompts. Holdout and verify runs never
 get one (their numbers must not reach agent prompts), and a report bug can
 never fail a scored eval — assembly is best-effort by construction.
+
+Validation runs also emit the reserved `instances` key: one entry per scored
+origin (`<asof>/<zone>`, e.g. GEFCom2014's task x zone), the origin's own
+score in the metric's direction. These are the per-instance scores engines
+with per-instance selection (GEPA's Pareto frontier) compare candidates on.
 """
 
 from __future__ import annotations
@@ -245,6 +250,36 @@ def _quantile_entries(breakdown: BreakdownAnalyzer, coverage: dict) -> list[dict
     return entries
 
 
+def instance_key(asof, zone: str) -> str:
+    """`<asof>/<zone>` — minute-resolution ISO stamp so keys read as the task
+    they score and stay identical across every candidate of a search."""
+    import pandas as pd
+
+    return f"{pd.Timestamp(asof).strftime('%Y-%m-%dT%H:%M')}/{zone}"
+
+
+def build_instances(breakdown: BreakdownAnalyzer) -> dict[str, float]:
+    """The verifier contract's reserved `instances` value: every origin the
+    eval settled with a finite score, keyed by `instance_key`. Origins are
+    fixed per problem and split, so the key set is the same for every
+    candidate that scores them all; an origin a candidate leaves unscored
+    (NaN) is simply absent — engines treat a missing key as a failed
+    instance, never as a new one. Repeated (asof, zone) pairs (several target
+    windows from one origin) get a `#2`, `#3` suffix in settlement order."""
+    instances: dict[str, float] = {}
+    for score, asof, zone, _n_scored in breakdown._origins:
+        value = _round(score)
+        if value is None:
+            continue
+        key = base = instance_key(asof, zone)
+        n = 2
+        while key in instances:
+            key = f"{base}#{n}"
+            n += 1
+        instances[key] = value
+    return instances
+
+
 def build_report(result, breakdown: BreakdownAnalyzer) -> dict:
     """Assemble the versioned report block from the finished Result and the
     analyzer's accumulated state. Pure dict math — unit-testable without a run."""
@@ -352,6 +387,13 @@ def main() -> None:
                 "source": "evaluator",
                 "report_error": repr(exc),
             }
+        try:
+            instances = build_instances(breakdown)
+        except Exception as exc:  # noqa: BLE001 — same rule: advisory, never fatal
+            print(f"warning: per-instance scores dropped: {exc!r}", file=sys.stderr)
+            instances = {}
+        if instances:
+            payload["instances"] = instances
     Path(args.result_json).write_text(json.dumps(payload, indent=2))
     if result.score != result.score:  # nan: scoring silently found no actuals
         print(

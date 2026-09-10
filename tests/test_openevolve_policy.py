@@ -3,6 +3,8 @@ inspirations, hillclimb's harness does the rest. Needs the `openevolve` extra.""
 
 from __future__ import annotations
 
+from tests.factories import trial as mk_trial
+
 import random
 from pathlib import Path
 
@@ -12,7 +14,7 @@ pytest.importorskip("openevolve")
 
 from hillclimb.backends.fake import FakeBackend
 from hillclimb.budget import BudgetManager
-from hillclimb.candidate import Candidate, Trial
+from hillclimb.candidate import Candidate
 from hillclimb.dirs import create_search_dir
 from hillclimb.journal import Journal
 from hillclimb.policies import get_policy
@@ -33,7 +35,7 @@ def scored(journal: Journal, tmp_path: Path, cid: str, op: str, score: float,
     cand = Candidate(
         candidate_id=cid, operator=op, status="ok", parent_id=parent_id,
         candidate_dir=str(d), policy_meta=policy_meta or {},
-        trials=[Trial(val_score=score, submission_ok=True, metrics=metrics or {})],
+        trials=[mk_trial(val_score=score, submission_ok=True, metrics=metrics or {})],
     )
     journal.candidate_result(cand)
     return cand
@@ -130,7 +132,7 @@ def test_lower_is_better_flips_fitness(config, tmp_path):
 def test_buggy_and_code_less_floor_are_not_programs(config, tmp_path):
     journal = Journal(tmp_path / "j.jsonl")
     journal.candidate_result(Candidate(candidate_id="c000", operator="baseline", status="ok",
-                                       trials=[Trial(val_score=0.3, submission_ok=True)]))
+                                       trials=[mk_trial(val_score=0.3, submission_ok=True)]))
     journal.candidate_result(Candidate(candidate_id="c001", operator="draft", status="buggy",
                                        candidate_dir=str(tmp_path)))
     policy, view = replayed(journal, config)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.factories import trial as mk_trial
+
 import pytest
 import typer
 from typer.testing import CliRunner
@@ -326,7 +328,7 @@ def test_resolve_search_dir_skips_v1_layout(config, tmp_path):
 
 
 def test_spent_seconds_sums_agent_and_trial_time(tmp_path):
-    from hillclimb.candidate import BackendInfo, Candidate, Trial
+    from hillclimb.candidate import BackendInfo, Candidate
     from hillclimb.api import spent_seconds
     from hillclimb.journal import Journal
 
@@ -336,7 +338,7 @@ def test_spent_seconds_sums_agent_and_trial_time(tmp_path):
             candidate_id="c001",
             operator="draft",
             backend=BackendInfo(agent_duration_s=100.0),
-            trials=[Trial(duration_s=30.0), Trial(duration_s=20.0)],
+            trials=[mk_trial(duration_s=30.0), mk_trial(duration_s=20.0)],
         )
     )
     journal.candidate_result(
@@ -387,7 +389,7 @@ def test_knowledge_live_renders_run_cards(config, tmp_path, monkeypatch, capsys)
 
 
 def test_show_renders_report_diff_and_notes(config, tmp_path, monkeypatch, capsys):
-    from hillclimb.candidate import Candidate, Trial
+    from hillclimb.candidate import Candidate
     from hillclimb.cli import show
     from hillclimb.journal import Journal
 
@@ -414,12 +416,12 @@ def test_show_renders_report_diff_and_notes(config, tmp_path, monkeypatch, capsy
     journal = Journal(search_dir / "journal.jsonl")
     journal.candidate_result(
         Candidate(candidate_id="c001", operator="draft", status="ok",
-                  candidate_dir=str(parent_ws), trials=[Trial(val_score=0.6)])
+                  candidate_dir=str(parent_ws), trials=[mk_trial(val_score=0.6)])
     )
     journal.candidate_result(
         Candidate(candidate_id="c002", operator="improve", parent_id="c001", status="ok",
                   candidate_dir=str(child_ws), summary="added lag features",
-                  trials=[Trial(val_score=0.7, report=report)])
+                  trials=[mk_trial(val_score=0.7, report=report)])
     )
     monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
 
@@ -698,7 +700,7 @@ def _summit_search(
 ):
     """A finished-looking search: metadata, a journal of scored drafts, and a
     best/ dir stamped with its own address so tests can see whose files won."""
-    from hillclimb.candidate import Candidate, Trial
+    from hillclimb.candidate import Candidate
     from hillclimb.journal import Journal
 
     run_dir = runs_dir / run_id
@@ -731,7 +733,7 @@ def _summit_search(
                 candidate_id=f"c{i:03d}",
                 operator="draft",
                 status="ok",
-                trials=[Trial(val_score=score, submission_ok=True)],
+                trials=[mk_trial(val_score=score, submission_ok=True)],
             )
         )
     (search_dir / "best" / "solution.py").write_text(f"# {run_id}/{search_id}\n")
@@ -901,3 +903,75 @@ def test_verify_without_interface_stays_silent(config, tmp_path, monkeypatch, ca
     _lintable_problem(tmp_path, VERIFY_BASELINE_OK, with_interface=False)
     _run_verify(config, tmp_path, monkeypatch)
     assert "interface:" not in capsys.readouterr().out
+
+
+def _capture_fleet(monkeypatch, config, tmp_path):
+    """`hillclimb run` with the fleet launcher replaced: records run_fleet's
+    keyword arguments instead of spawning engines."""
+    from types import SimpleNamespace
+
+    from hillclimb import cli
+
+    calls: list[dict] = []
+
+    def fake_run_fleet(target, **kwargs):
+        calls.append({"target": target, **kwargs})
+        return SimpleNamespace(run_id="20260910-120000-cp", run_dir=tmp_path / "runs" / "20260910-120000-cp")
+
+    monkeypatch.setattr(cli, "load_config", lambda backend=None, model=None: config)
+    monkeypatch.setattr(cli, "run_fleet", fake_run_fleet)
+    return calls
+
+
+def test_run_with_several_policies_launches_a_mixed_fleet(config, monkeypatch, tmp_path):
+    from hillclimb import cli
+    from hillclimb.api import FleetEngine
+
+    calls = _capture_fleet(monkeypatch, config, tmp_path)
+    result = CliRunner().invoke(cli.app, [
+        "run", "circle-packing", "--budget", "1m", "--backend", "dummy",
+        "--policy", "greedy", "--policy", "openevolve", "--policy", "gepa",
+        "--arm-set", "gepa:search.parallel_operators=1", "--set", "learning.enabled=false",
+        "--experiment", "three-way",
+    ])
+
+    assert result.exit_code == 0, result.output
+    (call,) = calls
+    assert call["target"] == "circle-packing" and call["policy"] is None
+    assert call["engines"] == [
+        FleetEngine(arm="greedy", policy="greedy"),
+        FleetEngine(arm="openevolve", policy="openevolve"),
+        FleetEngine(arm="gepa", policy="gepa", overrides=("search.parallel_operators=1",)),
+    ]
+    assert call["experiment"] == "three-way" and call["overrides"] == ["learning.enabled=false"]
+    assert config.search.policy == "greedy"  # the parent's config is not bent to any one arm
+    assert "3 searches (greedy, openevolve, gepa)" in result.output
+    assert "hillclimb experiment report three-way" in result.output
+
+
+def test_run_mixed_fleet_repeats_every_arm_and_rejects_stray_flags(config, monkeypatch, tmp_path):
+    from hillclimb import cli
+    calls = _capture_fleet(monkeypatch, config, tmp_path)
+    result = CliRunner().invoke(cli.app, [
+        "run", "circle-packing", "--policy", "greedy", "--policy", "gepa", "--parallel-searches", "2",
+    ])
+    assert result.exit_code == 0, result.output
+    assert [(e.arm, e.repeat) for e in calls[0]["engines"]] == [("greedy", 1), ("gepa", 1), ("greedy", 2), ("gepa", 2)]
+    assert "hillclimb experiment report 20260910-120000-cp" in result.output
+
+    for extra, message in (
+        (["--arm", "x"], "--arm/--run-id do not apply"),
+        (["--arm-set", "openevolve:search.parallel_operators=1"], "unknown arm"),
+        (["--arm-set", "gepa-search.parallel_operators=1"], "ARM:KEY=VALUE"),
+    ):
+        # a wide terminal: rich wraps (and elides) usage errors in narrow boxes
+        result = CliRunner().invoke(
+            cli.app, ["run", "circle-packing", "--policy", "greedy", "--policy", "gepa", *extra], env={"COLUMNS": "300"}
+        )
+        assert result.exit_code != 0 and message in result.output, (extra, result.output)
+    # a single policy is the classic path; --arm-set has nothing to attach to
+    result = CliRunner().invoke(
+        cli.app, ["run", "circle-packing", "--policy", "gepa", "--arm-set", "gepa:x=1"], env={"COLUMNS": "300"}
+    )
+    assert result.exit_code != 0 and "needs a mixed fleet" in result.output
+    assert len(calls) == 1

@@ -3,34 +3,41 @@ that stops the search climbing measurement noise."""
 
 from __future__ import annotations
 
+import pytest
+
+from tests.factories import trial as mk_trial
+
 from math import isclose
 from pathlib import Path
 
 from hillclimb.backends.fake import FakeBackend
 from hillclimb.budget import BudgetManager
-from hillclimb.candidate import Candidate, Trial
+from hillclimb.candidate import Candidate
 from hillclimb.journal import Journal
 from hillclimb.search import GreedySearcher
 from hillclimb.dirs import create_search_dir
 from tests.conftest import executor_for, ok_script
 
 
-def candidate(cid: str, *scores: float, parent: str | None = None) -> Candidate:
+def candidate(cid: str, *scores: float, parent: str | None = None, trials=None) -> Candidate:
+    if trials is not None:
+        return Candidate(candidate_id=cid, operator="draft", parent_id=parent, status="ok",
+                         candidate_dir="/tmp", trials=trials)
     return Candidate(
         candidate_id=cid,
         operator="draft",
         parent_id=parent,
         status="ok",
         candidate_dir="/tmp",
-        trials=[Trial(val_score=value, submission_ok=True) for value in scores],
+        trials=[mk_trial(*scores, submission_ok=True)] if scores else [],
     )
 
 
 # --- aggregation ---
 
 
-def test_val_score_is_the_median_of_trials():
-    """One slow run or unlucky seed must not drag the candidate's score with
+def test_val_score_is_the_median_of_replicates():
+    """One slow run or unlucky seed must not drag the trial's score with
     it, which is exactly what a mean would do."""
     assert candidate("c1", 0.5).val_score == 0.5
     assert candidate("c1", 0.5, 0.6, 0.55).val_score == 0.55
@@ -38,10 +45,25 @@ def test_val_score_is_the_median_of_trials():
     assert candidate("c1").val_score is None
 
 
-def test_trial_spread_needs_two_trials():
-    assert candidate("c1", 0.5).trial_spread is None
-    assert isclose(candidate("c1", 1.0, 1.2).trial_spread, 0.1)  # MAD of two points
-    assert candidate("c1", 1.0, 1.0, 1.0).trial_spread == 0.0
+def test_replicate_spread_needs_two_replicates():
+    assert candidate("c1", 0.5).replicate_spread is None
+    assert isclose(candidate("c1", 1.0, 1.2).replicate_spread, 0.1)  # MAD of two points
+    assert candidate("c1", 1.0, 1.0, 1.0).replicate_spread == 0.0
+
+
+def test_candidate_is_scored_by_its_best_trial():
+    """Spread ACROSS parameter sets is signal, not noise: the candidate's
+    score, metrics and holdout follow the best trial, and the noise floor
+    only ever sees within-trial replicate spread."""
+    c = candidate("c1", trials=[
+        mk_trial(1.0, 1.2, params={"lr": 0.1}, holdout_score=0.9),
+        mk_trial(2.0, 2.6, params={"lr": 0.2}, holdout_score=0.8, index=1),
+    ])
+    assert c.stamp_best_trial(higher_is_better=True).params == {"lr": 0.2}
+    assert c.val_score == 2.3 and c.holdout_score == 0.8
+    assert c.stamp_best_trial(higher_is_better=False).params == {"lr": 0.1}
+    assert c.val_score == 1.1 and c.holdout_score == 0.9
+    assert c.replicate_spreads == [pytest.approx(0.1), pytest.approx(0.3)]
 
 
 # --- noise floor ---
@@ -56,7 +78,7 @@ def test_noise_floor_from_repeated_trials(tmp_path):
 
     journal.candidate_result(candidate("c2", 1.0, 1.2))  # spread 0.1
     journal.candidate_result(candidate("c3", 2.0, 2.6))  # spread 0.3
-    assert journal.noise_floor() == 0.2  # median of the per-candidate spreads
+    assert journal.noise_floor() == 0.2  # median of the per-trial spreads
 
 
 # --- the accept band ---
@@ -150,7 +172,7 @@ import json, os, time
 start = time.monotonic()
 time.sleep(0.4)
 open("submission.csv", "w").write("id\\n")
-with open("../../overlap.log", "a") as fh:
+with open("../../../../overlap.log", "a") as fh:
     fh.write(f"{start},{time.monotonic()}\\n")
 print("val_score: 0.5")
 """
@@ -173,25 +195,26 @@ def overlaps(path: Path) -> int:
 def test_serial_trials_do_not_share_the_machine(task, config):
     """Anything that measures the machine (time, throughput, memory) measures
     its own sibling trials when they run concurrently."""
-    config.search.n_trials = 3
-    config.search.trial_mode = "serial"
+    config.search.n_replicates = 3
+    config.search.replicate_mode = "serial"
     backend = FakeBackend()
     backend.queue(script=TIMED_SOLUTION, notes="timed\n")
     searcher, journal, _ = make_searcher(task, config, backend)
     node = searcher.run_operator("draft", None)
 
-    assert len(node.trials) == 3
-    assert node.trials[0].seed == 0 and node.trials[2].seed == 2
+    replicates = node.trials[0].replicates
+    assert len(node.trials) == 1 and len(replicates) == 3
+    assert replicates[0].seed == 0 and replicates[2].seed == 2
     assert overlaps(Path(node.candidate_dir) / "overlap.log") == 0
 
 
 def test_parallel_trials_run_concurrently(task, config):
-    config.search.n_trials = 3
-    config.search.trial_mode = "parallel"  # the default
+    config.search.n_replicates = 3
+    config.search.replicate_mode = "parallel"  # the default
     backend = FakeBackend()
     backend.queue(script=TIMED_SOLUTION, notes="timed\n")
     searcher, journal, _ = make_searcher(task, config, backend)
     node = searcher.run_operator("draft", None)
 
-    assert len(node.trials) == 3
+    assert len(node.trials[0].replicates) == 3
     assert overlaps(Path(node.candidate_dir) / "overlap.log") > 0

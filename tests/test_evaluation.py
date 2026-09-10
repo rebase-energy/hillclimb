@@ -3,10 +3,12 @@ comparison, and the EvalResult projection engines consume."""
 
 from __future__ import annotations
 
+from tests.factories import trial as mk_trial
+
 import json
 from math import isclose
 
-from hillclimb.candidate import BackendInfo, Candidate, Trial
+from hillclimb.candidate import BackendInfo, Candidate
 from hillclimb.dirs import create_candidate_dir, create_search_dir
 from hillclimb.evaluation import (
     CandidateEvaluator,
@@ -37,11 +39,11 @@ def scored(cid: str, *scores: float) -> Candidate:
         operator="draft",
         status="ok",
         candidate_dir="/tmp/x",
-        trials=[Trial(val_score=v, submission_ok=True) for v in scores],
+        trials=[mk_trial(*scores, submission_ok=True)] if scores else [],
     )
 
 
-# --- CandidateEvaluator.run_trials ---
+# --- CandidateEvaluator.run_trial ---
 
 
 def test_single_trial_scores_the_candidate(tmp_path, task, config):
@@ -49,47 +51,55 @@ def test_single_trial_scores_the_candidate(tmp_path, task, config):
     (candidate_dir / "solution.py").write_text(ok_script(0.7))
     candidate = Candidate(candidate_id="c001", operator="draft", candidate_dir=str(candidate_dir))
 
-    ok = evaluator_for(task, config).run_trials(
+    trial, ok = evaluator_for(task, config).run_trial(
         candidate, candidate_dir / "solution.py", candidate_dir, exec_timeout=30
     )
 
     assert ok
-    assert len(candidate.trials) == 1
-    assert candidate.trials[0].seed is None
-    assert candidate.trials[0].val_score == 0.7
+    assert candidate.trials == [trial]
+    assert trial.index == 0 and trial.params == {} and trial.is_best
+    assert [r.seed for r in trial.replicates] == [None]
+    assert trial.val_score == 0.7 and candidate.val_score == 0.7
+    # one replicate still lives in its own replicate dir; r0 is hoisted
+    assert (candidate_dir / "trials" / "t0" / "replicates" / "r0" / "solution.py").exists()
+    assert (candidate_dir / "submission.csv").exists()
+    assert (candidate_dir / "exec_stdout.log").exists()
 
 
 def test_multi_trial_runs_in_index_order_and_copies_trial0_artifacts(tmp_path, task, config):
-    config.search.n_trials = 3
-    config.search.trial_mode = "serial"
+    config.search.n_replicates = 3
+    config.search.replicate_mode = "serial"
     candidate_dir = fresh_candidate_dir(tmp_path, task)
     (candidate_dir / "solution.py").write_text(ok_script(0.6))
     candidate = Candidate(candidate_id="c001", operator="draft", candidate_dir=str(candidate_dir))
 
-    ok = evaluator_for(task, config).run_trials(
+    trial, ok = evaluator_for(task, config).run_trial(
         candidate, candidate_dir / "solution.py", candidate_dir, exec_timeout=30
     )
 
     assert ok
-    assert [t.seed for t in candidate.trials] == [0, 1, 2]
-    assert candidate.val_score == 0.6  # median of identical trials
-    # trial-0 artifacts surface at the candidate-dir root
+    assert len(candidate.trials) == 1  # one parameter set, three seeded runs
+    assert [r.seed for r in trial.replicates] == [0, 1, 2]
+    assert candidate.val_score == 0.6  # median of identical replicates
+    # r0 artifacts surface at the candidate-dir root
     assert (candidate_dir / "submission.csv").exists()
+    for j in range(3):
+        assert (candidate_dir / "trials" / "t0" / "replicates" / f"r{j}" / "eval_result.json").exists()
 
 
 def test_parallel_trial_mode_also_scores(tmp_path, task, config):
-    config.search.n_trials = 2
-    config.search.trial_mode = "parallel"
+    config.search.n_replicates = 2
+    config.search.replicate_mode = "parallel"
     candidate_dir = fresh_candidate_dir(tmp_path, task)
     (candidate_dir / "solution.py").write_text(ok_script(0.4))
     candidate = Candidate(candidate_id="c001", operator="draft", candidate_dir=str(candidate_dir))
 
-    ok = evaluator_for(task, config).run_trials(
+    trial, ok = evaluator_for(task, config).run_trial(
         candidate, candidate_dir / "solution.py", candidate_dir, exec_timeout=30
     )
 
     assert ok
-    assert len(candidate.trials) == 2
+    assert len(trial.replicates) == 2
     assert candidate.val_score == 0.4
 
 
@@ -98,16 +108,16 @@ def test_crashing_solution_is_not_ok_and_surfaces_stderr(tmp_path, task, config)
     (candidate_dir / "solution.py").write_text(CRASH_SCRIPT)
     candidate = Candidate(candidate_id="c001", operator="draft", candidate_dir=str(candidate_dir))
 
-    ok = evaluator_for(task, config).run_trials(
+    trial, ok = evaluator_for(task, config).run_trial(
         candidate, candidate_dir / "solution.py", candidate_dir, exec_timeout=30
     )
 
     assert not ok
-    assert candidate.trials[0].val_score is None
-    assert "boom" in candidate.trials[0].stdout_tail
+    assert trial.val_score is None and candidate.val_score is None
+    assert "boom" in trial.replicates[0].stdout_tail
 
 
-# --- CandidateEvaluator.read_trial_report ---
+# --- CandidateEvaluator.read_replicate_report ---
 
 
 def test_report_requires_validation_split(tmp_path, task, config):
@@ -116,17 +126,17 @@ def test_report_requires_validation_split(tmp_path, task, config):
     cwd.mkdir()
 
     (cwd / RESULT_FILE).write_text("0.5")  # bare number: no report possible
-    assert evaluator.read_trial_report(cwd) is None
+    assert evaluator.read_replicate_report(cwd) is None
 
     (cwd / RESULT_FILE).write_text(
         json.dumps({"score": 0.5, "split": "holdout", "report": {"rmse": 1.0}})
     )
-    assert evaluator.read_trial_report(cwd) is None  # never trust non-validation
+    assert evaluator.read_replicate_report(cwd) is None  # never trust non-validation
 
     (cwd / RESULT_FILE).write_text(
         json.dumps({"score": 0.5, "split": "validation", "report": {"rmse": 1.0}})
     )
-    report = evaluator.read_trial_report(cwd)
+    report = evaluator.read_replicate_report(cwd)
     assert report is not None
     assert report["source"] == "agent"  # task fixture has report_trusted=False
 
@@ -138,7 +148,7 @@ def test_report_provenance_follows_problem_trust(tmp_path, task, config):
     (cwd / RESULT_FILE).write_text(
         json.dumps({"score": 0.5, "split": "validation", "report": {"rmse": 1.0}})
     )
-    report = evaluator_for(task, config).read_trial_report(cwd)
+    report = evaluator_for(task, config).read_replicate_report(cwd)
     assert report["source"] == "evaluator"
 
 
@@ -200,9 +210,8 @@ def test_holdout_threshold_is_kth_best(tmp_path, config):
 def test_eval_result_projects_a_terminal_candidate():
     candidate = scored("c007", 0.5, 0.6, 0.7)
     candidate.backend = BackendInfo(name="claude-code", cost_usd=1.25)
-    candidate.trials[0].metrics = {"x": 1.0}
-    candidate.trials[1].metrics = {"x": 3.0}
-    candidate.trials[2].metrics = {"x": 2.0}
+    for replicate, x in zip(candidate.trials[0].replicates, (1.0, 3.0, 2.0)):
+        replicate.metrics = {"x": x}
 
     result = eval_result_for(candidate, feedback="try harder")
 
@@ -212,7 +221,8 @@ def test_eval_result_projects_a_terminal_candidate():
     assert result.instance_scores == {}
     assert result.features == {"x": 2.0}  # per-key median
     assert result.feedback == "try harder"
-    assert [t.val_score for t in result.trials] == [0.5, 0.6, 0.7]
+    assert [t.val_score for t in result.trials] == [0.6]
+    assert [r.val_score for r in result.trials[0].replicates] == [0.5, 0.6, 0.7]
     assert result.cost_usd == 1.25
 
 
@@ -222,7 +232,7 @@ def test_eval_result_for_buggy_candidate():
         operator="improve",
         status="buggy",
         candidate_dir="/tmp/x",
-        trials=[Trial(returncode=1, stdout_tail="[stderr] boom")],
+        trials=[mk_trial(returncode=1, stdout_tail="[stderr] boom")],
     )
     result = eval_result_for(candidate)
     assert not result.valid

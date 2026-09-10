@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from tests.factories import trial as mk_trial
+
 import yaml
 
 from hillclimb.backends.fake import FakeBackend
-from hillclimb.candidate import Candidate, Trial
+from hillclimb.candidate import Candidate
 from hillclimb.claims import (
     Claim,
     Concept,
@@ -46,7 +48,7 @@ class FakeProblem:
 def scored(cid, op, val, summary="", candidate_dir="w"):
     return dict(
         candidate_id=cid, operator=op, status="ok", candidate_dir=candidate_dir,
-        summary=summary, trials=[Trial(val_score=val)],
+        summary=summary, trials=[mk_trial(val_score=val)],
     )
 
 

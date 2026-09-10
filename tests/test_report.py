@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from tests.factories import trial as mk_trial
+
 import json
 
-from hillclimb.candidate import Candidate, Trial
+from hillclimb.candidate import Candidate
 from hillclimb.report import (
     candidate_report,
     compact_report,
@@ -163,12 +165,21 @@ class TestCompact:
 
 
 class TestCandidateReport:
-    def test_first_trial_with_report_wins(self):
+    def test_best_trials_first_replicate_with_report_wins(self):
+        from hillclimb.candidate import Replicate
+
         report = {"version": 1, "overall": {"score": 1.0}}
         cand = Candidate(
             candidate_id="c1",
             operator="draft",
-            trials=[Trial(), Trial(report=report), Trial(report={"version": 1})],
+            trials=[
+                mk_trial(val_score=0.2, report={"version": 1}, is_best=False),
+                mk_trial(index=1, is_best=True, replicates=[
+                    Replicate(val_score=0.5),
+                    Replicate(val_score=0.5, report=report),
+                    Replicate(val_score=0.5, report={"version": 2}),
+                ]),
+            ],
         )
         assert candidate_report(cand) == report
         assert candidate_report(Candidate(candidate_id="c2", operator="draft")) is None

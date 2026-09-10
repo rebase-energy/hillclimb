@@ -20,7 +20,7 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Header, Input, OptionList, Static
-from textual.widgets._header import HeaderIcon, HeaderTitle
+from textual.widgets._header import HeaderTitle
 
 from hillclimb.project import user_config_path
 
@@ -98,7 +98,6 @@ class HillclimbHeader(Header):
         super().__init__(show_clock=False)
 
     def compose(self) -> ComposeResult:
-        yield HeaderIcon().data_bind(Header.icon)
         yield HeaderTitle()
         yield HillclimbClock()
 
@@ -174,6 +173,7 @@ class TimezoneMixin:
     """For Apps: `display_timezone` + the `choose_timezone` action the clock calls."""
 
     TITLE = APP_TITLE
+    ENABLE_COMMAND_PALETTE = False
     display_timezone: ZoneInfo | None = None
 
     def _init_timezone(self) -> None:

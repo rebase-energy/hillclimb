@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from tests.factories import trial as mk_trial
+
 import sys
 from pathlib import Path
 
 import pytest
 
-from hillclimb.candidate import Candidate, Trial
+from hillclimb.candidate import Candidate
 from hillclimb.backends.fake import FakeBackend
 from hillclimb.budget import BudgetManager
 from hillclimb.control import apply_prune, resync_best
@@ -52,8 +54,8 @@ def test_problem_rejects_unsafe_artifact_paths(task):
 
 def test_multi_trial_hoists_declared_json_artifact(tmp_path, task, config):
     problem = json_problem(tmp_path, task)
-    config.search.n_trials = 2
-    config.search.trial_mode = "serial"
+    config.search.n_replicates = 2
+    config.search.replicate_mode = "serial"
     search_dir = create_search_dir(tmp_path / "runs" / "r", "s")
     candidate_dir = create_candidate_dir(
         search_dir, "c001", problem.data_dir, problem.problem_dir
@@ -69,7 +71,7 @@ def test_multi_trial_hoists_declared_json_artifact(tmp_path, task, config):
         config=config,
     )
 
-    assert evaluator.run_trials(candidate, solution, candidate_dir, 30)
+    assert evaluator.run_trial(candidate, solution, candidate_dir, 30)[1]
     assert (candidate_dir / "submission.json").read_text() == "{}"
 
 
@@ -87,7 +89,7 @@ def test_resync_best_uses_declared_json_artifact(tmp_path):
             operator=operator,
             candidate_dir=str(directory),
             status="ok",
-            trials=[] if score is None else [Trial(val_score=score)],
+            trials=[] if score is None else [mk_trial(val_score=score)],
         )
         journal.candidate_result(candidate)
         return candidate

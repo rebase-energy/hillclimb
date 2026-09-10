@@ -124,19 +124,20 @@ def extract_libraries(solution: Path) -> list[str]:
 
 def _failure_phrase(candidate) -> str | None:
     trial = candidate.last_trial
-    if trial is None:
+    replicate = candidate.last_replicate
+    if trial is None or replicate is None:
         return None
-    if trial.timed_out:
+    if replicate.timed_out:
         return "execution timed out"
     if trial.holdout_error:
         flat = " ".join(trial.holdout_error.split())
         return f"holdout contract violation: {flat[:80]}"
-    tail = (trial.stdout_tail or "").strip()
+    tail = (replicate.stdout_tail or "").strip()
     match = re.findall(r"([A-Za-z_]*(?:Error|Exception)[^\n]{0,80})", tail)
     if match:
         return match[-1].strip()
-    if trial.returncode not in (0, None):
-        return f"exited {trial.returncode}"
+    if replicate.returncode not in (0, None):
+        return f"exited {replicate.returncode}"
     return None
 
 

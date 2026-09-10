@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from tests.factories import trial as mk_trial
+
 import pytest
 
-from hillclimb.candidate import Candidate, Trial
+from hillclimb.candidate import Candidate
 from hillclimb.credit import (
     PRIOR_WEIGHT,
     RETIRE_MIN_INJECTIONS,
@@ -44,7 +46,7 @@ def make_journal(tmp_path, entries) -> Journal:
 
 
 def cand(cid, op, val, status="ok"):
-    trials = [Trial(val_score=val)] if val is not None else []
+    trials = [mk_trial(val_score=val)] if val is not None else []
     return dict(candidate_id=cid, operator=op, status=status, candidate_dir="w", trials=trials)
 
 

@@ -24,7 +24,8 @@ Verifier environment:
     $HILLCLIMB_SOLUTION    the solution path for this run (trial-dir aware)
     $HILLCLIMB_RESULT      where to write the score
     $HILLCLIMB_SPLIT       `validation` or `holdout`
-    $HILLCLIMB_TRIAL_SEED  set when the engine runs repeated trials
+    $HILLCLIMB_REPLICATE_SEED  set when the engine runs repeated replicates
+                           (also exported under the old name HILLCLIMB_TRIAL_SEED)
 
 The command runs with cwd = the candidate candidate_dir, where `./problem/` and
 `./data/` symlinks always exist (candidate candidate dirs and trial dirs by
@@ -135,8 +136,39 @@ class ExecResult(BaseModel):
         )
 
 
+PARAMS_FILE = "params.json"
+
+
+def trial_params_doc(candidate_dir: Path, trial: object) -> dict | None:
+    """The params.json document a trial runs with: the candidate's declared
+    space (its root params.json) with the trial's `value` per entry. None
+    when the candidate declares nothing (the runtime helper then uses the
+    solution's own defaults) or the declaration is unreadable."""
+    root = candidate_dir / PARAMS_FILE
+    if not root.exists():
+        return None
+    try:
+        raw = json.loads(root.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    values = getattr(trial, "params", None) or {}
+    doc = {}
+    for name, spec in raw.items():
+        spec = dict(spec) if isinstance(spec, dict) else {"default": spec}
+        spec["value"] = values.get(name, spec.get("default"))
+        doc[name] = spec
+    return doc
+
+
 class HoldoutScorer(Protocol):
-    def score(self, candidate_dir: Path) -> tuple[float | None, str | None, float | None]: ...
+    def score(
+        self, candidate_dir: Path, trial: object = None
+    ) -> tuple[float | None, str | None, float | None]:
+        """Score the candidate's immutable code with `trial`'s params (a
+        `candidate.Trial`; None = the defaults). Returns (score, error, cpu_s)."""
+        ...
 
 
 class Executor(Protocol):
@@ -236,7 +268,8 @@ def verifier_env(
         "HILLCLIMB_SPLIT": split,
     }
     if seed is not None:
-        env["HILLCLIMB_TRIAL_SEED"] = str(seed)
+        env["HILLCLIMB_REPLICATE_SEED"] = str(seed)
+        env["HILLCLIMB_TRIAL_SEED"] = str(seed)  # pre-rename spelling, still read by harvested skills
     return env
 
 
@@ -422,19 +455,29 @@ class CommandHoldoutScorer:
         self.timeout_s = timeout_s
         self.pythonpath = pythonpath
 
-    def score(self, candidate_dir: Path) -> tuple[float | None, str | None, float | None]:
+    def score(
+        self, candidate_dir: Path, trial: object = None
+    ) -> tuple[float | None, str | None, float | None]:
         """Returns (score, error, cpu_s). CPU seconds are reported on every
-        exit — a failed or timed-out holdout run burned them all the same."""
+        exit — a failed or timed-out holdout run burned them all the same.
+        The holdout process sees exactly the candidate's scripts plus the
+        trial's params.json — never a trial dir's logs or outputs."""
         candidate_dir = candidate_dir.absolute()
         solution = candidate_dir / "solution.py"
         if not solution.exists():
             return None, "solution.py missing at holdout time", None
-        eval_dir = self.work_root.absolute() / candidate_dir.name
+        index = getattr(trial, "index", 0) or 0
+        eval_dir = self.work_root.absolute() / candidate_dir.name / f"t{index}"
         eval_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy(solution, eval_dir / "solution.py")
         # ensemble candidates import candidate_N modules from their candidate_dir
         for extra in candidate_dir.glob("candidate_*.py"):
             shutil.copy(extra, eval_dir / extra.name)
+        params_path = eval_dir / PARAMS_FILE
+        params_path.unlink(missing_ok=True)
+        params_doc = trial_params_doc(candidate_dir, trial)
+        if params_doc is not None:
+            params_path.write_text(json.dumps(params_doc, indent=2, sort_keys=True) + "\n")
         for name, target in (("problem", self.problem_dir), ("data", self.data_dir)):
             link = eval_dir / name
             if not link.exists():

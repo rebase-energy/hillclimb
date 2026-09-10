@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 from pathlib import Path
@@ -41,22 +42,64 @@ def allocate_search_dir(run_dir: Path, problem_id: str) -> Path:
         return create_search_dir(run_dir, search_id)
 
 
-def create_trial_dir(candidate_dir: Path, index: int) -> Path:
-    """Per-trial working directory under a candidate dir (n_trials > 1):
-    same data/problem symlinks, own copies of the solution and ensemble inputs
-    so parallel trials can't collide on artifacts."""
-    trial_dir = candidate_dir / "trials" / f"t{index}"
-    trial_dir.mkdir(parents=True, exist_ok=True)
+PARAMS_FILE = "params.json"
+_SCRIPT_GLOBS = ("solution.py", "candidate_*.py")
+
+
+def _link_and_copy(source_dir: Path, target_dir: Path, extra: tuple[str, ...] = ()) -> None:
+    target_dir.mkdir(parents=True, exist_ok=True)
     for link_name in ("data", "problem"):
-        source = candidate_dir / link_name
-        link = trial_dir / link_name
+        source = source_dir / link_name
+        link = target_dir / link_name
         if source.exists() and not link.exists():
             link.symlink_to(source.resolve(), target_is_directory=True)
-    for script in ["solution.py", *(p.name for p in candidate_dir.glob("candidate_*.py"))]:
-        source = candidate_dir / script
+    names = ["solution.py", *(p.name for p in source_dir.glob("candidate_*.py")), *extra]
+    for name in names:
+        source = source_dir / name
         if source.exists():
-            shutil.copy(source, trial_dir / script)
-    return trial_dir
+            shutil.copy(source, target_dir / name)
+
+
+def trial_dir(candidate_dir: Path, index: int) -> Path:
+    return candidate_dir / "trials" / f"t{index}"
+
+
+def replicate_dir(trial_dir_: Path, index: int) -> Path:
+    return trial_dir_ / "replicates" / f"r{index}"
+
+
+def create_trial_dir(candidate_dir: Path, index: int, params_doc: dict | None = None) -> Path:
+    """Per-trial working directory (one parameter set) under a candidate dir:
+    same data/problem symlinks, own copies of the solution and ensemble
+    inputs. `params_doc` — the candidate's declared parameter space with this
+    trial's `value` per entry — is written as params.json when given; a
+    candidate without a declaration gets no file (the runtime helper then
+    falls back to the solution's own defaults)."""
+    tdir = trial_dir(candidate_dir, index)
+    _link_and_copy(candidate_dir, tdir)
+    if params_doc is not None:
+        (tdir / PARAMS_FILE).write_text(json.dumps(params_doc, indent=2, sort_keys=True) + "\n")
+    return tdir
+
+
+def create_replicate_dir(trial_dir_: Path, index: int) -> Path:
+    """Per-replicate working directory (one seeded execution) under a trial
+    dir — the executor's cwd — with its own copies of the scripts and
+    params.json so parallel replicates can't collide on artifacts."""
+    rdir = replicate_dir(trial_dir_, index)
+    _link_and_copy(trial_dir_, rdir, extra=(PARAMS_FILE,))
+    return rdir
+
+
+def hoist_replicate(candidate_dir: Path, source_dir: Path, names) -> None:
+    """Surface one replicate's outputs at the candidate-dir root so
+    selection, pruning, summit and engine-specific consumers all see the
+    same declared artifact set. eval_result.json and the exec logs are
+    evaluator infrastructure, not shippable artifacts, but are hoisted for
+    report reading and debugging."""
+    for name in [*names, "eval_result.json", "exec_stdout.log", "exec_stderr.log"]:
+        if (source_dir / name).exists():
+            shutil.copy(source_dir / name, candidate_dir / name)
 
 
 def create_candidate_dir(

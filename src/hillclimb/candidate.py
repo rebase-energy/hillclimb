@@ -40,16 +40,13 @@ class BackendInfo(BaseModel):
     error_kind: str | None = None
 
 
-class Trial(BaseModel):
-    """One execution of a candidate with a fixed parameterization.
-
-    `params`/`seed` are schema-ready for a future tuning loop; today the
-    engine runs exactly one trial per candidate with empty params.
-    """
+class Replicate(BaseModel):
+    """One seeded execution of a trial's parameter set — the leaf of
+    Candidate (code) → Trial (params) → Replicate (run). Replicates of one
+    trial differ only by seed; their spread is the search's noise floor."""
 
     model_config = ConfigDict(extra="forbid")
 
-    params: dict = Field(default_factory=dict)
     seed: int | None = None
     returncode: int | None = None
     duration_s: float | None = None
@@ -60,15 +57,10 @@ class Trial(BaseModel):
     timed_out: bool = False
     stdout_tail: str = ""
     submission_ok: bool = False
-    holdout_error: str | None = None  # why holdout predictions couldn't be scored
-    # CPU seconds of this trial's holdout run (set even when it errored —
-    # the cost was paid); None where holdout didn't run or predates the field
-    holdout_cpu_s: float | None = None
     val_score: float | None = None
-    holdout_score: float | None = None  # orchestrator-computed, hidden from agent
     # compact VALIDATION-split breakdown from eval_result.json (never holdout —
     # that would leak the selection signal into prompts); consumers read the
-    # first trial's report (trial 0 in multi-trial mode, no averaging)
+    # first replicate's report (r0, no averaging)
     report: dict | None = None
     # auxiliary numeric measurements the verifier wrote next to `score`
     # (feature dimensions for quality-diversity policies); never a score
@@ -81,9 +73,91 @@ class Trial(BaseModel):
     finished_at: str | None = None
 
 
+def _per_key_median(dicts) -> dict[str, float]:
+    pooled: dict[str, list[float]] = {}
+    for entries in dicts:
+        for key, value in entries.items():
+            pooled.setdefault(key, []).append(value)
+    return {key: median(values) for key, values in pooled.items()}
+
+
+class Trial(BaseModel):
+    """One parameter set of a candidate, executed as `search.n_replicates`
+    seeded runs. `params` is empty for candidates that declare no tunable
+    parameters (today's default: one trial per candidate). Holdout is scored
+    once per trial (with its params), never per replicate. `is_best` is
+    stamped by `Candidate.stamp_best_trial` — the only place score direction
+    enters the candidate aggregate."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    index: int = 0
+    params: dict = Field(default_factory=dict)
+    replicates: list[Replicate] = Field(default_factory=list)
+    is_best: bool = False
+    holdout_score: float | None = None  # orchestrator-computed, hidden from agent
+    holdout_error: str | None = None  # why holdout predictions couldn't be scored
+    # CPU seconds of this trial's holdout run (set even when it errored —
+    # the cost was paid); None where holdout didn't run or predates the field
+    holdout_cpu_s: float | None = None
+    started_at: str = Field(default_factory=utcnow)
+    finished_at: str | None = None
+
+    @property
+    def last_replicate(self) -> Replicate | None:
+        return self.replicates[-1] if self.replicates else None
+
+    @property
+    def replicate_scores(self) -> list[float]:
+        return [r.val_score for r in self.replicates if r.val_score is not None]
+
+    # Aggregate rule: MEDIAN val over scored replicates is the trial's score.
+    # With one replicate (the default) it is that run's score; with several
+    # it resists the single slow run or unlucky seed that a mean would carry
+    # straight into the search's ranking.
+    @property
+    def val_score(self) -> float | None:
+        return median(self.replicate_scores) if self.replicate_scores else None
+
+    @property
+    def replicate_spread(self) -> float | None:
+        """Median absolute deviation of this trial's replicate scores — how
+        much the same code and params move between identical evaluations.
+        None until two replicates have scored."""
+        scores = self.replicate_scores
+        if len(scores) < 2:
+            return None
+        centre = median(scores)
+        return median([abs(value - centre) for value in scores])
+
+    @property
+    def metrics(self) -> dict[str, float]:
+        """Per-key MEDIAN of the scored replicates' auxiliary metrics."""
+        return _per_key_median(r.metrics for r in self.replicates if r.val_score is not None)
+
+    @property
+    def instance_scores(self) -> dict[str, float]:
+        """Per-key MEDIAN of the scored replicates' per-instance scores."""
+        return _per_key_median(
+            r.instance_scores for r in self.replicates if r.val_score is not None
+        )
+
+    @property
+    def report(self) -> dict | None:
+        """First replicate carrying one (r0 in multi-replicate mode, matching
+        the r0 artifact hoist)."""
+        return next((r.report for r in self.replicates if r.report), None)
+
+    @property
+    def submission_ok(self) -> bool:
+        """r0's verdict — r0's artifacts are what the candidate root holds."""
+        return bool(self.replicates) and self.replicates[0].submission_ok
+
+
 class Candidate(BaseModel):
     """An immutable code artifact produced by an operator. Any change to the
-    code is a new candidate; re-executions of the same code are new trials."""
+    code is a new candidate; a new parameter set for the same code is a new
+    trial; a re-execution of the same code and params is a new replicate."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -96,6 +170,10 @@ class Candidate(BaseModel):
     candidate_dir: str = ""
     backend: BackendInfo = Field(default_factory=BackendInfo)
     trials: list[Trial] = Field(default_factory=list)
+    # the candidate declared a valid params.json (tune actions may target it);
+    # params_error carries why a declaration was rejected (scored on defaults)
+    tunable: bool = False
+    params_error: str | None = None
     is_best: bool = False       # best by agent-reported val_score (climbing signal)
     is_selected: bool = False   # best by holdout score (final-submission signal)
     # opaque annotation from the search policy that proposed this candidate
@@ -118,66 +196,119 @@ class Candidate(BaseModel):
             data.pop("workspace", None)
         return data
 
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_flat_trials(cls, data):
+        """Journals written before the Trial (params) → Replicate (seed) split
+        carry `trials` as a flat list of seeded executions (each with
+        `seed`/`val_score` and empty `params`). Fold them into ONE trial whose
+        replicates they are; holdout fields lift from the last execution that
+        carried them (the old "last non-None wins" rule). Idempotent: entries
+        that already have `replicates` are the new shape and pass through
+        (Trial instances too — they are not dicts)."""
+        if not isinstance(data, dict) or not isinstance(data.get("trials"), list):
+            return data
+        entries = data["trials"]
+        old = [t for t in entries if isinstance(t, dict) and "replicates" not in t]
+        if not old:
+            return data
+        new = [t for t in entries if not (isinstance(t, dict) and "replicates" not in t)]
+        replicates: list[dict] = []
+        holdout: dict = {}
+        params: dict = {}
+        for entry in old:
+            entry = dict(entry)
+            params = entry.pop("params", None) or params
+            for key in ("holdout_score", "holdout_error", "holdout_cpu_s"):
+                value = entry.pop(key, None)
+                if value is not None:
+                    holdout[key] = value
+            replicates.append(entry)
+        folded: dict = {"index": 0, "params": params, "replicates": replicates, **holdout}
+        if replicates and "started_at" in replicates[0]:
+            folded["started_at"] = replicates[0]["started_at"]
+        finished = [r["finished_at"] for r in replicates if r.get("finished_at")]
+        if finished:
+            folded["finished_at"] = finished[-1]
+        if not new:
+            folded["is_best"] = True  # the only trial there is
+        data = dict(data)
+        data["trials"] = [folded, *new]
+        return data
+
     @property
     def last_trial(self) -> Trial | None:
         return self.trials[-1] if self.trials else None
 
-    # Aggregate rule: MEDIAN val over scored trials is the climbing signal.
-    # With one trial (the default) it is that trial's score; with several it
-    # resists the single slow run or unlucky seed that a mean would carry
-    # straight into the search's ranking. Holdout is evaluated once per
-    # candidate, so the last non-None value is the candidate's holdout score.
+    @property
+    def last_replicate(self) -> Replicate | None:
+        last = self.last_trial
+        return last.last_replicate if last is not None else None
+
+    def stamp_best_trial(self, higher_is_better: bool) -> Trial | None:
+        """Mark the trial the candidate is scored by (max/min median over
+        replicates; ties keep the earliest). Engines call this after every
+        trial lands; the flag is journaled so every reader sees the same
+        aggregate without knowing the direction."""
+        scored = [t for t in self.trials if t.val_score is not None]
+        for trial in self.trials:
+            trial.is_best = False
+        if not scored:
+            return None
+        best = scored[0]
+        for trial in scored[1:]:
+            if (trial.val_score > best.val_score) if higher_is_better else (trial.val_score < best.val_score):
+                best = trial
+        best.is_best = True
+        return best
+
+    # Aggregate rule: the candidate is scored by its BEST trial (the parameter
+    # set the search would ship), each trial by the MEDIAN of its replicates.
+    # Metrics, reports and holdout follow the best trial too — pooling across
+    # parameter sets would describe no run that actually happened.
+    @property
+    def best_trial(self) -> Trial | None:
+        scored = [t for t in self.trials if t.val_score is not None]
+        if not scored:
+            return None
+        flagged = [t for t in scored if t.is_best]
+        return flagged[-1] if flagged else scored[-1]  # unstamped: the only/last scored trial
+
     @property
     def val_score(self) -> float | None:
-        return median(self.trial_scores) if self.trial_scores else None
+        best = self.best_trial
+        return best.val_score if best is not None else None
 
     @property
     def metrics(self) -> dict[str, float]:
-        """Per-key MEDIAN of the scored trials' auxiliary metrics — the same
-        aggregate rule as val_score, so a policy binning on them sees the
-        candidate, not one noisy run."""
-        pooled: dict[str, list[float]] = {}
-        for trial in self.trials:
-            if trial.val_score is None:
-                continue
-            for key, value in trial.metrics.items():
-                pooled.setdefault(key, []).append(value)
-        return {key: median(values) for key, values in pooled.items()}
+        best = self.best_trial
+        return dict(best.metrics) if best is not None else {}
 
     @property
     def instance_scores(self) -> dict[str, float]:
-        """Per-key MEDIAN of the scored trials' per-instance scores — the
-        same aggregate rule as val_score, so an engine's per-instance
-        frontier sees the candidate, not one noisy run."""
-        pooled: dict[str, list[float]] = {}
-        for trial in self.trials:
-            if trial.val_score is None:
-                continue
-            for key, value in trial.instance_scores.items():
-                pooled.setdefault(key, []).append(value)
-        return {key: median(values) for key, values in pooled.items()}
+        best = self.best_trial
+        return dict(best.instance_scores) if best is not None else {}
 
     @property
-    def trial_scores(self) -> list[float]:
-        return [t.val_score for t in self.trials if t.val_score is not None]
+    def report(self) -> dict | None:
+        best = self.best_trial
+        return best.report if best is not None else None
 
     @property
-    def trial_spread(self) -> float | None:
-        """Median absolute deviation of this candidate's trial scores — how
-        much the same code moves between identical evaluations. None until
-        two trials have scored."""
-        scores = self.trial_scores
-        if len(scores) < 2:
-            return None
-        centre = median(scores)
-        return median([abs(value - centre) for value in scores])
+    def replicate_spread(self) -> float | None:
+        best = self.best_trial
+        return best.replicate_spread if best is not None else None
+
+    @property
+    def replicate_spreads(self) -> list[float]:
+        """Every trial's replicate spread — the search's evidence about its
+        own noise (spread ACROSS parameter sets is signal, not noise)."""
+        return [t.replicate_spread for t in self.trials if t.replicate_spread is not None]
 
     @property
     def holdout_score(self) -> float | None:
-        for trial in reversed(self.trials):
-            if trial.holdout_score is not None:
-                return trial.holdout_score
-        return None
+        best = self.best_trial
+        return best.holdout_score if best is not None else None
 
     @property
     def is_scored(self) -> bool:

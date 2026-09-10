@@ -44,6 +44,7 @@ While they climb:
 hillclimb watch candidates   # one search's candidates: drafting, debugging, improving
 hillclimb watch              # all the searches side by side
 hillclimb chart              # the hillclimb: best score so far across every search, every candidate a dot
+                             # (several charts in the folder: a table first — enter opens one, esc comes back)
 hillclimb graph              # the knowledge graph growing as searches finish
 hillclimb tree               # one search's exploration tree: expanded vs discontinued lineages
 hillclimb chart --detail     # the curve with that tree drawn on it (every scored candidate, parent edges)
@@ -197,6 +198,33 @@ search:
     feature_dimensions: [complexity, score]   # built-ins: complexity, diversity, score
     num_inspirations: 2                       # copied in as candidate_<i>.py
 ```
+
+### Several optimizers on one problem: a mixed fleet
+
+Repeat `--policy` and one run holds one search per policy, each its own
+engine process on the same problem, tagged as an arm so the arms can be
+compared afterwards. Per-arm settings go through `--arm-set ARM:KEY=VALUE`
+(applied after `--set`, which is fleet-wide); arms are named after their
+policy (a repeated policy becomes `greedy-2`):
+
+```bash
+uv run hillclimb run circle-packing --budget 30m \
+  --policy greedy --policy openevolve --policy gepa \
+  --seed-from seeds/circle-packing.py \
+  --arm-set gepa:search.parallel_operators=1 \
+  --arm-set gepa:search.policy_params.max_metric_calls=60
+uv run hillclimb watch                          # the three searches side by side, arm in the problem column
+uv run hillclimb experiment report <run-id>     # arms compared; --experiment NAME names it instead
+```
+
+The GEPA engine is serial, so its arm needs `search.parallel_operators=1`
+while the others keep the fleet-wide operator count. `--parallel-searches N`
+repeats every arm N times (repeat-major, like `hillclimb experiment run`).
+Searches of one run share live knowledge cards; pass `--set
+learning.enabled=false` for a fair comparison, or keep it for cooperation.
+The same fleet is available to embedders as `hillclimb.api.run_fleet(...,
+engines=mixed_fleet([...]))`. For repeats across problems with a committed
+spec, noise floors and a control arm, use `hillclimb experiment run`.
 
 Any other feature dimension must be a numeric key the verifier writes next
 to `score` (see *Trial metrics* below), e.g. `feature_dimensions: [runtime_s,
@@ -500,7 +528,12 @@ median like everything else, and consumed by engines whose selection is
 per-instance — GEPA keeps a candidate alive if it wins on *any* instance, not
 just on average. `problems/circle-packing/verify.py` (one instance per
 circle) is the reference producer; verifiers that emit nothing lose nothing.
-emflow per-zone and MLE-bench per-fold instances are planned follow-ups.
+emflow problems emit one instance per scored origin, keyed `<asof>/<zone>`
+— for GEFCom2014 that is every task x zone of the validation split (solar:
+3 tasks x 3 plants = 9 instances) — so a GEPA arm on `emflow://gefcom2014:solar`
+keeps a candidate that wins any single task. A candidate that leaves an
+origin unscored simply lacks that key and is treated as having failed it;
+MLE-bench per-fold instances are a planned follow-up.
 
 ## Noise: not climbing your own measurement error
 
@@ -690,6 +723,7 @@ the run has a single search), or `latest` (the default).
 | `status [search]` | search state + candidate tree (text) |
 | `watch` | live TUI over runs, searches, and candidates |
 | `chart` | live chart: best score so far by tested-candidate count across the problem's searches as a staircase, every scored candidate a dot (one line per arm in an experiment) |
+| `similarity [search] [--single]` | live 3D cube: each candidate at behavioral / structural / lineage distance from the search's seed (or baseline); an experiment arm opens its whole run, coloured by arm, `n`/`p` stepping through the run's problems; a problem's `fingerprint.py` defines the behavioral axis |
 | `graph` | the knowledge-graph TUI (same screen as `knowledge graph`) |
 | `show [search] <candidate-id>` | everything about one candidate: scores, evaluation breakdown, diff vs parent, output |
 | `ps` | every process hillclimb owns on this machine: engines with their agents and verifiers nested; `orphan` marks engines whose hillclimb dir was deleted |
@@ -705,7 +739,7 @@ the run has a single search), or `latest` (the default).
 | `knowledge query "<terms>" [--json]` | read-only memory lookup (also available to agents) |
 | `knowledge show <target>` | the prior-experience section a new search would get |
 | `run <problem> --set key=value … [--experiment E --arm A]` | any config setting, dotted; tag the search as an experiment arm |
-| `experiment run <spec> [--repeats N] [--parallel] [--dry-run]` | every arm × problem × repeat of a spec |
+| `experiment run <spec> [--repeats N] [--budget B] [--parallel] [--max-concurrent N] [--run-id R --first-repeat K] [--dry-run]` | every arm × problem × repeat of a spec; `--max-concurrent` bounds how many run at once, `--run-id` appends repeats to a finished run |
 | `experiment report [spec] [--problem X] [--control A] [--noise-floor F]` | compare the arms on holdout |
 
 Exit code `2` from `run`/`resume` means the search parked or was stopped — resume it.
@@ -722,6 +756,7 @@ problems: [circle-packing]
 repeats: 3
 budget: 15m
 schedule: sequential        # sequential | parallel
+max_concurrent: 8           # parallel only: searches alive at once
 noise_floor: 0.02           # from `hillclimb verify circle-packing --repeat 5`
 arms:
   greedy:       {search.policy: greedy}             # first arm = the control
@@ -733,7 +768,16 @@ arms:
 default — repeat by repeat, arms round-robin inside, so shared state such as
 the knowledge graph is seen by every arm at the same point (mandatory when an
 arm touches memory) — or `--parallel` for stateless comparisons (policy,
-model). Each search is a normal `hillclimb run … --experiment <name> --arm
+model). Parallel without a bound starts every search at once, and past the
+machine's operator slots (`search.machine_max_operators`, default
+`min(8, cores-2)`) the rest burn their wall clock in `waiting-slot` — so
+give it `max_concurrent: N` in the spec (or `--max-concurrent N`): the
+launcher starts searches in job order, waits on its children before starting
+the next, runs the whole matrix, and prints the report at the end (run it
+under `nohup` or in tmux; exit 1 if any child failed, 2 if any parked). To
+add repeats to a finished run, `--run-id <run> --first-repeat K --repeats M`
+appends repeats K..K+M-1 into the same run, so report and chart keep grouping
+as one experiment. Each search is a normal `hillclimb run … --experiment <name> --arm
 <arm> --set key=value`, tagged in its `search.yaml` (`experiment`, `arm`,
 `repeat`, `arm_overrides`), so a search you start by hand with those flags
 counts too. `hillclimb experiment report <name>` compares the arms on the
@@ -748,7 +792,13 @@ resolved against the spec's directory — which rides `--seed-from` into every
 child search, so arms are compared from identical source (the dry run prints
 the resolved path and its sha256). Mandatory for engines that require a seed
 (GEPA); see `hillclimb/experiments/gepa-vs-openevolve-vs-greedy.yaml` for the
-three-strategy comparison this shipped with.
+three-strategy comparison this shipped with, and
+`gepa-vs-openevolve-vs-greedy-heilbronn.yaml` for the same three engines
+across a difficulty ladder (`problems/heilbronn-{11,14,17}`, stamped by
+`problems/make_heilbronn.py`; its seed reads N off the problem, so one
+`seed_from` serves every level). One `hillclimb chart` per problem (a bare
+`hillclimb chart` lists them, `p` cycles them, `c` in `hillclimb watch` opens
+the highlighted one) and `hillclimb similarity <run>` for the arm-coloured cube.
 
 ## How runs and searches are laid out
 

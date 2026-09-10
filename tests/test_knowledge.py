@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from tests.factories import trial as mk_trial
+
 from pathlib import Path
 
 import pytest
 
 from hillclimb.backends.fake import FakeBackend
-from hillclimb.candidate import BackendInfo, Candidate, Trial
+from hillclimb.candidate import BackendInfo, Candidate
 from hillclimb.journal import Journal
 from hillclimb.knowledge import (
     KnowledgeCard,
@@ -42,7 +44,7 @@ def scored(cid, op, val, summary="", complexity=None, candidate_dir="w", holdout
     return dict(
         candidate_id=cid, operator=op, status="ok", complexity=complexity,
         candidate_dir=candidate_dir, summary=summary,
-        trials=[Trial(val_score=val, holdout_score=holdout)],
+        trials=[mk_trial(val_score=val, holdout_score=holdout)],
     )
 
 
@@ -56,7 +58,7 @@ class TestDistill:
             scored("c001", "draft", 0.02, "GBM with lag features", "minimal", str(ws)),
             scored("c002", "improve", 0.015, "added clearsky ratio", "minimal", str(ws), holdout=0.016),
             dict(candidate_id="c003", operator="draft", status="buggy", candidate_dir="w",
-                 trials=[Trial(returncode=1, stdout_tail="ValueError: bad shape")]),
+                 trials=[mk_trial(returncode=1, stdout_tail="ValueError: bad shape")]),
         ])
         card = distill_card(
             journal, problem=FakeProblem(), run_ref="run1/gefcom2014-solar",

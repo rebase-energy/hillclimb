@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Sequence
 from pydantic import BaseModel, Field
 
 from hillclimb.candidate import utcnow
+from hillclimb.dirs import PARAMS_FILE, trial_dir
 from hillclimb.journal import Journal
 from hillclimb.status import derive_state
 
@@ -119,6 +120,7 @@ def resync_best(
     # artifact must never inherit the previous winner's file.
     for name in output_artifacts:
         (best_dir / name).unlink(missing_ok=True)
+    (best_dir / PARAMS_FILE).unlink(missing_ok=True)
     if selected is None:
         baseline = journal.candidates.get("c000")
         if baseline is not None:
@@ -134,6 +136,13 @@ def resync_best(
             shutil.copy(src / name, best_dir / name)
     if (src / "solution.py").exists():
         shutil.copy(src / "solution.py", best_dir / "solution.py")
+    # the shipped parameter values are the best trial's (its trial dir's
+    # params.json), never the candidate root's declaration of defaults
+    best = selected.best_trial
+    if best is not None:
+        params = trial_dir(src, best.index) / PARAMS_FILE
+        if params.exists():
+            shutil.copy(params, best_dir / PARAMS_FILE)
     if not selected.is_selected:
         selected.is_selected = True
         journal.candidate_result(selected)

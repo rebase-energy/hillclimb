@@ -7,6 +7,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 from contextlib import closing
 from datetime import datetime
 from itertools import zip_longest
@@ -29,6 +30,8 @@ from hillclimb.api import (
     execute_search,
     new_run_id,
     resume_spent_seconds,
+    FleetEngine,
+    mixed_fleet,
     run_fleet,
     spawn_search_proc,
 )
@@ -44,6 +47,7 @@ from hillclimb.problem import (
     suite_problem_targets,
 )
 from hillclimb.run import (
+    load_run_meta,
     load_search_meta,
     RunMeta,
     search_ref,
@@ -183,8 +187,8 @@ model: sonnet
 # search:
 #   parallel_operators: 1   # >1 runs concurrent operators
 #   machine_max_operators: 8  # cap across every search on this machine (default min(8, cores-2))
-#   n_trials: 1          # evals per candidate (median is the climbing score)
-#   trial_mode: parallel # `serial` when the metric measures the machine (time!)
+#   n_replicates: 1        # seeded runs per trial (median is the trial's score)
+#   replicate_mode: parallel # `serial` when the metric measures the machine (time!)
 #   noise_k: 0           # require gains > k x the measured noise floor
 #   min_improvement: 0   # ...or an absolute floor, in metric units
 
@@ -236,7 +240,7 @@ INIT_PROBLEM_VERIFIER = """\
 #
 # Also available: $HILLCLIMB_PYTHON (the managed venv interpreter — use it
 # instead of bare `python`), $HILLCLIMB_SOLUTION, $HILLCLIMB_SPLIT,
-# $HILLCLIMB_TRIAL_SEED. `--holdout` is passed when scoring the hidden split.
+# $HILLCLIMB_REPLICATE_SEED. `--holdout` is passed when scoring the hidden split.
 set -euo pipefail
 
 "$HILLCLIMB_PYTHON" "$HILLCLIMB_SOLUTION" > solution_out.txt
@@ -539,9 +543,9 @@ def verify(
             f"an improvement smaller than ~{2 * mad:.3g} cannot be told from noise. "
             "To stop the search climbing it:"
         )
-        typer.echo(f"  search:\n    n_trials: {max(3, repeat)}\n    noise_k: 2")
+        typer.echo(f"  search:\n    n_replicates: {max(3, repeat)}\n    noise_k: 2")
         typer.echo(
-            "  add `trial_mode: serial` if this metric measures the machine "
+            "  add `replicate_mode: serial` if this metric measures the machine "
             "(time, throughput, memory) — parallel trials would measure each other"
         )
 
@@ -1001,6 +1005,19 @@ def experiment_run(
         None, "--parallel/--sequential",
         help="Launch every search detached at once, or one after another (default: the spec's schedule)",
     ),
+    max_concurrent: int = typer.Option(
+        None, "--max-concurrent", min=1,
+        help="Parallel, but at most N searches alive at once: launch detached in job order, "
+        "wait on the children before starting the next (overrides the spec's max_concurrent)",
+    ),
+    run_id: str = typer.Option(
+        None, "--run-id",
+        help="Append the searches to this existing experiment run instead of creating a new one",
+    ),
+    first_repeat: int = typer.Option(
+        1, "--first-repeat", min=1,
+        help="Number the repeats from K (with --run-id: add repeats K.. to a finished run)",
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the jobs, start nothing"),
 ):
     """Run an experiment: every arm × every problem × N repeats.
@@ -1010,7 +1027,13 @@ def experiment_run(
     is seen by every arm at the same point; use it whenever an arm touches
     shared state. Parallel launches all jobs detached at once (machine
     slots still cap concurrency) — fine for stateless comparisons such as
-    policy or model. Real agent runs — the repeat count is your cost dial.
+    policy or model. Bounded parallel (--max-concurrent N, or the spec's
+    max_concurrent) keeps at most N alive so no search spends its wall
+    clock waiting for a machine slot; the launcher stays up until the last
+    child exits, then prints the report — run it under nohup or in tmux.
+    Unlike sequential it runs the whole matrix rather than stopping at the
+    first failure; its exit code is 1 if any child failed, else 2 if any
+    parked, else 0. Real agent runs — the repeat count is your cost dial.
     """
     from hillclimb.experiment import expand, load_experiment, resolve_experiment_path, resolved_seed
 
@@ -1026,12 +1049,24 @@ def experiment_run(
     for problem_target in experiment.problems:
         if resolve_target(problem_target, config).kind == "suite":
             raise typer.BadParameter(f"experiments take problems, not suites ({problem_target!r})")
-    jobs = expand(experiment)
+    jobs = expand(experiment, first_repeat)
+    if parallel is False and max_concurrent is not None:
+        raise typer.BadParameter("--sequential and --max-concurrent contradict each other")
     schedule = "parallel" if parallel else "sequential" if parallel is False else experiment.schedule
+    limit = max_concurrent if max_concurrent is not None else experiment.max_concurrent
+    if max_concurrent is not None:
+        schedule = "parallel"  # the flag implies detached launches
+    if schedule != "parallel":
+        limit = None
     child_budget = budget or experiment.budget
+    repeats_text = (
+        f"{experiment.repeats} repeat(s)" if first_repeat == 1
+        else f"repeats {first_repeat}..{first_repeat + experiment.repeats - 1}"
+    )
     typer.echo(
         f"Experiment {experiment.name}: {len(experiment.arms)} arms × {len(experiment.problems)} "
-        f"problem(s) × {experiment.repeats} repeat(s) = {len(jobs)} searches, {schedule}"
+        f"problem(s) × {repeats_text} = {len(jobs)} searches, {schedule}"
+        + (f" (at most {limit} at once)" if limit else "")
     )
     if seed_path is not None:
         import hashlib
@@ -1043,17 +1078,27 @@ def experiment_run(
         typer.echo(f"  {job.index:2d}. {job.problem} · {job.arm} · r{job.repeat}  {settings}")
     if dry_run:
         return
-    run_name = experiment.name
-    run_id = new_run_id(run_name)
-    run_dir = create_run(
-        config,
-        RunMeta(
-            run_id=run_id, name=run_name, kind="experiment", target=spec,
-            spec=_spec_provenance(config, spec_path),
-            problem_ids=list(dict.fromkeys(load_problem(p, config).problem_id for p in experiment.problems)),
-        ),
-    )
+    if run_id:
+        run_dir = config.paths.runs_dir / run_id
+        existing = load_run_meta(run_dir)
+        if existing is None or existing.kind != "experiment":
+            raise typer.BadParameter(f"--run-id {run_id!r} is not an existing experiment run")
+        run_name = existing.name
+        typer.echo(f"Appending to run {run_id}")
+    else:
+        run_name = experiment.name
+        run_id = new_run_id(run_name)
+        run_dir = create_run(
+            config,
+            RunMeta(
+                run_id=run_id, name=run_name, kind="experiment", target=spec,
+                spec=_spec_provenance(config, spec_path),
+                problem_ids=list(dict.fromkeys(load_problem(p, config).problem_id for p in experiment.problems)),
+            ),
+        )
     launched = []
+    alive: dict[int, tuple[subprocess.Popen, str]] = {}  # bounded parallel: pid -> (child, slug)
+    exits: dict[str, int] = {}  # bounded parallel: slug -> non-zero exit code
     for job in jobs:
         argv = [
             job.problem, "--run-id", run_id, "--run-name", run_name,
@@ -1067,8 +1112,13 @@ def experiment_run(
             argv += ["--set", f"{key}={_set_value(value)}"]
         slug = f"{Path(job.problem).name}-{job.arm}-r{job.repeat}"
         if schedule == "parallel":
-            pid, log_path = _spawn_search(config, run_dir, job.index, slug, argv)
-            launched.append((slug, pid, log_path))
+            if limit:
+                _reap_until_below(alive, limit, exits, typer.echo)
+            proc, log_path = _spawn_search_proc(config, run_dir, job.index, slug, argv)
+            launched.append((slug, proc.pid, log_path))
+            if limit:
+                alive[proc.pid] = (proc, slug)
+                typer.echo(f"=== {job.index}/{len(jobs)}: {slug} started (pid {proc.pid}, log {log_path})")
             continue
         typer.echo(f"=== {job.index}/{len(jobs)}: {slug} ===")
         cwd, env = _child_launch_context(config)
@@ -1077,13 +1127,46 @@ def experiment_run(
             hint = " (parked — resume it, then `experiment report`)" if result.returncode == 2 else ""
             typer.echo(f"{slug} exited {result.returncode}{hint}; stopping the experiment", err=True)
             raise typer.Exit(result.returncode)
-    if schedule == "parallel":
+    if schedule == "parallel" and not limit:
         typer.echo(f"Run {run_id}: launched {len(launched)} searches (`hillclimb experiment report` when done)")
         for slug, pid, log_path in launched:
             typer.echo(f"  pid={pid} {slug}  log={log_path}")
         return
+    if limit:
+        _reap_until_below(alive, 1, exits, typer.echo)  # drain: every child has exited
+        typer.echo(f"Run {run_id}: {len(launched)} searches finished, {len(exits)} with a non-zero exit")
+        for slug, code in exits.items():
+            hint = "parked — resume it" if code == 2 else f"exit {code}"
+            typer.echo(f"  {slug}: {hint}; log under {run_dir / 'logs'}")
     typer.echo("")
     _experiment_report_impl(config, experiment.name, "", spec_path=spec_path)
+    if exits:
+        raise typer.Exit(1 if any(code != 2 for code in exits.values()) else 2)
+
+
+# How often the bounded experiment launcher polls its children for exits.
+_REAP_POLL_S = 5.0
+
+
+def _reap_until_below(
+    alive: dict[int, tuple[subprocess.Popen, str]], limit: int, exits: dict[str, int], log
+) -> None:
+    """Block until fewer than `limit` of the detached children in `alive`
+    (pid -> (child, slug)) are still running, reaping each one that exits and
+    recording non-zero exit codes in `exits`. `limit=1` drains them all.
+    Polls the Popen objects themselves: a dropped Popen gets reaped behind
+    our back by the next subprocess call, and its exit code with it."""
+    while len(alive) >= limit:
+        for pid, (proc, slug) in list(alive.items()):
+            code = proc.poll()
+            if code is None:
+                continue
+            alive.pop(pid)
+            log(f"    finished: {slug} (exit {code})")
+            if code != 0:
+                exits[slug] = code
+        if len(alive) >= limit:
+            time.sleep(_REAP_POLL_S)
 
 
 def _set_value(value) -> str:
@@ -1269,7 +1352,7 @@ def _run_problem(
         run_dir = config.paths.runs_dir / run_id
     total_s = parse_budget(budget) if budget else problem.time_budget_s
     search_dir = create_search(
-        config, problem, run_dir, run_id, total_s,
+        config, problem, run_dir, run_id, total_s, seed_from=seed_from,
         experiment=experiment, arm=arm, repeat=repeat, arm_overrides=arm_overrides,
     )
     tag = f", experiment={experiment}/{arm}" + (f" r{repeat}" if repeat else "") if experiment else ""
@@ -1306,7 +1389,7 @@ def _run_suite(
     name: str | None,
     policy: str | None = None,
     parallel_operators: int | None = None,
-    n_trials: int | None = None,
+    n_replicates: int | None = None,
     seed_from: Path | None = None,
     learning: bool = True,
     set_: list[str] | None = None,
@@ -1343,7 +1426,7 @@ def _run_suite(
         child_backend = backend or entry.backend
         child_model = model or entry.model
         child_parallel = parallel_operators if parallel_operators is not None else entry.parallel_operators
-        child_trials = n_trials if n_trials is not None else entry.n_trials
+        child_replicates = n_replicates if n_replicates is not None else entry.n_replicates
         child_seed = seed_from or entry.seed_from
         if child_budget:
             cmd += ["--budget", child_budget]
@@ -1355,8 +1438,8 @@ def _run_suite(
             cmd += ["--policy", policy]
         if child_parallel is not None:
             cmd += ["--parallel-operators", str(child_parallel)]
-        if child_trials is not None:
-            cmd += ["--n-trials", str(child_trials)]
+        if child_replicates is not None:
+            cmd += ["--n-replicates", str(child_replicates)]
         if child_seed:
             # spec-relative paths resolve against the spec's own directory
             seed_path = Path(child_seed)
@@ -1382,8 +1465,13 @@ def run(
     budget: str = typer.Option(None, help="Wall-clock budget, e.g. 2h / 30m"),
     backend: str = typer.Option(None, help="Operator backend: claude-code | codex | dummy"),
     model: str = typer.Option(None, help="Model for operator calls, e.g. sonnet / opus"),
-    policy: str = typer.Option(
-        None, "--policy", help="Search policy (default: greedy); params via config search.policy_params"
+    policy: list[str] = typer.Option(
+        None, "--policy",
+        help=(
+            "Search policy (default: greedy); params via config search.policy_params. "
+            "Repeat it (--policy greedy --policy gepa) for a mixed fleet: one search per policy "
+            "on the problem, under one run, each tagged as an arm"
+        ),
     ),
     holdout: bool = typer.Option(True, "--holdout/--no-holdout", help="Hidden selection holdout"),
     learning: bool = typer.Option(
@@ -1398,8 +1486,9 @@ def run(
         1, "--parallel-searches", min=1,
         help="Independent searches on the problem at once (>1 runs them detached, in the background)",
     ),
-    n_trials: int = typer.Option(
-        None, "--n-trials", help="Validation evals per candidate (mean climbs)"
+    n_replicates: int = typer.Option(
+        None, "--n-replicates", "--n-trials",
+        help="Seeded runs per trial (the median is the trial's score; --n-trials is the old spelling)",
     ),
     seed_from: Path = typer.Option(
         None, "--seed-from", help="Incumbent solution.py scored as the floor candidate"
@@ -1407,7 +1496,17 @@ def run(
     set_: list[str] = typer.Option(
         None, "--set", help="Any config setting, dotted: --set search.policy=openevolve --set learning.enabled=false",
     ),
-    experiment: str = typer.Option(None, "--experiment", help="Tag the search as one arm of an experiment"),
+    arm_set: list[str] = typer.Option(
+        None, "--arm-set",
+        help=(
+            "A setting for one arm of a mixed fleet, ARM:KEY=VALUE: "
+            "--arm-set gepa:search.parallel_operators=1 (applied after --set)"
+        ),
+    ),
+    experiment: str = typer.Option(
+        None, "--experiment",
+        help="Tag the search as one arm of an experiment (with --arm); names a mixed fleet's experiment",
+    ),
     arm: str = typer.Option(None, "--arm", help="The arm name (with --experiment)"),
     repeat: int = typer.Option(0, "--repeat", hidden=True),
     run_id: str = typer.Option(None, "--run-id", hidden=True),
@@ -1423,21 +1522,45 @@ def run(
         config.holdout.enabled = False
     if not learning:
         config.learning.enabled = False
-    if policy is not None:
-        config.search.policy = policy
+    policies = list(policy or [])
+    mixed = len(policies) > 1
+    arm_overrides = _parse_arm_set(arm_set or [])
+    if arm_overrides and not mixed:
+        raise typer.BadParameter("--arm-set needs a mixed fleet (two or more --policy)")
+    single_policy = None if mixed else (policies[0] if policies else None)
+    if single_policy is not None:
+        config.search.policy = single_policy
     if parallel_operators is not None:
         config.search.parallel_operators = parallel_operators
-    if n_trials is not None:
-        config.search.n_trials = n_trials
+    if n_replicates is not None:
+        config.search.n_replicates = n_replicates
     overrides = _parse_set(set_ or [])
-    if (experiment is None) != (arm is None):
+    if mixed:
+        if arm or run_id:
+            raise typer.BadParameter("a mixed fleet names its arms itself; --arm/--run-id do not apply")
+    elif (experiment is None) != (arm is None):
         raise typer.BadParameter("--experiment and --arm go together")
     resolved = resolve_target(target, config)
     if resolved.kind == "suite":
+        if mixed:
+            raise typer.BadParameter("a spec takes one --policy; mixed fleets run on a single problem")
         _run_suite(
             target, config, budget, backend, model, holdout, name,
-            policy=policy, parallel_operators=parallel_operators, n_trials=n_trials,
+            policy=single_policy, parallel_operators=parallel_operators, n_replicates=n_replicates,
             seed_from=seed_from, learning=learning, set_=set_,
+        )
+        return
+    if mixed:
+        try:
+            engines = mixed_fleet(policies, repeats=parallel_searches, arm_overrides=arm_overrides)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        _run_problem_fleet(
+            target, config, budget, parallel_searches, name,
+            backend=backend, model=model, policy=None, parallel_operators=parallel_operators,
+            n_replicates=n_replicates, holdout=holdout, learning=learning, set_=set_ or [],
+            seed_from=seed_from, knowledge_context_file=knowledge_context_file,
+            engines=engines, experiment=experiment,
         )
         return
     if parallel_searches > 1:
@@ -1445,8 +1568,8 @@ def run(
             raise typer.BadParameter("--parallel-searches does not combine with --experiment/--run-id")
         _run_problem_fleet(
             target, config, budget, parallel_searches, name,
-            backend=backend, model=model, policy=policy, parallel_operators=parallel_operators,
-            n_trials=n_trials, holdout=holdout, learning=learning, set_=set_ or [],
+            backend=backend, model=model, policy=single_policy, parallel_operators=parallel_operators,
+            n_replicates=n_replicates, holdout=holdout, learning=learning, set_=set_ or [],
             seed_from=seed_from, knowledge_context_file=knowledge_context_file,
         )
         return
@@ -1476,15 +1599,18 @@ def _run_problem_fleet(
     model: str | None,
     policy: str | None,
     parallel_operators: int | None,
-    n_trials: int | None,
+    n_replicates: int | None,
     holdout: bool,
     learning: bool,
     set_: list[str],
     seed_from: Path | None = None,
     knowledge_context_file: Path | None = None,
+    engines: list[FleetEngine] | None = None,
+    experiment: str | None = None,
 ) -> Path:
-    """CLI shell over api.run_fleet: N independent searches on one problem,
-    each its own detached engine under one run. Returns the run dir."""
+    """CLI shell over api.run_fleet: N independent searches on one problem
+    (or one per `engines` entry — a mixed fleet), each its own detached
+    engine under one run. Returns the run dir."""
     fleet = run_fleet(
         target,
         config=config,
@@ -1492,17 +1618,39 @@ def _run_problem_fleet(
         run_name=name,
         budget=budget,
         backend=backend, model=model, policy=policy,
-        parallel_operators=parallel_operators, n_trials=n_trials,
+        parallel_operators=parallel_operators, n_replicates=n_replicates,
         holdout=holdout, learning=learning, seed_from=seed_from,
         knowledge_context_file=knowledge_context_file, overrides=set_,
+        engines=engines, experiment=experiment,
         log=typer.echo,
     )
     operators = parallel_operators if parallel_operators is not None else config.search.parallel_operators
-    typer.echo(
-        f"Run {fleet.run_id}: {parallel_searches} searches x {operators} operators "
-        f"running in the background; engine logs in {fleet.run_dir / 'logs'}"
-    )
+    if engines:
+        arms = ", ".join(dict.fromkeys(engine.arm for engine in engines))
+        typer.echo(
+            f"Run {fleet.run_id}: {len(engines)} searches ({arms}) x {operators} operators "
+            f"running in the background; engine logs in {fleet.run_dir / 'logs'}"
+        )
+        typer.echo(f"Compare the arms with: hillclimb experiment report {experiment or fleet.run_id}")
+    else:
+        typer.echo(
+            f"Run {fleet.run_id}: {parallel_searches} searches x {operators} operators "
+            f"running in the background; engine logs in {fleet.run_dir / 'logs'}"
+        )
     return fleet.run_dir
+
+
+def _parse_arm_set(pairs: list[str]) -> dict[str, list[str]]:
+    """`ARM:KEY=VALUE` strings (the `--arm-set` flag) → arm name -> its
+    `--set` pairs, validated the way `--set` is."""
+    out: dict[str, list[str]] = {}
+    for item in pairs:
+        arm, sep, pair = item.partition(":")
+        if not sep or not arm.strip() or "=" not in pair:
+            raise typer.BadParameter(f"--arm-set expects ARM:KEY=VALUE, got {item!r}")
+        _parse_set([pair])
+        out.setdefault(arm.strip(), []).append(pair)
+    return out
 
 
 def _parse_set(pairs: list[str]) -> dict:
@@ -1997,19 +2145,31 @@ def show(
         if backend.num_turns is not None:
             agent_line += f", {backend.num_turns} turns"
         typer.echo(agent_line)
-    for index, trial in enumerate(cand.trials):
+    for trial in cand.trials:
         parts = [f"val={trial.val_score if trial.val_score is not None else '-'}"]
-        if trial.seed is not None:
-            parts.append(f"seed={trial.seed}")
-        if trial.duration_s is not None:
-            parts.append(f"{trial.duration_s:.0f}s")
-        if trial.returncode not in (0, None):
-            parts.append(f"rc={trial.returncode}")
-        if trial.timed_out:
-            parts.append("TIMEOUT")
+        if trial.params:
+            parts.append("params=" + json.dumps(trial.params, sort_keys=True))
+        if trial.holdout_score is not None:
+            parts.append(f"holdout={trial.holdout_score:.5g}")
         if trial.holdout_error:
             parts.append(f"holdout_error={trial.holdout_error[:60]}")
-        typer.echo(f"trial {index}: {'  '.join(parts)}")
+        mark = "*" if trial.is_best and len(cand.trials) > 1 else ""
+        typer.echo(f"trial {trial.index}{mark}: {'  '.join(parts)}")
+        for replicate in trial.replicates:
+            rparts = [f"val={replicate.val_score if replicate.val_score is not None else '-'}"]
+            if replicate.seed is not None:
+                rparts.append(f"seed={replicate.seed}")
+            if replicate.duration_s is not None:
+                rparts.append(f"{replicate.duration_s:.0f}s")
+            if replicate.returncode not in (0, None):
+                rparts.append(f"rc={replicate.returncode}")
+            if replicate.timed_out:
+                rparts.append("TIMEOUT")
+            typer.echo(f"  replicate {replicate.seed if replicate.seed is not None else 0}: {'  '.join(rparts)}")
+    if cand.tunable:
+        typer.echo("tunable: yes")
+    elif cand.params_error:
+        typer.echo(f"tunable: no — {cand.params_error}")
     scores = f"val_score={cand.val_score}"
     if cand.holdout_score is not None:
         scores += f"  holdout={cand.holdout_score:.5g}"
@@ -2027,8 +2187,6 @@ def show(
         typer.echo(delta)
 
     if cand.metrics or cand.policy_meta:
-        import json
-
         typer.echo("\n# search metadata\n")
         if cand.metrics:
             typer.echo("metrics: " + json.dumps(cand.metrics, sort_keys=True))
@@ -2149,13 +2307,20 @@ def chart(
 ):
     """Live hillclimb chart: best score so far vs tested candidates.
 
+    With no argument and several charts to show (more than one problem, or
+    the same problem in more than one run), first a table of them — one row
+    per problem worked in a run, newest activity first; enter opens that
+    chart, esc comes back to the table. `hillclimb watch` reaches the same
+    chart with `c` from its runs, searches and candidates tables.
+
     One staircase across every search of the problem, every scored candidate
     a dot (bright where it set a new best, dim where it missed), plus optional
     problem-config baselines; an experiment gets one line per arm instead.
     Refreshes as candidates land.
     Keys: r=refresh, t=toggle improvement text, d=detail
     (every scored candidate as a mark, parent edges, accepted lineage bold),
-    h=toggle holdout/validation, c=cost overlay, p=switch problem, q=quit.
+    h=toggle holdout/validation, c=cost overlay, p=switch problem,
+    esc=back to the table, q=quit.
     """
     try:
         from hillclimb.chart import ChartApp
@@ -2226,43 +2391,86 @@ def surface(
 @app.command()
 def similarity(
     search: str = typer.Argument(None, help="latest (default), <run-id>, or <run-id>/<search-id>"),
+    single: bool = typer.Option(
+        False, "--single", help="One search only, even when it is an experiment arm"
+    ),
 ):
-    """Live 3D distance scatter of one search: how far each candidate moved.
+    """Live 3D distance scatter: how far each candidate moved.
 
     Every candidate sits at (behavioral, structural, lineage) distance from
-    a reference candidate — the baseline by default, `c` toggles to the
-    current champion — coloured by score rank (cold to hot; the champion is
-    gold, the reference white). Distances are derived from what candidates
-    already produced (submission or evaluator report, solution.py, the
-    journal); nothing extra is stored. Drag rotates, scroll zooms, n/p
-    switch search, q quits.
+    a reference candidate — the origin the search grew from (its seed, else
+    its baseline) by default, `c` toggles to the current champion — coloured
+    by score rank (cold to hot; the champion is gold, the reference white).
+    A search that is an experiment arm opens the whole run instead: every
+    search of that problem in one cube, measured from the shared seed,
+    coloured by arm like `chart`, n/p stepping through the run's problems
+    (--single for the one-search view). Distances are derived from what
+    candidates already produced (the problem's fingerprint.py if it ships
+    one, else submission or evaluator report; solution.py; the journal);
+    nothing extra is stored. Drag rotates, scroll zooms, q quits.
     """
     try:
-        from hillclimb.similarity import build_similarity
-        from hillclimb.similarityview import SimilarityApp
+        from hillclimb.similarity import build_run_similarity, build_similarity
+        from hillclimb.similarityview import SimilarityApp, run_inputs, search_inputs
     except ModuleNotFoundError as exc:
         raise typer.BadParameter(
             "`hillclimb similarity` needs the TUI extra: pip install 'hillclimb[tui]'"
         ) from exc
 
     config = load_config()
-    store, record = open_search(config, search)
+    store, record = _similarity_anchor(config, search)
+    meta = record.meta
+    try:
+        fingerprint_path = load_problem(meta.problem, config).fingerprint_path
+    except Exception:  # noqa: BLE001 — a provider or moved problem: no fingerprint module
+        fingerprint_path = None
+    if meta.experiment and meta.arm and not single:
+        records = run_inputs(store, record.run_id, meta.problem_key)
+        inputs = search_inputs(store, records)
+        higher = bool(meta.higher_is_better)
+        for reference in ("seed", "champion"):
+            view = build_run_similarity(
+                inputs, higher, reference=reference, output_artifacts=meta.output_artifacts,
+                fingerprint_path=fingerprint_path, problem_key=meta.problem_key,
+            )
+            if view.unavailable is None:
+                break
+        else:
+            typer.echo(f"run view unavailable ({view.unavailable}); opening {record.ref} alone")
+            reference = None
+        if reference is not None:
+            SimilarityApp(config, reference=reference, run=(record.run_id, meta.problem_key)).run()
+            return
     journal = Journal(store.journal(record.key))
     candidates = list(journal.candidates.values())
-    higher = bool(record.meta.higher_is_better)
+    higher = bool(meta.higher_is_better)
     # open on a reference that has something to measure against (a declared
     # baseline ships no artifacts); nothing from either -> print why, return
     for reference in ("baseline", "champion"):
         view = build_similarity(
             candidates, record.search_dir, higher, reference=reference,
-            output_artifacts=record.meta.output_artifacts,
+            output_artifacts=meta.output_artifacts, fingerprint_path=fingerprint_path,
         )
         if view.unavailable is None:
             break
     else:
         typer.echo(view.unavailable)
         return
-    SimilarityApp(config, search, reference=reference).run()
+    SimilarityApp(config, record.ref, reference=reference).run()
+
+
+def _similarity_anchor(config: Config, search: str | None) -> tuple[DataStore, SearchRecord]:
+    """`open_search`, except that a bare run id holding several searches
+    anchors on its most recent one instead of asking the user to pick — the
+    run view shows them all anyway."""
+    store = open_store(config)
+    try:
+        return store, resolve_search(store, search)
+    except LookupError as exc:
+        records = store.searches(run_id=search) if search and "/" not in search else []
+        if not records:
+            raise typer.BadParameter(str(exc)) from exc
+        return store, max(records, key=lambda r: (r.activity_at, r.ref))
 
 
 @app.command()
@@ -2362,7 +2570,7 @@ def demo(
     run_dir = _run_problem_fleet(
         DEMO_PROBLEM_ID, config, budget, parallel_searches, "demo",
         backend=backend, model=model, policy=None, parallel_operators=parallel_operators,
-        n_trials=None, holdout=True, learning=True, set_=[],
+        n_replicates=None, holdout=True, learning=True, set_=[],
     )
     _print_demo_intro(config.hillclimb_dir, parallel_searches, parallel_operators, budget)
     typer.echo(f"Engine logs in {run_dir / 'logs'}")

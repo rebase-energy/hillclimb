@@ -22,7 +22,7 @@ def test_documented_fields_accepted():
             "max_metric_calls": 100,
             "reflection_minibatch_size": 2,
             "candidate_selection_strategy": "current_best",
-            "frontier_type": "objective",
+            "frontier_type": "instance",
             "cache_evaluation": False,
             "use_merge": False,
             "failure_fitness": -1e9,
@@ -30,7 +30,14 @@ def test_documented_fields_accepted():
         }
     )
     assert params.max_metric_calls == 100
-    assert params.frontier_type == "objective"
+    assert params.frontier_type == "instance"
+
+
+def test_objective_frontier_is_rejected_up_front():
+    # upstream demands objective_scores from the evaluator for it, which the
+    # bridge never produces: the run would die at the seed evaluation
+    with pytest.raises(ValueError, match="frontier_type"):
+        GEPAParams.model_validate({"frontier_type": "objective"})
 
 
 @pytest.mark.parametrize(

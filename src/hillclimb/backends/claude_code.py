@@ -45,6 +45,16 @@ def _has_rate_limit_marker(text: str) -> bool:
     return any(marker in lowered for marker in RATE_LIMIT_MARKERS)
 
 
+def is_concrete_model_id(model_id: str | None) -> bool:
+    """Whether a stream model names an inference model.
+
+    Claude Code labels locally generated API-error messages ``<synthetic>``.
+    That marker must not replace the requested/announced model in persisted
+    candidate metadata or the watch UI.
+    """
+    return bool(model_id and model_id != "<synthetic>")
+
+
 class _StreamReader(threading.Thread):
     """Drains the agent's stdout line-by-line into agent_stream.jsonl so the
     transcript is observable while the call is still running (watch TUI tails
@@ -92,13 +102,15 @@ class _StreamReader(threading.Thread):
                 if not isinstance(message, dict):
                     continue
                 if message.get("type") == "system":
-                    if message.get("model"):
-                        self.model_id = message["model"]
+                    model_id = message.get("model")
+                    if is_concrete_model_id(model_id):
+                        self.model_id = model_id
                 elif message.get("type") == "assistant":
                     body = message.get("message") or {}
                     # the turn's own model beats the init announcement
-                    if body.get("model"):
-                        self.model_id = body["model"]
+                    model_id = body.get("model")
+                    if is_concrete_model_id(model_id):
+                        self.model_id = model_id
                     if body.get("usage") and body.get("id"):
                         self.usage_by_turn[body["id"]] = body["usage"]
                 elif message.get("type") == "result":
@@ -127,6 +139,45 @@ USAGE_TOKEN_KEYS = (
 
 def usage_total_tokens(usage: dict) -> int:
     return sum(usage.get(k) or 0 for k in USAGE_TOKEN_KEYS)
+
+
+# List price per million tokens, (input, output), keyed by the model-id family
+# substring — first match wins, so the more specific rows sit on top. Cache
+# writes bill at 1.25x input and cache reads at 0.1x, the same multipliers
+# Claude Code applies when it computes `total_cost_usd`; this table only
+# stands in for that number while a call is still streaming (the stream
+# carries usage per turn but no cost until the final `result` message).
+MODEL_RATES_USD_PER_MTOK: tuple[tuple[str, float, float], ...] = (
+    ("fable", 10.0, 50.0),
+    ("mythos", 10.0, 50.0),
+    ("opus", 5.0, 25.0),
+    ("sonnet-4", 3.0, 15.0),
+    ("sonnet", 2.0, 10.0),
+    ("haiku", 1.0, 5.0),
+)
+CACHE_WRITE_MULTIPLIER = 1.25
+CACHE_READ_MULTIPLIER = 0.1
+
+
+def estimate_cost_usd(usage: dict, model_id: str | None) -> float | None:
+    """What one turn's usage costs at list price, or None when the model is
+    not in the rate table (an unknown model contributes nothing rather than
+    a made-up number)."""
+    if not model_id:
+        return None
+    family = model_id.lower()
+    for needle, in_rate, out_rate in MODEL_RATES_USD_PER_MTOK:
+        if needle in family:
+            break
+    else:
+        return None
+    per_tok_in, per_tok_out = in_rate / 1e6, out_rate / 1e6
+    return (
+        (usage.get("input_tokens") or 0) * per_tok_in
+        + (usage.get("cache_creation_input_tokens") or 0) * per_tok_in * CACHE_WRITE_MULTIPLIER
+        + (usage.get("cache_read_input_tokens") or 0) * per_tok_in * CACHE_READ_MULTIPLIER
+        + (usage.get("output_tokens") or 0) * per_tok_out
+    )
 
 
 def _observed_usage(reader: "_StreamReader | None", payload: dict) -> dict[str, int]:

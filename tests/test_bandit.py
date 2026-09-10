@@ -3,13 +3,15 @@ and journal-replay reconstruction (the resume contract)."""
 
 from __future__ import annotations
 
+from tests.factories import trial as mk_trial
+
 import sys
 from pathlib import Path
 
 from hillclimb.backends.fake import FakeBackend
 from hillclimb.bandit import UCB1, OperatorBandits, candidate_reward
 from hillclimb.budget import BudgetManager
-from hillclimb.candidate import BackendInfo, Candidate, Trial
+from hillclimb.candidate import BackendInfo, Candidate
 from hillclimb.config import Config, RouteConfig
 from tests.conftest import local_executor
 from hillclimb.journal import Journal
@@ -26,7 +28,7 @@ def cand(cid, operator="improve", parent=None, status="ok", val=None, model="m1"
         operator=operator,
         status=status,
         backend=BackendInfo(model=model),
-        trials=[Trial(val_score=val)] if val is not None else [],
+        trials=[mk_trial(val_score=val)] if val is not None else [],
         is_best=best,
     )
 
