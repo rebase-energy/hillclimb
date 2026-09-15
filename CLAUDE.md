@@ -65,6 +65,15 @@ shim).
   `min(8, cores-2)`); verifier and agent envs are single-threaded
   (`executor.SINGLE_THREAD_ENV`, parent values win). `hillclimb ps` lists the
   engine process trees; `stop --all` reaps engines whose hillclimb dir was deleted; `reset` kills only the engines pinned to this folder's hillclimb dir, then deletes the dir
+- Agent billing: `backend_auth` picks who pays — `subscription` (the Claude or
+  ChatGPT login), `api-key`, or `openrouter`, which points the codex backend at
+  OpenRouter (`wire_api: responses`; the key comes from the environment or a
+  `.env` beside config.yaml) and bills OpenRouter credits instead. Every codex
+  call runs under an isolated `CODEX_HOME` in
+  `~/.cache/hillclimb/codex-home/<auth>/`, so personal `~/.codex` settings
+  change neither a search's results nor its token bill; a provider 402 parks
+  the search as `out_of_credits`, and `pricing.py` fills `cost_usd` from
+  OpenRouter's catalogue so `budget.max_cost_usd` applies
 - DataStore (`store.py`): the one read/write path for a search's records —
   run/search metadata, the append-only journal (`Journal(store.journal(key))`,
   append order is the replay contract), the status record, and the stop/prune

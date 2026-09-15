@@ -268,7 +268,8 @@ INIT_SPEC_EXAMPLE = """\
 
 def scaffold_hillclimb_dir(root: Path) -> Path:
     """Create `<root>/hillclimb/` with config, the example problem, an
-    example spec, and a gitignore entry for runs/. Idempotent on the folder
+    example spec, and gitignore entries for runs/ and the .env that carries
+    provider keys. Idempotent on the folder
     layout; never overwrites an existing config."""
     from hillclimb.project import MARKER_DIR, MARKER_FILE
 
@@ -286,10 +287,20 @@ def scaffold_hillclimb_dir(root: Path) -> Path:
     (example / "verifier.sh").write_text(INIT_PROBLEM_VERIFIER)
     (example / "verifier.sh").chmod(0o755)
     gitignore = root / ".gitignore"
-    ignore_line = f"{MARKER_DIR}/runs/"
     existing_ignore = gitignore.read_text() if gitignore.exists() else ""
-    if ignore_line not in existing_ignore.splitlines():
-        gitignore.write_text(existing_ignore.rstrip("\n") + ("\n" if existing_ignore else "") + ignore_line + "\n")
+    present = existing_ignore.splitlines()
+    missing = [
+        line
+        for line in (f"{MARKER_DIR}/runs/", f"{MARKER_DIR}/.env")
+        if line not in present
+    ]
+    if missing:
+        gitignore.write_text(
+            existing_ignore.rstrip("\n")
+            + ("\n" if existing_ignore else "")
+            + "\n".join(missing)
+            + "\n"
+        )
     return folder
 
 

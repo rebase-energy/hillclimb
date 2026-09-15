@@ -691,7 +691,9 @@ class GreedySearcher:
             error_kind=result.error_kind,
         )
 
-        if result.error_kind == "rate_limited":
+        # out_of_credits parks like a rate limit: every later call fails the
+        # same way until the account is topped up, and a parked search resumes.
+        if result.error_kind in ("rate_limited", "out_of_credits"):
             return OutcomeMsg(job=job, kind="parked", result=result)
         if result.error_kind == "aborted":
             return OutcomeMsg(job=job, kind="aborted", result=result)

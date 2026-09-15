@@ -168,6 +168,7 @@ the backend seam in `src/hillclimb/backends/`:
 |---|---|
 | `claude-code` | Claude Code in headless mode — the production backend; bills your Claude subscription |
 | `codex` | Codex CLI in non-interactive mode; uses your Codex login by default |
+| `codex` + `backend_auth: openrouter` | the same Codex CLI pointed at OpenRouter: cheap open models billed to OpenRouter credits, no subscription touched |
 | `dummy` | no model calls: a scripted operator for exercising the engine, TUIs and run layout |
 | `fake` | deterministic canned operator for the test suite |
 
@@ -175,6 +176,36 @@ Other agents (Codex, Pi, OpenCode, …) plug in at the same seam: a backend
 implements the `OperatorBackend` protocol in `backends/base.py` — take a prompt plus a
 working directory, return the agent's JSON result — and is selected with
 `--backend <name>`.
+
+### Cheap operators through OpenRouter
+
+```yaml
+backend: codex
+backend_auth: openrouter
+model: qwen/qwen3-coder          # any OpenRouter model id
+```
+
+`OPENROUTER_API_KEY` comes from the environment or a `.env` beside
+`config.yaml`. Routing mixes providers per operator, and a `models:` pool lets
+the bandit learn which cheap model actually earns improvements:
+
+```yaml
+routing:
+  draft:   {backend: claude-code, backend_auth: subscription, model: sonnet}
+  improve: {models: [qwen/qwen3-coder, deepseek/deepseek-v3]}
+  debug:   {model: cohere/north-mini-code:free}
+```
+
+Codex resends an identical ~12k-token preamble on every call, so prefer models
+whose providers cache prompts: the journaled `cache_read_input_tokens` tells
+you whether the discount is landing. Set `budget.max_cost_usd` — cheap per
+token is not cheap per search, because a weaker model compensates with
+volume: one measured DRAFT burned 3M tokens (~$0.53 at qwen3-coder prices)
+and another spent its whole agent timeout without converging. Running out of
+credits parks the search — top up, then `resume`.
+To compare models head to head, give an experiment one arm per model
+(`arm_overrides: {model: …}`); the chart and `experiment report` group on the
+arm tags.
 
 ## Search policies
 

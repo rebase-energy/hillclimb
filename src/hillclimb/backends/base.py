@@ -38,7 +38,7 @@ class OperatorResult(BaseModel):
     quota_end: dict | None = None
     duration_s: float = 0.0
     raw_output_path: str | None = None
-    # rate_limited | timeout | error — None when ok
+    # rate_limited | out_of_credits | aborted | timeout | error — None when ok
     error_kind: str | None = None
     error_message: str = ""
 

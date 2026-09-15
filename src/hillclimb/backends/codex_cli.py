@@ -10,6 +10,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -25,16 +26,61 @@ from hillclimb.backends.claude_code import (
     usage_total_tokens,
 )
 from hillclimb.candidate import utcnow
+from hillclimb.pricing import cost_usd
+
+
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+# codex 0.153 dropped Chat Completions, so the provider must speak the
+# Responses API. OpenRouter's is stateless, which costs nothing here: codex
+# replays history client-side, so `exec resume` still works.
+OPENROUTER_PROVIDER = (
+    'model_providers.openrouter={name="OpenRouter",'
+    f'base_url="{OPENROUTER_BASE_URL}",'
+    'env_key="OPENROUTER_API_KEY",wire_api="responses"}'
+)
+
+
+def codex_home(auth: str) -> Path:
+    """A CODEX_HOME per auth mode, so a search never inherits personal codex
+    settings — they change results and cost tokens. The subscription login is
+    copied in because it is the credential; OpenRouter needs no file."""
+    home = Path.home() / ".cache" / "hillclimb" / "codex-home" / auth
+    home.mkdir(parents=True, exist_ok=True)
+    if auth == "openrouter":
+        return home
+    source = Path.home() / ".codex" / "auth.json"
+    target = home / "auth.json"
+    if source.exists() and (
+        not target.exists() or source.stat().st_mtime > target.stat().st_mtime
+    ):
+        # atomic: concurrent operators share this directory — threads of one
+        # search process as much as separate processes, so the staging file
+        # must be unique per call, not per pid
+        fd, staging = tempfile.mkstemp(prefix=".auth.", suffix=".json", dir=home)
+        os.close(fd)
+        shutil.copy2(source, staging)
+        os.replace(staging, target)
+    return home
 
 
 def codex_env(auth: str = "subscription") -> dict[str, str]:
-    """Build the child environment for ChatGPT-login or API-key auth."""
+    """Build the child environment for ChatGPT-login, API-key or OpenRouter
+    auth. A missing OpenRouter key raises here, before the spawn."""
     from hillclimb.executor import single_threaded
 
     env = os.environ.copy()
-    if auth != "api-key":
+    if auth == "openrouter":
+        if not env.get("OPENROUTER_API_KEY"):
+            raise RuntimeError(
+                "backend_auth: openrouter needs OPENROUTER_API_KEY — export it "
+                "or put it in a .env beside config.yaml"
+            )
+        # billing must not fall back to an inherited OpenAI account
+        env.pop("OPENAI_API_KEY", None)
+    elif auth != "api-key":
         # An inherited key can take precedence over the interactive login.
         env.pop("OPENAI_API_KEY", None)
+    env["CODEX_HOME"] = str(codex_home(auth))
     return single_threaded(env)
 
 
@@ -43,10 +89,33 @@ def _has_rate_limit_marker(text: str) -> bool:
     return any(marker in lowered for marker in RATE_LIMIT_MARKERS)
 
 
+# What a provider says when the account cannot pay for the call. No bare
+# "402": it collides with token counts in ordinary messages.
+CREDIT_MARKERS = (
+    "payment required",
+    "requires more credits",
+    "insufficient credits",
+    "insufficient_quota",
+)
+
+
+def _has_credit_marker(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in CREDIT_MARKERS)
+
+
 def _normalized_usage(usage: dict) -> dict:
-    """Responses input_tokens already includes the cached-token subset."""
+    """Responses usage onto hillclimb's disjoint token keys
+    (claude_code.USAGE_TOKEN_KEYS). Upstream `input_tokens` includes the
+    cached subset, so the remainder is the uncached input; cache reads are
+    worth watching because codex resends an identical ~12k preamble every
+    call. `reasoning_output_tokens` sits inside `output_tokens`."""
+    total_input = int(usage.get("input_tokens") or 0)
+    cache_read = int(usage.get("cached_input_tokens") or 0)
     return {
-        "input_tokens": int(usage.get("input_tokens") or 0),
+        "input_tokens": max(total_input - cache_read, 0),
+        "cache_read_input_tokens": cache_read,
+        "cache_creation_input_tokens": int(usage.get("cache_write_input_tokens") or 0),
         "output_tokens": int(usage.get("output_tokens") or 0),
     }
 
@@ -83,6 +152,7 @@ class _CodexStreamReader(threading.Thread):
         self.completed = False
         self.started = threading.Event()
         self.rate_limited = False
+        self.out_of_credits = False
         self.error_message = ""
 
     def _normalize(self, message: dict) -> dict:
@@ -140,6 +210,11 @@ class _CodexStreamReader(threading.Thread):
         if event_type == "turn.completed":
             self.completed = True
             self.num_turns += 1
+            # codex retries transient provider errors (OpenRouter 502s) and
+            # emits them as it goes; a turn that finished is not a failure
+            self.error_message = ""
+            self.rate_limited = False
+            self.out_of_credits = False
             self.usage = _normalized_usage(message.get("usage") or {})
             return {
                 "type": "result",
@@ -151,7 +226,10 @@ class _CodexStreamReader(threading.Thread):
             }
         if event_type in {"error", "turn.failed"}:
             self.error_message = _error_message(message)
-            self.rate_limited = _has_rate_limit_marker(self.error_message)
+            self.out_of_credits = _has_credit_marker(self.error_message)
+            self.rate_limited = not self.out_of_credits and _has_rate_limit_marker(
+                self.error_message
+            )
             return {
                 "type": "result",
                 "subtype": "error",
@@ -198,8 +276,10 @@ class CodexCliBackend:
         self.abort = abort
 
     def _command(self, request: OperatorRequest) -> list[str]:
-        cmd = [
-            self.codex_bin,
+        cmd = [self.codex_bin]
+        if self.auth == "openrouter":
+            cmd += ["-c", OPENROUTER_PROVIDER, "-c", "model_provider=openrouter"]
+        cmd += [
             "--model",
             request.model,
             "--sandbox",
@@ -238,6 +318,11 @@ class CodexCliBackend:
         proc: subprocess.Popen | None = None
 
         try:
+            child_env = codex_env(self.auth)
+        except RuntimeError as exc:
+            return OperatorResult(ok=False, error_kind="error", error_message=str(exc))
+
+        try:
             with stderr_path.open("w") as stderr_sink:
                 # Codex synchronizes shared system skills at startup. Protect
                 # just that phase across independent Hillclimb search
@@ -253,7 +338,7 @@ class CodexCliBackend:
                             stderr=stderr_sink,
                             text=True,
                             cwd=candidate_dir,
-                            env=codex_env(self.auth),
+                            env=child_env,
                             start_new_session=True,
                         )
                     except OSError as exc:
@@ -326,6 +411,8 @@ class CodexCliBackend:
             common["token_usage"] = {
                 key: count for key, count in reader.usage.items() if count
             }
+            if self.auth == "openrouter":
+                common["cost_usd"] = cost_usd(request.model, common["token_usage"])
         if aborted:
             return OperatorResult(
                 ok=False,
@@ -341,6 +428,15 @@ class CodexCliBackend:
                 **common,
             )
         assert proc is not None and reader is not None
+        if reader.out_of_credits or _has_credit_marker(stderr_text):
+            return OperatorResult(
+                ok=False,
+                session_id=reader.session_id,
+                num_turns=reader.num_turns,
+                error_kind="out_of_credits",
+                error_message=(reader.error_message or stderr_text)[:500],
+                **common,
+            )
         if reader.rate_limited or _has_rate_limit_marker(stderr_text):
             return OperatorResult(
                 ok=False,

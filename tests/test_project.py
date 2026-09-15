@@ -123,7 +123,9 @@ class TestInit:
         assert (tmp_path / "hillclimb" / "config.yaml").exists()
         assert (tmp_path / "hillclimb" / "problems").is_dir()
         assert (tmp_path / "hillclimb" / "specs" / "example.yaml").exists()
-        assert "hillclimb/runs/" in (tmp_path / ".gitignore").read_text()
+        ignored = (tmp_path / ".gitignore").read_text().splitlines()
+        assert "hillclimb/runs/" in ignored
+        assert "hillclimb/.env" in ignored  # provider keys live there
         assert find_hillclimb_dir(tmp_path) == tmp_path / "hillclimb"
 
     def test_refuses_nested_without_force(self, tmp_path, monkeypatch):

@@ -237,6 +237,19 @@ def _read_yaml(path: Path) -> dict:
     return yaml.safe_load(path.read_text()) or {}
 
 
+def _load_dotenv(path: Path) -> None:
+    """`KEY=VALUE` lines into the environment, never overriding the shell.
+    Provider keys (OPENROUTER_API_KEY) live here; the value stays in the
+    environment and never enters the Config object, so it cannot be
+    journaled."""
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+
+
 def _deep_merge(base: dict, override: dict) -> dict:
     merged = dict(base)
     for key, value in override.items():
@@ -247,9 +260,12 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return merged
 
 
+BACKEND_AUTHS = ("subscription", "api-key", "openrouter")
+
+
 class Config(BaseModel):
     backend: str = "claude-code"
-    backend_auth: str = "subscription"  # subscription | api-key
+    backend_auth: str = "subscription"  # one of BACKEND_AUTHS
     model: str = "sonnet"
     # per-operator routing; keys: draft | debug | improve | ensemble |
     # distill | default. Missing keys (or an absent block) fall back to the
@@ -269,6 +285,32 @@ class Config(BaseModel):
     # Resolved at load time; None for embedders that construct Config()
     # directly and set absolute paths themselves (e.g. the hosted container).
     hillclimb_dir: Path | None = Field(default=None, exclude=True)
+
+    @model_validator(mode="after")
+    def _check_backend_auth(self):
+        """`openrouter` only means something to the codex backend; anywhere
+        else it would silently run as `subscription`, and a typo would too."""
+        layers = [("backend_auth", self.backend, self.backend_auth)]
+        for name, route in self.routing.items():
+            layers.append(
+                (
+                    f"routing.{name}",
+                    route.backend or self.backend,
+                    route.backend_auth or self.backend_auth,
+                )
+            )
+        for where, backend, auth in layers:
+            if auth not in BACKEND_AUTHS:
+                raise ValueError(
+                    f"{where}: unknown backend_auth {auth!r} "
+                    f"(one of {', '.join(BACKEND_AUTHS)})"
+                )
+            if auth == "openrouter" and backend != "codex":
+                raise ValueError(
+                    f"{where}: backend_auth: openrouter needs backend: codex, "
+                    f"not {backend!r}"
+                )
+        return self
 
     @classmethod
     def load(
@@ -298,6 +340,13 @@ class Config(BaseModel):
                 data = _deep_merge(data, _read_yaml(found / MARKER_FILE))
             config = cls.model_validate(data)
             config.hillclimb_dir = found
+            if found is not None:
+                # a repo keeps .env at its root, a standalone hillclimb dir
+                # beside config.yaml
+                for env_file in (found / ".env", found.parent / ".env"):
+                    if env_file.exists():
+                        _load_dotenv(env_file)
+                        break
         for key, value in overrides.items():
             if value is None:
                 continue
