@@ -11,6 +11,7 @@ from hillclimb.backends.fake import FakeBackend
 from hillclimb.budget import BudgetManager
 from hillclimb.control import ControlCommand, write_command
 from tests.conftest import executor_for, local_executor
+from hillclimb.evaluation import CandidateEvaluator
 from hillclimb.journal import Journal
 from hillclimb.search import GreedySearcher, ParkedSearch, StopRequested
 from hillclimb.dirs import create_search_dir
@@ -285,12 +286,18 @@ def make_holdout_searcher(task, config, backend, tmp_path, max_candidates=10):
     search_dir = create_search_dir(config.paths.runs_dir, "test-run")
     journal = Journal(search_dir / "journal.jsonl")
     task = task.model_copy(update={"holdout_cmd": task.verifier_cmd + ["--holdout"]})
+    # holdout is the host's: it rides in on the evaluator (inline timing,
+    # gated by the journal's top-k), never as a searcher argument
+    evaluator = CandidateEvaluator(
+        executor=executor_for(task), problem=task, config=config,
+        holdout_scorer=FileHoldoutScorer(), journal=journal,
+    )
     searcher = GreedySearcher(
         problem=task, config=config, journal=journal, backend=backend,
-        executor=executor_for(task),
+        executor=evaluator.executor,
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir, max_candidates=max_candidates, log=lambda *_: None,
-        holdout_scorer=FileHoldoutScorer(),
+        evaluator=evaluator,
     )
     return searcher, journal, search_dir
 

@@ -29,7 +29,13 @@ from hillclimb.config import Config
 from hillclimb.journal import Journal
 from hillclimb.problem import ProblemSpec, load_problem
 from hillclimb.run import RunMeta, SearchMeta, new_search_uid
-from hillclimb.search_runner import ParkedSearch, SearchRunner, StopRequested, build_search_runner
+from hillclimb.search_strategy import (
+    ParkedSearch,
+    SearchStrategy,
+    StopRequested,
+    build_search_strategy,
+    holdout_timing,
+)
 from hillclimb.status import SearchStatus, StatusWriter
 from hillclimb.store import key_for, open_store
 from hillclimb.dirs import allocate_search_dir, create_run_dir
@@ -214,6 +220,32 @@ def build_holdout_scorer(config: Config, problem: ProblemSpec, search_dir: Path,
     )
 
 
+def build_evaluator(
+    config: Config,
+    problem: ProblemSpec,
+    search_dir: Path,
+    journal: "Journal",
+    *,
+    status=None,
+    log: Log = print,
+):
+    """The host's evaluate service for one search: verifier trials plus the
+    hidden split, scored at the timing the strategy's registry entry
+    declares. Strategies receive this and never a holdout scorer."""
+    from hillclimb.evaluation import CandidateEvaluator
+
+    return CandidateEvaluator(
+        executor=build_executor(config, problem, log),
+        problem=problem,
+        config=config,
+        holdout_scorer=build_holdout_scorer(config, problem, search_dir, log),
+        holdout_timing=holdout_timing(config.search.policy),
+        journal=journal,
+        status=status,
+        log=log,
+    )
+
+
 def spent_seconds(journal: Journal) -> float:
     """Legacy resume accounting: sum of agent + trial work durations. Only a
     fallback — under parallel workers this overcounts wall-clock; prefer
@@ -267,7 +299,13 @@ def create_search(
     repeat: int = 0,
     arm_overrides: dict | None = None,
 ) -> Path:
+    from hillclimb.policies import policy_base_dir, policy_sha256
+    from hillclimb.prompts.render import templates_digest
+
+    # a file policy that cannot be read fails here, before a search dir exists
+    policy_digest = policy_sha256(config.search.policy, policy_base_dir(config))
     search_dir = allocate_search_dir(run_dir, problem.problem_id)
+    templates = templates_digest(config.paths.prompts_dir)
     meta = SearchMeta(
             search_id=search_dir.name,
             run_id=run_id,
@@ -279,6 +317,9 @@ def create_search(
             model=config.model,
             policy=config.search.policy,
             policy_params=config.search.policy_params,
+            policy_sha256=policy_digest,
+            tuner=config.search.tuner,
+            tuner_params=config.search.tuner_params,
             routing={
                 op: route.model_dump(exclude_none=True)
                 for op, route in config.routing.items()
@@ -292,6 +333,8 @@ def create_search(
             holdout_enabled=config.holdout.enabled and problem.holdout_cmd is not None,
             seed_from=str(seed_from) if seed_from else None,
             seed_sha256=_sha256(seed_from) if seed_from else None,
+            templates_sha256=templates.sha256,
+            templates_overridden=templates.overridden,
             learning_enabled=config.learning.enabled,
             experiment=experiment,
             arm=arm,
@@ -529,6 +572,7 @@ def execute_search(
     parked/stopped/done; unexpected engine crashes finalize `failed` and
     re-raise."""
     run_dir = search_dir.parents[1]
+    _activate_prompt_overrides(config, log)
     store = open_store(config)
     key = key_for(search_dir)
     store.clear_stale_stops(key)
@@ -596,16 +640,17 @@ def execute_search(
 
     machine_max = config.search.effective_machine_max_operators()
     slots = MachineSlots(machine_cache_dir() / "agent-slots", machine_max) if machine_max > 0 else None
-    searcher: SearchRunner = build_search_runner(
+    evaluator = build_evaluator(config, problem, search_dir, journal, status=status, log=log)
+    searcher: SearchStrategy = build_search_strategy(
         problem=problem,
         config=config,
         journal=journal,
         backend=backend_obj,
-        executor=build_executor(config, problem, log),
+        executor=evaluator.executor,
         budget=budget,
         search_dir=search_dir,
         log=log,
-        holdout_scorer=build_holdout_scorer(config, problem, search_dir, log),
+        evaluator=evaluator,
         status=status,
         slots=slots,
         abort=abort,
@@ -625,6 +670,7 @@ def execute_search(
 
     try:
         selected = searcher.run()
+        selected = _finish_holdout(config, problem, search_dir, journal, evaluator, selected, log)
     except ParkedSearch as exc:
         finalize("parked", last_error=str(exc)[:500])
         return SearchOutcome(run_dir, search_dir, None, "parked", error=str(exc))
@@ -645,6 +691,50 @@ def execute_search(
         cost_usd=searcher.total_cost_usd(), log=log,
     )
     return SearchOutcome(run_dir, search_dir, selected, "done")
+
+
+def _activate_prompt_overrides(config: Config, log: Log) -> None:
+    """Point `prompts.render` at the hillclimb dir's prompts/ for this
+    engine process. A broken override is a config error, not something
+    to discover an hour in: refuse to start on lint findings."""
+    from hillclimb.prompts.render import lint_overrides, set_override_dir, templates_digest
+
+    prompts_dir = config.paths.prompts_dir
+    problems = lint_overrides(prompts_dir)
+    if problems:
+        raise ValueError(
+            f"prompt overrides in {prompts_dir} are invalid:\n  " + "\n  ".join(problems)
+        )
+    set_override_dir(prompts_dir)
+    overridden = templates_digest(prompts_dir).overridden
+    if overridden:
+        log(f"prompt overrides from {prompts_dir}: {', '.join(overridden)}")
+
+
+def _finish_holdout(
+    config: Config,
+    problem: ProblemSpec,
+    search_dir: Path,
+    journal: Journal,
+    evaluator,
+    selected: Candidate | None,
+    log: Log,
+) -> Candidate | None:
+    """Host-side holdout for `after` timing: score the top-k hidden splits
+    now that the strategy has returned, repoint best/ and re-select. A
+    no-op for `inline` timing (every candidate was scored as it landed)."""
+    if evaluator.holdout_timing != "after" or evaluator.holdout_scorer is None:
+        return selected
+    from hillclimb.control import resync_best
+
+    scored = evaluator.finalize_holdout(journal)
+    if scored:
+        log(f"holdout scored for {', '.join(c.candidate_id for c in scored)}")
+    resync_best(
+        search_dir, journal, problem.higher_is_better,
+        config.holdout.selection, problem.output_artifacts,
+    )
+    return journal.selected_candidate(problem.higher_is_better, config.holdout.selection)
 
 
 def _official_verify(
@@ -900,12 +990,15 @@ def mixed_fleet(
         raise ValueError("repeats must be >= 1")
     if not policies:
         raise ValueError("a mixed fleet needs at least one policy")
+    from hillclimb.policies import policy_label
+
     arms: list[tuple[str, str]] = []
     seen: dict[str, int] = {}
     for policy in policies:
-        count = seen.get(policy, 0) + 1
-        seen[policy] = count
-        arms.append((policy if count == 1 else f"{policy}-{count}", policy))
+        label = policy_label(policy)  # a file policy's arm is its stem
+        count = seen.get(label, 0) + 1
+        seen[label] = count
+        arms.append((label if count == 1 else f"{label}-{count}", policy))
     overrides = {arm: tuple(pairs) for arm, pairs in (arm_overrides or {}).items()}
     unknown = sorted(set(overrides) - {arm for arm, _ in arms})
     if unknown:

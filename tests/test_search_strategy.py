@@ -1,4 +1,4 @@
-"""Engine-level runner dispatch: build_search_runner constructs the runner
+"""Strategy dispatch: build_search_strategy constructs the strategy
 that search.policy names — GreedySearcher through the policy registry, full
 engines through _ENGINES without touching get_policy."""
 
@@ -12,7 +12,7 @@ from hillclimb.dirs import create_search_dir
 from hillclimb.journal import Journal
 from hillclimb.policies.greedy import GreedyPolicy
 from hillclimb.search import GreedySearcher
-from hillclimb.search_runner import _ENGINES, SearchRunner, build_search_runner
+from hillclimb.search_strategy import _ENGINES, SearchStrategy, build_search_strategy
 from tests.conftest import executor_for
 
 
@@ -29,16 +29,16 @@ def build(task, config, tmp_path, **overrides):
         log=lambda *_: None,
     )
     deps.update(overrides)
-    return build_search_runner(**deps)
+    return build_search_strategy(**deps)
 
 
 def test_greedy_dispatch_builds_greedy_searcher(task, config, tmp_path):
     config.search.policy = "greedy"
-    runner = build(task, config, tmp_path, complexity_start=2)
-    assert isinstance(runner, GreedySearcher)
-    assert isinstance(runner.policy, GreedyPolicy)
-    assert runner.complexity_start == 2
-    assert isinstance(runner, SearchRunner)  # protocol is runtime-checkable
+    strategy = build(task, config, tmp_path, complexity_start=2)
+    assert isinstance(strategy, GreedySearcher)
+    assert isinstance(strategy.policy, GreedyPolicy)
+    assert strategy.complexity_start == 2
+    assert isinstance(strategy, SearchStrategy)  # protocol is runtime-checkable
 
 
 def test_openevolve_dispatch_goes_through_policy_registry(task, config, tmp_path):
@@ -46,9 +46,9 @@ def test_openevolve_dispatch_goes_through_policy_registry(task, config, tmp_path
     from hillclimb.policies.openevolve import OpenEvolvePolicy
 
     config.search.policy = "openevolve"
-    runner = build(task, config, tmp_path)
-    assert isinstance(runner, GreedySearcher)
-    assert isinstance(runner.policy, OpenEvolvePolicy)
+    strategy = build(task, config, tmp_path)
+    assert isinstance(strategy, GreedySearcher)
+    assert isinstance(strategy.policy, OpenEvolvePolicy)
 
 
 def test_unknown_policy_keeps_the_registry_error(task, config, tmp_path):
@@ -79,8 +79,8 @@ def test_registered_engine_bypasses_get_policy(task, config, tmp_path, monkeypat
     monkeypatch.setattr("hillclimb.policies.get_policy", explode)
 
     config.search.policy = "stub-engine"
-    runner = build(task, config, tmp_path)
-    assert isinstance(runner, SearchRunner)
+    strategy = build(task, config, tmp_path)
+    assert isinstance(strategy, SearchStrategy)
     assert seen["problem"] is task
     assert seen["config"] is config
     assert "journal" in seen and "budget" in seen and "search_dir" in seen
@@ -94,12 +94,12 @@ def test_greedy_class_resolves_per_call_for_monkeypatching(task, config, tmp_pat
         pass
 
     monkeypatch.setattr("hillclimb.search.GreedySearcher", Capped)
-    runner = build(task, config, tmp_path)
-    assert type(runner) is Capped
+    strategy = build(task, config, tmp_path)
+    assert type(strategy) is Capped
 
 
 def test_exceptions_are_the_same_objects_via_both_homes():
-    from hillclimb import search, search_runner
+    from hillclimb import search, search_strategy
 
-    assert search.ParkedSearch is search_runner.ParkedSearch
-    assert search.StopRequested is search_runner.StopRequested
+    assert search.ParkedSearch is search_strategy.ParkedSearch
+    assert search.StopRequested is search_strategy.StopRequested

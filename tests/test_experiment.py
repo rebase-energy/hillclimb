@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import json
 import pytest
 import typer
 import yaml
@@ -566,3 +567,39 @@ class TestLegacyReplicateKeys:
         config.apply_overrides(parse_set_overrides(["search.n_trials=3", "search.trial_mode=serial"]))
         assert config.search.n_replicates == 3
         assert config.search.replicate_mode == "serial"
+
+
+class TestSummaryJson:
+    def test_summary_to_dict_carries_scores_gaps_and_verdicts(self):
+        from hillclimb.experiment import summaries_to_dict
+
+        rows = [
+            row("greedy", 1, 0.70, started="t1"), row("openevolve", 1, 0.80, started="t2"),
+            row("greedy", 2, 0.90, started="t3"), row("openevolve", 2, 0.85, started="t4"),
+            row("nomem", 1, 0.70, started="t5"), row("late", 1, None, state="running", started="t6"),
+        ]
+        payload = summaries_to_dict(summarize(rows, noise_floor={"p": 0.02}))
+        assert len(payload) == 1
+        data = payload[0]
+        assert (data["experiment"], data["problem_key"], data["noise_floor"]) == ("ab", "p", 0.02)
+        arms = {a["arm"]: a for a in data["arms"]}
+        assert arms["greedy"]["control"] is True and arms["greedy"]["scores"] == [0.7, 0.9]
+        assert arms["greedy"]["searches"] == ["r/p-greedy-1", "r/p-greedy-2"]
+        assert arms["openevolve"]["control"] is False and arms["openevolve"]["wins"] == 1
+        cmp = {c["arm"]: c for c in data["comparisons"]}
+        assert cmp["openevolve"]["gap"] == pytest.approx(0.025)
+        assert cmp["openevolve"]["verdict"] == "better"
+        assert cmp["nomem"]["verdict"] == "within-noise"
+        assert data["unfinished"] == [{"search": "r/p-late-1", "arm": "late", "state": "running"}]
+        json.dumps(payload)  # plain data throughout
+
+    def test_verdicts_without_a_noise_floor_and_for_lower_is_better(self):
+        from hillclimb.experiment import summary_to_dict
+
+        rows = [row("a", 1, 0.03, lower=True), row("b", 1, 0.02, lower=True)]
+        data = summary_to_dict(summarize(rows, control="b")[0])
+        assert data["higher_is_better"] is False
+        assert data["comparisons"][0]["verdict"] == "unknown"  # no floor: direction alone is not a result
+        data = summary_to_dict(summarize(rows, control="b", noise_floor={"p": 0.001})[0])
+        assert data["comparisons"][0]["verdict"] == "worse"
+        assert summary_to_dict(summarize([row("a", 1, None, state="crashed")])[0])["comparisons"] == []

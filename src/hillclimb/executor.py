@@ -26,6 +26,8 @@ Verifier environment:
     $HILLCLIMB_SPLIT       `validation` or `holdout`
     $HILLCLIMB_REPLICATE_SEED  set when the engine runs repeated replicates
                            (also exported under the old name HILLCLIMB_TRIAL_SEED)
+    $HILLCLIMB_PARAMS      the trial's params.json when the candidate declares
+                           tunable parameters (`spaces.params()` follows it)
 
 The command runs with cwd = the candidate candidate_dir, where `./problem/` and
 `./data/` symlinks always exist (candidate candidate dirs and trial dirs by
@@ -151,15 +153,11 @@ def trial_params_doc(candidate_dir: Path, trial: object) -> dict | None:
         raw = json.loads(root.read_text())
     except (OSError, ValueError):
         return None
-    if not isinstance(raw, dict):
+    if not isinstance(raw, dict) or not all(isinstance(v, dict) for v in raw.values()):
         return None
-    values = getattr(trial, "params", None) or {}
-    doc = {}
-    for name, spec in raw.items():
-        spec = dict(spec) if isinstance(spec, dict) else {"default": spec}
-        spec["value"] = values.get(name, spec.get("default"))
-        doc[name] = spec
-    return doc
+    from hillclimb.spaces import with_values
+
+    return with_values(raw, getattr(trial, "params", None) or {})
 
 
 class HoldoutScorer(Protocol):
@@ -259,6 +257,7 @@ def verifier_env(
     result: Path,
     split: str,
     seed: int | None = None,
+    params: Path | None = None,
 ) -> dict[str, str]:
     """The `$HILLCLIMB_*` contract a verifier command reads."""
     env = {
@@ -270,6 +269,8 @@ def verifier_env(
     if seed is not None:
         env["HILLCLIMB_REPLICATE_SEED"] = str(seed)
         env["HILLCLIMB_TRIAL_SEED"] = str(seed)  # pre-rename spelling, still read by harvested skills
+    if params is not None:
+        env["HILLCLIMB_PARAMS"] = str(params)  # the trial's params.json (spaces.params() follows it)
     return env
 
 
@@ -407,7 +408,11 @@ class CommandExecutor:
         # scrubbed at run time (not snapshotted at construction) so a change to
         # the orchestrator's environment can never leak into a later run
         env = scrubbed_env(**self.env_extra)
-        env.update(verifier_env(self.python, script, result_path, "validation", seed))
+        params_path = candidate_dir / PARAMS_FILE
+        env.update(verifier_env(
+            self.python, script, result_path, "validation", seed,
+            params=params_path if params_path.exists() else None,
+        ))
         prepend_pythonpath(env, self.pythonpath)
         start = time.monotonic()
         with stdout_path.open("w") as out, stderr_path.open("w") as err:
@@ -485,9 +490,10 @@ class CommandHoldoutScorer:
         result_path = eval_dir / RESULT_FILE
         result_path.unlink(missing_ok=True)
         env = dict(os.environ)  # full env: credentials flow
-        env.update(
-            verifier_env(self.python, eval_dir / "solution.py", result_path, "holdout")
-        )
+        env.update(verifier_env(
+            self.python, eval_dir / "solution.py", result_path, "holdout",
+            params=params_path if params_doc is not None else None,
+        ))
         prepend_pythonpath(env, self.pythonpath)
         stdout_path = eval_dir / "exec_stdout.log"
         stderr_path = eval_dir / "exec_stderr.log"

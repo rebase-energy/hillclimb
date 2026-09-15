@@ -16,9 +16,13 @@ The design is deliberately three-layered:
 3. **`hillclimb watch`** — a live TUI you keep open beside the agent:
    runs → searches → candidate trees, with an on-demand candidate
    detail panel for notes, scores, lineage, output, and the timestamped operator stream when present.
-   Drag the divider or use `+` / `-` to resize the detail panel.
+   A candidate still in flight gets a live console under its overview: the
+   agent's stream, then the verifier's stdout/stderr, appended as they are
+   written (`tail -f` style — it follows the end until you scroll up, and `f`
+   follows again). Drag the divider, use `+` / `-` to resize the detail
+   panel, or `m` to maximize it.
 
-## Try it in three commands
+## Try it in five commands
 
 ```bash
 pip install hillclimb
@@ -134,6 +138,16 @@ uv run hillclimb run hillclimb/specs/gefcom.yaml --model sonnet   # ad-hoc overr
 A spec with a single top-level `target:` (plus the same parameter keys) runs
 one search. `run.yaml` records which spec launched the run.
 
+### The budget is a gate, not a wall
+
+A search stops *starting* operators once its budget is inside the stop
+margin; by default (`budget.deadline: graceful`) whatever is still in flight
+finishes and is committed, so a search can overrun by up to one operator. The
+duration column in `hillclimb watch` keeps counting and says by how much:
+`1h 04m 16s (budget: 1h, 4m 16s over)`. Pass `--set budget.deadline=hard` (or
+set it in `config.yaml`) to cut in-flight operators off at the deadline
+instead; they are journaled `abandoned` ("cut off at the budget deadline").
+
 ## Concepts
 
 The UI and on-disk metadata use this hierarchy, coarse to fine:
@@ -143,6 +157,7 @@ Run
 └── Search
     └── Candidate
         └── Trial
+            └── Replicate
 ```
 
 - **Problem**: reusable definition under `problems/<id>/`.
@@ -151,10 +166,11 @@ Run
 - **Search**: one search worker (engine process) exploring one problem.
 - **Candidate**: an immutable code artifact produced by an operator. Any change
   to the code — however small — is a new candidate with a new id.
-- **Trial**: one execution of a candidate with a fixed parameterization
-  (params, seed). Today the engine runs exactly one trial per candidate; the
-  schema supports several so re-evaluations and parameter tuning can land
-  without another migration.
+- **Trial**: one parameter set of a candidate's code (`params`). A candidate
+  that declares no tunable parameters has exactly one trial; a tuned
+  candidate has several, and its score is the best trial's.
+- **Replicate**: one seeded execution of a trial. A trial's score is the
+  median of its replicates, so seed variance is measured, never climbed.
 
 `hillclimb watch` opens on the Runs screen. Metadata carries
 `schema_version: 2`; directories from the pre-v2 flat layout are ignored.
@@ -241,7 +257,7 @@ policy (a repeated policy becomes `greedy-2`):
 ```bash
 uv run hillclimb run circle-packing --budget 30m \
   --policy greedy --policy openevolve --policy gepa \
-  --seed-from seeds/circle-packing.py \
+  --seed-from hillclimb/experiments/seeds/circle-packing.py \
   --arm-set gepa:search.parallel_operators=1 \
   --arm-set gepa:search.policy_params.max_metric_calls=60
 uv run hillclimb watch                          # the three searches side by side, arm in the problem column
@@ -263,15 +279,15 @@ score]`. Each evolved candidate's `policy_meta` records its island, grid cell
 and inspirations in the journal (`hillclimb show <candidate>` prints it);
 the watch TUI and knowledge graph don't surface it yet.
 
-A policy is two methods over a read-only `SearchView`:
+A policy is two methods over a read-only `PolicyInput`:
 
 ```python
 class SearchPolicy(Protocol):
     name: str
     params: dict   # persisted into SearchMeta, so `resume` restores them
 
-    def propose(self, view: SearchView) -> Action | None: ...
-    def observe(self, view: SearchView, candidate: Candidate) -> None: ...
+    def propose(self, view: PolicyInput) -> Action | None: ...
+    def observe(self, view: PolicyInput, candidate: Candidate) -> None: ...
 ```
 
 `propose` returns one `Action` — an operator (`draft`/`debug`/`improve`/
@@ -286,24 +302,90 @@ Three rules the harness relies on, spelled out in `policy.py`:
 - `propose`/`observe` run only on the scheduler thread, under the search's
   state lock. A policy may read candidate dirs; it must never write.
 - Every decision must be derivable from replayed journal state — compute it
-  from the `SearchView`, or rebuild your caches in `observe`.
+  from the `PolicyInput`, or rebuild your caches in `observe`.
 - Ensemble-style actions must carry their inputs in `inspiration_ids`; the
   harness copies those solutions into the new candidate dir.
 
-To add one: implement the protocol, register it in the `_POLICIES` dict in
-`policies/__init__.py`, and select it with `hillclimb run --policy <name>`
-(constructor arguments come from `search.policy_params` in config.yaml).
-`policies/greedy.py` is 170 lines and is the reference. Beam search, MCTS,
+To add one: implement the protocol in a file and point `search.policy` at
+it, no registry edit needed. Any value ending in `.py` is a policy file,
+relative to the folder holding the hillclimb dir (like `paths.runs_dir`):
+
+```python
+# hillclimb/policies/drafts_only.py
+from hillclimb.policies.greedy import GreedyPolicy
+from hillclimb.policy import Action
+
+
+class DraftsOnly(GreedyPolicy):
+    name = "drafts-only"
+
+    def propose(self, view):
+        tip = self.debuggable_tip(view)
+        if tip is not None:
+            return Action(operator="debug", target_id=tip.candidate_id)
+        return self._draft_action(view)
+```
+
+```bash
+uv run hillclimb policy check --policy hillclimb/policies/drafts_only.py   # before spending budget
+uv run hillclimb run circle-packing --policy hillclimb/policies/drafts_only.py
+uv run hillclimb run circle-packing --policy greedy --policy hillclimb/policies/drafts_only.py  # fleet: arm "drafts_only"
+```
+
+The file exposes its policy as the one class it defines with `propose`
+and `observe`, or as `POLICY = <class or factory>`; the constructor gets
+`params` (from `search.policy_params`) and `complexity_start` when it
+accepts them. `search.yaml` records the path as written and
+`policy_sha256`, the file's hash at search start: the identity of an
+edited exploration process, the way `seed_sha256` identifies a seed.
+`resume` reloads the file from the same path and warns when the hash
+changed, since replay may then diverge. Built-in names (`greedy`,
+`openevolve`) stay in the `_POLICIES` dict in `policies/__init__.py`.
+`policies/greedy.py` is under 300 lines and is the reference. Beam search, MCTS,
 evolutionary populations, novelty search and bandits over operators all fit
 this shape — greedy is just the one that ships.
+
+The whole exploration process is one dict plus one file. Every knob greedy
+reads — `num_drafts`, `max_debug_depth`, the `ensemble*` window and the
+`tune_*` budget — comes from `search.policy_params` first and falls back to
+the config block it historically lived in, so an existing `config.yaml`
+behaves as before and an experiment arm (or, later, an agent editing the
+loop) is handed a single dict; `GreedyPolicy.resolved_params(config)` is
+that dict fully resolved. Before spending an agent hour on an edited
+process, run the conformance check:
+
+```bash
+uv run hillclimb policy check [--policy NAME] [--set search.policy_params.k=v] [--problem P] [--smoke]
+```
+
+It replays every recorded journal in the store (plus an empty one) through
+the policy with no agent or verifier and reports each contract breach it
+can see: a hold with empty slots on an empty journal (the search would
+never start), two fresh instances disagreeing at some budget point (resume
+would diverge), a target or inspiration id that does not exist, an
+operator that needs a target without one, a `debug` on a non-buggy
+candidate, a mutated journal or a file written under a search dir, a
+factory that hands back the same object, and a prompt override that
+lints dirty. `--smoke --problem P` then runs a short `--backend dummy`
+search so the whole loop, prompts included, executes once; `--json` is the
+machine-readable form. Exit 1 on any breach.
+
+Operator prompts are part of that process too. Any template in
+`hillclimb/prompts/<name>.md` (`paths.prompts_dir`) shadows the package
+template of the same name (`draft`, `improve`, `debug`, `ensemble`, the
+`contract_*` templates, the cue snippets); an override may drop `{{tokens}}`
+but never add one the engine does not fill — the engine refuses to start on
+such a file. Every search records `templates_sha256` and
+`templates_overridden` in `search.yaml`, so two searches are comparable only
+when their prompt hashes agree.
 
 ### The GEPA engine (optional extra)
 
 Some optimizers cannot be reduced to "what next?" — they own proposal,
 reflection, and selection themselves. Those integrate one tier up, as a
-**search runner** (`src/hillclimb/search_runner.py`): dispatched by the same
+**search strategy** (`src/hillclimb/search_strategy.py`): dispatched by the same
 `search.policy` name, but handed the full dependency set instead of a
-`SearchView`. The architecture is `docs/optimizer-host-plan.md`; GEPA is the
+`PolicyInput`. The architecture is `docs/optimizer-host-plan.md`; GEPA is the
 first such engine:
 
 - greedy: hillclimb chooses the parent and asks an agent to mutate;
@@ -475,9 +557,9 @@ exec "$HILLCLIMB_PYTHON" problem/verify.py  # writes $HILLCLIMB_RESULT
 | exit 0 | the candidate is valid; non-zero routes it to the `debug` operator |
 | `$HILLCLIMB_RESULT` | the score: `{"score": <float>, "report": {...}, <other numeric keys>}`, or a bare number |
 | `$HILLCLIMB_PYTHON` | the managed runtime venv's interpreter (bare `python` resolves via PATH: wrong interpreter) |
-| `$HILLCLIMB_SOLUTION` | the solution path for this run (trial-dir aware) |
+| `$HILLCLIMB_SOLUTION` | the solution path for this run (replicate-dir aware) |
 | `$HILLCLIMB_SPLIT` | `validation` or `holdout` |
-| `$HILLCLIMB_TRIAL_SEED` | set when the engine runs repeated trials |
+| `$HILLCLIMB_REPLICATE_SEED` | set when the engine runs repeated replicates (also exported as the legacy `$HILLCLIMB_TRIAL_SEED`) |
 
 The result file is both the score carrier and the completion proof: the engine
 deletes it before every run, so a stale file can never fake success, and exit 0
@@ -499,19 +581,19 @@ reports the spread between identical runs — an improvement smaller than that
 is noise, not progress. `problems/bin-packing/` and `problems/circle-packing/`
 are the two reference shapes (evaluator-driven, and run-then-score).
 
-### Trial metrics (optional)
+### Replicate metrics (optional)
 
 Any other **numeric** key in the result object is journaled verbatim as the
-trial's `metrics` (`{"score": 12.3, "runtime_s": 0.8, "n_params": 40}`), and
-a candidate's metrics are the per-key median of its trials — the same rule
-as the score. The engine never ranks on them; they are feature dimensions
+replicate's `metrics` (`{"score": 12.3, "runtime_s": 0.8, "n_params": 40}`);
+a trial's metrics are the per-key median of its replicates and a candidate's
+are its best trial's — the same rule as the score. The engine never ranks on them; they are feature dimensions
 for quality-diversity policies (`openevolve`) and context for reports.
 Strings, booleans and NaN are dropped silently.
 
-### Trial reports (optional)
+### Replicate reports (optional)
 
 `$HILLCLIMB_RESULT` may carry a `report` block alongside the score: any
-verifier that writes one gets its breakdown stored on the trial, rendered into improve prompts ("attack the largest contributors"),
+verifier that writes one gets its breakdown stored on the replicate, rendered into improve prompts ("attack the largest contributors"),
 and shown by `hillclimb show` and the watch TUI:
 
 ```json
@@ -544,6 +626,36 @@ Only `"split": "validation"` reports are ever fed back to operators — holdout
 evaluations never produce one, by construction. `report.enabled: false` in
 config disables prompt injection (data is still recorded).
 
+### Tunable parameters (optional)
+
+A solution may declare its numeric knobs in `params.json` next to
+`solution.py` and read them through `spaces.params()`:
+
+```json
+{"restarts": {"type": "int", "low": 1, "high": 64, "log": true, "default": 8},
+ "step":     {"type": "float", "low": 1e-4, "high": 0.1, "log": true, "default": 0.01},
+ "init":     {"type": "categorical", "choices": ["grid", "random"], "default": "grid"}}
+```
+
+```python
+from hillclimb import spaces
+P = spaces.params()   # {"restarts": 8, "step": 0.01, "init": "grid"} — the trial's values, else the defaults
+```
+
+The engine then spends verifier runs, not agent turns, on that code: the
+search policy proposes *tune* actions on promising candidates, each one a
+new **trial** of the same `solution.py` with values from the tuner
+(`search.tuner: random` by default, `optuna` with `pip install
+'hillclimb[optuna]'`), and the candidate is scored by its best trial. The
+greedy policy's knobs live in `search.policy_params`: `tune_budget` (extra
+trials per candidate, default 8, `0` disables), `tune_gate` (`band`: within
+the accept band of the best; `best`; `always`), `tune_parallel`,
+`tune_burst`. Holdout runs with the winning trial's values, `best/` ships
+them as `params.json`, and a child improved from a tuned parent starts
+from those values as its defaults. A malformed declaration is scored on the
+solution's own defaults and reported in `hillclimb show`; seeds are never
+tuned — replicate variance is the noise floor, not a knob.
+
 ### Per-instance scores (optional)
 
 A third reserved key, `instances`, carries the breakdown of `score` over the
@@ -554,7 +666,7 @@ direction, with keys stable across the search:
 {"score": 2.158, "instances": {"circle-00": 0.083, "circle-01": 0.083}}
 ```
 
-They are journaled per trial (`Trial.instance_scores`), aggregated per key by
+They are journaled per replicate (`Replicate.instance_scores`), aggregated per key by
 median like everything else, and consumed by engines whose selection is
 per-instance — GEPA keeps a candidate alive if it wins on *any* instance, not
 just on average. `problems/circle-packing/verify.py` (one instance per
@@ -573,8 +685,8 @@ on its own. Three settings decide whether it can:
 
 ```yaml
 search:
-  n_trials: 5            # evaluate each candidate this many times
-  trial_mode: serial     # `parallel` (default) | `serial`
+  n_replicates: 5        # run each trial (parameter set) this many times
+  replicate_mode: serial # `parallel` (default) | `serial`
   noise_k: 2             # a gain must beat 2x the measured noise floor
   min_improvement: 0.0   # ...or an absolute floor, in metric units
 ```
@@ -587,17 +699,18 @@ the total across every search on the machine — extra operators wait
 `OMP/OPENBLAS/MKL_NUM_THREADS=1` unless the parent environment sets them, so
 N operators cost at most N cores; `hillclimb ps` shows what is actually running.
 
-- **The candidate's score is the MEDIAN of its trials**, so one slow run or
+- **A trial's score is the MEDIAN of its replicates**, so one slow run or
   unlucky seed does not become the number the search ranks on. With
-  `n_trials: 1` (the default) it is simply that trial's score.
-- **`trial_mode: serial` is required whenever the metric measures the
-  machine** — wall-clock time, throughput, memory. Parallel trials share a
-  CPU, so they measure each other. For seed variance, parallel is right and
+  `n_replicates: 1` (the default) it is simply that run's score. A candidate
+  is scored by its best trial; seeds are never tuned.
+- **`replicate_mode: serial` is required whenever the metric measures the
+  machine** — wall-clock time, throughput, memory. Parallel replicates share
+  a CPU, so they measure each other. For seed variance, parallel is right and
   three times faster.
 - **The accept band** is what stops the climb. A candidate becomes the new
   best only if it beats the incumbent by more than
   `max(min_improvement, noise_k x noise_floor)`, where the noise floor is the
-  median per-candidate trial spread (MAD) the search has actually observed.
+  median within-trial replicate spread (MAD) the search has actually observed.
   Both default to `0`, which is the strict comparison. The band also gates the
   routing bandit's reward, so noise cannot train the model router either.
   Rejected near-misses are logged, not hidden:
@@ -613,7 +726,7 @@ verifier five times and reports the floor, with the settings to match.
 5 runs: median 0.9738, spread 0.0822, noise floor (MAD) 0.0104
 an improvement smaller than ~0.0208 cannot be told from noise. To stop the search climbing it:
   search:
-    n_trials: 5
+    n_replicates: 5
     noise_k: 2
 ```
 
@@ -696,7 +809,7 @@ git-versionable — it lives in your hillclimb dir, under `knowledge/`:
   (`learning.enabled: false`) answers it on holdout; see *Experiments* below.
 
 Explore it interactively with `hillclimb knowledge graph` (or `g` inside
-`hillclimb watch`): a true-3D scene rendered by [plotui](../plotui) (Rust
+`hillclimb watch`): a true-3D scene rendered by [plotui](https://pypi.org/project/plotui/) (Rust
 rasterizer; full-pixel Kitty graphics — kitty, Ghostty, iTerm2 ≥ 3.5, and
 WezTerm are supported). Drag rotates, shift-drag pans, scroll zooms — and zoom
 doubles as semantic level-of-detail: zoom out and entities fold into concept
@@ -754,24 +867,33 @@ the run has a single search), or `latest` (the default).
 | `status [search]` | search state + candidate tree (text) |
 | `watch` | live TUI over runs, searches, and candidates |
 | `chart` | live chart: best score so far by tested-candidate count across the problem's searches as a staircase, every scored candidate a dot (one line per arm in an experiment) |
-| `similarity [search] [--single]` | live 3D cube: each candidate at behavioral / structural / lineage distance from the search's seed (or baseline); an experiment arm opens its whole run, coloured by arm, `n`/`p` stepping through the run's problems; a problem's `fingerprint.py` defines the behavioral axis |
+| `similarity map [search] [--single] [--metric M]` | live 3D map: every candidate embedded by pairwise distance (behavioral by default; `m` cycles structural and blend), so nearby dots are alike — lineage edges, a gold best-so-far trail, hover reads distances, click dims everything outside a lineage, `space` replays the search growing; an experiment arm opens its whole run, coloured by arm; a bare `similarity` is this view |
+| `similarity reference [search] [--single]` | live 3D cube: each candidate at behavioral / structural / lineage distance from the search's seed (or baseline; `c` toggles the champion); an experiment arm opens its whole run, coloured by arm, `n`/`p` stepping through the run's problems; a problem's `fingerprint.py` defines the behavioral axis; `v` swaps between the two views |
 | `graph` | the knowledge-graph TUI (same screen as `knowledge graph`) |
 | `show [search] <candidate-id>` | everything about one candidate: scores, evaluation breakdown, diff vs parent, output |
 | `ps` | every process hillclimb owns on this machine: engines with their agents and verifiers nested; `orphan` marks engines whose hillclimb dir was deleted |
 | `stop [search] [--all]` | graceful stop: finish current operator, then park; `--all` also reaps orphaned engines when no hillclimb dir is found |
 | `kill [search]` | SIGTERM the engine now (state finalized, resumable) |
 | `prune <search> <candidate-id>` | cut a candidate and its subtree from the search |
-| `tree [search]` | render the exploration tree to `<search>/tree.png` |
+| `tree [search]` | live 3D exploration tree of one search: colour is the operator, silhouette the fate (expanded / discontinued / best / failed); `j`/`k` scrub through time |
+| `tree2 [search]` | the same tree drawn like the Darwin Gödel Machine's archive: the iteration number inside each circle, fill = score (viridis, bright = best), ring = how far it got (red no working solution / yellow scored / green built on), star = best, bold path = the best's lineage; circles are sized to the zoom so they never overlap, numbers appear as they grow |
+| `archive [search]` | the `tree2` archive tree on the left and the progress chart on the right — every scored candidate at (iteration, score), the best-so-far staircase, and the lineage of the final best as a thick line, the same parent chain drawn bold in the tree; `j`/`k` scrub both panels together, click a node to ring its dot on the chart |
+| `surface [search]` | live 3D fitness surface: the search's candidates on the problem's terrain (needs a `landscape.py` in the problem; `problems/fitness-landscape/` is the reference) |
+| `summit [problem]` | copy the best solution found so far across every run of a problem next to your `hillclimb/` folder; works mid-climb |
 | `smoke [problem]` | one real agent call end-to-end (auth / contract check) |
 | `knowledge graph [--stats]` | interactive knowledge-graph TUI (or a text summary) |
 | `knowledge rebuild` | force-rebuild the derived `knowledge/graph.json` index |
 | `knowledge distill [search] [--backfill]` | run the LLM claims pass on a search / all cards |
+| `knowledge backfill` | distill cards from every finished search that lacks one |
+| `knowledge live [run]` | the live cards concurrent searches in a run are sharing |
+| `paper add <pdf> [--problem <target>]` / `paper list` | distill a PDF into knowledge claims that seed future searches (one agent pass per paper, content-hash cached) |
 | `knowledge consolidate [--dry-run]` | sleep phase: generalize claims + rewrite playbooks |
 | `knowledge query "<terms>" [--json]` | read-only memory lookup (also available to agents) |
 | `knowledge show <target>` | the prior-experience section a new search would get |
 | `run <problem> --set key=value … [--experiment E --arm A]` | any config setting, dotted; tag the search as an experiment arm |
 | `experiment run <spec> [--repeats N] [--budget B] [--parallel] [--max-concurrent N] [--run-id R --first-repeat K] [--dry-run]` | every arm × problem × repeat of a spec; `--max-concurrent` bounds how many run at once, `--run-id` appends repeats to a finished run |
-| `experiment report [spec] [--problem X] [--control A] [--noise-floor F]` | compare the arms on holdout |
+| `experiment report [spec] [--problem X] [--control A] [--noise-floor F] [--json]` | compare the arms on holdout; `--json` gives a meta-verifier the gaps and verdicts as data |
+| `policy check [--policy NAME] [--set k=v] [--problem P] [--smoke] [--json]` | conformance check for a search policy over the store's recorded journals; `--smoke` adds a dummy-backend search |
 
 Exit code `2` from `run`/`resume` means the search parked or was stopped — resume it.
 
@@ -829,7 +951,7 @@ across a difficulty ladder (`problems/heilbronn-{11,14,17}`, stamped by
 `problems/make_heilbronn.py`; its seed reads N off the problem, so one
 `seed_from` serves every level). One `hillclimb chart` per problem (a bare
 `hillclimb chart` lists them, `p` cycles them, `c` in `hillclimb watch` opens
-the highlighted one) and `hillclimb similarity <run>` for the arm-coloured cube.
+the highlighted one) and `hillclimb similarity <run>` for the arm-coloured map (`similarity reference <run>` for the cube).
 
 ## How runs and searches are laid out
 

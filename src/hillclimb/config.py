@@ -22,6 +22,11 @@ class BudgetConfig(BaseModel):
     agent_timeout_s: int = 1800
     exec_timeout_s: int = 1800
     stop_margin_s: int = 300
+    # what happens to operators still in flight when `total_s` runs out:
+    # `graceful` lets them finish and commit (the search overruns by up to one
+    # operator; the TUI shows by how much), `hard` aborts them at the deadline
+    # and journals them abandoned
+    deadline: Literal["graceful", "hard"] = "graceful"
     # hard agent-spend ceiling; the search parks (resumable) when cumulative
     # backend cost reaches it. 0 = no ceiling.
     max_cost_usd: float = 0.0
@@ -92,6 +97,11 @@ class SearchConfig(BaseModel):
     machine_max_operators: int | None = None
     policy: str = "greedy"  # search policy (policies registry)
     policy_params: dict = Field(default_factory=dict)  # opaque; validated by the policy factory
+    # which parameter set a `tune` action tries next on a candidate that
+    # declares params.json (tuners registry: random | optuna). WHEN to tune is
+    # the policy's call (greedy: policy_params.tune_budget etc.)
+    tuner: str = "random"
+    tuner_params: dict = Field(default_factory=dict)  # opaque; validated by the tuner factory
 
 
 class OperatorsConfig(BaseModel):
@@ -150,6 +160,10 @@ class PathsConfig(BaseModel):
     # hillclimb/ folder by default.
     runs_dir: Path = Path("hillclimb/runs")
     problems_dir: Path = Path("hillclimb/problems")
+    # operator prompt overrides: `<prompts_dir>/<template>.md` shadows the
+    # package template of the same name (prompts/render.py); the effective
+    # set is hashed into SearchMeta.templates_sha256
+    prompts_dir: Path = Path("hillclimb/prompts")
     # None = shared machine venv under ~/.cache/hillclimb/venvs/, keyed by a
     # hash of the requirements (+ emflow source). Set explicitly to pin.
     runtime_python: Path | None = None
@@ -395,6 +409,7 @@ class Config(BaseModel):
         for section, name in (
             (self.paths, "runs_dir"),
             (self.paths, "problems_dir"),
+            (self.paths, "prompts_dir"),
             (self.store, "sqlite_path"),
         ):
             value: Path = getattr(section, name)

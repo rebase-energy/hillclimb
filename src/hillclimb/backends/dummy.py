@@ -74,9 +74,22 @@ shutil.copy(sample, "submission.csv")
 BARE_TEMPLATE = '''\
 import os
 
+try:
+    from hillclimb import spaces  # the runtime shim makes this importable
+
+    P = spaces.params({"offset": 0.0})
+except ImportError:
+    P = {"offset": 0.0}
+
 # a tiny bit of movement per call so successive candidates differ
 print("dummy solution")
-print(round(0.5 + 0.01 * int(os.environ.get("HILLCLIMB_REPLICATE_SEED", 0)), 4))
+print(round(0.5 + 0.01 * int(os.environ.get("HILLCLIMB_REPLICATE_SEED", 0)) + P["offset"], 4))
+'''
+
+# one declared knob so `hillclimb run --backend dummy` exercises tune jobs
+# end to end (the score moves with `offset`, so a tuner has something to find)
+PARAMS_TEMPLATE = '''\
+{"offset": {"type": "float", "low": 0.0, "high": 0.05, "default": 0.0}}
 '''
 
 
@@ -95,6 +108,7 @@ class DummyBackend:
             # problems whose verifier drives solution.py directly have no
             # sample_submission to mimic
             (request.candidate_dir / "solution.py").write_text(BARE_TEMPLATE)
+            (request.candidate_dir / "params.json").write_text(PARAMS_TEMPLATE)
             (request.candidate_dir / "notes.md").write_text(
                 "dummy: prints a number for the problem's verifier to score\n"
             )

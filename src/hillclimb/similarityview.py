@@ -1,4 +1,4 @@
-"""`hillclimb similarity` — candidates as a 3D distance scatter.
+"""`hillclimb similarity reference` — candidates as a 3D distance scatter.
 
 Each candidate sits at (behavioral, structural, lineage) distance from the
 reference candidate inside a unit cube (each axis normalized by its own
@@ -24,6 +24,9 @@ In run scope: arms whose clouds overlap explored the same way.
 
 Same architecture as surfaceview.py: pure functions up top, thin Textual
 shells below, free orbit camera starting from the shared START_CAMERA.
+`SimilarityBase` and `RunScopeMixin` are shared with `similarity_mapview`
+(the pairwise map, `v` from here) — the two views are one command with
+two layouts.
 """
 
 from __future__ import annotations
@@ -200,22 +203,22 @@ class SimilarityPlotWidget(PlotWidget):
         self.invalidate()
 
 
-class SimilarityScreen(LiveScreen):
-    """Canvas + statusline for one search's distance scatter. Reached via
-    `hillclimb similarity [search]`."""
+class SimilarityBase(LiveScreen):
+    """What the reference cube and the map share: the store, the anchored
+    search, n/p stepping through the store's searches, and the problem
+    lookup for its optional fingerprint.py. Subclasses compose their own
+    canvas and own `refresh_data`."""
 
     BINDING_GROUP_TITLE = "similarity"
     BINDINGS = [
-        Binding("c", "toggle_reference", "origin/champion",
-                tooltip="measure from the seed or baseline, or from the current best"),
         Binding("n", "next_search", "next search", tooltip="the next search in the store"),
         Binding("p", "prev_search", "prev search", show=False, tooltip="the previous search"),
         Binding("q", "app.quit", "quit"),
     ]
 
     DEFAULT_CSS = """
-    SimilarityScreen #similarityline { height: 1; padding: 0 1; background: $surface; }
-    SimilarityScreen #similarity-canvas { width: 1fr; height: 1fr; }
+    SimilarityBase #similarityline { height: 1; padding: 0 1; background: $surface; }
+    SimilarityBase #similarity-canvas { width: 1fr; height: 1fr; }
     """
 
     def __init__(self, config: Config, search: str | None = None, reference: str = "baseline"):
@@ -229,32 +232,28 @@ class SimilarityScreen(LiveScreen):
         self._position: tuple[int, int] | None = None
         self._problems: dict[str, ProblemSpec | None] = {}
 
-    def compose(self) -> ComposeResult:
-        yield HillclimbHeader()
-        yield Label(id="similarityline")
-        yield SimilarityPlotWidget(id="similarity-canvas")
-        yield Footer()
-
     def on_mount(self) -> None:
         self.start_live()
         self._canvas().focus()
 
-    def _canvas(self) -> SimilarityPlotWidget:
-        return self.query_one("#similarity-canvas", SimilarityPlotWidget)
+    def _canvas(self):
+        return self.query_one("#similarity-canvas", PlotWidget)
 
     def _statusline(self) -> Label:
         return self.query_one("#similarityline", Label)
-
-    def action_toggle_reference(self) -> None:
-        self.reference = "champion" if self.reference == "baseline" else "baseline"
-        self._fingerprint = None
-        self.refresh_data()
 
     def action_next_search(self) -> None:
         self._switch_search(1)
 
     def action_prev_search(self) -> None:
         self._switch_search(-1)
+
+    def _on_switch(self) -> None:
+        """A different search or problem is now anchored: forget what was
+        derived from the old one and redraw."""
+        self._fingerprint = None
+        clear_caches()
+        self.refresh_data()
 
     # -- data --
 
@@ -295,9 +294,40 @@ class SimilarityScreen(LiveScreen):
         target = records[(keys.index(self._record.key) + step) % len(records)]
         self._record = target
         self.search = target.ref
+        self._on_switch()
+
+    def refresh_data(self) -> None:  # pragma: no cover — subclasses implement
+        raise NotImplementedError
+
+
+class SimilarityScreen(SimilarityBase):
+    """Canvas + statusline for one search's distance scatter. Reached via
+    `hillclimb similarity reference [search]`; `v` swaps to the map."""
+
+    BINDINGS = [
+        Binding("c", "toggle_reference", "origin/champion",
+                tooltip="measure from the seed or baseline, or from the current best"),
+        Binding("v", "open_map", "map view", tooltip="the same candidates embedded by pairwise distance"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        yield HillclimbHeader()
+        yield Label(id="similarityline")
+        yield SimilarityPlotWidget(id="similarity-canvas")
+        yield Footer()
+
+    def _canvas(self) -> SimilarityPlotWidget:
+        return self.query_one("#similarity-canvas", SimilarityPlotWidget)
+
+    def action_toggle_reference(self) -> None:
+        self.reference = "champion" if self.reference == "baseline" else "baseline"
         self._fingerprint = None
-        clear_caches()
         self.refresh_data()
+
+    def action_open_map(self) -> None:
+        from hillclimb.similarity_mapview import MapScreen
+
+        self.app.switch_screen(MapScreen(self.config, self.search))
 
     def _show(self, view: SimilarityView, ref: str, state: str, metric: str, higher: bool) -> None:
         canvas = self._canvas()
@@ -339,7 +369,55 @@ class SimilarityScreen(LiveScreen):
         self._show(view, record.ref, record.state, record.meta.metric, higher)
 
 
-class RunSimilarityScreen(SimilarityScreen):
+class RunScopeMixin:
+    """Run scope for either view: anchored on (run_id, problem_key), `n`/`p`
+    step through the run's problems. Mixed in before a SimilarityBase
+    subclass, which supplies `_store`, `_fingerprint`, `_position`,
+    `_on_switch` and `refresh_data`."""
+
+    run_id: str
+    problem_key: str
+
+    def _problem_keys(self) -> list[str]:
+        assert self._store is not None  # type: ignore[attr-defined]
+        return list(dict.fromkeys(
+            r.meta.problem_key for r in self._store.searches(run_id=self.run_id)  # type: ignore[attr-defined]
+        ))
+
+    def _switch_search(self, step: int) -> None:
+        if self._store is None:  # type: ignore[attr-defined]
+            return
+        keys = self._problem_keys()
+        if self.problem_key not in keys or len(keys) < 2:
+            return
+        self.problem_key = keys[(keys.index(self.problem_key) + step) % len(keys)]
+        self._on_switch()  # type: ignore[attr-defined]
+
+    def _run_records(self) -> tuple[list[SearchRecord], str]:
+        """This problem's searches in the run, and the ref the statusline
+        names; also refreshes the (position/count) readout."""
+        if self._store is None:  # type: ignore[attr-defined]
+            self._store = open_store(self.config)  # type: ignore[attr-defined]
+        records = run_inputs(self._store, self.run_id, self.problem_key)  # type: ignore[attr-defined]
+        keys = self._problem_keys()
+        self._position = (  # type: ignore[attr-defined]
+            (keys.index(self.problem_key), len(keys)) if self.problem_key in keys else None
+        )
+        return records, f"{self.run_id} {self.problem_key}"
+
+    @staticmethod
+    def _run_fingerprint(records: list[SearchRecord], inputs: list[SearchInput], *extra) -> tuple:
+        return (
+            *extra,
+            tuple(
+                (r.key, r.state, tuple((c.candidate_id, c.status, c.val_score, c.pruned, c.finished_at)
+                                       for c in s.candidates))
+                for r, s in zip(records, inputs)
+            ),
+        )
+
+
+class RunSimilarityScreen(RunScopeMixin, SimilarityScreen):
     """Run scope: every search of one problem in an experiment run in one
     cube, coloured by arm. `n`/`p` step through the run's problems."""
 
@@ -348,7 +426,6 @@ class RunSimilarityScreen(SimilarityScreen):
                 tooltip="measure from the shared seed, or from the run's best candidate"),
         Binding("n", "next_search", "next problem", tooltip="the run's next problem"),
         Binding("p", "prev_search", "prev problem", show=False, tooltip="the run's previous problem"),
-        Binding("q", "app.quit", "quit"),
     ]
 
     def __init__(self, config: Config, run_id: str, problem_key: str, reference: str = "seed"):
@@ -361,43 +438,21 @@ class RunSimilarityScreen(SimilarityScreen):
         self._fingerprint = None
         self.refresh_data()
 
-    def _problem_keys(self) -> list[str]:
-        assert self._store is not None
-        return list(dict.fromkeys(r.meta.problem_key for r in self._store.searches(run_id=self.run_id)))
+    def action_open_map(self) -> None:
+        from hillclimb.similarity_mapview import RunMapScreen
 
-    def _switch_search(self, step: int) -> None:
-        if self._store is None:
-            return
-        keys = self._problem_keys()
-        if self.problem_key not in keys or len(keys) < 2:
-            return
-        self.problem_key = keys[(keys.index(self.problem_key) + step) % len(keys)]
-        self._fingerprint = None
-        clear_caches()
-        self.refresh_data()
+        self.app.switch_screen(RunMapScreen(self.config, self.run_id, self.problem_key))
 
     def refresh_data(self) -> None:
         if self._canvas().dragging:
             return
-        if self._store is None:
-            self._store = open_store(self.config)
-        records = run_inputs(self._store, self.run_id, self.problem_key)
-        keys = self._problem_keys()
-        self._position = (keys.index(self.problem_key), len(keys)) if self.problem_key in keys else None
-        ref = f"{self.run_id} {self.problem_key}"
+        records, ref = self._run_records()
         if not records:
             self._canvas().clear_view()
             self._statusline().update(f"no searches for {self.problem_key} in run {self.run_id}")
             return
-        inputs = search_inputs(self._store, records)
-        fingerprint = (
-            self.run_id, self.problem_key, self.reference,
-            tuple(
-                (r.key, r.state, tuple((c.candidate_id, c.status, c.val_score, c.pruned, c.finished_at)
-                                       for c in s.candidates))
-                for r, s in zip(records, inputs)
-            ),
-        )
+        inputs = search_inputs(self._store, records)  # type: ignore[arg-type]
+        fingerprint = self._run_fingerprint(records, inputs, self.run_id, self.problem_key, self.reference)
         if fingerprint == self._fingerprint:
             return
         self._fingerprint = fingerprint
@@ -419,18 +474,29 @@ class SimilarityApp(TimezoneMixin, App):
     CSS = HILLCLIMB_CSS
 
     def __init__(self, config: Config | None = None, search: str | None = None,
-                 reference: str = "baseline", run: tuple[str, str] | None = None):
+                 reference: str = "baseline", run: tuple[str, str] | None = None,
+                 view: str = "reference", metric: str = "behavioral"):
         super().__init__()
         self.config = config or Config.load()
         self.search = search
         self.reference = reference
         self.run = run  # (run_id, problem_key) -> run scope
+        self.view = view  # "reference" (the cube) | "map"
+        self.metric = metric  # the map's opening metric
 
     def on_mount(self) -> None:
         apply_theme(self)
         self._init_timezone()
+        self.push_screen(self.first_screen())
+
+    def first_screen(self):
+        if self.view == "map":
+            from hillclimb.similarity_mapview import MapScreen, RunMapScreen
+
+            if self.run is not None:
+                return RunMapScreen(self.config, *self.run, metric=self.metric)
+            return MapScreen(self.config, self.search, metric=self.metric)
         if self.run is not None:
             run_id, problem_key = self.run
-            self.push_screen(RunSimilarityScreen(self.config, run_id, problem_key, reference=self.reference))
-        else:
-            self.push_screen(SimilarityScreen(self.config, self.search, reference=self.reference))
+            return RunSimilarityScreen(self.config, run_id, problem_key, reference=self.reference)
+        return SimilarityScreen(self.config, self.search, reference=self.reference)

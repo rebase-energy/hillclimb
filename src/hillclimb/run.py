@@ -53,8 +53,13 @@ class SearchMeta(BaseModel):
     model: str
     # additive with defaults on purpose: bumping SCHEMA_VERSION would hide
     # every existing run dir from the scanners (exact-match gate below)
-    policy: str = "greedy"
+    policy: str = "greedy"  # registry name, or the path of a policy file as written
     policy_params: dict = Field(default_factory=dict)
+    # sha256 of a file policy's bytes at search start (None for a registry
+    # name): the identity of an edited exploration process, like seed_sha256
+    policy_sha256: str | None = None
+    tuner: str = "random"
+    tuner_params: dict = Field(default_factory=dict)
     routing: dict = Field(default_factory=dict)  # RouteConfig dumps by operator
     metric: str
     higher_is_better: bool = True
@@ -88,6 +93,12 @@ class SearchMeta(BaseModel):
     # sha256 of that seed file's bytes at search start: the identity views
     # compare when several searches claim to share one seed
     seed_sha256: str | None = None
+    # sha256 of the effective operator prompt templates at search start
+    # (prompts/render.py `templates_digest`) and the names the hillclimb
+    # dir's prompts/ overrode — the prompts are part of the exploration
+    # process, so two searches are comparable only when these agree
+    templates_sha256: str | None = None
+    templates_overridden: list[str] = Field(default_factory=list)
     # whether cross-search memory was active
     learning_enabled: bool = True
     # Experiment tags (experiment.py): which experiment and arm this search

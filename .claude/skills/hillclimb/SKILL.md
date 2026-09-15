@@ -15,7 +15,10 @@ reads the same on-disk state you do.
 
 The hierarchy: a **Run** (one invocation) contains **Searches** (one engine
 process on one problem), each exploring a tree of **Candidates** (immutable code
-artifacts), each executed as a **Trial**.
+artifacts), each evaluated as one or more **Trials** (parameter sets) of seeded
+**Replicates**. A candidate that declares `params.json` gets extra trials from
+the search's tuner (`cNNN(tune/exec/tK)` in `watch`; `hillclimb show` lists
+them with their params).
 
 All commands: `uv run hillclimb <command>` from anywhere inside a hillclimb
 dir (found by upward search for `hillclimb/config.yaml`). Search-addressing
@@ -128,7 +131,9 @@ uv run hillclimb knowledge show <target>        # prior-experience block a new s
 uv run hillclimb paper add <pdf> --problem <t>  # distill a PDF paper into claims (before a run: inspect wiring with `hillclimb graph`)
 uv run hillclimb paper list                     # ingested papers with scope and claim counts
 uv run hillclimb experiment run <spec> [--dry-run] [--parallel]  # arms × problems × repeats (real searches; --dry-run lists jobs)
-uv run hillclimb experiment report [spec]       # compare the arms on holdout, gap vs control judged against the noise floor
+uv run hillclimb experiment report [spec]       # compare the arms on holdout, gap vs control judged against the noise floor (--json: gaps + verdicts as data)
+uv run hillclimb policy check [--policy hillclimb/policies/x.py] [--set search.policy_params.k=v] [--problem P --smoke]  # replay recorded journals through the policy (no agent): resume-determinism, dangling ids, writes, prompt overrides; exit 1 on a breach
+uv run hillclimb run <problem> --policy hillclimb/policies/x.py  # a policy file (one SearchPolicy class, or POLICY=...) instead of a registry name; search.yaml records policy_sha256
 uv run hillclimb run <problem> --set search.policy=openevolve --experiment E --arm A  # one arm by hand (counts in the report)
 uv run hillclimb run <problem> --policy greedy --policy openevolve --policy gepa --arm-set gepa:search.parallel_operators=1  # mixed fleet: one search per optimizer under one run; `experiment report <run-id>` compares
 ```

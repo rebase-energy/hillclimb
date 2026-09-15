@@ -24,6 +24,7 @@ from hillclimb.api import (
     create_problem_run,
     create_run,
     create_search,
+    build_evaluator,
     build_executor,
     build_holdout_scorer,
     ensure_runtime_venv,
@@ -183,6 +184,7 @@ model: sonnet
 
 # budget:
 #   total_s: 7200
+#   deadline: graceful     # `hard` aborts in-flight operators when total_s runs out
 
 # search:
 #   parallel_operators: 1   # >1 runs concurrent operators
@@ -1198,6 +1200,9 @@ def experiment_report(
     noise_floor: float = typer.Option(
         None, "--noise-floor", help="Gap below which arms are not different (default: the spec's)"
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="Machine-readable: the summaries as JSON (a meta-verifier reads the gaps)"
+    ),
 ):
     """Compare the arms of an experiment.
 
@@ -1216,7 +1221,8 @@ def experiment_report(
         except FileNotFoundError:
             spec_path = None  # a name with no spec on disk: report by tag alone
     _experiment_report_impl(
-        config, experiment, problem, spec_path=spec_path, control=control, noise_floor=noise_floor
+        config, experiment, problem, spec_path=spec_path, control=control,
+        noise_floor=noise_floor, as_json=as_json,
     )
 
 
@@ -1228,8 +1234,15 @@ def _experiment_report_impl(
     spec_path: Path | None = None,
     control: str | None = None,
     noise_floor: float | None = None,
+    as_json: bool = False,
 ) -> None:
-    from hillclimb.experiment import collect_results, load_experiment, render_report, summarize
+    from hillclimb.experiment import (
+        collect_results,
+        load_experiment,
+        render_report,
+        summaries_to_dict,
+        summarize,
+    )
 
     floors: dict[str, float | None] = {}
     name = experiment
@@ -1247,7 +1260,138 @@ def _experiment_report_impl(
         rows = collect_results(store, experiment=name, problem_id=problem_id)
     if noise_floor is not None:
         floors = {row.problem_id: noise_floor for row in rows}
-    typer.echo(render_report(summarize(rows, control=control, noise_floor=floors)))
+    summaries = summarize(rows, control=control, noise_floor=floors)
+    if as_json:
+        typer.echo(json.dumps(summaries_to_dict(summaries), indent=2))
+    else:
+        typer.echo(render_report(summaries))
+
+
+policy_app = typer.Typer(
+    cls=HillclimbGroup, help="Search policies: check an exploration process before spending budget on it"
+)
+app.add_typer(policy_app, name="policy")
+
+
+@policy_app.command("check")
+def policy_check(
+    policy: str = typer.Option(None, "--policy", help="Policy name (default: config search.policy)"),
+    problem: str = typer.Option(
+        None, "--problem", help="Replay only this problem's recorded searches (default: every search)"
+    ),
+    set_: list[str] = typer.Option(
+        None, "--set", help="Config override, dotted: --set search.policy_params.num_drafts=1",
+    ),
+    limit: int = typer.Option(20, "--limit", help="Newest recorded searches to replay"),
+    smoke: bool = typer.Option(
+        False, "--smoke", help="Then run a dummy-backend search on --problem (no LLM, real verifier)"
+    ),
+    smoke_budget: str = typer.Option("2m", "--smoke-budget", help="Wall clock for the smoke search"),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
+):
+    """Conformance check for a search policy — the cheap pre-verifier.
+
+    Replays every recorded journal (plus an empty one) through the policy
+    with no agent or verifier: two fresh instances must propose the same
+    action at every budget point (the resume contract), every referenced
+    candidate must exist, the policy must never write, and the prompt
+    override dir must lint clean. Exit 1 on any breach. `--smoke` follows
+    up with a short `--backend dummy` search so the whole loop — prompts
+    included — runs once before an agent hour is spent on it.
+    """
+    from hillclimb.api import run_search
+    from hillclimb.policies import get_policy, policy_base_dir, policy_path
+    from hillclimb.policy_check import JournalCase, check_policy
+    from hillclimb.search_strategy import _ENGINES
+
+    config = load_config()
+    config.apply_overrides(_parse_set(set_ or []))
+    name = policy or config.search.policy
+    if name in _ENGINES:
+        typer.echo(
+            f"{name} is a search engine that owns its own loop (search_strategy.py); "
+            "the conformance check covers SearchPolicy implementations",
+            err=True,
+        )
+        raise typer.Exit(2)
+    params = dict(config.search.policy_params)
+    base_dir = policy_base_dir(config)
+    source = policy_path(name, base_dir)
+    if source is not None and not source.is_file():
+        raise typer.BadParameter(f"policy file not found: {source}")
+
+    def make_policy():
+        return get_policy(name, params, base_dir=base_dir)
+
+    problem_key = None
+    if problem:
+        problem_key = load_problem(problem, config).problem_key
+    cases: list[JournalCase] = []
+    with closing(open_store(config)) as store:
+        records = store.searches(problem_key=problem_key)
+        for record in sorted(records, key=lambda r: r.meta.started_at, reverse=True)[:limit]:
+            cases.append(
+                JournalCase(
+                    label=record.ref,
+                    journal=Journal(store.journal(record.key)),
+                    higher_is_better=record.meta.higher_is_better,
+                    total_s=record.meta.budget_s or 3600,
+                    search_dir=record.search_dir,
+                )
+            )
+    report = check_policy(make_policy, cases, config, prompts_dir=config.paths.prompts_dir)
+    if report.ok:
+        resolved = getattr(make_policy(), "resolved_params", None)
+        resolved_params = resolved(config) if callable(resolved) else params
+    else:
+        resolved_params = params  # the policy may not even construct
+    if source is not None:
+        report.policy = f"{report.policy} ({source})"
+    smoke_result: dict | None = None
+    if smoke and report.ok:
+        if not problem:
+            raise typer.BadParameter("--smoke needs --problem")
+        smoke_config = load_config(backend="dummy")
+        smoke_config.apply_overrides(_parse_set(set_ or []))
+        smoke_config.search.policy = name
+        smoke_config.learning.enabled = False
+        outcome = run_search(
+            problem,
+            budget_s=parse_budget(smoke_budget),
+            name="policy-check",
+            config=smoke_config,
+            log=(lambda *_: None) if as_json else typer.echo,
+        )
+        with closing(open_store(smoke_config)) as store:
+            journal = Journal(store.journal(key_for(outcome.search_dir)))
+        smoke_result = {
+            "search": outcome.ref,
+            "state": outcome.state,
+            "candidates": len(journal.candidates),
+            "scored": len(journal.scored_candidates()),
+            "best": outcome.selected.val_score if outcome.selected is not None else None,
+        }
+    if as_json:
+        payload = report.to_dict()
+        payload["resolved_params"] = resolved_params
+        payload["journals"] = [c.label for c in cases]
+        if smoke_result is not None:
+            payload["smoke"] = smoke_result
+        typer.echo(json.dumps(payload, indent=2, default=str))
+    else:
+        typer.echo(report.render())
+        typer.echo(f"resolved params: {json.dumps(resolved_params, default=str)}")
+        typer.echo(f"replayed {len(cases)} recorded journal(s)")
+        if smoke_result is not None:
+            typer.echo(
+                f"smoke {smoke_result['search']}: {smoke_result['state']}, "
+                f"{smoke_result['candidates']} candidate(s), {smoke_result['scored']} scored, "
+                f"best={smoke_result['best']}"
+            )
+        elif smoke:
+            typer.echo("smoke skipped: fix the breaches above first")
+    if not report.ok or (smoke_result is not None and smoke_result["state"] != "done"):
+        raise typer.Exit(1)
 
 
 def parse_budget(value: str) -> int:
@@ -1735,6 +1879,23 @@ def resume(
     # whatever the live config currently says
     config.search.policy = meta.policy
     config.search.policy_params = meta.policy_params
+    if meta.policy_sha256 is not None:
+        from hillclimb.policies import policy_base_dir, policy_sha256
+
+        # the replay contract assumes the same decision code: an edited
+        # policy file resumes, but say so — its proposals may diverge
+        try:
+            now = policy_sha256(meta.policy, policy_base_dir(config))
+        except OSError as exc:
+            raise typer.BadParameter(f"policy file {meta.policy} is gone: {exc}") from exc
+        if now != meta.policy_sha256:
+            typer.echo(
+                f"warning: policy file {meta.policy} changed since the search started "
+                f"({meta.policy_sha256[:12]} -> {now[:12]}); replay may diverge",
+                err=True,
+            )
+    config.search.tuner = meta.tuner
+    config.search.tuner_params = meta.tuner_params
     config.routing = {op: RouteConfig(**route) for op, route in meta.routing.items()}
     problem = load_problem(meta.problem, config)
     journal = Journal(store.journal(record.key))
@@ -2367,6 +2528,57 @@ def tree(
 
 
 @app.command()
+def tree2(
+    search: str = typer.Argument(None, help="latest (default), <run-id>, or <run-id>/<search-id>"),
+):
+    """Live archive tree of one search, drawn like the Darwin Gödel Machine's.
+
+    Same layout as `tree`; each circle carries its iteration (the candidate
+    number) inside, is filled with its score on a viridis ramp (bright =
+    best), and ringed by how far it got: red = no working solution, yellow =
+    scored but never built on, green = built on. The final best is a gold
+    star, and its parent chain is drawn bold. Circles never overlap: they
+    are sized to the zoom, and the numbers appear as they grow. Scroll
+    zooms, drag pans, click a node for details, enter opens it, j/k scrub
+    through time, n/p switch search, `?` keys.
+    """
+    try:
+        from hillclimb.tree2view import Tree2App
+    except ModuleNotFoundError as exc:
+        raise typer.BadParameter(
+            "`hillclimb tree2` needs the TUI extra: pip install 'hillclimb[tui]'"
+        ) from exc
+
+    Tree2App(load_config(), search).run()
+
+
+@app.command()
+def archive(
+    search: str = typer.Argument(None, help="latest (default), <run-id>, or <run-id>/<search-id>"),
+):
+    """Archive tree beside the progress chart, live — the Darwin Gödel
+    Machine's two-panel figure for one search.
+
+    Left, the `tree2` archive tree; right, every scored candidate as a dot
+    at (iteration, score) with the best-so-far staircase, a brighter dot
+    where a candidate set a new best, and the lineage of the final best as
+    a thick line — the same parent chain drawn bold in the tree, one
+    candidate per iteration number on both. j/k scrub both panels through
+    time together (a cursor marks the iteration on the chart); click a node
+    to ring its dot on the chart and see its detail, enter opens it, n/p
+    switch search, `?` keys.
+    """
+    try:
+        from hillclimb.archiveview import ArchiveApp
+    except ModuleNotFoundError as exc:
+        raise typer.BadParameter(
+            "`hillclimb archive` needs the TUI extra: pip install 'hillclimb[tui]'"
+        ) from exc
+
+    ArchiveApp(load_config(), search).run()
+
+
+@app.command()
 def surface(
     search: str = typer.Argument(None, help="latest (default), <run-id>, or <run-id>/<search-id>"),
 ):
@@ -2399,14 +2611,69 @@ def surface(
     SurfaceApp(config, search).run()
 
 
-@app.command()
-def similarity(
-    search: str = typer.Argument(None, help="latest (default), <run-id>, or <run-id>/<search-id>"),
-    single: bool = typer.Option(
-        False, "--single", help="One search only, even when it is an experiment arm"
+class DefaultCommandGroup(HillclimbGroup):
+    """A group whose bare form and any first token that is not one of its
+    commands run `default_command` — `similarity <search>` is
+    `similarity map <search>`, `similarity --help` still lists both."""
+
+    default_command = "map"
+
+    def parse_args(self, ctx, args):
+        if not args or (args[0] not in self.commands and args[0] not in ("-h", "--help")):
+            args = [self.default_command, *args]
+        return super().parse_args(ctx, args)
+
+
+similarity_app = typer.Typer(
+    cls=DefaultCommandGroup,
+    invoke_without_command=True,
+    help="Live 3D similarity views of a search's candidates: `map` (pairwise, default) and `reference`.",
+)
+app.add_typer(similarity_app, name="similarity")
+
+_SIMILARITY_SEARCH = typer.Argument(None, help="latest (default), <run-id>, or <run-id>/<search-id>")
+_SIMILARITY_SINGLE = typer.Option(False, "--single", help="One search only, even when it is an experiment arm")
+
+
+@similarity_app.callback()
+def similarity(ctx: typer.Context):
+    """Live 3D similarity views of one search's candidates.
+
+    `map` (the default) embeds every candidate by pairwise distance, so
+    nearby dots are alike; `reference` places each candidate at its
+    distance from one reference candidate. Both derive everything from
+    what candidates already produced (the problem's fingerprint.py if it
+    ships one, else submission or evaluator report; solution.py; the
+    journal) and store nothing. `v` swaps between them in the TUI.
+    """
+
+
+@similarity_app.command("map")
+def similarity_map(
+    search: str = _SIMILARITY_SEARCH,
+    single: bool = _SIMILARITY_SINGLE,
+    metric: str = typer.Option(
+        "behavioral", "--metric", "-m", help="Pairwise distance to lay out by: behavioral, structural, blend"
     ),
 ):
-    """Live 3D distance scatter: how far each candidate moved.
+    """Candidates embedded by pairwise distance: nearby means alike.
+
+    One 3D graph: lineage edges join parent to child, the best-so-far
+    sequence is a gold trail, colour is score rank (cold to hot; the
+    champion a gold diamond, the origin a white open diamond), shape the
+    tree's fate. An experiment arm opens its whole run instead, coloured by
+    arm like `chart` (--single for the one-search view). Keys: m cycles
+    behavioral/structural/blend, v opens the reference view, space
+    replays the search growing, s toggles the idle spin; hover reads a
+    candidate's distances to the selected one, click dims everything
+    outside its lineage. Drag rotates, scroll zooms, q quits.
+    """
+    _open_similarity(search, single, view="map", metric=metric)
+
+
+@similarity_app.command("reference")
+def similarity_reference(search: str = _SIMILARITY_SEARCH, single: bool = _SIMILARITY_SINGLE):
+    """Candidates at their distance from one reference candidate.
 
     Every candidate sits at (behavioral, structural, lineage) distance from
     a reference candidate — the origin the search grew from (its seed, else
@@ -2415,19 +2682,24 @@ def similarity(
     A search that is an experiment arm opens the whole run instead: every
     search of that problem in one cube, measured from the shared seed,
     coloured by arm like `chart`, n/p stepping through the run's problems
-    (--single for the one-search view). Distances are derived from what
-    candidates already produced (the problem's fingerprint.py if it ships
-    one, else submission or evaluator report; solution.py; the journal);
-    nothing extra is stored. Drag rotates, scroll zooms, q quits.
+    (--single for the one-search view). v opens the map. Drag rotates,
+    scroll zooms, q quits.
     """
+    _open_similarity(search, single, view="reference")
+
+
+def _open_similarity(search: str | None, single: bool, view: str, metric: str = "behavioral") -> None:
     try:
         from hillclimb.similarity import build_run_similarity, build_similarity
+        from hillclimb.similarity_map import METRICS, build_map, build_run_map
         from hillclimb.similarityview import SimilarityApp, run_inputs, search_inputs
     except ModuleNotFoundError as exc:
         raise typer.BadParameter(
             "`hillclimb similarity` needs the TUI extra: pip install 'hillclimb[tui]'"
         ) from exc
 
+    if metric not in METRICS:
+        raise typer.BadParameter(f"--metric must be one of {', '.join(METRICS)}")
     config = load_config()
     store, record = _similarity_anchor(config, search)
     meta = record.meta
@@ -2435,39 +2707,46 @@ def similarity(
         fingerprint_path = load_problem(meta.problem, config).fingerprint_path
     except Exception:  # noqa: BLE001 — a provider or moved problem: no fingerprint module
         fingerprint_path = None
-    if meta.experiment and meta.arm and not single:
-        records = run_inputs(store, record.run_id, meta.problem_key)
-        inputs = search_inputs(store, records)
-        higher = bool(meta.higher_is_better)
-        for reference in ("seed", "champion"):
-            view = build_run_similarity(
-                inputs, higher, reference=reference, output_artifacts=meta.output_artifacts,
-                fingerprint_path=fingerprint_path, problem_key=meta.problem_key,
-            )
-            if view.unavailable is None:
-                break
-        else:
-            typer.echo(f"run view unavailable ({view.unavailable}); opening {record.ref} alone")
-            reference = None
-        if reference is not None:
-            SimilarityApp(config, reference=reference, run=(record.run_id, meta.problem_key)).run()
-            return
-    journal = Journal(store.journal(record.key))
-    candidates = list(journal.candidates.values())
     higher = bool(meta.higher_is_better)
-    # open on a reference that has something to measure against (a declared
-    # baseline ships no artifacts); nothing from either -> print why, return
-    for reference in ("baseline", "champion"):
-        view = build_similarity(
-            candidates, record.search_dir, higher, reference=reference,
-            output_artifacts=meta.output_artifacts, fingerprint_path=fingerprint_path,
-        )
-        if view.unavailable is None:
-            break
+    common = dict(output_artifacts=meta.output_artifacts, fingerprint_path=fingerprint_path)
+
+    if meta.experiment and meta.arm and not single:
+        inputs = search_inputs(store, run_inputs(store, record.run_id, meta.problem_key))
+        reference: str | None = None
+        if view == "map":
+            unavailable = build_run_map(inputs, higher, metric=metric, problem_key=meta.problem_key, **common).unavailable
+            reference = "seed" if unavailable is None else None
+        else:
+            for reference in ("seed", "champion"):
+                unavailable = build_run_similarity(
+                    inputs, higher, reference=reference, problem_key=meta.problem_key, **common,
+                ).unavailable
+                if unavailable is None:
+                    break
+            else:
+                reference = None
+        if reference is not None:
+            SimilarityApp(
+                config, reference=reference, run=(record.run_id, meta.problem_key), view=view, metric=metric,
+            ).run()
+            return
+        typer.echo(f"run view unavailable ({unavailable}); opening {record.ref} alone")
+
+    candidates = list(Journal(store.journal(record.key)).candidates.values())
+    if view == "map":
+        unavailable = build_map(candidates, record.search_dir, higher, metric=metric, **common).unavailable
+        reference = "baseline"
     else:
-        typer.echo(view.unavailable)
+        # open on a reference that has something to measure against (a declared
+        # baseline ships no artifacts); nothing from either -> print why, return
+        for reference in ("baseline", "champion"):
+            unavailable = build_similarity(candidates, record.search_dir, higher, reference=reference, **common).unavailable
+            if unavailable is None:
+                break
+    if unavailable is not None:
+        typer.echo(unavailable)
         return
-    SimilarityApp(config, record.ref, reference=reference).run()
+    SimilarityApp(config, record.ref, reference=reference, view=view, metric=metric).run()
 
 
 def _similarity_anchor(config: Config, search: str | None) -> tuple[DataStore, SearchRecord]:
@@ -2623,16 +2902,17 @@ def smoke(
     )
     search_dir = create_search(config, problem, run_dir, run_id, total_s=1800)
     journal = Journal(open_store(config).journal(key_for(search_dir)))
+    evaluator = build_evaluator(config, problem, search_dir, journal, log=typer.echo)
     searcher = GreedySearcher(
         problem=problem,
         config=config,
         journal=journal,
         backend=get_backend(config.backend, auth=config.backend_auth),
-        executor=build_executor(config, problem),
+        executor=evaluator.executor,
         budget=BudgetManager(1800, stop_margin_s=0),
         search_dir=search_dir,
         log=typer.echo,
-        holdout_scorer=build_holdout_scorer(config, problem, search_dir),
+        evaluator=evaluator,
     )
     typer.echo(
         f"Running one {config.backend} DRAFT in the foreground; "

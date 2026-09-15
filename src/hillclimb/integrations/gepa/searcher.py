@@ -1,4 +1,4 @@
-"""GEPASearcher: the SearchRunner that hands the loop to gepa while
+"""GEPASearcher: the SearchStrategy that hands the loop to gepa while
 hillclimb stays the outer authority — canonical candidate dirs, the
 append-only journal, budgets, control commands, and a post-completion
 private holdout gepa never sees."""
@@ -17,7 +17,7 @@ from hillclimb.candidate import BackendInfo, Candidate, utcnow
 from hillclimb.config import Config
 from hillclimb.control import ControlCommand, apply_prune, drain_commands_dir, resync_best
 from hillclimb.evaluation import CandidateEvaluator
-from hillclimb.executor import Executor, HoldoutScorer
+from hillclimb.executor import Executor
 from hillclimb.integrations.gepa.config import GEPAParams, validate_gepa_search_config
 from hillclimb.integrations.gepa.evaluator import GEPAEvaluatorBridge
 from hillclimb.integrations.gepa.proposer import (
@@ -30,7 +30,7 @@ from hillclimb.integrations.gepa.proposer import (
 from hillclimb.journal import Journal
 from hillclimb.problem import ProblemSpec
 from hillclimb.routing import BackendPool, Router
-from hillclimb.search_runner import ParkedSearch, StopRequested
+from hillclimb.search_strategy import ParkedSearch, StopRequested
 from hillclimb.slots import MachineSlots
 from hillclimb.status import CandidateCounts, CurrentCandidate, ScoreRef, StatusWriter
 
@@ -69,7 +69,7 @@ class GEPASearcher:
         budget: BudgetManager,
         search_dir: Path,
         log=print,
-        holdout_scorer: HoldoutScorer | None = None,
+        evaluator: CandidateEvaluator | None = None,
         status: StatusWriter | None = None,
         slots: MachineSlots | None = None,
         abort: threading.Event | None = None,
@@ -90,7 +90,6 @@ class GEPASearcher:
         self.budget = budget
         self.search_dir = search_dir
         self.log = log
-        self.holdout_scorer = holdout_scorer
         self.status = status
         self.abort = abort or threading.Event()
         self.seed_solution = seed_solution
@@ -104,7 +103,11 @@ class GEPASearcher:
         if backends is None:
             backends = BackendPool(abort=self.abort)
             backends.seed(config.backend, config.backend_auth, backend)
-        evaluator = CandidateEvaluator(executor=executor, problem=problem, config=config)
+        # the host's evaluate service; the host registers gepa with holdout
+        # timing `after`, so nothing scores the hidden split while the
+        # optimizer is live (evaluation.py) — a local default has no scorer
+        if evaluator is None:
+            evaluator = CandidateEvaluator(executor=executor, problem=problem, config=config)
         proposal_bridge = ProposalBridge()
         self.bridge = GEPAEvaluatorBridge(
             journal=journal,
@@ -149,15 +152,14 @@ class GEPASearcher:
             if candidate.operator == "seed" or candidate.policy_meta.get("optimizer") == "gepa":
                 self.bridge.preload(candidate)
 
-    # --- SearchRunner ---
+    # --- SearchStrategy ---
 
     def run(self) -> Candidate | None:
         if not self.journal.candidates:
             baseline = write_baseline(
                 self.problem,
                 self.search_dir,
-                executor=self.bridge.evaluator.executor,
-                holdout_scorer=self.holdout_scorer,
+                evaluator=self.bridge.evaluator,
                 timeout_s=self.config.budget.exec_timeout_s,
             )
             self.journal.candidate_result(baseline)
@@ -195,7 +197,9 @@ class GEPASearcher:
         except ProposerError as exc:
             raise ParkedSearch(f"GEPA proposer failed: {exc}") from exc
         self._raise_pending()
-        self.finalize_holdout()
+        # holdout is the host's: execute_search scores the top-k hidden
+        # splits after this returns and re-selects (privacy: gepa never
+        # holds a scorer, and its state is frozen by then)
         self._selection_id = resync_best(
             self.search_dir, self.journal, self.problem.higher_is_better,
             self.config.holdout.selection, self.problem.output_artifacts,
@@ -306,49 +310,6 @@ class GEPASearcher:
                 "degenerates to the aggregate score"
             )
         return [self.problem.problem_id]
-
-    # --- holdout: post-completion only ---
-
-    def finalize_holdout(self) -> None:
-        """Score the hidden split for the top-k validation candidates, only
-        after the optimizer is done — gepa never sees these values, and
-        nothing under gepa/ is written after this starts."""
-        if self.holdout_scorer is None:
-            return
-        ranked = [
-            c
-            for c in sorted(
-                self.journal.scored_candidates(),
-                key=lambda c: (
-                    -c.val_score if self.problem.higher_is_better else c.val_score
-                ),
-            )
-            if c.trials
-        ]
-        top_k = self.config.holdout.top_k
-        wanted = len(ranked) if top_k <= 0 else top_k
-        scored = 0
-        for candidate in ranked:
-            if scored >= wanted:
-                break
-            if candidate.holdout_score is not None:
-                scored += 1
-                continue
-            self._on_phase(candidate.candidate_id, "holdout")
-            last = candidate.best_trial or candidate.trials[-1]
-            try:
-                score, error, cpu_s = self.holdout_scorer.score(Path(candidate.candidate_dir), last)
-            finally:
-                if self.status is not None:
-                    self.status.remove_current(candidate.candidate_id)
-            last.holdout_cpu_s = cpu_s
-            if error is not None:
-                last.holdout_error = error
-                self.log(f"  holdout failed for {candidate.candidate_id}: {error}")
-            else:
-                last.holdout_score = score
-                scored += 1
-            self.journal.candidate_result(candidate)  # replay keeps the last event
 
     # --- status plumbing ---
 

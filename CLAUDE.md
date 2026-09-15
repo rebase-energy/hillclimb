@@ -7,7 +7,14 @@ solution per search.
 
 Hierarchy: **Run** (one invocation, `runs/<run-id>/`) → **Search** (one engine
 process, `searches/<search-id>/`) → **Candidate** (immutable code artifact) →
-**Trial** (one execution). The problem is an *attribute* of a search, not a
+**Trial** (one parameter set of that code) → **Replicate** (one seeded
+execution). A trial's score is the MEDIAN of its replicates; a candidate's
+score is its BEST trial (`Candidate.stamp_best_trial` sets `Trial.is_best`,
+the only place direction enters the aggregate; `val_score`/`metrics`/
+`report`/`holdout_score` all follow the best trial). Candidates without a
+declared parameter space have exactly one trial (`params={}`); pre-split
+journals fold their flat `trials` list into one trial on load. The problem
+is an *attribute* of a search, not a
 level: a run may hold searches on different problems (MLE-bench) or several
 on one (the demo). Search ids are `<problem-id>`, then `<problem-id>-2`, `-3`
 (atomic mkdir allocation); `search.yaml` carries `problem_key` — the
@@ -18,14 +25,21 @@ and every problem-scoped view (chart, best-ever, knowledge) groups on it.
 A problem **is its verifier**: `problems/<id>/verifier.sh` is the only process
 the engine starts. It drives `solution.py` and writes the score to
 `$HILLCLIMB_RESULT` (a `{"score": …}` object or a bare number; other numeric
-keys are journaled as `Trial.metrics` — feature dimensions for policies,
-never a score); exit 0 means valid. A trial the engine kills under a
+keys are journaled as `Replicate.metrics` — feature dimensions for policies,
+never a score); exit 0 means valid. A replicate the engine kills under a
 timeout clamped by the search's *remaining budget* is journaled `abandoned`
 ("cut off at the budget wall"), never `buggy`: only a non-zero exit or the
 problem's own `exec_timeout_s` makes a candidate buggy and thus a debug
 target (`watch` colours the candidates cell red/yellow/green on
 buggy/abandoned/clean). `holdout: true` in `problem.yaml` makes the engine run the same script
-with `--holdout` in a directory agents never see. Providers (`emflow://`,
+with `--holdout` in a directory agents never see. Holdout scoring is the
+HOST's, never a search strategy's: `CandidateEvaluator` (`evaluation.py`)
+scores the hidden split as part of `run_trial` — a trial that fails it is
+not-ok, like a verifier crash — and `api.build_evaluator` decides WHEN
+(`holdout_timing`): `inline` per candidate as it lands (greedy; `watch`
+shows holdout live; `holdout.top_k` gates the spend, floors are never gated),
+`after` once `run()` has returned (`api._finish_holdout`, for engines whose
+state must never see a holdout value — the `_ENGINES` entry declares it). Providers (`emflow://`,
 `mlebench://`) supply their own argv for the same contract. Never read a score
 off stdout — agent code shares that stream.
 
@@ -46,7 +60,10 @@ shim).
   runs/problems to its legacy top-level dirs in `hillclimb/config.yaml`.
 - Directory vocabulary: every level is `<level>_dir` — `run_dir`,
   `search_dir`, `candidate_dir` (`searches/<id>/candidates/<cid>/`, where the
-  agent works), `trial_dir`. The word "workspace" is banned (`tests/test_vocabulary.py`
+  agent works), `trial_dir` (`candidates/<cid>/trials/t<i>/`, holds the
+  trial's `params.json`), `replicate_dir` (`…/t<i>/replicates/r<j>/`, the
+  verifier's cwd; r0 of the best trial is hoisted to the candidate root).
+  The word "workspace" is banned (`tests/test_vocabulary.py`
   enforces it); old journals/status files that still carry a `workspace` key
   are mapped to `candidate_dir` on load.
   Machine-scoped state (shared venvs, emflow cache, agent slots) lives in
@@ -55,11 +72,13 @@ shim).
 - New problem: `hillclimb init` scaffolds `problems/example/`; check a
   verifier with `hillclimb verify <problem> --repeat 5` (the spread it prints
   is the noise floor — improvements below it are not real)
-- Noisy metrics: a candidate's score is the MEDIAN of its trials;
-  `search.n_trials` + `noise_k`/`min_improvement` set an accept band so the
-  search cannot climb noise, and `trial_mode: serial` is mandatory when the
-  metric measures the machine (time/throughput/memory) — parallel trials
-  measure each other
+- Noisy metrics: a trial's score is the MEDIAN of its replicates;
+  `search.n_replicates` + `noise_k`/`min_improvement` set an accept band so
+  the search cannot climb noise (the floor is the within-trial replicate
+  spread — spread across parameter sets is signal), and `replicate_mode:
+  serial` is mandatory when the metric measures the machine
+  (time/throughput/memory) — parallel replicates measure each other. Seeds
+  are never tuned. `n_trials`/`trial_mode` are accepted as legacy spellings
 - Concurrency: `search.parallel_operators` per search, `search.machine_max_operators`
   across the machine (flock slots in `~/.cache/hillclimb/agent-slots/`, default
   `min(8, cores-2)`); verifier and agent envs are single-threaded
@@ -85,28 +104,81 @@ shim).
   is `(run_id, search_id)`; `SearchMeta.search_uid` is the global id. Views and
   commands never open `journal.jsonl`/`status.json` directly — only the file
   backend does. `hillclimb store sync` imports the folder into another backend
+- Tunable parameters (`spaces.py` contract + `params.py` engine view +
+  `tuner.py`/`tuners/`): an agent may declare numeric knobs in
+  `params.json` next to `solution.py` (flat `name -> {type: float|int|
+  categorical, low/high|choices, log, step, default}`; the runtime reads
+  values through `spaces.params()`, which follows `$HILLCLIMB_PARAMS` to the
+  trial dir's copy — the root copy carries defaults, a trial copy adds a
+  `value` per param; `spaces.py` stays stdlib-only, it is byte-copied into
+  the runtime shim). A valid declaration sets `Candidate.tunable`; a
+  malformed one is scored on the solution's own defaults with
+  `params_error` set, never a crash. WHEN to tune is the policy's decision:
+  greedy proposes `Action(operator="tune", target_id=cid)` (params
+  `tune_budget`/`tune_gate`/`tune_parallel`/`tune_burst`, all derived from
+  the journal + in-flight refs) and the harness runs a *tune job* — no
+  agent, no machine slot, one new Trial on the EXISTING candidate on a deep
+  copy, merged in `_commit_tune` under the state lock, re-journaled (replay
+  keeps the last record; `tune_started`/`tune_discarded` audit lines), holdout
+  only for a trial that became the candidate's best. WHICH values come from
+  the tuner seam (`search.tuner: random | optuna`, `search.tuner_params`,
+  extra `hillclimb[optuna]`): `ask(space, history, higher_is_better, seed)`
+  is a pure function of the candidate's trials + pending sets, so no study
+  state survives a call and resume is free. Children of a tunable parent
+  inherit its best trial's values as their defaults (`prompts/params_cue.md`
+  tells the agent); `best/params.json` ships the selected candidate's best
+  trial values. Seeds are never tuned.
 - Search policies (`policies/`): `greedy` (default) and `openevolve`
   (OpenEvolve's MAP-Elites database as the what-next brain; optional extra,
   `search.policy_params` pass through to its `DatabaseConfig`). A policy
   owns only `propose`/`observe`; it must stay replay-deterministic — the
   openevolve policy seeds/restores the global RNG around every OpenEvolve call
-  because that library samples via the `random` module
-- Search engines (`search_runner.py`, architecture in
+  because that library samples via the `random` module. The exploration
+  process is ONE dict: every greedy knob (`num_drafts`, `max_debug_depth`,
+  `ensemble`/`ensemble_reserve_fraction`/`ensemble_top_k`/
+  `ensemble_max_attempts`, `tune_*`) reads `policy_params` first and falls
+  back to its config block (`CONFIG_FALLBACKS` in `greedy.py`;
+  `GreedyPolicy.resolved_params(config)` is the resolved dict) — never read
+  `config.search.num_drafts`/`config.ensemble` directly in a policy.
+  File policies: `search.policy` ending in `.py` is loaded from that path
+  (`policies.load_policy_file`; relative to the folder holding the
+  hillclimb dir via `policy_base_dir(config)`, the `runs_dir` anchor); the
+  file exposes `POLICY` (class or `(params, *, complexity_start)` factory)
+  or exactly one class with `propose`+`observe`. `SearchMeta.policy` keeps
+  the path as written, `policy_sha256` its hash (`create_search` fails
+  before allocating a dir if the file is unreadable; `resume` warns on a
+  changed hash). Arm/display names use `policy_label` (the file stem).
+  `hillclimb policy check` (`policy_check.py`, pure: no agent, verifier or
+  writes) is the cheap pre-verifier for an edited process: replays the
+  store's recorded journals plus an empty one through the policy and
+  reports contract breaches (stall on empty journal, replay/idempotence
+  divergence, dangling or wrong-status targets, journal/file writes,
+  shared-instance factory, dirty prompt overrides); `--smoke` adds a
+  dummy-backend search; engines in `_ENGINES` are out of scope (exit 2)
+- Prompt overrides: `paths.prompts_dir` (default `<hillclimb dir>/prompts/`)
+  shadows package templates by name (`prompts/render.py`: `set_override_dir`
+  is activated once per engine process in `api.execute_search`, refusing to
+  start on `lint_overrides` findings — an override may drop `{{tokens}}`,
+  never add unknown ones); `templates_digest` hashes the effective set into
+  `SearchMeta.templates_sha256` + `templates_overridden` at `create_search`.
+  Tests that activate an override dir must restore the previous setting
+- Search engines (`search_strategy.py`, architecture in
   `docs/optimizer-host-plan.md`): optimizers that own their whole loop
-  dispatch as a `SearchRunner` via `_ENGINES` before `get_policy()` is ever
+  dispatch as a `SearchStrategy` via `_ENGINES` before `get_policy()` is ever
   called — `gepa` (`integrations/gepa/`, extra `hillclimb[gepa]`) is the
   first: a routed hillclimb agent is its mutation proposer
   (`SEARCH_DIR/gepa/proposals/`), every evaluation is a canonical journaled
   candidate (`policy_meta.optimizer: gepa`), checkpoints in
   `SEARCH_DIR/gepa/state`, holdout only after the optimizer finishes and
-  never visible to it. `driver.py` is the only module importing gepa
+  never visible to it (the host scores it — `holdout_timing="after"` on the
+  registry entry; the searcher never holds a scorer). `driver.py` is the only module importing gepa
   (`skip_perfect_score=False` is mandatory there — the upstream default
   silently disables mutation for unbounded scores); the default suite drives
   `GEPASearcher` through `tests/gepa_fakes.py`. Shared trial execution lives
   in `evaluation.py` (`CandidateEvaluator` is journal-free by construction;
   `EvalResult` is the projection engines consume). A verifier may write a
   reserved `instances` key next to `score` (per-instance breakdown, stable
-  keys → `Trial.instance_scores`, median-aggregated) — GEPA's Pareto
+  keys → `Replicate.instance_scores`, median-aggregated) — GEPA's Pareto
   frontier and future QD engines consume it; circle-packing is the
   reference producer, and the emflow eval runner emits one instance per
   scored origin (`<asof>/<zone>`, GEFCom2014's task x zone); a candidate
@@ -123,6 +195,9 @@ shim).
   the ones past the machine's operator slots burn their budget in
   `waiting-slot`. `--run-id R --first-repeat K` appends repeats to a finished
   run. `SearchMeta.seed_sha256` records the seed each search started from.
+  `experiment report --json` (`experiment.summaries_to_dict`) emits the arms,
+  paired gaps and a `verdict` per comparison (`better`/`worse`/`tie`/
+  `within-noise`/`unknown`) so a meta-verifier reads a score, not a table.
   `problems/make_heilbronn.py` stamps the heilbronn difficulty ladder
   (11/14/17; committed dirs must match the generator — `tests/test_heilbronn_ladder.py`)
 - CLI: `uv run hillclimb --help` (engine); live TUIs: `watch` (agents; `watch candidates` jumps to a search),
@@ -136,21 +211,51 @@ shim).
   `--detail`/`d` overlays one search's
   exploration tree on the curve), `tree` (one search's exploration tree —
   `tree.py` is the pure layout + fates, `treeview.py` the plotui screen with a
-  face-on locked camera), `surface` (one search's candidates on the problem's
+  face-on locked camera), `tree2` (the same layout drawn like the Darwin
+  Gödel Machine's archive tree: iteration number inside each circle, fill =
+  score on a viridis ramp, ring = fate ladder red/yellow/green, star = best,
+  the best's parent chain bold — `tree2.py` pure encoding + one Graph3d
+  trace using plotui's `set_graph_borders`/`set_graph_labels`/`"star"`
+  (labels are drawn by plotui inside the mark only where they fit);
+  `fit_radius` sizes marks from the closest projected pair so circles never
+  overlap, and `tree2view.py` rebuilds on every zoom/reset/resize to apply
+  it, subclassing the `tree` widget/screen through `TreePlotWidget`'s
+  `_build_plot`/`_label_nodes`/`_legend_spans`/`_legend_entry_at`/
+  `_flat_to_id`/`_place_labels` hooks; a candidate for replacing `tree`),
+  `archive` (the DGM two-panel figure: `tree2` on the left, the progress
+  chart on the right — `archive.py` pure: scored nodes at (iteration,
+  score) where iteration is the circle number (`tree2.node_number`, else
+  creation order), best-so-far walked in ITERATION order (same final
+  best as `tree.accepted`, intermediate steps may differ from `chart`'s
+  landing order), the best's parent chain as a thick line, a cursor at
+  the scrub tick's iteration, axes pinned to the live tree; `archiveview.py`
+  subclasses `Tree2Screen`, keeps its ids so scrubbing/detail/n-p are
+  inherited, and re-shows the chart from the same scrubbed tree in
+  `_apply_view`. Two plots on one screen need two Kitty image-id pairs:
+  plotui's `PlotWidget(image_slot=n)` (the chart takes slot 1;
+  `PlotWidget.kitty_cleanup()` names every slot taken)), `surface` (one search's candidates on the problem's
   3D terrain — needs the problem to ship `landscape.py` (`elevation(x, y)` +
   `grid(n)`, picked up by default like `contract.md`) and journal each
   candidate's position as `surface_metrics` keys (default x/y) in
-  `Trial.metrics`; `surface.py` pure layer, `surfaceview.py` the free-orbit
+  `Replicate.metrics`; `surface.py` pure layer, `surfaceview.py` the free-orbit
   screen — start the camera at negative pitch, plotui's default views a
   surface from underneath; no landscape = prints why and returns;
-  `problems/fitness-landscape/` is the reference problem), `similarity` (one
+  `problems/fitness-landscape/` is the reference problem), `similarity` — two views of one search's candidates,
+  same inputs, nothing stored: `similarity map` (default; `similarity_map.py`
+  pure layer, `similarity_mapview.py` screen) embeds every candidate by
+  pairwise distance (behavioral / structural / blend, `m` cycles) with
+  classical MDS, Procrustes-aligned to the previous layout so a live search
+  grows in place, drawn as one `add_graph3d` with lineage edges + a gold
+  best-so-far `add_line3d`, click dims outside a lineage, `space` replays
+  growth, `v` swaps to the cube; `similarity reference` (`v` swaps back;
+  `SimilarityBase`/`RunScopeMixin` in `similarityview.py` are shared) shows one
   search's candidates as a 3D scatter at behavioral/structural/lineage
   distance from a reference — the seed (else baseline) by default, `c`
   toggles the current champion — coloured by score rank; distances are
   derived at render time from existing artifacts (the problem's optional
   `fingerprint.py` — `fingerprint(candidate_dir) -> vector`, picked up by
   default like `landscape.py`, for outputs with equivalences the flat file
-  misses — else submission.csv or trial-0's evaluator report, solution.py
+  misses — else submission.csv or the best trial's r0 evaluator report, solution.py
   tokens, parent chains) and NEVER stored; an experiment arm opens the
   **run scope** instead (`build_run_similarity`: every search of the problem
   in the run, each measured from its own copy of the shared seed, ids

@@ -15,16 +15,19 @@ from hillclimb.config import Config
 from hillclimb.control import ControlCommand, apply_prune, drain_commands_dir, resync_best
 from hillclimb import evaluation
 from hillclimb.evaluation import TAIL_CHARS, CandidateEvaluator, tail  # noqa: F401 — re-exported (cli imports tail from here)
-from hillclimb.executor import Executor, HoldoutScorer
+from hillclimb.executor import Executor
 from hillclimb.journal import Journal
 from hillclimb.policies.greedy import GreedyPolicy
-from hillclimb.policy import Action, BudgetView, InflightRef, SearchPolicy, SearchView
+from hillclimb.params import ParamsFile, read_candidate_space, write_inherited_params
+from hillclimb.policy import TUNE_ACTION, Action, BudgetView, InflightRef, SearchPolicy, PolicyInput
 from hillclimb.prompts.render import COMPLEXITY_CUES, render
 from hillclimb.routing import BackendPool, ResolvedRoute, Router
 from hillclimb.run import SEARCHES_DIRNAME
-from hillclimb.search_runner import ParkedSearch, StopRequested  # noqa: F401 — re-exported (their historic home)
+from hillclimb.search_strategy import ParkedSearch, StopRequested  # noqa: F401 — re-exported (their historic home)
 from hillclimb.slots import MachineSlots
+from hillclimb.spaces import describe_params as spaces_describe, with_values
 from hillclimb.status import CandidateCounts, CurrentCandidate, ScoreRef, StatusWriter
+from hillclimb.tuner import Tuner, history_for, tune_seed
 from hillclimb.problem import ProblemSpec
 from hillclimb.dirs import create_candidate_dir
 
@@ -39,8 +42,22 @@ class Job:
     request: OperatorRequest | None  # None for the agent-less seed candidate
     candidate_dir: Path
     ensemble_inputs: "list[Candidate] | None" = None
-    holdout_threshold: float | None = None  # k-th best val at prepare time; None = no gate
     backend: OperatorBackend | None = None  # routed instance; None = harness default
+    # tune jobs: an extra trial on an EXISTING candidate — `candidate` is a
+    # deep copy the worker may mutate, the live object is only touched in
+    # _commit_tune under the state lock
+    kind: str = "operator"  # operator | tune
+    trial_index: int | None = None
+    params: dict | None = None
+    declaration: ParamsFile | None = None
+
+    @property
+    def key(self) -> str:
+        """In-flight registry key: one slot per candidate for operator jobs,
+        one per (candidate, trial) for tune jobs."""
+        if self.kind == "tune":
+            return f"{self.candidate.candidate_id}:t{self.trial_index}"
+        return self.candidate.candidate_id
 
 
 @dataclass
@@ -48,13 +65,9 @@ class OutcomeMsg:
     """Terminal report from a worker; consumed by _commit on the scheduler."""
 
     job: Job
-    kind: str  # parked | aborted | agent_failed | no_solution | executed
+    kind: str  # parked | aborted | agent_failed | no_solution | executed | tuned
     result: OperatorResult | None = None
-    all_ok: bool = False
-    holdout_score: float | None = None
-    holdout_error: str | None = None
-    holdout_cpu_s: float | None = None  # burned even when holdout errored
-    holdout_gated: bool = False
+    all_ok: bool = False  # every replicate passed AND (when scored) the hidden split did too
     # the verifier ran under a timeout clamped by the search's remaining
     # budget rather than the problem's own execution limit: a trial killed
     # by that timeout was cut off by the clock, not shown to be buggy
@@ -82,7 +95,7 @@ class GreedySearcher:
         search_dir: Path,
         max_candidates: int = 50,
         log=print,
-        holdout_scorer: HoldoutScorer | None = None,
+        evaluator: CandidateEvaluator | None = None,
         status: StatusWriter | None = None,
         slots: MachineSlots | None = None,
         abort: threading.Event | None = None,
@@ -95,6 +108,7 @@ class GreedySearcher:
         router: Router | None = None,
         backends: BackendPool | None = None,
         drain_commands: Callable[[], list[ControlCommand]] | None = None,
+        tuner: Tuner | None = None,
     ):
         # where queued stop/prune commands come from: the store's queue for
         # this search (the engine binds it), else the search dir's control/
@@ -108,9 +122,10 @@ class GreedySearcher:
         self.search_dir = search_dir
         self.max_candidates = max_candidates
         self.log = log
-        self.holdout_scorer = holdout_scorer
-        self.evaluator = CandidateEvaluator(
-            executor=executor, problem=problem, config=config, holdout_scorer=holdout_scorer
+        # the host's evaluate service: verifier trials, and holdout — the
+        # hidden split is scored in there, never here (see evaluation.py)
+        self.evaluator = evaluator or CandidateEvaluator(
+            executor=executor, problem=problem, config=config
         )
         self.status = status
         self.slots = slots  # machine-wide agent-concurrency cap (optional)
@@ -123,6 +138,11 @@ class GreedySearcher:
         self.reference_note = reference_note
         self.complexity_start = complexity_start  # learned draft-complexity offset
         self.policy = policy or GreedyPolicy(complexity_start=complexity_start)
+        if tuner is None:
+            from hillclimb.tuners.random_search import RandomTuner
+
+            tuner = RandomTuner(config.search.tuner_params)
+        self.tuner = tuner  # which params a `tune` action tries; WHEN is the policy's call
         self.router = router  # None: everything routes to `backend` + config.model
         self.backends = backends
         self._consecutive_failures = 0
@@ -156,18 +176,19 @@ class GreedySearcher:
     def data_dir(self) -> Path:
         return self.problem.data_dir
 
-    def _view(self) -> SearchView:
+    def _view(self) -> PolicyInput:
         """Snapshot of search state for a policy call. Scheduler-thread only —
         same discipline as every other journal touch."""
-        return SearchView(
+        return PolicyInput(
             journal=self.journal,
             inflight=tuple(
                 InflightRef(
-                    candidate_id=candidate_id,
-                    operator=job.candidate.operator,
-                    parent_id=job.candidate.parent_id,
+                    candidate_id=job.candidate.candidate_id,
+                    operator=TUNE_ACTION if job.kind == "tune" else job.candidate.operator,
+                    parent_id=None if job.kind == "tune" else job.candidate.parent_id,
+                    trial_index=job.trial_index,
                 )
-                for candidate_id, job in self._inflight.items()
+                for job in self._inflight.values()
             ),
             budget=BudgetView(
                 remaining_s=self.budget.remaining(),
@@ -185,8 +206,7 @@ class GreedySearcher:
             baseline = write_baseline(
                 self.problem,
                 self.search_dir,
-                executor=self.executor,
-                holdout_scorer=self.holdout_scorer,
+                evaluator=self.evaluator,
                 timeout_s=self.config.budget.exec_timeout_s,
             )
             self._record_result(baseline)
@@ -235,6 +255,18 @@ class GreedySearcher:
                         or len(self.journal.candidates) >= self.max_candidates
                     ):
                         break
+                elif self.config.budget.deadline == "hard" and self.budget.remaining() <= 0:
+                    # the budget is a gate on starting work; `hard` makes it a
+                    # wall too — whatever is still running is cut off now
+                    self.log(
+                        f"  budget deadline reached: aborting {len(self._inflight)} "
+                        "in-flight operator(s) (budget.deadline=hard)"
+                    )
+                    self.abort.set()
+                    self._drain_aborted(reason="cut off at the budget deadline")
+                    if drain is not None:
+                        raise drain
+                    break
                 try:
                     msg = self._done_q.get(timeout=1.0)
                 except queue.Empty:
@@ -258,12 +290,18 @@ class GreedySearcher:
         )
 
     def _submit(self, pool: ThreadPoolExecutor, job: Job) -> None:
-        self.log(
-            f"[{self.budget.remaining_str()} left] {job.candidate.operator}"
-            + (f" -> {job.candidate.parent_id}" if job.candidate.parent_id else "")
-            + f" ({job.candidate.candidate_id})"
-        )
-        self._inflight[job.candidate.candidate_id] = job
+        if job.kind == "tune":
+            self.log(
+                f"[{self.budget.remaining_str()} left] tune {job.candidate.candidate_id} "
+                f"t{job.trial_index} {job.params}"
+            )
+        else:
+            self.log(
+                f"[{self.budget.remaining_str()} left] {job.candidate.operator}"
+                + (f" -> {job.candidate.parent_id}" if job.candidate.parent_id else "")
+                + f" ({job.candidate.candidate_id})"
+            )
+        self._inflight[job.key] = job
 
         def work() -> None:
             try:
@@ -277,20 +315,25 @@ class GreedySearcher:
 
         pool.submit(work)
 
-    def _drain_aborted(self) -> None:
+    def _drain_aborted(self, reason: str | None = None) -> None:
         """After abort: collect whatever workers return (they die within ~1s
-        poll intervals) and journal the candidates as abandoned."""
+        poll intervals) and journal the candidates as abandoned. `reason`
+        names why in the summary (a hard budget deadline); without one, a
+        summary the agent already wrote is kept."""
         while self._inflight:
             try:
                 msg = self._done_q.get(timeout=30.0)
             except queue.Empty:
                 break  # workers wedged; stale-pending recovery handles them on resume
+            if msg.job.kind == "tune":
+                self._discard_tune(msg.job, reason or "stopped mid-tune (abort)")
+                continue
             candidate = msg.job.candidate
             candidate.status = "abandoned"
-            candidate.summary = candidate.summary or "stopped mid-operator (abort)"
+            candidate.summary = reason or candidate.summary or "stopped mid-operator (abort)"
             candidate.finished_at = utcnow()
             self._record_result(candidate)
-            self._inflight.pop(candidate.candidate_id, None)
+            self._inflight.pop(msg.job.key, None)
             if self.status is not None:
                 self.status.remove_current(candidate.candidate_id)
 
@@ -302,6 +345,8 @@ class GreedySearcher:
             action = self.policy.propose(self._view())
             if action is None:
                 return None
+            if action.operator == TUNE_ACTION:
+                return self._prepare_tune(action)
             return self._prepare(action)
 
     def _debuggable_tip(self) -> Candidate | None:
@@ -479,8 +524,8 @@ class GreedySearcher:
 
     def _run_seed(self) -> Candidate:
         """Score the incumbent solution as a real candidate: the floor a
-        re-search must beat. No agent call; holdout always evaluated (it is
-        the selection floor, so the top-k gate does not apply)."""
+        re-search must beat. No agent call (the evaluator scores its hidden
+        split ungated — it is the selection floor)."""
         seed = self.seed_solution.absolute()
         if not seed.exists():
             raise FileNotFoundError(f"seed solution not found: {seed}")
@@ -501,19 +546,13 @@ class GreedySearcher:
         self.journal.candidate_created(candidate)
         self.log(f"seeding incumbent {seed.name} as {candidate_id}")
         exec_timeout = self.config.budget.exec_timeout_s
-        trial, all_ok = self.evaluator.run_trial(
+        _, all_ok = self.evaluator.run_trial(
             candidate, candidate_dir / "solution.py", candidate_dir, exec_timeout
         )
-        holdout_score = holdout_error = holdout_cpu = None
-        if all_ok:
-            holdout_score, holdout_error, holdout_cpu = self.evaluator.score_holdout(candidate_dir, trial)
         msg = OutcomeMsg(
             job=Job(candidate=candidate, request=None, candidate_dir=candidate_dir),
             kind="executed",
             all_ok=all_ok,
-            holdout_score=holdout_score,
-            holdout_error=holdout_error,
-            holdout_cpu_s=holdout_cpu,
         )
         committed = self._commit(msg)
         score = f"val={committed.val_score}" if committed.val_score is not None else "buggy"
@@ -524,7 +563,12 @@ class GreedySearcher:
     # --- → _commit (scheduler); run_operator is the synchronous composition
 
     def run_operator(self, operator: str, target: Candidate | None) -> Candidate:
-        job = self._prepare(self._action_for(operator, target))
+        if operator == TUNE_ACTION:
+            job = self._prepare_tune(self._action_for(operator, target))
+            if job is None:
+                raise ValueError(f"{target.candidate_id if target else None} cannot be tuned")
+        else:
+            job = self._prepare(self._action_for(operator, target))
         return self._commit(self._execute_job(job))
 
     def _action_for(self, operator: str, target: Candidate | None) -> Action:
@@ -557,13 +601,14 @@ class GreedySearcher:
         )
         if self._wants_reference(operator):
             shutil.copy(self.reference_solution, candidate_dir / "reference_solution.py")
+        inherited = self._inherit_params(target, candidate_dir) if parent_solution else None
         ensemble_inputs = None
         if action.inspiration_ids:
             ensemble_inputs = [self.journal.candidates[i] for i in action.inspiration_ids]
             for i, cand in enumerate(ensemble_inputs, 1):
                 shutil.copy(Path(cand.candidate_dir) / "solution.py", candidate_dir / f"candidate_{i}.py")
         complexity = action.complexity
-        prompt = self.build_prompt(operator, target, complexity, ensemble_inputs)
+        prompt = self.build_prompt(operator, target, complexity, ensemble_inputs, inherited=inherited)
         if action.extra_prompt_context:
             prompt += (
                 "\n\n# Additional context from the search strategy\n\n"
@@ -623,11 +668,6 @@ class GreedySearcher:
             request=request,
             candidate_dir=candidate_dir,
             ensemble_inputs=ensemble_inputs,
-            holdout_threshold=evaluation.holdout_threshold(
-                self.journal,
-                top_k=self.config.holdout.top_k,
-                higher_is_better=self.problem.higher_is_better,
-            ),
             backend=(
                 self.backends.get(route.backend, route.backend_auth)
                 if self.backends is not None
@@ -656,8 +696,11 @@ class GreedySearcher:
         )
 
     def _execute_job(self, job: Job) -> OutcomeMsg:
-        """Worker-side: agent call + trials + holdout. Lock-free — touches
-        only the job's own candidate/candidate_dir, never the journal."""
+        """Worker-side: agent call + trials (the evaluator scores holdout
+        inside run_trial). Lock-free — touches only the job's own
+        candidate/candidate_dir, never the journal."""
+        if job.kind == "tune":
+            return self._execute_tune(job)
         candidate = job.candidate
         backend = job.backend if job.backend is not None else self.backend
 
@@ -716,40 +759,33 @@ class GreedySearcher:
         )
         budget_clamped = exec_timeout < self.config.budget.exec_timeout_s
         self._set_phase(candidate.candidate_id, "exec")
-        trial, all_ok = self.evaluator.run_trial(candidate, solution, job.candidate_dir, exec_timeout)
-
-        holdout_score = holdout_error = holdout_cpu = None
-        gated = False
-        if all_ok:
-            if evaluation.gate_passes(
-                candidate.val_score,
-                job.holdout_threshold,
-                higher_is_better=self.problem.higher_is_better,
-            ):
-                self._set_phase(candidate.candidate_id, "holdout")
-                holdout_score, holdout_error, holdout_cpu = self.evaluator.score_holdout(
-                    job.candidate_dir, trial
-                )
-            else:
-                gated = True  # climbs on val; not selectable via holdout
+        # the defaults trial: a declared params.json makes t0 self-describing
+        # (values journaled, $HILLCLIMB_PARAMS pointing at the trial's copy);
+        # a malformed one is scored on the solution's own defaults instead
+        declaration, params_error = read_candidate_space(job.candidate_dir)
+        candidate.tunable = declaration is not None
+        candidate.params_error = params_error
+        _, all_ok = self.evaluator.run_trial(
+            candidate, solution, job.candidate_dir, exec_timeout,
+            params=declaration.defaults if declaration else None,
+            params_doc=with_values(declaration.raw, declaration.defaults) if declaration else None,
+        )
         return OutcomeMsg(
             job=job,
             kind="executed",
             result=result,
             all_ok=all_ok,
-            holdout_score=holdout_score,
-            holdout_error=holdout_error,
-            holdout_cpu_s=holdout_cpu,
-            holdout_gated=gated,
             budget_clamped=budget_clamped,
         )
 
     def _commit(self, msg: OutcomeMsg) -> Candidate:
         """Scheduler-side: journal the outcome, update best/selection and the
         failure counter. Raises ParkedSearch on rate limit / third failure."""
+        if msg.job.kind == "tune":
+            return self._commit_tune(msg)
         with self._state_lock:
             candidate, result = msg.job.candidate, msg.result
-            self._inflight.pop(candidate.candidate_id, None)
+            self._inflight.pop(msg.job.key, None)
             try:
                 if msg.kind == "parked":
                     candidate.status = "parked"
@@ -797,18 +833,10 @@ class GreedySearcher:
                     self._record_result(candidate)
                     return candidate
 
-                # kind == "executed"
+                # kind == "executed"; a failed hidden split arrives as
+                # all_ok=False with the reason on the trial (evaluator's call)
                 if msg.all_ok:
-                    last = candidate.best_trial or candidate.trials[-1]
-                    # holdout CPU is spent whether or not scoring succeeded
-                    last.holdout_cpu_s = msg.holdout_cpu_s
-                    if msg.holdout_error is not None:
-                        candidate.status = "buggy"
-                        last.holdout_error = msg.holdout_error
-                    else:
-                        candidate.status = "ok"
-                        if not msg.holdout_gated:
-                            last.holdout_score = msg.holdout_score
+                    candidate.status = "ok"
                     if candidate.status == "ok":
                         previous_best = self.journal.best_candidate(self.problem.higher_is_better)
                         if previous_best is None:
@@ -843,6 +871,11 @@ class GreedySearcher:
                 else:
                     candidate.status = "buggy"
                 candidate.finished_at = utcnow()
+                if candidate.params_error:
+                    self.log(
+                        f"  {candidate.candidate_id} params.json rejected — scored on its "
+                        f"own defaults, not tunable: {candidate.params_error}"
+                    )
                 self._record_result(candidate)
                 if candidate.status == "ok":
                     self._sync_selection()
@@ -851,6 +884,168 @@ class GreedySearcher:
             finally:
                 if self.status is not None:
                     self.status.remove_current(candidate.candidate_id)
+                    self._status()
+
+    # --- tune jobs: an extra trial (parameter set) on an existing candidate ---
+
+    def _inherit_params(self, target: Candidate | None, candidate_dir: Path) -> dict | None:
+        """A child of a tunable parent starts from the parent's best-found
+        values as its own defaults. Returns the inherited values (for the
+        prompt) or None."""
+        if target is None or not target.tunable:
+            return None
+        declaration, _ = read_candidate_space(Path(target.candidate_dir))
+        if declaration is None:
+            return None
+        best = target.best_trial
+        values = dict(best.params) if best is not None and best.params else declaration.defaults
+        write_inherited_params(candidate_dir, declaration, values)
+        return values
+
+    def _prepare_tune(self, action: Action) -> Job | None:
+        """Scheduler-side (under the lock): reserve the next trial index on
+        the target, ask the tuner for its values, write the trial dir's
+        params.json. None = hold: the target cannot be tuned (policy asked
+        for the impossible) or the tuner failed — logged, never fatal."""
+        target = self.journal.candidates.get(action.target_id) if action.target_id else None
+        if target is None or target.status != "ok" or target.pruned or not target.tunable:
+            self.log(f"  tune: {action.target_id} is not tunable (ignored)")
+            return None
+        candidate_dir = Path(target.candidate_dir)
+        declaration, reason = read_candidate_space(candidate_dir)
+        if declaration is None:
+            # the file changed on disk since the candidate was scored
+            target.tunable = False
+            target.params_error = reason or "params.json vanished"
+            self.journal.candidate_result(target)
+            self.log(f"  tune: {target.candidate_id} params.json no longer valid: {target.params_error}")
+            return None
+        pending = [
+            job.params for job in self._inflight.values()
+            if job.kind == "tune" and job.candidate.candidate_id == target.candidate_id
+        ]
+        index = len(target.trials) + len(pending)
+        seed = tune_seed(
+            int(self.config.search.tuner_params.get("seed", 0)), target.candidate_id, index
+        )
+        try:
+            values = self.tuner.ask(
+                declaration.space,
+                history_for(target, pending),
+                higher_is_better=self.problem.higher_is_better,
+                seed=seed,
+            )
+        except Exception as exc:  # noqa: BLE001 — a tuner bug must not kill the search
+            self.log(f"  tune: {self.tuner.name} failed on {target.candidate_id}: {exc!r}")
+            return None
+        self.journal.audit_event(
+            "tune_started", candidate_id=target.candidate_id, trial_index=index, params=values,
+            tuner=self.tuner.name,
+        )
+        if self.status is not None:
+            self.status.add_current(
+                CurrentCandidate(
+                    candidate_id=target.candidate_id,
+                    operator=TUNE_ACTION,
+                    phase="exec",
+                    candidate_dir=str(candidate_dir),
+                    trial_index=index,
+                )
+            )
+            self._status()
+        return Job(
+            candidate=target.model_copy(deep=True),
+            request=None,
+            candidate_dir=candidate_dir,
+            kind="tune",
+            trial_index=index,
+            params=values,
+            declaration=declaration,
+        )
+
+    def _execute_tune(self, job: Job) -> OutcomeMsg:
+        """Worker-side: run the trial's replicates on the candidate copy (the
+        evaluator scores its hidden split iff the new trial is the copy's
+        best and passes the gate). No agent, no machine slot (those meter
+        agent processes)."""
+        copy = job.candidate
+        if self.abort.is_set():
+            return OutcomeMsg(job=job, kind="aborted")
+        exec_timeout = min(
+            self.config.budget.exec_timeout_s, max(60, int(self.budget.remaining() - 30))
+        )
+        _, all_ok = self.evaluator.run_trial(
+            copy, job.candidate_dir / "solution.py", job.candidate_dir, exec_timeout,
+            params=job.params,
+            params_doc=with_values(job.declaration.raw, job.params),
+            index=job.trial_index,
+        )
+        return OutcomeMsg(job=job, kind="tuned", all_ok=all_ok)
+
+    def _discard_tune(self, job: Job, reason: str) -> None:
+        """Nothing lands on the candidate; resume re-proposes via the policy."""
+        self._inflight.pop(job.key, None)
+        self.journal.audit_event(
+            "tune_discarded", candidate_id=job.candidate.candidate_id,
+            trial_index=job.trial_index, reason=reason,
+        )
+        self.log(f"  tune {job.candidate.candidate_id} t{job.trial_index} discarded: {reason}")
+        if self.status is not None:
+            self.status.remove_current(job.candidate.candidate_id, job.trial_index)
+
+    def _commit_tune(self, msg: OutcomeMsg) -> Candidate | None:
+        """Scheduler-side: append the trial to the LIVE candidate, restamp its
+        best trial, re-hoist outputs when the new trial wins, re-evaluate
+        promotion, re-journal (replay keeps the last record)."""
+        job = msg.job
+        with self._state_lock:
+            try:
+                live = self.journal.candidates.get(job.candidate.candidate_id)
+                if msg.kind != "tuned" or live is None:
+                    self._discard_tune(job, msg.kind)
+                    return live
+                self._inflight.pop(job.key, None)
+                # the trial arrives with whatever the evaluator stamped on it;
+                # a parameter set whose hidden split failed still climbs on
+                # val (it is just never selectable) — the candidate stays ok
+                trial = job.candidate.trials[-1]
+                live.trials.append(trial)
+                live.trials.sort(key=lambda t: t.index)  # parallel tune commits land in any order
+                live.stamp_best_trial(self.problem.higher_is_better)
+                score = trial.val_score
+                self.log(
+                    f"  tune {live.candidate_id} t{trial.index}: val="
+                    f"{score:.5g}" if score is not None else
+                    f"  tune {live.candidate_id} t{trial.index}: failed"
+                )
+                if trial.is_best:
+                    self.evaluator.hoist_trial(job.candidate_dir, trial)
+                    if not live.pruned and not live.is_best:
+                        previous_best = self.journal.best_candidate(self.problem.higher_is_better)
+                        if previous_best is None or previous_best.candidate_id == live.candidate_id:
+                            live.is_best = True
+                        elif self._improves(live.val_score, previous_best.val_score):
+                            live.is_best = True
+                            self.log(f"  {live.candidate_id} promoted to best by t{trial.index}")
+                        elif self._improves(live.val_score, previous_best.val_score, band=0.0):
+                            self.log(
+                                f"  {live.candidate_id} t{trial.index} val={live.val_score:.5g} beats "
+                                f"{previous_best.candidate_id} ({previous_best.val_score:.5g}) by less "
+                                f"than the accept band ({self.accept_band():.3g}): within noise, not promoted"
+                            )
+                self.journal.candidate_result(live)
+                self.policy.observe(self._view(), live)
+                if live.status == "ok" and not live.pruned:
+                    if trial.is_best and live.candidate_id == self._selection_id:
+                        # the selected candidate's shipped values changed: best/
+                        # must be re-materialized even though selection did not move
+                        self._selection_id = None
+                    self._sync_selection()
+                self._publish_live_card()
+                return live
+            finally:
+                if self.status is not None:
+                    self.status.remove_current(job.candidate.candidate_id, job.trial_index)
                     self._status()
 
     def _record_result(self, candidate: Candidate) -> None:
@@ -929,6 +1124,7 @@ class GreedySearcher:
         target: Candidate | None,
         complexity: str | None,
         ensemble_inputs: list[Candidate] | None = None,
+        inherited: dict | None = None,
     ) -> str:
         holdout_clause = render(
             "holdout_clause", metric_name=self.problem.metric_name
@@ -964,6 +1160,7 @@ class GreedySearcher:
             verifier_display=self.problem.verifier_display,
             problem_contract=self.problem.contract or "(see the problem description above)",
             interface_section=self._interface_section(),
+            params_section=self._params_section(target, inherited),
             tools_clause=tools_clause,
         )
         direction = "higher is better" if self.problem.higher_is_better else "lower is better"
@@ -1125,6 +1322,28 @@ class GreedySearcher:
                 f"    PYTHONPATH={shim} {python} problem/interface.py\n"
             )
         return section
+
+    def _params_section(self, target: Candidate | None, inherited: dict | None) -> str:
+        """The params.json cue (always on — declaring is optional), plus the
+        parent's best-found values when a child inherits a declaration."""
+        shim = getattr(self.executor, "pythonpath", None)
+        shim_note = f"; for your own test runs prefix PYTHONPATH={shim}" if shim else ""
+        inherited_note = ""
+        if inherited and target is not None:
+            declaration, _ = read_candidate_space(Path(target.candidate_dir))
+            best = target.best_trial
+            where = f"its best trial (t{best.index})" if best is not None else "its defaults"
+            described = (
+                spaces_describe(declaration.raw, inherited) if declaration is not None else str(inherited)
+            )
+            inherited_note = (
+                f"\nThe parent declared tunable parameters; {where} found the values "
+                f"below, and `./params.json` already carries them as the defaults. "
+                f"Keep or revise the declaration — do not regress the values.\n\n"
+                + "\n".join(f"    {line}" for line in described.splitlines())
+                + "\n"
+            )
+        return render("params_cue", shim_note=shim_note, inherited=inherited_note).rstrip("\n") + "\n"
 
     def _verifier_clause(self) -> str:
         """How the agent's script is expected to surface its score, for the

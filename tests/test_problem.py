@@ -220,8 +220,11 @@ def test_bin_packing_repo_problem_loads_and_scores(config, tmp_path):
     assert "pack(items" in spec.contract
 
     search_dir = create_search_dir(tmp_path / "runs" / "r1", "bin-packing")
+    from hillclimb.evaluation import CandidateEvaluator
+
     executor = CommandExecutor(Path(sys.executable), spec.verifier_cmd)
-    baseline = write_baseline(spec, search_dir, executor=executor, timeout_s=120)
+    evaluator = CandidateEvaluator(executor=executor, problem=spec, config=config)
+    baseline = write_baseline(spec, search_dir, evaluator=evaluator, timeout_s=120)
     assert baseline.val_score is not None
     assert baseline.is_best
     # FFD lands close to the ceil(sum/capacity) floor on these instances

@@ -414,6 +414,65 @@ def summarize(
     return summaries
 
 
+def summary_to_dict(summary: ExperimentSummary) -> dict:
+    """The summary as plain JSON-able data (`experiment report --json`):
+    per arm the scores and aggregates, per comparison the paired gap and
+    its verdict — enough for a meta-verifier to read a score off without
+    parsing the table. `verdict` is one of `better`, `worse`, `tie`,
+    `within-noise`, `unknown` (no scores or no noise floor)."""
+    arms = []
+    for arm in summary.arms:
+        arms.append({
+            "arm": arm.arm,
+            "control": arm is summary.arms[0],
+            "n": len(arm.scores),
+            "scores": list(arm.scores),
+            "mean": arm.mean,
+            "median": arm.median,
+            "spread": arm.spread,
+            "wins": arm.wins,
+            "minutes_to_best": arm.minutes_to_best,
+            "tokens": arm.tokens,
+            "searches": [r.ref for r in arm.rows],
+        })
+    comparisons = []
+    for cmp in summary.comparisons:
+        if cmp.gap is None:
+            verdict = "unknown"
+        elif cmp.within_noise:
+            verdict = "within-noise"
+        elif cmp.gap == 0:
+            verdict = "tie"
+        elif cmp.within_noise is None:
+            verdict = "unknown"
+        else:
+            verdict = "better" if (cmp.gap > 0) == summary.higher_is_better else "worse"
+        comparisons.append({
+            "arm": cmp.arm,
+            "control": cmp.control,
+            "gap": cmp.gap,
+            "wins": cmp.wins,
+            "losses": cmp.losses,
+            "ties": cmp.ties,
+            "within_noise": cmp.within_noise,
+            "verdict": verdict,
+        })
+    return {
+        "experiment": summary.experiment,
+        "problem_id": summary.problem_id,
+        "problem_key": summary.problem_key,
+        "higher_is_better": summary.higher_is_better,
+        "noise_floor": summary.noise_floor,
+        "arms": arms,
+        "comparisons": comparisons,
+        "unfinished": [{"search": r.ref, "arm": r.arm, "state": r.state} for r in summary.unfinished],
+    }
+
+
+def summaries_to_dict(summaries: list[ExperimentSummary]) -> list[dict]:
+    return [summary_to_dict(s) for s in summaries]
+
+
 def _fmt(value: float | None, digits: int = 5) -> str:
     return f"{value:.{digits}g}" if value is not None else "-"
 

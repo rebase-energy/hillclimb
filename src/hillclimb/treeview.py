@@ -324,9 +324,9 @@ class TreePlotWidget(PlotWidget):
         if self.selected is not None and self._visible.node(self.selected) is None:
             self.selected = None
             self.post_message(self.NodeSelected(None))
-        plot, self._ids = build_tree_plot(self._visible, selected=self.selected, frame=self._frame)
+        plot, self._ids = self._build_plot(self._visible, self.selected, self._frame)
         self._index = {node_id: i for i, node_id in enumerate(self._ids)}
-        self._labels = label_nodes(self._visible)
+        self._labels = self._label_nodes(self._visible)
         if self._hover is not None:
             if self._hover in self._index:
                 plot.set_hovered(self._index[self._hover])
@@ -337,6 +337,41 @@ class TreePlotWidget(PlotWidget):
         self._plot = plot
         self._refresh_overlay()
         self.invalidate()
+
+    # -- the encoding hooks: what a subclass swaps to draw the same tree
+    # another way (tree2view.py) while keeping picking, scrubbing, the
+    # legend hit-test and the detail dock --
+
+    def _build_plot(self, tree: SearchTree, selected: str | None, frame: SearchTree | None):
+        return build_tree_plot(tree, selected=selected, frame=frame)
+
+    def _label_nodes(self, tree: SearchTree) -> list[VNode]:
+        return label_nodes(tree)
+
+    def _legend_spans(self) -> list[tuple[int, int, str, str]]:
+        return legend_spans(self._tree, self.hidden)
+
+    def _legend_entry_at(self, col: int, row: int) -> str | None:
+        return legend_entry_at(col, row)
+
+    def _flat_to_id(self, flat: int) -> str | None:
+        """The candidate a plotui flat pick index stands for, or None when
+        the pick landed on something that is not a candidate."""
+        return self._ids[flat] if flat < len(self._ids) else None
+
+    def _place_labels(self, projected) -> list[tuple[tuple[int, int, str, str], str]]:
+        """Label spans `((row, col, text, style), node_id)` for the current
+        projection: beside the marks, thinned by the collision mask."""
+        return place_labels_by_node(
+            self._labels,
+            projected,
+            cols=self.size.width,
+            rows=self.size.height,
+            cell_px=(self._cell_w, self._cell_h),
+            zoom=LABEL_ZOOM,
+            selected=self.selected,
+            hovered=self._hover,
+        )
 
     # -- geometry --
 
@@ -349,15 +384,17 @@ class TreePlotWidget(PlotWidget):
         y = _mouse_event_y(event) - self.region.y
         px_w, px_h, px, py, radius = self._pixel_geometry(x, y)
         flat = self._plot.pick_px(px_w, px_h, px, py, radius)
-        if flat is not None and flat < len(self._ids):
-            return self._ids[flat]
+        if flat is not None:
+            node_id = self._flat_to_id(flat)
+            if node_id is not None:
+                return node_id
         # not on a mark: the candidate's label next to it counts as the node too
         return self._label_cells.get((int(y), int(x)))
 
     def _refresh_overlay(self) -> None:
         if self._mode == "unsupported":
             return
-        legend = legend_spans(self._tree, self.hidden)
+        legend = self._legend_spans()
         self._label_cells = {}
         if self._tree is None or not self._ids or self.size.width <= 0:
             self.set_overlay([(r, c, t, Style.parse(st)) for r, c, t, st in legend])
@@ -365,16 +402,7 @@ class TreePlotWidget(PlotWidget):
         # legend first: set_overlay keeps the first span where two overlap, so
         # a node label never paints over a legend line. Labels always on (zoom
         # pinned past the graph's threshold); the collision mask thins a crowd
-        placed = place_labels_by_node(
-            self._labels,
-            self._plot.project_nodes(*self._px_dims()),
-            cols=self.size.width,
-            rows=self.size.height,
-            cell_px=(self._cell_w, self._cell_h),
-            zoom=LABEL_ZOOM,
-            selected=self.selected,
-            hovered=self._hover,
-        )
+        placed = self._place_labels(self._plot.project_nodes(*self._px_dims()))
         for (row, col, text, _style), node_id in placed:
             for x in range(col, col + len(text)):
                 self._label_cells[(row, x)] = node_id
@@ -418,7 +446,7 @@ class TreePlotWidget(PlotWidget):
         self.rebuild()
 
     def on_click_at(self, event: events.MouseUp) -> None:
-        entry = legend_entry_at(
+        entry = self._legend_entry_at(
             _mouse_event_x(event) - self.region.x, _mouse_event_y(event) - self.region.y
         )
         if entry is not None:

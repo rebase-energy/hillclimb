@@ -1,22 +1,25 @@
-"""The engine-level runner seam: a search engine that owns its own loop.
+"""The search-strategy seam: a search engine that owns its own loop.
 
 Two integration tiers exist (docs/optimizer-host-plan.md):
 
 - `SearchPolicy` (policy.py) — a read-only brain inside GreedySearcher's
   loop, for libraries that are archives/selectors.
-- `SearchRunner` (this module) — a full engine dispatched by name before
+- `SearchStrategy` (this module) — a full engine dispatched by name before
   `get_policy()` is ever called, for optimizers that own proposal,
   selection, and iteration themselves (GEPA, future engines).
 
-`build_search_runner` is the single construction point `api.execute_search`
+`build_search_strategy` is the single construction point `api.execute_search`
 calls; it receives every dependency the harness builds and returns whichever
-runner the config's `search.policy` names. `run()` owns the journal for the
-duration of the search (single-writer contract — see Journal).
+strategy the config's `search.policy` names. `run()` owns the journal for the
+duration of the search (single-writer contract — see Journal). Holdout is not
+a strategy's concern at all: the host scores it through the `evaluator` it
+hands in (evaluation.py), at the timing the engine registry declares.
 """
 
 from __future__ import annotations
 
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Protocol, runtime_checkable
 
@@ -26,7 +29,8 @@ if TYPE_CHECKING:
     from hillclimb.candidate import Candidate
     from hillclimb.config import Config
     from hillclimb.control import ControlCommand
-    from hillclimb.executor import Executor, HoldoutScorer
+    from hillclimb.evaluation import CandidateEvaluator
+    from hillclimb.executor import Executor
     from hillclimb.journal import Journal
     from hillclimb.problem import ProblemSpec
     from hillclimb.routing import BackendPool, Router
@@ -44,7 +48,7 @@ class StopRequested(Exception):
 
 
 @runtime_checkable
-class SearchRunner(Protocol):
+class SearchStrategy(Protocol):
     """What execute_search consumes: run the search to a terminal state and
     account for what it spent. `run()` may raise ParkedSearch/StopRequested;
     execute_search maps them to terminal states."""
@@ -54,21 +58,40 @@ class SearchRunner(Protocol):
     def total_cost_usd(self) -> float: ...
 
 
-# Engine registry: search.policy names that dispatch to a full runner instead
+# Engine registry: search.policy names that dispatch to a full strategy instead
 # of get_policy(). Factories import their integration lazily so a greedy
-# install never imports an optional engine.
+# install never imports an optional engine. An entry may also declare how the
+# HOST times holdout for that engine (evaluation.py): `inline` scores each
+# candidate as it lands, `after` waits until run() has returned — for an
+# optimizer whose state must never see a holdout value. A bare callable is
+# accepted as an inline entry (tests stub engines that way).
 
 
-def _gepa_factory(**deps) -> SearchRunner:
+@dataclass(frozen=True)
+class Engine:
+    factory: Callable[..., SearchStrategy]
+    holdout_timing: str = "inline"
+
+
+def _gepa_factory(**deps) -> SearchStrategy:
     from hillclimb.integrations.gepa import build_gepa_searcher
 
     return build_gepa_searcher(**deps)
 
 
-_ENGINES: dict[str, Callable[..., SearchRunner]] = {"gepa": _gepa_factory}
+_ENGINES: dict[str, Engine | Callable[..., SearchStrategy]] = {
+    "gepa": Engine(_gepa_factory, holdout_timing="after"),
+}
 
 
-def build_search_runner(
+def holdout_timing(name: str) -> str:
+    """When the host scores the hidden split for the strategy `name` picks:
+    an engine's declared timing, `inline` for everything else."""
+    entry = _ENGINES.get(name)
+    return entry.holdout_timing if isinstance(entry, Engine) else "inline"
+
+
+def build_search_strategy(
     *,
     config: Config,
     problem: ProblemSpec,
@@ -78,7 +101,7 @@ def build_search_runner(
     budget: BudgetManager,
     search_dir: Path,
     log=print,
-    holdout_scorer: HoldoutScorer | None = None,
+    evaluator: CandidateEvaluator | None = None,
     status: StatusWriter | None = None,
     slots: MachineSlots | None = None,
     abort: threading.Event | None = None,
@@ -90,8 +113,8 @@ def build_search_runner(
     router: Router | None = None,
     backends: BackendPool | None = None,
     drain_commands: Callable[[], list[ControlCommand]] | None = None,
-) -> SearchRunner:
-    """Construct the runner `config.search.policy` names. Engine names get
+) -> SearchStrategy:
+    """Construct the strategy `config.search.policy` names. Engine names get
     the full dependency set and never touch the policy registry; every other
     name goes through `get_policy()` (whose ValueError names the unknowns)
     into a GreedySearcher."""
@@ -104,7 +127,7 @@ def build_search_runner(
         budget=budget,
         search_dir=search_dir,
         log=log,
-        holdout_scorer=holdout_scorer,
+        evaluator=evaluator,
         status=status,
         slots=slots,
         abort=abort,
@@ -119,15 +142,22 @@ def build_search_runner(
     )
     name = config.search.policy
     if name in _ENGINES:
-        return _ENGINES[name](**deps)
-    from hillclimb.policies import get_policy
+        entry = _ENGINES[name]
+        factory = entry.factory if isinstance(entry, Engine) else entry
+        return factory(**deps)
+    from hillclimb.policies import get_policy, policy_base_dir
 
     # function-local on purpose: breaks the module cycle (search.py imports
     # the exceptions above at top level) and re-resolves the class per call
     # so tests can monkeypatch hillclimb.search.GreedySearcher
     from hillclimb.search import GreedySearcher
+    from hillclimb.tuners import get_tuner
 
     return GreedySearcher(
-        policy=get_policy(name, config.search.policy_params, complexity_start=complexity_start),
+        policy=get_policy(
+            name, config.search.policy_params,
+            complexity_start=complexity_start, base_dir=policy_base_dir(config),
+        ),
+        tuner=get_tuner(config.search.tuner, config.search.tuner_params),
         **deps,
     )

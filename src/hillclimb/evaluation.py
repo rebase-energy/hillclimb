@@ -5,25 +5,47 @@ interprets verifier results identically.
 
 Concurrency contract
 --------------------
-`CandidateEvaluator` is journal-free by construction: it touches only the
+`CandidateEvaluator` never writes the journal: it touches only the
 executor, the `Candidate` object it is handed, and that candidate's
-directory — safe to call from an operator worker or an engine thread.
-The journal-reading free functions at the bottom (`accept_band`,
-`holdout_threshold`) are the exception: they read journal state and must
-only run on the thread that owns the journal (the scheduler, or an engine
-holding its state lock).
+directory — safe to call from an operator worker or an engine thread. Its
+one journal *read* (the holdout top-k gate, `holdout_threshold`) takes the
+journal's lock, so it is safe from any thread. `accept_band` is the
+exception: it reads journal state and must only run on the thread that
+owns the journal (the scheduler, or an engine holding its state lock).
+
+Holdout is the host's, not a strategy's
+---------------------------------------
+The hidden split is scored HERE, as part of evaluating a trial, never by a
+search strategy: a strategy calls `run_trial` and gets back a trial that
+may already carry `holdout_score`/`holdout_error`, and a trial that fails
+the hidden split is reported as not-ok — the same contract failure as a
+verifier that exits non-zero. WHEN holdout runs is the host's decision
+(`holdout_timing`): `inline` scores each candidate's best trial as it
+lands (the TUI shows holdout live; the top-k gate limits the spend),
+`after` leaves it to `finalize_holdout` once the strategy has returned
+(engines whose state must never see a holdout value — GEPA). A strategy
+never holds the scorer.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, Callable
 
 from hillclimb.candidate import Candidate, Replicate, Trial, utcnow
 from hillclimb.config import Config
 from hillclimb.executor import RESULT_FILE, Executor, HoldoutScorer, read_result
 from hillclimb.journal import Journal
 from hillclimb.problem import ProblemSpec
+
+if TYPE_CHECKING:
+    from hillclimb.status import StatusWriter
+
+HOLDOUT_TIMINGS = ("inline", "after")
+# floors are always holdout-scored: they are the selection floor a re-search
+# must beat, so the top-k spend gate does not apply to them
+_UNGATED_OPERATORS = ("seed", "baseline")
 
 TAIL_CHARS = 2000
 
@@ -36,14 +58,26 @@ def tail(path: Path, chars: int = TAIL_CHARS) -> str:
 
 @dataclass
 class CandidateEvaluator:
-    """Trial/replicate execution and report reading for one search. Journal-free:
-    reads `config`/`problem` per call (they may be mutated by tests), writes
-    only into the candidate dir it is given."""
+    """Trial/replicate execution, report reading and holdout scoring for one
+    search — the host's `evaluate` service. Reads `config`/`problem` per
+    call (they may be mutated by tests), writes only into the candidate dir
+    it is given, never the journal (it only reads it for the holdout gate)."""
 
     executor: Executor
     problem: ProblemSpec
     config: Config
     holdout_scorer: HoldoutScorer | None = None
+    # host wiring for holdout (see the module docstring); a strategy sets none of it
+    holdout_timing: str = "inline"
+    journal: Journal | None = None  # the top-k gate; None = no gate
+    status: StatusWriter | None = None  # phase="holdout" for `watch`
+    log: Callable[[str], None] = field(default=print)
+
+    def __post_init__(self) -> None:
+        if self.holdout_timing not in HOLDOUT_TIMINGS:
+            raise ValueError(
+                f"holdout_timing must be one of {HOLDOUT_TIMINGS}, got {self.holdout_timing!r}"
+            )
 
     def run_trial(
         self,
@@ -74,6 +108,7 @@ class CandidateEvaluator:
 
         from hillclimb.dirs import create_replicate_dir, create_trial_dir, hoist_replicate, replicate_dir
 
+        explicit_index = index  # tune jobs: the status entry is keyed by trial
         if index is None:
             index = len(candidate.trials)
         tdir = create_trial_dir(candidate_dir, index, params_doc)
@@ -101,7 +136,96 @@ class CandidateEvaluator:
         # (the engine re-hoists when a later trial becomes the best one)
         if index == 0:
             hoist_replicate(candidate_dir, replicate_dir(tdir, 0), self.problem.output_artifacts)
-        return trial, all(ok for _, ok in results)
+        all_ok = all(ok for _, ok in results)
+        if all_ok and self._holdout_now(candidate, trial):
+            # the host scores the hidden split as part of evaluation: a trial
+            # that fails it is not ok, exactly like one that fails the verifier
+            self._score_holdout(candidate, candidate_dir, trial, status_key=explicit_index)
+            all_ok = trial.holdout_error is None
+        return trial, all_ok
+
+    # --- holdout: the host's, scored here, never by a strategy ---
+
+    def _holdout_now(self, candidate: Candidate, trial: Trial) -> bool:
+        """Score this trial's hidden split right now? Only in `inline`
+        timing, only for the trial the candidate would ship (its best), and
+        past the top-k spend gate — floors (seed, baseline) are never gated:
+        they are the selection floor itself."""
+        if self.holdout_scorer is None or self.holdout_timing != "inline":
+            return False
+        if not trial.is_best:
+            return False  # a losing parameter set never ships
+        if candidate.operator in _UNGATED_OPERATORS or self.journal is None:
+            return True
+        threshold = holdout_threshold(
+            self.journal,
+            top_k=self.config.holdout.top_k,
+            higher_is_better=self.problem.higher_is_better,
+        )
+        return gate_passes(trial.val_score, threshold, higher_is_better=self.problem.higher_is_better)
+
+    def _score_holdout(
+        self, candidate: Candidate, candidate_dir: Path, trial: Trial, *, status_key: int | None
+    ) -> None:
+        """Run the scorer against `trial` and stamp the result on it (cpu is
+        stamped even when scoring errored — the cost was paid)."""
+        if self.status is not None:
+            self.status.update_current(candidate.candidate_id, status_key, phase="holdout")
+        score, error, cpu_s = self.holdout_scorer.score(candidate_dir, trial)
+        trial.holdout_cpu_s = cpu_s
+        if error is not None:
+            trial.holdout_error = error
+            self.log(f"  holdout failed for {candidate.candidate_id} t{trial.index}: {error}")
+        else:
+            trial.holdout_score = score
+
+    def finalize_holdout(self, journal: Journal) -> list[Candidate]:
+        """`after` timing: score the hidden split for the top-k validation
+        candidates once the strategy has returned, and re-journal each
+        (replay keeps the last record). Idempotent — candidates that already
+        carry a holdout count toward k and are not re-scored. Returns the
+        candidates it scored."""
+        from hillclimb.status import CurrentCandidate
+
+        if self.holdout_scorer is None:
+            return []
+        ranked = [
+            c
+            for c in sorted(
+                journal.scored_candidates(),
+                key=lambda c: (-c.val_score if self.problem.higher_is_better else c.val_score),
+            )
+            if c.trials
+        ]
+        top_k = self.config.holdout.top_k
+        wanted = len(ranked) if top_k <= 0 else top_k
+        scored, done = 0, []
+        for candidate in ranked:
+            if scored >= wanted:
+                break
+            if candidate.holdout_score is not None:
+                scored += 1
+                continue
+            trial = candidate.best_trial or candidate.trials[-1]
+            if self.status is not None:
+                self.status.add_current(
+                    CurrentCandidate(
+                        candidate_id=candidate.candidate_id,
+                        operator=candidate.operator,
+                        phase="holdout",
+                        candidate_dir=candidate.candidate_dir,
+                    )
+                )
+            try:
+                self._score_holdout(candidate, Path(candidate.candidate_dir), trial, status_key=None)
+            finally:
+                if self.status is not None:
+                    self.status.remove_current(candidate.candidate_id)
+            if trial.holdout_error is None:
+                scored += 1
+            journal.candidate_result(candidate)
+            done.append(candidate)
+        return done
 
     def hoist_trial(self, candidate_dir: Path, trial: Trial) -> None:
         """Re-surface a trial's r0 outputs at the candidate root — called by
@@ -171,10 +295,9 @@ class CandidateEvaluator:
     def score_holdout(
         self, candidate_dir: Path, trial: Trial | None = None
     ) -> tuple[float | None, str | None, float | None]:
-        """Score the hidden split with `trial`'s params (the candidate's
-        immutable code, that trial's values); (score, None, cpu_s) on
-        success, (None, reason, cpu_s) on contract violation, (None, None,
-        None) when this search has no holdout."""
+        """Raw scorer call (the baseline writer and tests): (score, None,
+        cpu_s) on success, (None, reason, cpu_s) on contract violation,
+        (None, None, None) when this search has no holdout."""
         if self.holdout_scorer is None:
             return None, None, None
         return self.holdout_scorer.score(candidate_dir, trial)
@@ -205,7 +328,9 @@ def gate_passes(
     )
 
 
-# --- journal-reading helpers: LOCK-HOLDER / SCHEDULER-THREAD ONLY ---
+# --- journal-reading helpers ---
+# accept_band: LOCK-HOLDER / SCHEDULER-THREAD ONLY. holdout_threshold: any
+# thread (it takes the journal's lock) — the evaluator gates from workers.
 
 
 def accept_band(config: Config, journal: Journal) -> float:
@@ -223,17 +348,18 @@ def accept_band(config: Config, journal: Journal) -> float:
 
 
 def holdout_threshold(journal: Journal, *, top_k: int, higher_is_better: bool) -> float | None:
-    """Holdout hygiene: the k-th best val score at prepare time; a
-    candidate must beat (or tie) it to earn a holdout evaluation.
-    None = no gate (top_k disabled or fewer than k scored candidates).
-    Snapshot semantics: slightly stale under parallelism, exact in
-    serial — an acceptable heuristic for a hygiene gate."""
+    """Holdout hygiene: the k-th best val score right now; a candidate
+    must beat (or tie) it to earn a holdout evaluation. None = no gate
+    (top_k disabled or fewer than k scored candidates). Snapshot semantics:
+    slightly stale under parallelism (in-flight results are not in it),
+    exact in serial — an acceptable heuristic for a hygiene gate."""
     if top_k <= 0:
         return None
-    scored = sorted(
-        (c.val_score for c in journal.scored_candidates() if c.val_score is not None),
-        reverse=higher_is_better,
-    )
+    with journal.lock:
+        scored = sorted(
+            (c.val_score for c in journal.scored_candidates() if c.val_score is not None),
+            reverse=higher_is_better,
+        )
     if len(scored) < top_k:
         return None
     return scored[top_k - 1]

@@ -8,10 +8,10 @@ a fake driver). Install with: pip install 'hillclimb[gepa]'.
 from __future__ import annotations
 
 from hillclimb.integrations.gepa.searcher import GEPASearcher
-from hillclimb.search_runner import SearchRunner
+from hillclimb.search_strategy import SearchStrategy
 
 
-def build_gepa_searcher(**deps) -> SearchRunner:
-    """The _ENGINES factory: same dependency set build_search_runner passes
+def build_gepa_searcher(**deps) -> SearchStrategy:
+    """The _ENGINES factory: same dependency set build_search_strategy passes
     to GreedySearcher, minus the policy (GEPA owns its loop)."""
     return GEPASearcher(**deps)

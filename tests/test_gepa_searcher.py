@@ -13,7 +13,7 @@ from hillclimb.dirs import create_search_dir
 from hillclimb.integrations.gepa.proposer import source_hash
 from hillclimb.integrations.gepa.searcher import GEPASearcher
 from hillclimb.journal import Journal
-from hillclimb.search_runner import build_search_runner
+from hillclimb.search_strategy import build_search_strategy
 from tests.conftest import executor_for, ok_script
 from tests.gepa_fakes import FakeGEPADriver
 
@@ -139,7 +139,7 @@ def test_failure_fitness_dominates_all_valid_scores(task, config, tmp_path):
 
 def test_stop_command_parks_the_loop_without_holdout(task, config, tmp_path):
     from hillclimb.control import ControlCommand
-    from hillclimb.search_runner import StopRequested
+    from hillclimb.search_strategy import StopRequested
 
     backend = FakeBackend()
     backend.queue(script=ok_script(0.6))
@@ -156,7 +156,7 @@ def test_stop_command_parks_the_loop_without_holdout(task, config, tmp_path):
 
 
 def test_three_proposal_failures_park(task, config, tmp_path):
-    from hillclimb.search_runner import ParkedSearch
+    from hillclimb.search_strategy import ParkedSearch
 
     backend = FakeBackend()
     for _ in range(3):  # agent "succeeds" but returns the parent unchanged
@@ -204,7 +204,7 @@ def test_resume_identity_mismatch_is_a_hard_error(task, config, tmp_path):
         searcher2.run()
 
 
-def test_dispatch_via_build_search_runner(task, config, tmp_path, monkeypatch):
+def test_dispatch_via_build_search_strategy(task, config, tmp_path, monkeypatch):
     config.search.policy = "gepa"
 
     def explode(*a, **k):
@@ -212,7 +212,7 @@ def test_dispatch_via_build_search_runner(task, config, tmp_path, monkeypatch):
 
     monkeypatch.setattr("hillclimb.policies.get_policy", explode)
     search_dir = create_search_dir(tmp_path / "runs" / "r", "s")
-    runner = build_search_runner(
+    runner = build_search_strategy(
         config=config,
         problem=task,
         journal=Journal(search_dir / "journal.jsonl"),

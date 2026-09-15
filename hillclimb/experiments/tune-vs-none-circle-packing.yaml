@@ -1,0 +1,26 @@
+# Does policy-driven parameter tuning beat plain greedy at equal wall clock?
+# The control arm keeps tune_budget at 0 (no tune jobs); the treatment arm
+# lets the greedy policy spend up to 8 extra trials per promising candidate,
+# sampled by Optuna. Both arms see the same prompt cue, so the agents may
+# declare params.json either way — only the engine's spending differs.
+problems: [circle-packing]
+seed_from: seeds/circle-packing.py
+repeats: 3
+budget: 60m
+noise_floor: 0.01
+schedule: parallel
+max_concurrent: 2
+defaults:
+  learning.enabled: false
+  search.parallel_operators: 1
+  # agents write ~7 min solvers here; one draft, then tune it, is the only
+  # schedule that reaches tune jobs inside an hour (a 30m pilot with the
+  # default three drafts never got there)
+  search.num_drafts: 1
+  search.n_replicates: 1
+  search.tuner: optuna
+arms:
+  no-tune:
+    search.policy_params.tune_budget: 0
+  tune-8:
+    search.policy_params.tune_budget: 8

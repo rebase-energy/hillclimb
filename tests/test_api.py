@@ -164,8 +164,11 @@ def test_evaluator_baseline_placeholder_and_scored(config, tmp_path):
     baseline_file.write_text("def answer():\n    return 0.25\n")
     problem = make_evaluator_problem(tmp_path, baseline_text=baseline_file.read_text())
     search_dir = create_search_dir(tmp_path / "runs" / "r2", "eval-problem")
+    from hillclimb.evaluation import CandidateEvaluator
+
     executor = CommandExecutor(Path(sys.executable), problem.verifier_cmd)
-    scored = write_baseline(problem, search_dir, executor=executor, timeout_s=60)
+    evaluator = CandidateEvaluator(executor=executor, problem=problem, config=config)
+    scored = write_baseline(problem, search_dir, evaluator=evaluator, timeout_s=60)
     assert scored.val_score == 0.25
     assert scored.is_best
     assert (search_dir / "best" / "solution.py").exists()

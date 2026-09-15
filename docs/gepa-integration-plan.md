@@ -79,7 +79,7 @@ Keep the public configuration surface compatible—`search.policy: gepa`—but d
 
 ```text
 execute_search
-  └─ build_search_runner(...)
+  └─ build_search_strategy(...)
        ├─ policy == "gepa"  -> GEPASearcher
        └─ otherwise         -> GreedySearcher(get_policy(...))
 ```
@@ -87,12 +87,12 @@ execute_search
 Use a small protocol for the two methods the API needs:
 
 ```python
-class SearchRunner(Protocol):
+class SearchStrategy(Protocol):
     def run(self) -> Candidate | None: ...
     def total_cost_usd(self) -> float: ...
 ```
 
-The factory can live in `src/hillclimb/search_runner.py`. Avoid renaming or moving
+The factory can live in `src/hillclimb/search_strategy.py`. Avoid renaming or moving
 `GreedySearcher` in the first integration; that would create unnecessary merge risk.
 
 ## Ownership model
@@ -226,7 +226,7 @@ Use a narrow integration package so upstream-specific code does not leak into ge
 
 ```text
 src/hillclimb/
-  search_runner.py                  # protocol + dispatch factory
+  search_strategy.py                  # protocol + dispatch factory
   evaluation.py                     # shared trial/report helpers extracted from search.py
   integrations/
     gepa/
@@ -296,7 +296,7 @@ private trial/report logic into a second engine.
 
 ### Phase 2 — runner dispatch and configuration
 
-1. Add the `SearchRunner` protocol and `build_search_runner(...)` factory.
+1. Add the `SearchStrategy` protocol and `build_search_strategy(...)` factory.
 2. Move only construction branching out of `execute_search`; keep API finalization, official
    verification/grading, knowledge distillation, and status finalization shared.
 3. For `policy != "gepa"`, construct `GreedySearcher` exactly as today and call `get_policy()`.

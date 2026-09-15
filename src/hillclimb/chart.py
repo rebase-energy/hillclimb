@@ -91,6 +91,18 @@ def _landing_time(cand: Candidate) -> datetime | None:
     return _parse_ts(cand.finished_at) or _parse_ts(cand.created_at)
 
 
+def score_time(cand: Candidate) -> datetime | None:
+    """When the candidate's current score was measured: the best trial's
+    finish when a later tune trial won (a tune gain must not be drawn back
+    at the candidate's original landing), else the landing time."""
+    best = cand.best_trial
+    if best is not None and best.index > 0:
+        when = _parse_ts(best.finished_at or "")
+        if when is not None:
+            return when
+    return _landing_time(cand)
+
+
 def _counts_as_scored(cand: Candidate) -> bool:
     """The one predicate for "this candidate occupies an x slot on the climb".
     `climb_from_searches` and `cost_series` must agree on it exactly, or the
@@ -127,7 +139,7 @@ def curve_from_candidates(
     for cand in candidates:
         if cand.pruned or cand.val_score is None:
             continue
-        when = _parse_ts(cand.finished_at) or _parse_ts(cand.created_at)
+        when = score_time(cand)
         if when is None:
             continue
         scored.append((when, cand.val_score, cand.holdout_score))
@@ -490,7 +502,7 @@ def detail_layout(
         return layout
     landed = []
     for cand in scored.values():
-        when = _parse_ts(cand.finished_at) or _parse_ts(cand.created_at)
+        when = score_time(cand)
         if when is not None:
             landed.append((when, cand.candidate_id))
     landed.sort(key=lambda item: item[0])

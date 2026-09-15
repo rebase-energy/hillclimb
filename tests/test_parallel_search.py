@@ -120,20 +120,25 @@ class TestHoldoutTopK:
         from tests.test_search import FileHoldoutScorer
 
         config.holdout.top_k = top_k
+        from hillclimb.evaluation import CandidateEvaluator
+
         search_dir = create_search_dir(config.paths.runs_dir, "test-search")
         journal = Journal(search_dir / "journal.jsonl")
+        problem = task.model_copy(update={"holdout_cmd": task.verifier_cmd + ["--holdout"]})
+        evaluator = CandidateEvaluator(
+            executor=local_executor(), problem=problem, config=config,
+            holdout_scorer=FileHoldoutScorer(), journal=journal,
+        )
         searcher = GreedySearcher(
-            problem=task.model_copy(
-                update={"holdout_cmd": task.verifier_cmd + ["--holdout"]}
-            ),
+            problem=problem,
             config=config,
             journal=journal,
             backend=backend,
-            executor=local_executor(),
+            executor=evaluator.executor,
             budget=BudgetManager(3600, stop_margin_s=1),
             search_dir=search_dir,
             log=lambda *_: None,
-            holdout_scorer=FileHoldoutScorer(),
+            evaluator=evaluator,
         )
         return searcher, journal
 
@@ -435,6 +440,55 @@ class TestWorkerPool:
         assert isinstance(outcome.get("exc"), StopRequested)
         # both in-flight operators finished and were committed as real work
         assert len(journal.scored_candidates()) == 2
+
+    def test_graceful_deadline_lets_in_flight_finish(self, task, config):
+        backend = GateBackend()
+        backend.queue(script=ok_script(0.6), notes="a\n")
+        backend.queue(script=ok_script(0.7), notes="b\n")
+        searcher, journal, _ = pool_searcher(task, config, backend, n=2, max_candidates=6)
+        runner = threading.Thread(target=searcher.run)
+        runner.start()
+        assert backend.started.acquire(timeout=10)
+        assert backend.started.acquire(timeout=10)
+        # the budget runs out while both operators are in flight
+        searcher.budget._started = time.monotonic() - searcher.budget.total_s - 1
+        time.sleep(2.0)
+        assert runner.is_alive()  # graceful (default): still waiting on the operators
+        backend.release_all()
+        runner.join(timeout=30)
+        assert not runner.is_alive()
+        # both finished and were committed as real work, past the deadline
+        assert len(journal.scored_candidates()) == 2
+        assert searcher.budget.elapsed() > searcher.budget.total_s
+
+    def test_hard_deadline_aborts_in_flight(self, task, config):
+        config.budget.deadline = "hard"
+        backend = GateBackend()
+        backend.queue(script=ok_script(0.6), notes="a\n")
+        backend.queue(script=ok_script(0.7), notes="b\n")
+        searcher, journal, _ = pool_searcher(task, config, backend, n=2, max_candidates=6)
+        backend.abort = searcher.abort
+        outcome: dict = {}
+
+        def run():
+            try:
+                outcome["selected"] = searcher.run()
+            except Exception as exc:  # noqa: BLE001
+                outcome["exc"] = exc
+
+        runner = threading.Thread(target=run)
+        runner.start()
+        assert backend.started.acquire(timeout=10)
+        assert backend.started.acquire(timeout=10)
+        # nobody releases the gates: the deadline alone must cut the operators off
+        searcher.budget._started = time.monotonic() - searcher.budget.total_s - 1
+        runner.join(timeout=30)
+        assert not runner.is_alive()
+        assert "exc" not in outcome
+        abandoned = [c for c in journal.candidates.values() if c.status == "abandoned"]
+        assert len(abandoned) == 2
+        assert all(c.summary == "cut off at the budget deadline" for c in abandoned)
+        assert not [c for c in journal.scored_candidates() if c.operator != "baseline"]
 
     def test_journal_integrity_under_parallelism(self, task, config):
         import json

@@ -1,15 +1,23 @@
 """The holdout privacy boundary: gepa's prompts, feedback, and state never
-contain holdout values, and holdout runs only after the optimizer is done."""
+contain holdout values, and holdout runs only after the optimizer is done.
+
+Holdout is the host's: the searcher never holds a scorer. The host hands it
+an evaluator whose holdout timing is `after` (the gepa registry entry) and
+scores the top-k hidden splits itself once run() has returned
+(`api._finish_holdout`); this file drives that host path directly."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
+from hillclimb.api import _finish_holdout
 from hillclimb.backends.fake import FakeBackend
 from hillclimb.budget import BudgetManager
 from hillclimb.dirs import create_search_dir
+from hillclimb.evaluation import CandidateEvaluator
 from hillclimb.integrations.gepa.searcher import GEPASearcher
 from hillclimb.journal import Journal
+from hillclimb.search_strategy import holdout_timing
 from tests.conftest import executor_for, ok_script
 from tests.gepa_fakes import FakeGEPADriver
 
@@ -54,20 +62,31 @@ def run_search(task, config, tmp_path):
     search_dir = create_search_dir(tmp_path / "runs" / "r", "s")
     seed = tmp_path / "seed_solution.py"
     seed.write_text(ok_script(0.5))
+    journal = Journal(search_dir / "journal.jsonl")
+    # exactly what execute_search builds for gepa: the registry says `after`
+    assert holdout_timing("gepa") == "after"
+    evaluator = CandidateEvaluator(
+        executor=executor_for(task), problem=task, config=config,
+        holdout_scorer=holdout, holdout_timing="after", journal=journal,
+    )
     searcher = GEPASearcher(
         problem=task,
         config=config,
-        journal=Journal(search_dir / "journal.jsonl"),
+        journal=journal,
         backend=backend,
-        executor=executor_for(task),
+        executor=evaluator.executor,
         budget=BudgetManager(3600),
         search_dir=search_dir,
         log=lambda *_: None,
-        holdout_scorer=holdout,
+        evaluator=evaluator,
         seed_solution=seed,
         driver=driver,
     )
     selected = searcher.run()
+    assert not holdout.calls  # the strategy returned without a single holdout call
+    selected = _finish_holdout(
+        config, task, search_dir, journal, evaluator, selected, lambda *_: None
+    )
     return searcher, search_dir, holdout, driver, selected
 
 

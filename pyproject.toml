@@ -32,6 +32,11 @@ openevolve = [
 # `search.policy: gepa` — reflective Pareto search engine
 gepa = [
     "gepa>=0.1.4,<0.2",
+    "optuna>=3.6,<5",
+]
+# `search.tuner: optuna` — TPE over a candidate's declared params.json
+optuna = [
+    "optuna>=3.6,<5",
 ]
 
 [project.scripts]
@@ -48,6 +53,7 @@ dev = [
     "emflow",
     "openevolve>=0.3,<0.4",
     "gepa>=0.1.4,<0.2",
+    "optuna>=3.6,<5",
 ]
 
 [tool.uv.sources]
@@ -71,4 +77,4 @@ only-include = ["src/hillclimb", "README.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["slow: long-running integration tests"]
+markers = ["slow: long-running integration tests", "optuna: needs the optuna extra"]

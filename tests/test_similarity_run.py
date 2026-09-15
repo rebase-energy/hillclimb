@@ -347,8 +347,9 @@ class TestCliAutoDetect:
         launched = []
 
         class FakeApp:
-            def __init__(self, config=None, search=None, reference="baseline", run=None):
-                launched.append({"search": search, "reference": reference, "run": run})
+            def __init__(self, config=None, search=None, reference="baseline", run=None,
+                         view="reference", metric="behavioral"):
+                launched.append({"search": search, "reference": reference, "run": run, "view": view})
 
             def run(self):
                 pass
@@ -367,14 +368,20 @@ class TestCliAutoDetect:
         launched = self._capture(monkeypatch)
         result = CliRunner().invoke(app, ["similarity", "r1/p"])
         assert result.exit_code == 0, result.output
-        assert launched == [{"search": None, "reference": "seed", "run": ("r1", "p")}]
+        assert launched == [{"search": None, "reference": "seed", "run": ("r1", "p"), "view": "map"}]
         # a bare run id with several searches anchors on the latest, no "pick one"
         result = CliRunner().invoke(app, ["similarity", "r1"])
         assert result.exit_code == 0, result.output
         assert launched[-1]["run"] == ("r1", "p")
-        result = CliRunner().invoke(app, ["similarity", "r1/p", "--single"])
+        result = CliRunner().invoke(app, ["similarity", "map", "r1/p", "--single"])
         assert result.exit_code == 0, result.output
-        assert launched[-1] == {"search": "r1/p", "reference": "baseline", "run": None}
+        assert launched[-1] == {"search": "r1/p", "reference": "baseline", "run": None, "view": "map"}
+        # the reference cube is its own subcommand, same auto-detection
+        result = CliRunner().invoke(app, ["similarity", "reference", "r1/p"])
+        assert result.exit_code == 0, result.output
+        assert launched[-1] == {"search": None, "reference": "seed", "run": ("r1", "p"), "view": "reference"}
+        result = CliRunner().invoke(app, ["similarity", "reference", "r1/p", "--single"])
+        assert launched[-1] == {"search": "r1/p", "reference": "baseline", "run": None, "view": "reference"}
 
     def test_seedless_experiment_falls_back_to_the_single_view(self, config, tmp_path, monkeypatch):
         from typer.testing import CliRunner
@@ -385,7 +392,9 @@ class TestCliAutoDetect:
             _experiment_search(config.paths.runs_dir, "r1", search_id, arm, seed=False)
         monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
         launched = self._capture(monkeypatch)
-        result = CliRunner().invoke(app, ["similarity", "r1/p-2"])
-        assert result.exit_code == 0, result.output
-        assert "run view unavailable (p has no seed candidate" in result.output
-        assert launched == [{"search": "r1/p-2", "reference": "baseline", "run": None}]
+        for argv in (["similarity", "r1/p-2"], ["similarity", "reference", "r1/p-2"]):
+            result = CliRunner().invoke(app, argv)
+            assert result.exit_code == 0, result.output
+            assert "run view unavailable (p has no seed candidate" in result.output
+        assert [(l["search"], l["reference"], l["run"]) for l in launched] == [("r1/p-2", "baseline", None)] * 2
+        assert [l["view"] for l in launched] == ["map", "reference"]

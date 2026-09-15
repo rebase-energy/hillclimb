@@ -15,6 +15,7 @@ Work only inside the current working directory. Before you finish, these two fil
 
 {{problem_contract}}
 {{interface_section}}
+{{params_section}}
 {{holdout_clause}}
 
 Rules:

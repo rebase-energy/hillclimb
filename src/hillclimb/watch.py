@@ -24,9 +24,10 @@ from hillclimb.candidate import Candidate
 from hillclimb.config import Config
 from hillclimb.control import request_prune, request_stop
 from hillclimb.journal import Journal
+from hillclimb.policies import policy_label
 from hillclimb.run import RunMeta, SearchMeta, run_display_name
 from hillclimb.run import search_ref as _search_ref
-from hillclimb.status import SearchStatus, live_remaining_s
+from hillclimb.status import SearchStatus, live_remaining_s, live_spent_s
 from hillclimb.store import DataStore, FileDataStore, SearchRecord, key_for, open_store
 from hillclimb.theme import HILLCLIMB_CSS, apply_theme
 
@@ -146,12 +147,18 @@ def _format_duration(spent_s: float | None, total_s: float | None) -> str:
     """`4m 07s (budget: 10m)`: what has been spent, counting up while the
     search runs, next to the budget it was given — so a search that stopped
     early reads as "used 4 of 10 minutes" rather than a countdown stuck
-    short of zero."""
+    short of zero. Past the budget it keeps counting and says by how much
+    (`1h 04m 16s (budget: 1h, 4m 16s over)`): the default `graceful`
+    deadline lets in-flight operators finish, and that tail is real time."""
     if spent_s is None:
         return "-"
     text = _format_budget_left(spent_s)
     if total_s:
-        text += f" (budget: {_format_budget_total(total_s)})"
+        over = int(spent_s) - int(total_s)
+        text += f" (budget: {_format_budget_total(total_s)}"
+        if over > 0:
+            text += f", {_format_budget_left(over)} over"
+        text += ")"
     return text
 
 
@@ -300,7 +307,7 @@ def _stream_model_id(candidate_dir: Path) -> str | None:
     return None
 
 
-def _resolved_model_id(journal: Journal, status: SearchStatus | None) -> str | None:
+def _resolved_model_id(journal: Journal, status: SearchStatus | None, search_dir: Path) -> str | None:
     """The latest candidate's model, preferring the served id.
 
     Old journals may contain ``<synthetic>`` from a locally generated Claude
@@ -315,7 +322,7 @@ def _resolved_model_id(journal: Journal, status: SearchStatus | None) -> str | N
             resolved = candidate.backend.model
     if resolved is None and status is not None:
         for current in status.current:
-            resolved = _stream_model_id(Path(current.candidate_dir))
+            resolved = _stream_model_id(resolve_candidate_dir(search_dir, current.candidate_id, current.candidate_dir))
             if resolved:
                 break
     return resolved
@@ -334,7 +341,7 @@ def _search_row(store: DataStore, record: SearchRecord) -> SearchRow:
         # in-flight operators are not in the journal yet: read their live
         # streams so the count climbs while the tokens are being burned
         for current in status.current:
-            candidate_dir = Path(current.candidate_dir)
+            candidate_dir = resolve_candidate_dir(search_dir, current.candidate_id, current.candidate_dir)
             tokens += _stream_tokens(candidate_dir)
             spend += _stream_cost_usd(candidate_dir)
         best_val = _fmt(status.best.val_score) if status.best else "-"
@@ -344,9 +351,7 @@ def _search_row(store: DataStore, record: SearchRecord) -> SearchRow:
             if status.selected
             else "-"
         )
-        duration = _format_duration(
-            status.budget.total_s - live_remaining_s(status, state), status.budget.total_s
-        )
+        duration = _format_duration(live_spent_s(status, state), status.budget.total_s)
     else:
         best_val, selected, duration = "-", "-", "-"
     best_score = status.best.val_score if status is not None and status.best else None
@@ -357,11 +362,13 @@ def _search_row(store: DataStore, record: SearchRecord) -> SearchRow:
         # name (a mixed fleet, an optimizer comparison), which the policy
         # column already shows
         problem=(
-            f"{meta.problem_id} [{meta.arm}]" if meta.arm and meta.arm != meta.policy else meta.problem_id
+            f"{meta.problem_id} [{meta.arm}]"
+            if meta.arm and meta.arm != policy_label(meta.policy)
+            else meta.problem_id
         ),
-        policy=meta.policy,
+        policy=policy_label(meta.policy),
         backend=_display_backend(meta.backend, journal),
-        model=_display_model(meta.model, _resolved_model_id(journal, status)),
+        model=_display_model(meta.model, _resolved_model_id(journal, status, search_dir)),
         tokens=_fmt_tokens(tokens),
         spend=_fmt_cost(spend),
         state=state,
@@ -434,7 +441,7 @@ def _run_row(store: DataStore, meta: RunMeta) -> RunRow:
         if status is None:
             continue
         for current in status.current:
-            candidate_dir = Path(current.candidate_dir)
+            candidate_dir = resolve_candidate_dir(record.search_dir, current.candidate_id, current.candidate_dir)
             token_total += _stream_tokens(candidate_dir)
             spend_total += _stream_cost_usd(candidate_dir)
         if status.selected is not None:
@@ -756,10 +763,21 @@ def open_in_file_manager(path: Path) -> None:
     )
 
 
+def resolve_candidate_dir(search_dir: Path, candidate_id: str, recorded: str | None = None) -> Path:
+    """A candidate's working dir. The journal and status.json carry the
+    absolute path the engine used; a mirror of a hosted run (`rebase
+    hillclimb watch`) or a runs dir copied between machines keeps the layout
+    under the search dir but not that prefix, so when the recorded path is
+    not here the canonical `candidates/<cid>` under the search dir wins."""
+    if recorded:
+        path = Path(recorded)
+        if path.exists():
+            return path
+    return search_dir / "candidates" / candidate_id
+
+
 def _candidate_dir(search_dir: Path, candidate: Candidate) -> Path:
-    if candidate.candidate_dir:
-        return Path(candidate.candidate_dir)
-    return search_dir / "candidates" / candidate.candidate_id
+    return resolve_candidate_dir(search_dir, candidate.candidate_id, candidate.candidate_dir)
 
 
 def _candidate_marks(candidate: Candidate) -> str:
@@ -912,9 +930,22 @@ def _render_to_text(renderables: list[object], width: int) -> str:
     return buffer.getvalue()
 
 
+def candidate_in_flight(candidate: Candidate, live: bool) -> bool:
+    """Whether an operator is working on the candidate right now: the journal
+    keeps it `pending` from creation until its result lands (the table shows
+    that as `running`), and only while the search itself is alive."""
+    return live and candidate.status in ("pending", "running")
+
+
 def candidate_detail_renderables(
-    record: SearchRecord, journal: Journal, candidate_id: str, live: bool | None = None
+    record: SearchRecord,
+    journal: Journal,
+    candidate_id: str,
+    live: bool | None = None,
+    console: bool = False,
 ) -> list[object]:
+    """The detail panel's sections. ``console=True`` leaves out the stream,
+    stdout and stderr tails: the screen shows them in its live console."""
     from rich.console import Group
     from rich.panel import Panel
     from rich.table import Table
@@ -991,7 +1022,7 @@ def candidate_detail_renderables(
     else:
         overview.add_row("trial", Text("(not executed)", style="dim"), "", "")
     backend = candidate.backend
-    if candidate.status == "running" and live:
+    if candidate_in_flight(candidate, live):
         # in flight: what is known now, refreshed every tick — the backend
         # and model from the route, tokens from the live stream, a clock
         # counting up since the candidate was created
@@ -1080,6 +1111,9 @@ def candidate_detail_renderables(
             )
         )
 
+    if console:
+        return renderables
+
     stderr = _tail_text(candidate_dir / "exec_stderr.log", max_chars=3000)
     stdout = _tail_text(candidate_dir / "exec_stdout.log", max_chars=3000)
     if stderr:
@@ -1109,6 +1143,7 @@ def candidate_detail_renderables(
 
 from textual.app import App, ComposeResult  # noqa: E402
 from textual.binding import Binding  # noqa: E402
+from textual.containers import Vertical  # noqa: E402
 from textual.coordinate import Coordinate  # noqa: E402
 from textual import events  # noqa: E402
 from textual.scrollbar import ScrollBar  # noqa: E402
@@ -1520,6 +1555,191 @@ class CandidateHorizontalScrollBar(ScrollBar):
         event.stop()
 
 
+@dataclass(frozen=True)
+class ConsoleSource:
+    """One file a candidate's console follows: `stream` sources are Claude
+    Code stream-json (rendered like the operator stream), `text` sources are
+    plain logs written line by line in `style`."""
+
+    path: Path
+    label: str
+    kind: str  # stream | text
+    style: str = ""
+
+
+def console_sources(search_dir: Path, candidate_id: str, candidate_dir: Path) -> list[ConsoleSource]:
+    """Everything a running candidate writes, in the order the engine's
+    phases produce it: the agent's stream, the verifier's stdout/stderr, then
+    the holdout evaluation's (which runs in a dir agents never see)."""
+    holdout_dir = search_dir / "holdout-eval" / candidate_id
+    return [
+        ConsoleSource(candidate_dir / "agent_stream.jsonl", "agent", "stream"),
+        ConsoleSource(candidate_dir / "exec_stdout.log", "exec stdout", "text"),
+        ConsoleSource(candidate_dir / "exec_stderr.log", "exec stderr", "text", "red"),
+        ConsoleSource(holdout_dir / "exec_stdout.log", "holdout stdout", "text"),
+        ConsoleSource(holdout_dir / "exec_stderr.log", "holdout stderr", "text", "red"),
+    ]
+
+
+#: lines a console source remembers to find where a rewritten file continues
+CONSOLE_OVERLAP_LINES = 3
+#: lines a console keeps per source (and in the widget); older ones scroll away
+CONSOLE_MAX_LINES = 5000
+
+
+def complete_lines(path: Path) -> list[str] | None:
+    """The file's newline-terminated lines, or None when it is not readable.
+    A trailing line without its newline is still being written (an agent
+    stream message, a verifier's partial print) and waits for the next tick."""
+    try:
+        text = path.read_text(errors="replace")
+    except OSError:
+        return None
+    lines = text.split("\n")
+    lines.pop()  # the text after the last newline: "" or a half-written line
+    return lines
+
+
+def fresh_lines(seen: list[str], lines: list[str]) -> tuple[list[str], bool]:
+    """The lines of a re-read file that `seen` does not cover yet, and whether
+    the file was replaced rather than appended to. A file that only grew
+    continues right after the seen lines; a mirrored tail (the last N KB of a
+    remote file) drops lines off its head, so the seen tail is searched for
+    from the end. No overlap at all means the file was replaced wholesale."""
+    if not seen:
+        return lines, False
+    n = len(seen)
+    k = min(n, CONSOLE_OVERLAP_LINES)
+    if len(lines) >= n and lines[n - k : n] == seen[-k:]:
+        return lines[n:], False
+    # shorter windows too: the tail may have been cut inside the overlap.
+    # A single blank line is no evidence of anything.
+    for k in range(k, 0, -1):
+        tail = seen[-k:]
+        if k == 1 and not tail[0].strip():
+            break
+        for i in range(len(lines) - k, -1, -1):
+            if lines[i : i + k] == tail:
+                return lines[i + k :], False
+    return lines, True
+
+
+class ConsoleLog(RichLog):
+    """`tail -f` over a running candidate: the agent's stream while the
+    operator works, the verifier's output while it runs, appended as the
+    files grow (a section header the first time each file speaks). Follows
+    the end until the viewer scrolls up; scrolling back down, or `f`, follows
+    again. Unlike the detail above it, nothing here is ever rewritten, so a
+    line that has scrolled past stays where the reader left it."""
+
+    DEFAULT_CSS = """
+    ConsoleLog {
+        height: 1fr;
+        min-height: 4;
+        border: round $secondary;
+        padding: 0 0 0 1;
+    }
+    """
+
+    def __init__(self, **kwargs) -> None:
+        kwargs.setdefault("wrap", False)
+        kwargs.setdefault("markup", False)
+        kwargs.setdefault("auto_scroll", False)
+        kwargs.setdefault("max_lines", CONSOLE_MAX_LINES)
+        super().__init__(**kwargs)
+        self.follow = True
+        self.candidate_id: str | None = None
+        self.phase: str = ""
+        self._sources: list[ConsoleSource] = []
+        self._seen: dict[str, list[str]] = {}
+        self._started: set[str] = set()
+
+    def reset(self, candidate_id: str | None, sources: list[ConsoleSource]) -> None:
+        """Start following another candidate (or none): the log empties and
+        every source is read from its beginning at the next `pull`."""
+        self.clear()
+        self.candidate_id = candidate_id
+        self.phase = ""
+        self._sources = list(sources)
+        self._seen = {}
+        self._started = set()
+        self.follow = True
+        self._update_title()
+
+    def pull(self, phase: str = "") -> int:
+        """Append what the sources gained since the last pull. Returns the
+        number of lines written. A source whose file was replaced (no overlap
+        with what was shown) restarts the whole console from the files as they
+        are now, since the lines already shown may no longer be true."""
+        self.phase = phase
+        written = 0
+        for source in self._sources:
+            lines = complete_lines(source.path)
+            if lines is None:
+                continue
+            fresh, replaced = fresh_lines(self._seen.get(source.label, []), lines)
+            if replaced:
+                self._seen = {}
+                self._started = set()
+                self.clear()
+                return self.pull(phase)
+            if not fresh:
+                continue
+            seen = self._seen.setdefault(source.label, [])
+            first = not seen and source.label not in self._started
+            written += self._append(source, fresh, header=first)
+            seen.extend(fresh)
+            del seen[:-CONSOLE_MAX_LINES]
+        if self.follow and written:
+            self.scroll_end(animate=False)
+        self._update_title()
+        return written
+
+    def _append(self, source: ConsoleSource, lines: list[str], header: bool) -> int:
+        from rich.text import Text
+
+        renderables = []
+        if source.kind == "stream":
+            for index, raw in enumerate(lines):
+                entry = parse_stream_line(raw)
+                # the first line of a mirrored tail is usually the end of a
+                # message cut at the tail boundary: junk, not a raw line
+                if entry is None or (entry.kind == "raw" and header and index == 0):
+                    continue
+                renderables.append(_stream_text(entry))
+        else:
+            renderables.extend(Text(line, style=source.style, no_wrap=True) for line in lines)
+        if not renderables:
+            return 0
+        if header:
+            self._started.add(source.label)
+            self.write(Text(f"── {source.label} ──", style="dim"), scroll_end=False)
+        for renderable in renderables:
+            self.write(renderable, scroll_end=False)
+        return len(renderables)
+
+    def action_follow(self) -> None:
+        self.follow = True
+        self.scroll_end(animate=False)
+        self._update_title()
+
+    def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        if self.follow and self.max_scroll_y > 0:
+            self.follow = False
+            self._update_title()
+
+    def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+        if not self.follow and self.scroll_target_y >= self.max_scroll_y:
+            self.follow = True
+            self._update_title()
+
+    def _update_title(self) -> None:
+        title = "console"
+        if self.phase:
+            title += f" · {self.phase}"
+        self.border_title = title + ("" if self.follow else "  (paused — f follows)")
+
+
 class CandidateTable(DataTable):
     """Candidate tree table whose horizontal scrollbar can also resize details."""
 
@@ -1551,10 +1771,12 @@ class CandidateScreen(ResizableDetail, LiveScreen):
         Binding("x", "prune_candidate", "prune candidate", show=False),
         Binding("o", "open_candidate_dir", "open candidate dir", show=False),
         Binding("c", "open_chart", "chart", show=False),
+        Binding("f", "follow_console", "console: follow the end", show=False),
         KEYS_BINDING,
         *QUIT_BINDINGS,
     ]
     POINTER_HELP = [("click", "details"), ("drag divider", "resize detail")]
+    DETAIL_WIDGET = "#detail-pane"
 
     DEFAULT_CSS = """
     CandidateScreen #candidates { height: 1fr; }
@@ -1564,10 +1786,15 @@ class CandidateScreen(ResizableDetail, LiveScreen):
         color: $secondary;
         text-align: center;
     }
+    CandidateScreen #detail-pane { height: 10; }
     CandidateScreen #candidate-detail {
+        height: 1fr;
         min-height: 6;
         padding: 0 0 0 1;  /* no right padding: the scrollbar sits flush at the edge, like the table's */
     }
+    /* a running candidate: the overview takes the rows it needs, the console the rest */
+    CandidateScreen #candidate-detail.with-console { height: auto; max-height: 60%; }
+    CandidateScreen #candidate-console { display: none; }
     CandidateScreen #searchline { height: 1; padding: 0 1; background: $surface; }
     """
 
@@ -1591,7 +1818,9 @@ class CandidateScreen(ResizableDetail, LiveScreen):
         yield Label(id="searchline")
         yield CandidateTable(id="candidates", cursor_type="row")
         yield DetailDivider(" drag to resize details ", id="detail-divider")
-        yield RichLog(id="candidate-detail", wrap=True, markup=False, auto_scroll=False)
+        with Vertical(id="detail-pane"):
+            yield RichLog(id="candidate-detail", wrap=True, markup=False, auto_scroll=False)
+            yield ConsoleLog(id="candidate-console")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -1630,7 +1859,9 @@ class CandidateScreen(ResizableDetail, LiveScreen):
             line += f"  budget left: {_format_budget_left(live_remaining_s(status, state))}"
             if status.current:
                 active = " · ".join(
-                    f"{c.candidate_id}({c.operator}/{c.phase})" for c in status.current[:3]
+                    f"{c.candidate_id}({c.operator}/{c.phase}"
+                    + (f"/t{c.trial_index}" if c.trial_index is not None else "") + ")"
+                    for c in status.current[:3]
                 )
                 if len(status.current) > 3:
                     active += f" +{len(status.current) - 3}"
@@ -1663,7 +1894,13 @@ class CandidateScreen(ResizableDetail, LiveScreen):
         # the first paint narrow until the next refresh re-wrote it.
         # 4 = screen margins + the log's `padding: 0 1`.
         width = max(20, self.size.width - 4 - (detail.scrollbar_size_vertical if detail.show_vertical_scrollbar else 0))
-        renderables = candidate_detail_renderables(self._record(), journal, self._detail_candidate_id)
+        record = self._record()
+        candidate = journal.candidates[self._detail_candidate_id]
+        in_flight = candidate_in_flight(candidate, record.state == "running")
+        self._sync_console(record, candidate, in_flight)
+        renderables = candidate_detail_renderables(
+            record, journal, self._detail_candidate_id, console=in_flight
+        )
         # Only rewrite the log when the rendered content changed. A clear +
         # rewrite every live tick flashes the log's tail for a frame before
         # the scroll position is restored — visible flicker on every refresh.
@@ -1691,11 +1928,49 @@ class CandidateScreen(ResizableDetail, LiveScreen):
         self._detail_candidate_id = candidate_id
         self._render_detail(self._journal())
 
+    def _sync_console(self, record: SearchRecord, candidate: Candidate, in_flight: bool) -> None:
+        """Show the live console under the overview while an operator works
+        on the candidate, following its files; hide it (the overview's own
+        tails take over) once the result has landed."""
+        console = self.query_one("#candidate-console", ConsoleLog)
+        detail = self.query_one("#candidate-detail", RichLog)
+        if not in_flight:
+            if console.candidate_id is not None:
+                console.reset(None, [])
+            console.styles.display = "none"
+            detail.remove_class("with-console")
+            return
+        if console.candidate_id != candidate.candidate_id:
+            candidate_dir = _candidate_dir(record.search_dir, candidate)
+            console.reset(
+                candidate.candidate_id,
+                console_sources(record.search_dir, candidate.candidate_id, candidate_dir),
+            )
+        console.styles.display = "block"
+        detail.add_class("with-console")
+        status = self.store.read_status(self.key)
+        phase = ""
+        if status is not None:
+            phase = next((c.phase for c in status.current if c.candidate_id == candidate.candidate_id), "")
+        console.pull(phase)
+
+    def action_follow_console(self) -> None:
+        console = self.query_one("#candidate-console", ConsoleLog)
+        if console.candidate_id is not None:
+            console.action_follow()
+
+    def _set_detail_visible(self, visible: bool) -> None:
+        super()._set_detail_visible(visible)
+        # the pane hides as a whole; keep the overview's own display in step
+        # so `#candidate-detail` reads as hidden too
+        self.query_one("#candidate-detail", RichLog).styles.display = "block" if visible else "none"
+
     def _close_detail(self) -> None:
         self._detail_candidate_id = None
         self._detail_fingerprint = None
         detail = self.query_one("#candidate-detail", RichLog)
         detail.clear()
+        self.query_one("#candidate-console", ConsoleLog).reset(None, [])
         self._set_detail_visible(False)
 
     def _selected_candidate_id(self) -> str | None:
@@ -2121,7 +2396,11 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         candidates = list(journal.candidates.values())
         status = self.store.read_status(record.key)
         live = record.state == "running"
-        phases = {c.candidate_id: c.phase for c in status.current} if status else {}
+        # a candidate's own operator phase wins over a concurrent tune job's
+        phases = (
+            {c.candidate_id: c.phase for c in sorted(status.current, key=lambda c: c.trial_index is None)}
+            if status else {}
+        )
         layout = build_gantt(
             candidates,
             origin=status.started_at if status else None,

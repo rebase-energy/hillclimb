@@ -61,21 +61,30 @@ def test_full_emflow_search(config, tmp_path):
     backend.queue(script=predictor_module("Climatology60d", "60D"), notes="improve: 60-day window\n")
 
     python = Path(sys.executable)
+    from hillclimb.evaluation import CandidateEvaluator
+
     journal = Journal(search_dir / "journal.jsonl")
+    evaluator = CandidateEvaluator(
+        executor=CommandExecutor(python, spec.verifier_cmd, spec.verifier_env),
+        problem=spec,
+        config=config,
+        holdout_scorer=CommandHoldoutScorer(
+            python, spec.holdout_cmd, problem_dir=spec.problem_dir,
+            data_dir=spec.data_dir, work_root=search_dir / "holdout-eval", timeout_s=300,
+        ),
+        journal=journal,
+    )
     searcher = GreedySearcher(
         problem=spec,
         config=config,
         journal=journal,
         backend=backend,
-        executor=CommandExecutor(python, spec.verifier_cmd, spec.verifier_env),
+        executor=evaluator.executor,
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir,
         max_candidates=4,
         log=lambda *_: None,
-        holdout_scorer=CommandHoldoutScorer(
-            python, spec.holdout_cmd, problem_dir=spec.problem_dir,
-            data_dir=spec.data_dir, work_root=search_dir / "holdout-eval", timeout_s=300,
-        ),
+        evaluator=evaluator,
     )
     selected = searcher.run()
 

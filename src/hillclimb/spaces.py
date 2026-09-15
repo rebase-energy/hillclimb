@@ -41,6 +41,8 @@ import csv as _csv
 import hashlib
 import importlib.util
 import inspect
+import json as _json
+import os as _os
 import random as _random
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -566,3 +568,200 @@ def main(space: Space, argv: list[str] | None = None) -> int:
     for violation in violations:
         print(f"interface: {violation}")
     return 1
+
+
+# ---------------------------------------------------------------------------
+# Tunable parameters: the `params.json` contract
+#
+# A solution may declare numeric knobs next to itself in `params.json`
+# (flat `name -> spec`, see PARAM_TYPES); the engine then runs extra trials of
+# the SAME code with other values and keeps the best. The candidate-root copy
+# carries each param's `default`; the copy the engine writes into a trial dir
+# adds a `value` per param. `params()` is the agent-facing reader — it works
+# with no file at all (the solution's own defaults), so declaring is optional.
+#
+# Stdlib-only on purpose: this file is byte-copied into the runtime shim.
+
+PARAMS_FILE = "params.json"
+PARAMS_ENV = "HILLCLIMB_PARAMS"
+PARAM_TYPES = ("float", "int", "categorical")
+_SPEC_KEYS = {"type", "low", "high", "log", "step", "choices", "default", "value"}
+_SCALARS = (str, int, float, bool)
+
+
+class ParamsError(ValueError):
+    """A params.json that cannot be read or violates the declaration rules."""
+
+
+def _is_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def check_params_space(raw: object) -> list[Violation]:
+    """Every rule the declaration must honor, as located violations (never
+    raises): a flat object of identifier-named specs; `type` in PARAM_TYPES;
+    float/int carry numeric `low < high` (ints for int), optional `log`
+    (needs low > 0) and positive `step`; categorical carries unique
+    same-typed scalar `choices`; every spec has a `default` in range."""
+    violations: list[Violation] = []
+
+    def bad(path: str, message: str, expected: str, actual: object = None) -> None:
+        violations.append(Violation(path, message, expected, None if actual is None else repr(actual)))
+
+    if not isinstance(raw, dict):
+        bad(PARAMS_FILE, "not a JSON object", "{name: spec, ...}", type(raw).__name__)
+        return violations
+    if not raw:
+        bad(PARAMS_FILE, "declares no parameters", "at least one entry")
+    for name, spec in raw.items():
+        path = f"{PARAMS_FILE}[{name}]"
+        if not isinstance(name, str) or not name.isidentifier():
+            bad(path, "name is not a Python identifier", "e.g. learning_rate", name)
+        if not isinstance(spec, dict):
+            bad(path, "spec is not an object", '{"type": ..., "default": ...}', spec)
+            continue
+        unknown = sorted(set(spec) - _SPEC_KEYS)
+        if unknown:
+            bad(path, f"unknown keys {unknown}", f"only {sorted(_SPEC_KEYS)}")
+        kind = spec.get("type")
+        if kind not in PARAM_TYPES:
+            bad(f"{path}.type", "unknown type", "|".join(PARAM_TYPES), kind)
+            continue
+        if "default" not in spec:
+            bad(f"{path}.default", "missing", "the value the code uses today")
+        if kind == "categorical":
+            choices = spec.get("choices")
+            if not isinstance(choices, list) or not choices:
+                bad(f"{path}.choices", "missing or empty", "a non-empty list", choices)
+                continue
+            if any(not isinstance(c, _SCALARS) for c in choices):
+                bad(f"{path}.choices", "non-scalar choice", "strings, numbers or booleans")
+            if len({type(c) for c in choices}) > 1:
+                bad(f"{path}.choices", "mixed types", "choices of one type")
+            if len(set(map(repr, choices))) != len(choices):
+                bad(f"{path}.choices", "duplicate choice", "unique choices")
+            for key in ("low", "high", "log", "step"):
+                if key in spec:
+                    bad(f"{path}.{key}", "not allowed on a categorical", "choices only")
+            if "default" in spec and spec["default"] not in choices:
+                bad(f"{path}.default", "not one of the choices", str(choices), spec["default"])
+            continue
+        low, high = spec.get("low"), spec.get("high")
+        numeric = _is_number
+        if kind == "int":
+            numeric = lambda v: isinstance(v, int) and not isinstance(v, bool)  # noqa: E731
+        if not numeric(low) or not numeric(high):
+            bad(f"{path}.low/high", "missing or not numeric", f"{kind} bounds", (low, high))
+            continue
+        if not low < high:
+            bad(f"{path}.low/high", "low is not below high", "low < high", (low, high))
+        if spec.get("log", False) not in (True, False):
+            bad(f"{path}.log", "not a boolean", "true|false", spec.get("log"))
+        elif spec.get("log") and low <= 0:
+            bad(f"{path}.log", "log scale needs low > 0", "low > 0", low)
+        if "step" in spec and (not numeric(spec["step"]) or spec["step"] <= 0):
+            bad(f"{path}.step", "not a positive number", f"positive {kind}", spec["step"])
+        if "choices" in spec:
+            bad(f"{path}.choices", "not allowed on a numeric parameter", "low/high")
+        default = spec.get("default")
+        if "default" in spec:
+            if not numeric(default):
+                bad(f"{path}.default", "not numeric", kind, default)
+            elif not low <= default <= high:
+                bad(f"{path}.default", "outside [low, high]", f"[{low}, {high}]", default)
+    return violations
+
+
+def load_params_file(path) -> dict:
+    """Parse and validate a params.json; raises ParamsError naming every
+    violation (the runtime half: a broken declaration must fail visibly)."""
+    try:
+        raw = _json.loads(Path(path).read_text())
+    except (OSError, ValueError) as exc:
+        raise ParamsError(f"{path}: {exc}") from exc
+    violations = check_params_space(raw)
+    if violations:
+        raise ParamsError("; ".join(str(v) for v in violations))
+    return raw
+
+
+def _coerce_param(spec: dict, value):
+    kind = spec["type"]
+    if kind == "int":
+        return int(value)
+    if kind == "float":
+        return float(value)
+    for choice in spec["choices"]:  # categorical: the declared object, not a lookalike
+        if choice == value and type(choice) is type(value):
+            return choice
+    for choice in spec["choices"]:
+        if choice == value:
+            return choice
+    raise ParamsError(f"{value!r} is not one of {spec['choices']}")
+
+
+def params_values(raw: dict) -> dict:
+    """`{name: value-or-default}` for a validated declaration."""
+    return {name: _coerce_param(spec, spec.get("value", spec["default"])) for name, spec in raw.items()}
+
+
+def with_values(raw: dict, values: dict) -> dict:
+    """The trial-dir document: the declaration with a `value` per param
+    (missing names fall back to the default)."""
+    doc = {}
+    for name, spec in raw.items():
+        entry = {k: v for k, v in spec.items() if k != "value"}
+        entry["value"] = values.get(name, spec.get("default"))
+        doc[name] = entry
+    return doc
+
+
+def fold_defaults(raw: dict, values: dict) -> dict:
+    """The inheritance document for a child candidate: `values` become the
+    new defaults, `value` is dropped."""
+    doc = {}
+    for name, spec in raw.items():
+        entry = {k: v for k, v in spec.items() if k != "value"}
+        if name in values:
+            entry["default"] = values[name]
+        doc[name] = entry
+    return doc
+
+
+def params(defaults: dict | None = None, path=None) -> dict:
+    """The agent-facing reader: `{name: value}` for this run. Resolution:
+    `path` → `$HILLCLIMB_PARAMS` (the engine points it at the trial's copy)
+    → `./params.json` → no file, in which case `defaults` is returned as is.
+    With a file, every declared param gets its `value` (else `default`),
+    type-coerced; `defaults` fills any name the file does not declare. A
+    malformed file raises ParamsError so the failure is visible in the run's
+    stderr rather than silently scored on wrong values."""
+    location = path or _os.environ.get(PARAMS_ENV) or PARAMS_FILE
+    location = Path(location)
+    if not location.exists():
+        return dict(defaults or {})
+    raw = load_params_file(location)
+    values = dict(defaults or {})
+    values.update(params_values(raw))
+    return values
+
+
+def describe_params(raw: dict, values: dict | None = None) -> str:
+    """Deterministic one-line-per-param rendering for prompts and `show`."""
+    lines = []
+    for name in sorted(raw):
+        spec = raw[name]
+        kind = spec.get("type")
+        if kind == "categorical":
+            domain = "one of " + ", ".join(repr(c) for c in spec.get("choices", []))
+        else:
+            domain = f"{kind} in [{spec.get('low')}, {spec.get('high')}]"
+            if spec.get("log"):
+                domain += " (log)"
+            if spec.get("step") is not None:
+                domain += f" step {spec['step']}"
+        line = f"{name}: {domain}, default {spec.get('default')!r}"
+        if values is not None and name in values:
+            line += f" = {values[name]!r}"
+        lines.append(line)
+    return "\n".join(lines)

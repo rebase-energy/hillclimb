@@ -39,7 +39,7 @@ from pathlib import Path
 
 from hillclimb.candidate import Candidate
 from hillclimb.policies.greedy import GreedyPolicy, _improvable
-from hillclimb.policy import Action, SearchView
+from hillclimb.policy import Action, PolicyInput
 
 BUILTIN_FEATURES = ("complexity", "diversity", "score")
 DEFAULT_SEED = 42
@@ -73,7 +73,9 @@ class OpenEvolvePolicy:
         self.num_inspirations = int(self.params.get("num_inspirations", 2))
         self.debug_enabled = bool(self.params.get("debug", True))
         self.seed = int(self.params.get("random_seed", DEFAULT_SEED))
-        self._greedy = GreedyPolicy(complexity_start=complexity_start)  # draft/debug rules
+        # draft/debug rules; shares the params dict so `num_drafts` /
+        # `max_debug_depth` in policy_params apply here too
+        self._greedy = GreedyPolicy(complexity_start=complexity_start, params=self.params)
         db_fields = {f.name for f in dataclass_fields(DatabaseConfig)}
         db_kwargs = {k: v for k, v in self.params.items() if k in db_fields}
         db_kwargs.setdefault("random_seed", self.seed)
@@ -88,7 +90,7 @@ class OpenEvolvePolicy:
 
     # --- SearchPolicy protocol ---
 
-    def propose(self, view: SearchView) -> Action | None:
+    def propose(self, view: PolicyInput) -> Action | None:
         if self.debug_enabled:
             tip = self._greedy.debuggable_tip(view)
             if tip is not None:
@@ -98,7 +100,7 @@ class OpenEvolvePolicy:
             return self._draft_action(view)
         return self._evolve_action(view)
 
-    def observe(self, view: SearchView, candidate: Candidate) -> None:
+    def observe(self, view: PolicyInput, candidate: Candidate) -> None:
         """Bin every scored candidate into the grid. Buggy/abandoned ones are
         not programs (OpenEvolve drops failed evaluations too); the debug
         chain is hillclimb's way of recovering them."""
@@ -145,7 +147,7 @@ class OpenEvolvePolicy:
                 self.db.migrate_programs()
         self._added += 1
 
-    def action_for(self, view: SearchView, operator: str, target_id: str | None) -> Action:
+    def action_for(self, view: PolicyInput, operator: str, target_id: str | None) -> Action:
         """Explicitly requested operator (run_operator/smoke): fill in the
         decision-time details the harness cannot know."""
         if operator == "draft":
@@ -156,13 +158,13 @@ class OpenEvolvePolicy:
 
     # --- introspection shared with the TUI/status surfaces ---
 
-    def debuggable_tip(self, view: SearchView) -> Candidate | None:
+    def debuggable_tip(self, view: PolicyInput) -> Candidate | None:
         return self._greedy.debuggable_tip(view) if self.debug_enabled else None
 
-    def prospective_branches(self, view: SearchView) -> int:
+    def prospective_branches(self, view: PolicyInput) -> int:
         return self._greedy.prospective_branches(view)
 
-    def draft_complexity(self, view: SearchView) -> str:
+    def draft_complexity(self, view: PolicyInput) -> str:
         return self._greedy.draft_complexity(view)
 
     def island_stats(self) -> list[dict]:
@@ -170,14 +172,14 @@ class OpenEvolvePolicy:
 
     # --- decisions ---
 
-    def _draft_action(self, view: SearchView) -> Action:
+    def _draft_action(self, view: PolicyInput) -> Action:
         return Action(
             operator="draft",
             complexity=self._greedy.draft_complexity(view),
             policy_meta={"island": self._added % self.db_config.num_islands},
         )
 
-    def _evolve_action(self, view: SearchView) -> Action:
+    def _evolve_action(self, view: PolicyInput) -> Action:
         iteration = len(view.journal.candidates)
         island = iteration % self.db_config.num_islands
         pool = self._parent_pool(view)
@@ -206,7 +208,7 @@ class OpenEvolvePolicy:
 
     # --- helpers ---
 
-    def _parent_pool(self, view: SearchView) -> dict[str, Candidate]:
+    def _parent_pool(self, view: PolicyInput) -> dict[str, Candidate]:
         """Programs in the database that can still be expanded: scored,
         unpruned, with a solution.py on disk."""
         pool = {}
@@ -229,7 +231,7 @@ class OpenEvolvePolicy:
             return None
         return max(members, key=self._fitness)
 
-    def _metrics(self, view: SearchView, candidate: Candidate) -> dict[str, float]:
+    def _metrics(self, view: PolicyInput, candidate: Candidate) -> dict[str, float]:
         score = float(candidate.val_score)
         fitness = score if view.higher_is_better else -score  # OpenEvolve maximizes
         return {"combined_score": fitness, **candidate.metrics}

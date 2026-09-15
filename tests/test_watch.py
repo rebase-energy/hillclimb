@@ -1394,6 +1394,9 @@ def test_search_duration_counts_up_with_the_budget_alongside():
     assert _format_budget_total(90) == "1m 30s"
     assert _format_duration(247.9, 600) == "4m 07s (budget: 10m)"
     assert _format_duration(600, 600) == "10m 00s (budget: 10m)"
+    # a graceful deadline lets the last operator finish: the tail is shown, not clipped
+    assert _format_duration(856, 600) == "14m 16s (budget: 10m, 4m 16s over)"
+    assert _format_duration(3856, 3600) == "1h 04m 16s (budget: 1h, 4m 16s over)"
     assert _format_duration(12, 0) == "0m 12s"  # no budget declared
     assert _format_duration(None, 600) == "-"
 
@@ -1419,6 +1422,25 @@ def test_live_remaining_counts_down_between_heartbeats():
     assert live_remaining_s(status, "done") == 100
     status.budget.remaining_s = 3
     assert live_remaining_s(status, "running") == 0.0
+
+
+def test_live_spent_s_keeps_counting_past_the_budget():
+    from datetime import datetime, timedelta, timezone
+
+    from hillclimb.status import BudgetStatus, SearchStatus, live_spent_s
+
+    written = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
+    # over budget and still running: remaining is floored at 0 but spent is not
+    status = SearchStatus(
+        search_id="p", state="running",
+        budget=BudgetStatus(total_s=100, spent_s=104, remaining_s=0), updated_at=written,
+    )
+    assert 113 <= live_spent_s(status, "running") <= 115
+    assert live_spent_s(status, "done") == 104
+    # a record from before spent_s was written: total minus remaining
+    status.budget.spent_s = 0
+    status.budget.remaining_s = 40
+    assert live_spent_s(status, "done") == 60
 
 
 @pytest.mark.asyncio
@@ -1706,3 +1728,211 @@ async def test_ctrl_c_quits_and_question_mark_lists_every_key(tmp_path: Path):
         await pilot.press("ctrl+c")
         await pilot.pause()
     assert app.return_code is not None or not app.is_running
+
+
+# --- candidate paths recorded elsewhere (mirrors of hosted runs) ---
+
+
+def _running_status(search_id: str, run_id: str, current=()) -> SearchStatus:
+    return SearchStatus(search_id=search_id, run_id=run_id, state="running", pid=os.getpid(), current=list(current))
+
+
+def _stream_message(text: str, tokens: int = 1000) -> str:
+    return json.dumps({
+        "type": "assistant",
+        "message": {"id": f"m{tokens}", "usage": {"input_tokens": tokens, "output_tokens": 0},
+                    "content": [{"type": "text", "text": text}]},
+    }) + "\n"
+
+
+def test_candidate_paths_fall_back_to_the_search_dir_when_recorded_elsewhere(tmp_path: Path):
+    """A mirror of a hosted run keeps the layout but not the container's
+    absolute paths: the detail, the token counts and the model all read the
+    candidate dir under the search dir instead."""
+    from hillclimb.status import CurrentCandidate
+    from hillclimb.watch import _search_row, resolve_candidate_dir
+
+    runs_dir = tmp_path / "runs"
+    search_dir = make_run_with_search(runs_dir, "r")
+    foreign = "/hillclimb/hillclimb/runs/r/searches/circle-packing/candidates/c003"
+    local = search_dir / "candidates" / "c003"
+    local.mkdir()
+    (local / "agent_stream.jsonl").write_text(_stream_message("reading the contract", tokens=500_000))
+    (local / "exec_stdout.log").write_text("epoch 1 done\n")
+    journal = Journal(search_dir / "journal.jsonl")
+    journal.candidate_created(
+        make_candidate("c003", operator="draft", status="pending", candidate_dir=foreign,
+                       backend=BackendInfo(name="claude-code", model="sonnet"))
+    )
+    write_status(search_dir, _running_status("circle-packing", "r", [
+        CurrentCandidate(candidate_id="c003", operator="draft", phase="agent", candidate_dir=foreign)]))
+
+    assert resolve_candidate_dir(search_dir, "c003", foreign) == local
+    assert resolve_candidate_dir(search_dir, "c003", str(local)) == local  # an existing path is kept
+    assert resolve_candidate_dir(search_dir, "c003", None) == local
+
+    store = FileDataStore(search_dir.parents[2])
+    row = _search_row(store, store.search(key_for(search_dir)))
+    assert row.tokens == "1.74M"  # 240k + 1.0M journaled + 500k from the in-flight stream
+
+    from rich.console import Console
+
+    console = Console(record=True, width=120)
+    for renderable in candidate_detail_renderables(_record(search_dir), Journal(search_dir / "journal.jsonl"), "c003"):
+        console.print(renderable)
+    rendered = console.export_text()
+    assert "500.0k so far" in rendered
+    assert "reading the contract" in rendered
+    assert "epoch 1 done" in rendered
+    assert "candidates/c003" in rendered
+
+
+def test_pending_candidate_detail_is_in_flight_only_while_the_search_lives(tmp_path: Path):
+    """The journal keeps a candidate `pending` until its result lands, so
+    that is the status the in-flight rows (elapsed, tokens so far) key on."""
+    from rich.console import Console
+
+    from hillclimb.candidate import utcnow
+    from hillclimb.watch import candidate_in_flight
+
+    search_dir = make_run_with_search(tmp_path / "runs", "r")
+    journal = Journal(search_dir / "journal.jsonl")
+    journal.candidate_created(
+        make_candidate("c003", operator="draft", status="pending", created_at=utcnow(),
+                       backend=BackendInfo(name="claude-code", model="sonnet"))
+    )
+    journal = Journal(search_dir / "journal.jsonl")
+    assert candidate_in_flight(journal.candidates["c003"], live=True)
+    assert not candidate_in_flight(journal.candidates["c003"], live=False)
+    assert not candidate_in_flight(journal.candidates["c001"], live=True)
+
+    def rendered(live: bool, console: bool = False) -> str:
+        out = Console(record=True, width=120)
+        for r in candidate_detail_renderables(_record(search_dir), journal, "c003", live=live, console=console):
+            out.print(r)
+        return out.export_text()
+
+    assert "elapsed" in rendered(live=True)
+    assert "so far" in rendered(live=True)
+    assert "elapsed" not in rendered(live=False)
+
+
+# --- the live console ---
+
+
+def test_fresh_lines_grown_shifted_and_replaced():
+    from hillclimb.watch import fresh_lines
+
+    seen = ["a", "b", "c", "d"]
+    assert fresh_lines([], ["a", "b"]) == (["a", "b"], False)
+    assert fresh_lines(seen, seen) == ([], False)
+    assert fresh_lines(seen, seen + ["e", "f"]) == (["e", "f"], False)
+    # a mirrored tail dropped lines off its head
+    assert fresh_lines(seen, ["c", "d", "e"]) == (["e"], False)
+    # the file was replaced by something unrelated
+    assert fresh_lines(seen, ["x", "y", "z"]) == (["x", "y", "z"], True)
+    # a repeated tail: the continuation right after the seen lines wins over
+    # a later repeat
+    seen = ["tick", "tick", "tick"]
+    assert fresh_lines(seen, ["tick", "tick", "tick", "tick", "tick"]) == (["tick", "tick"], False)
+
+
+def test_complete_lines_waits_for_the_newline(tmp_path: Path):
+    from hillclimb.watch import complete_lines
+
+    path = tmp_path / "exec_stdout.log"
+    assert complete_lines(path) is None
+    path.write_text("")
+    assert complete_lines(path) == []
+    path.write_text("one\ntwo\nthr")
+    assert complete_lines(path) == ["one", "two"]
+    path.write_text("one\ntwo\nthree\n")
+    assert complete_lines(path) == ["one", "two", "three"]
+
+
+def _console_text(console) -> str:
+    return "\n".join(strip.text for strip in console.lines)
+
+
+@pytest.mark.asyncio
+async def test_running_candidate_detail_has_a_following_console(tmp_path: Path):
+    from hillclimb.candidate import utcnow
+    from hillclimb.status import CurrentCandidate
+    from hillclimb.watch import ConsoleLog
+
+    runs_dir = tmp_path / "runs"
+    search_dir = make_run_with_search(runs_dir, "r")
+    live = search_dir / "candidates" / "c003"
+    live.mkdir()
+    stream = live / "agent_stream.jsonl"
+    stream.write_text(_stream_message("reading the contract"))
+    journal = Journal(search_dir / "journal.jsonl")
+    journal.candidate_created(
+        make_candidate("c003", operator="draft", status="pending", created_at=utcnow(),
+                       candidate_dir=str(live), backend=BackendInfo(name="claude-code", model="sonnet"))
+    )
+    current = CurrentCandidate(candidate_id="c003", operator="draft", phase="agent", candidate_dir=str(live))
+    write_status(search_dir, _running_status("circle-packing", "r", [current]))
+    config = Config()
+    config.paths.runs_dir = runs_dir
+
+    app = WatchApp(config)
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.press("enter")
+        await pilot.press("o")
+        await pilot.pause()
+        screen = app.screen
+        table = screen.query_one("#candidates")
+        table.move_cursor(row=table.get_row_index("c003"))
+        await pilot.press("enter")
+        await pilot.pause()
+        console = screen.query_one("#candidate-console", ConsoleLog)
+        detail = screen.query_one("#candidate-detail")
+        assert screen._detail_candidate_id == "c003"
+        assert str(console.styles.display) == "block"
+        assert detail.has_class("with-console")
+        assert console.candidate_id == "c003"
+        assert console.border_title == "console · agent"
+        shown = _console_text(console)
+        assert "── agent ──" in shown and "reading the contract" in shown
+        assert "epoch" not in shown
+
+        # the operator streams on, the verifier starts: lines are appended, not rewritten
+        with stream.open("a") as f:
+            f.write(_stream_message("writing solution.py", tokens=2000))
+            f.write('{"type": "assistant", "message": {"id": "half"')  # mid-write, no newline yet
+        (live / "exec_stdout.log").write_text("epoch 1 done\nepoch 2 done\n")
+        current.phase = "exec"
+        write_status(search_dir, _running_status("circle-packing", "r", [current]))
+        screen.refresh_data()
+        await pilot.pause()
+        shown = _console_text(console)
+        assert shown.count("reading the contract") == 1
+        assert "writing solution.py" in shown
+        assert "half" not in shown
+        assert "── exec stdout ──" in shown and "epoch 2 done" in shown
+        assert console.border_title == "console · exec"
+        assert console.follow
+
+        # scrolling up pauses following; `f` resumes it
+        console.follow = False
+        console._update_title()
+        assert "paused" in console.border_title
+        await pilot.press("f")
+        await pilot.pause()
+        assert console.follow and "paused" not in console.border_title
+
+        # the result lands: the console goes away and the overview's own tails take over
+        done = journal.candidates["c003"]
+        done.status = "ok"
+        Journal(search_dir / "journal.jsonl").candidate_result(done)
+        screen.refresh_data()
+        await pilot.pause()
+        assert str(console.styles.display) == "none"
+        assert not detail.has_class("with-console")
+        assert console.candidate_id is None
+
+        # closing the detail hides the pane and the overview with it
+        await pilot.press("escape")
+        await pilot.pause()
+        assert str(detail.styles.display) == "none"

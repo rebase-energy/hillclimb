@@ -1,7 +1,7 @@
 """The search-policy seam: WHAT to try next is a policy decision; everything
 else is the harness.
 
-A `SearchPolicy` proposes `Action`s over a read-only `SearchView`; the
+A `SearchPolicy` proposes `Action`s over a read-only `PolicyInput`; the
 harness (`GreedySearcher`) materializes each action into a candidate dir, prompt,
 and agent call, executes it, and journals the outcome.
 
@@ -12,7 +12,7 @@ Contracts every policy must honor:
   access. Policies may read candidate candidate dirs from disk (greedy hashes
   solution.py to dedupe ensemble inputs) but must never write.
 - Decisions must be derivable from replayed journal state: either compute
-  every proposal from the `SearchView` alone, or rebuild internal caches via
+  every proposal from the `PolicyInput` alone, or rebuild internal caches via
   `observe()` — on construction the harness replays every existing candidate
   through `observe()` in journal order, so `hillclimb resume` works.
 - Ensemble-style actions must carry their inputs in `inspiration_ids`; the
@@ -37,6 +37,9 @@ if TYPE_CHECKING:
     from hillclimb.journal import Journal
 
 
+TUNE_ACTION = "tune"
+
+
 @dataclass(frozen=True)
 class Route:
     """Backend/model override for one action; None fields inherit from the
@@ -51,8 +54,11 @@ class Action:
     """One proposed operator invocation. Candidates are referenced by id, not
     object, so actions stay serializable and trivially journal-derivable."""
 
-    operator: str  # draft | debug | improve | ensemble
-    target_id: str | None = None  # parent candidate
+    # draft | debug | improve | ensemble create a candidate through an agent;
+    # `tune` (TUNE_ACTION) adds one trial — a new parameter set from the
+    # search's tuner — to the existing candidate `target_id`, no agent
+    operator: str
+    target_id: str | None = None  # parent candidate (the tuned candidate for `tune`)
     inspiration_ids: tuple[str, ...] = ()  # extra candidates as prompt/candidate-dir context
     complexity: str | None = None  # draft complexity cue (minimal | moderate | advanced)
     route: Route | None = None  # rare per-action override; routing config is the norm
@@ -62,11 +68,14 @@ class Action:
 
 @dataclass(frozen=True)
 class InflightRef:
-    """Snapshot of one in-flight job, as much as a policy may know about it."""
+    """Snapshot of one in-flight job, as much as a policy may know about it.
+    A tune job carries the tuned candidate's id, operator `tune`, no parent
+    and its trial index (so a policy never over-proposes on one candidate)."""
 
     candidate_id: str
     operator: str
     parent_id: str | None
+    trial_index: int | None = None
 
 
 @dataclass(frozen=True)
@@ -79,7 +88,7 @@ class BudgetView:
 
 
 @dataclass(frozen=True)
-class SearchView:
+class PolicyInput:
     """Read-only view of search state handed to the policy on every call.
     The journal is shared by reference (scheduler-thread only); everything
     else is a snapshot computed at call time."""
@@ -97,12 +106,12 @@ class SearchPolicy(Protocol):
     name: str
     params: dict  # persisted verbatim into SearchMeta for resume
 
-    def propose(self, view: SearchView) -> Action | None:
+    def propose(self, view: PolicyInput) -> Action | None:
         """Next action given current state; None = hold (keep the slot empty
         until an in-flight result lands)."""
         ...
 
-    def observe(self, view: SearchView, candidate: Candidate) -> None:
+    def observe(self, view: PolicyInput, candidate: Candidate) -> None:
         """Called after every journaled terminal result (and replayed for
         every existing candidate on construction). Stateless policies ignore
         it; stateful ones rebuild caches here."""

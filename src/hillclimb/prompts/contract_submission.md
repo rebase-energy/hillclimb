@@ -9,6 +9,7 @@ Work only inside the current working directory. Before you finish, these two fil
    - writes `./submission.csv` matching `./problem/sample_submission.csv` exactly: same columns, same id values, same value dtypes
 2. `notes.md` — first line: one sentence summarizing the approach (or the change you made); a short explanation may follow.
 {{interface_section}}
+{{params_section}}
 {{holdout_clause}}
 {{report_clause}}
 

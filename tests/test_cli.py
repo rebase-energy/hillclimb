@@ -388,6 +388,34 @@ def test_knowledge_live_renders_run_cards(config, tmp_path, monkeypatch, capsys)
         knowledge_live("nope")
 
 
+def test_show_lists_trials_with_their_params(config, tmp_path, monkeypatch, capsys):
+    from hillclimb.candidate import Candidate
+    from hillclimb.cli import show
+    from hillclimb.journal import Journal
+
+    config.paths.runs_dir = tmp_path / "runs"
+    search_dir = make_search(config.paths.runs_dir, "run-1", "a")
+    ws = tmp_path / "ws" / "c001"
+    ws.mkdir(parents=True)
+    (ws / "solution.py").write_text("x = 1\n")
+    journal = Journal(search_dir / "journal.jsonl")
+    journal.candidate_result(Candidate(
+        candidate_id="c001", operator="draft", status="ok", candidate_dir=str(ws), tunable=True,
+        trials=[
+            mk_trial(0.5, params={"k": 1}, is_best=False),
+            mk_trial(0.6, 0.62, params={"k": 4}, index=1, holdout_score=0.55),
+        ],
+    ))
+    monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
+
+    show("run-1/a", "c001")
+    out = capsys.readouterr().out
+    assert 'trial 0: val=0.5  params={"k": 1}' in out
+    assert 'trial 1*: val=0.61  params={"k": 4}  holdout=0.55' in out
+    assert "  replicate 1: val=0.62  seed=1" in out
+    assert "tunable: yes" in out
+
+
 def test_show_renders_report_diff_and_notes(config, tmp_path, monkeypatch, capsys):
     from hillclimb.candidate import Candidate
     from hillclimb.cli import show
@@ -975,3 +1003,39 @@ def test_run_mixed_fleet_repeats_every_arm_and_rejects_stray_flags(config, monke
     )
     assert result.exit_code != 0 and "needs a mixed fleet" in result.output
     assert len(calls) == 1
+
+
+def test_resume_warns_when_the_policy_file_changed(config, tmp_path, monkeypatch, capsys):
+    """A file policy resumes from its recorded path; a changed hash is said
+    out loud (replay may diverge), a missing file is a usage error."""
+    from hillclimb.cli import resume
+    from tests.test_policy import FILE_POLICY
+
+    policy_file = tmp_path / "drafts_only.py"
+    policy_file.write_text(FILE_POLICY)
+    config.paths.runs_dir = tmp_path / "runs"
+    run_dir = config.paths.runs_dir / "run-1"
+    write_run_meta(run_dir, RunMeta(run_id="run-1", name="run-1", kind="problem", target="x", problem_ids=["a"]))
+    search_dir = run_dir / "searches" / "a"
+    write_search_meta(
+        search_dir,
+        SearchMeta(
+            search_id="a", run_id="run-1", problem="p", problem_id="a",
+            backend="dummy", model="m", metric="score", budget_s=600,
+            policy=str(policy_file), policy_sha256="0" * 64,
+        ),
+    )
+    (search_dir / "journal.jsonl").write_text("")
+    captured = {}
+    monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config.model_copy(deep=True))
+    monkeypatch.setattr("hillclimb.cli.load_problem", lambda *a, **k: object())
+    monkeypatch.setattr("hillclimb.cli._execute", lambda config_arg, *a, **k: captured.setdefault("config", config_arg))
+
+    resume("run-1/a")
+    assert captured["config"].search.policy == str(policy_file)
+    err = capsys.readouterr().err
+    assert "changed since the search started" in err and "000000000000 ->" in err
+
+    policy_file.unlink()
+    with pytest.raises(typer.BadParameter, match="is gone"):
+        resume("run-1/a")

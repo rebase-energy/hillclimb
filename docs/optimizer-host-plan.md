@@ -52,9 +52,9 @@ Nothing here replaces the existing seams; it names them and adds one.
 
 1. **`SearchPolicy`** (`policy.py`, registry in `policies/__init__.py`) —
    a read-only *brain inside hillclimb's loop*: `propose()`/`observe()` over
-   a `SearchView`, replay-deterministic. Correct tier for libraries that are
+   a `PolicyInput`, replay-deterministic. Correct tier for libraries that are
    archives/selectors (OpenEvolve's database today; pyribs later). Unchanged.
-2. **`SearchRunner`** (from the GEPA plan: `search_runner.py`, protocol
+2. **`SearchStrategy`** (from the GEPA plan: `search_strategy.py`, protocol
    `run() -> Candidate | None` + `total_cost_usd()`) — an *engine that owns
    its loop*, dispatched before `get_policy()` is called. `GreedySearcher`
    is the first runner; `GEPASearcher` the second. All future full engines
@@ -233,7 +233,7 @@ already exists to meter them.
 ## Phasing
 
 1. **GEPA MVP** (`docs/gepa-integration-plan.md`, in flight). Ships
-   `SearchRunner` dispatch and `evaluation.py`. One adjustment to that plan:
+   `SearchStrategy` dispatch and `evaluation.py`. One adjustment to that plan:
    shape the shared evaluation helpers' return as `EvalResult` now, even
    though GEPA only consumes score + feedback — it is the one interface
    every later engine touches.

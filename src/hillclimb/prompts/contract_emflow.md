@@ -52,6 +52,7 @@ class MyModel(Predictor):
 - NEVER evaluate on or fit against the holdout split. The orchestrator scores holdout
   separately; touching it invalidates the search.
 {{interface_section}}
+{{params_section}}
 Rules:
 - Do NOT run long training yourself. Quick sanity checks (imports, instantiating your
   model, predicting one origin) are fine; the orchestrator runs the real evaluation

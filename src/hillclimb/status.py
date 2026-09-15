@@ -43,11 +43,16 @@ class CandidateCounts(BaseModel):
 
 class CurrentCandidate(BaseModel):
     candidate_id: str
-    operator: str
-    phase: str  # agent | exec
+    operator: str  # the creating operator, or `tune` for an extra trial
+    phase: str  # agent | exec | holdout | waiting-slot
     candidate_dir: str
     agent_pid: int | None = None
+    trial_index: int | None = None  # set for tune jobs (one candidate, several in flight)
     started_at: str = Field(default_factory=utcnow)
+
+    @property
+    def key(self) -> tuple[str, int | None]:
+        return (self.candidate_id, self.trial_index)
 
     @model_validator(mode="before")
     @classmethod
@@ -111,6 +116,21 @@ def live_remaining_s(status: "SearchStatus", state: str) -> float:
     if state == "running":
         remaining -= _age_s(status.updated_at)
     return max(0.0, remaining)
+
+
+def live_spent_s(status: "SearchStatus", state: str) -> float:
+    """Wall clock the search has actually used, right now. Unlike the budget
+    left, this keeps counting past the budget: a graceful deadline lets
+    in-flight operators finish, and that tail is real time the search
+    spent. The engine writes `spent_s` at each heartbeat; while running,
+    add the heartbeat's age. Records from before `spent_s` was written fall
+    back to total minus remaining."""
+    spent = status.budget.spent_s
+    if spent <= 0 and status.budget.total_s > 0:
+        spent = status.budget.total_s - status.budget.remaining_s
+    if state == "running":
+        spent += _age_s(status.updated_at)
+    return max(0.0, spent)
 
 
 def pid_alive(pid: int | None) -> bool:
@@ -233,23 +253,21 @@ class StatusWriter:
 
     def add_current(self, entry: CurrentCandidate) -> None:
         with self._lock:
-            self.status.current = [
-                c for c in self.status.current if c.candidate_id != entry.candidate_id
-            ] + [entry]
+            self.status.current = [c for c in self.status.current if c.key != entry.key] + [entry]
             self._write()
 
-    def update_current(self, candidate_id: str, **fields) -> None:
+    def update_current(self, candidate_id: str, trial_index: int | None = None, **fields) -> None:
         with self._lock:
             for entry in self.status.current:
-                if entry.candidate_id == candidate_id:
+                if entry.key == (candidate_id, trial_index):
                     for key, value in fields.items():
                         setattr(entry, key, value)
             self._write()
 
-    def remove_current(self, candidate_id: str) -> None:
+    def remove_current(self, candidate_id: str, trial_index: int | None = None) -> None:
         with self._lock:
             self.status.current = [
-                c for c in self.status.current if c.candidate_id != candidate_id
+                c for c in self.status.current if c.key != (candidate_id, trial_index)
             ]
             self._write()
 

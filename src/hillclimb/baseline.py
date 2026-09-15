@@ -57,8 +57,7 @@ def declared_floor(search_dir: Path, score: float, summary: str) -> Candidate:
 def run_scored_baseline(
     problem: ProblemSpec,
     search_dir: Path,
-    executor,
-    holdout_scorer,
+    evaluator,
     timeout_s: int,
     solution_text: str,
     summary: str,
@@ -66,7 +65,9 @@ def run_scored_baseline(
     """c000 evaluated for real — a genuine scored floor agent drafts must
     beat. Shared by the emflow and evaluator kinds; degrades to the
     unscored-placeholder semantics when the eval fails (keeps the search
-    alive)."""
+    alive). `evaluator` is the host's `CandidateEvaluator`: its executor runs
+    the baseline and, when holdout timing is inline, its scorer scores the
+    hidden split (the floor is never gated)."""
     candidate_dir = create_candidate_dir(
         search_dir, "c000", problem.data_dir, problem.problem_dir
     )
@@ -82,7 +83,7 @@ def run_scored_baseline(
     (candidate_dir / "notes.md").write_text(summary + "\n")
 
     rdir = create_replicate_dir(create_trial_dir(candidate_dir, 0), 0)
-    exec_result = executor.execute(rdir / "solution.py", rdir, timeout_s)
+    exec_result = evaluator.executor.execute(rdir / "solution.py", rdir, timeout_s)
     replicate = Replicate(
         returncode=exec_result.returncode,
         duration_s=exec_result.duration_s,
@@ -96,9 +97,9 @@ def run_scored_baseline(
     (search_dir / "best").mkdir(parents=True, exist_ok=True)
     if exec_result.ok:
         trial = Trial(is_best=True, replicates=[replicate])
-        if holdout_scorer is not None:
+        if evaluator.holdout_scorer is not None and evaluator.holdout_timing == "inline":
             trial.holdout_score, trial.holdout_error, trial.holdout_cpu_s = (
-                holdout_scorer.score(candidate_dir, trial)
+                evaluator.score_holdout(candidate_dir, trial)
             )
         trial.finished_at = utcnow()
         candidate.trials.append(trial)
@@ -120,19 +121,19 @@ def run_scored_baseline(
 def write_baseline(
     problem: ProblemSpec,
     search_dir: Path,
-    executor=None,
-    holdout_scorer=None,
+    evaluator=None,
     timeout_s: int = 1800,
 ) -> Candidate:
     """t=0 scored floor: the problem's baseline solution evaluated for real,
     so agent drafts must beat something honest to become best. Problems that
-    ship no baseline get the unscored placeholder."""
+    ship no baseline (or callers without an evaluator) get the unscored
+    placeholder."""
     if problem.baseline_score is not None:
         return declared_floor(search_dir, problem.baseline_score, problem.baseline_summary)
-    if problem.baseline_text is None or executor is None:
+    if problem.baseline_text is None or evaluator is None:
         return unscored_placeholder(search_dir, problem.baseline_files)
     return run_scored_baseline(
-        problem, search_dir, executor, holdout_scorer, timeout_s,
+        problem, search_dir, evaluator, timeout_s,
         solution_text=problem.baseline_text,
         summary=problem.baseline_summary,
     )

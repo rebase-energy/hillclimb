@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from statistics import median
 from typing import Protocol
@@ -55,6 +56,10 @@ class Journal:
     def __init__(self, backend: JournalBackend | Path):
         self.backend: JournalBackend = FileJournal(backend) if isinstance(backend, Path) else backend
         self.candidates: dict[str, Candidate] = {}
+        # Writes stay single-threaded (the strategy's scheduler); the lock
+        # lets the host's evaluator take a consistent read (the holdout
+        # top-k gate) from a worker thread while the scheduler appends.
+        self.lock = threading.RLock()
         self._replay()
 
     CANDIDATE_EVENTS = ("candidate_created", "candidate_result")
@@ -78,8 +83,9 @@ class Journal:
         self.backend.append(record)
 
     def _append(self, event: str, candidate: Candidate) -> None:
-        self._append_line({"event": event, **candidate.model_dump()})
-        self.candidates[candidate.candidate_id] = candidate.model_copy(deep=True)
+        with self.lock:
+            self._append_line({"event": event, **candidate.model_dump()})
+            self.candidates[candidate.candidate_id] = candidate.model_copy(deep=True)
 
     def candidate_created(self, candidate: Candidate) -> None:
         self._append("candidate_created", candidate)
@@ -146,7 +152,8 @@ class Journal:
         return median(spreads) if spreads else None
 
     def scored_candidates(self) -> list[Candidate]:
-        return [c for c in self.candidates.values() if c.is_scored and not c.pruned]
+        with self.lock:
+            return [c for c in self.candidates.values() if c.is_scored and not c.pruned]
 
     def best_candidate(self, higher_is_better: bool) -> Candidate | None:
         scored = self.scored_candidates()
