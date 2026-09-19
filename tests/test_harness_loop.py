@@ -217,11 +217,11 @@ def test_inject_scores_a_text_the_loop_already_has(task, config):
     harness, journal, search_dir = make_harness(task, config, backend)
 
     marker = "# only-in-the-source-text\n"
-    first = harness.run(Action(operator=INJECT_ACTION, args={"source": ok_script(0.4)}))
+    first = harness.run(Action(operator=INJECT_ACTION, payload={"source": ok_script(0.4)}))
     child = harness.run(
         Action(
             operator=INJECT_ACTION, target_id=first.candidate.candidate_id,
-            args={"source": ok_script(0.6) + marker}, policy_meta={"optimizer": "mine"},
+            payload={"source": ok_script(0.6) + marker}, policy_meta={"optimizer": "mine"},
         )
     )
 
@@ -242,7 +242,7 @@ def test_inject_scores_a_text_the_loop_already_has(task, config):
 def test_inject_refuses_nonsense_before_creating_anything(task, config):
     harness, journal, _ = make_harness(task, config, FakeBackend())
     assert harness.run(Action(operator=INJECT_ACTION)).kind == "rejected"
-    outcome = harness.run(Action(operator=INJECT_ACTION, target_id="c999", args={"source": "x=1\n"}))
+    outcome = harness.run(Action(operator=INJECT_ACTION, target_id="c999", payload={"source": "x=1\n"}))
     assert outcome.kind == "rejected" and not journal.candidates
     assert outcome.ticket.rejected == "references c999 which is not in the journal"
 
@@ -256,7 +256,7 @@ class Mutate(Operator):
     def prepare(self, ctx):
         return Preparation(
             prompt="Change solution.py.", copy_parent=True, require_change=True,
-            texts={"feedback.json": ctx.action.args["feedback"]},
+            texts={"feedback.json": ctx.action.payload["feedback"]},
         )
 
 
@@ -267,8 +267,8 @@ def test_require_change_turns_an_untouched_parent_into_unchanged(task, config):
         backend.queue(script=None, notes="looked, changed nothing\n")  # leaves the parent copy as it is
         backend.queue(script=ok_script(0.9), notes="a real change\n")
         harness, journal, _ = make_harness(task, config, backend)
-        parent = harness.run(Action(operator=INJECT_ACTION, args={"source": ok_script(0.5)})).candidate
-        action = Action(operator="mutate", target_id=parent.candidate_id, args={"feedback": '{"weak": "x"}'})
+        parent = harness.run(Action(operator=INJECT_ACTION, payload={"source": ok_script(0.5)})).candidate
+        action = Action(operator="mutate", target_id=parent.candidate_id, payload={"feedback": '{"weak": "x"}'})
 
         lazy = harness.run(action)
         real = harness.run(action)
@@ -287,7 +287,7 @@ def test_require_change_turns_an_untouched_parent_into_unchanged(task, config):
 def test_outcome_result_never_carries_holdout(task_larger, config):
     """The scored view is projected from the holdout-blind copy."""
     harness, journal, _ = make_harness(task_larger, config, FakeBackend())
-    outcome = harness.run(Action(operator=INJECT_ACTION, args={"source": ok_script(0.5)}))
+    outcome = harness.run(Action(operator=INJECT_ACTION, payload={"source": ok_script(0.5)}))
     dumped = repr(outcome.result) + repr(outcome.candidate)
     assert "holdout_score=None" in dumped or "holdout" not in repr(outcome.result)
     assert outcome.candidate.holdout_score is None

@@ -64,7 +64,7 @@ class DraftOperator(Operator):
             data_listing=problem.data_listing,
             research_cue=research_cue,
             starter_cue=starter_cue,
-            complexity_cue=COMPLEXITY_CUES[ctx.action.complexity or "minimal"],
+            complexity_cue=COMPLEXITY_CUES[ctx.action.args.get("complexity") or "minimal"],
             prior_experience=prior or "(no prior searches recorded)",
             prior_drafts=ctx.summaries(ctx.journal.drafts()) or "(none yet)",
         )

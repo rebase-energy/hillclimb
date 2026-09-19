@@ -27,7 +27,7 @@ class GepaReflectOperator(Operator):
         return reason
 
     def prepare(self, ctx: OperatorContext) -> Preparation:
-        feedback = str(ctx.action.args.get("feedback", ""))
+        feedback = str(ctx.action.payload.get("feedback", ""))
         extra = ""
         if ctx.memory.text:
             extra += f"\n## Prior experience\n\n{ctx.memory.text}\n"

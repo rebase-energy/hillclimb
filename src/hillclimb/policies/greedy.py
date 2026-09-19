@@ -186,7 +186,7 @@ class GreedyPolicy:
         )
 
     def _draft_action(self, view: PolicyInput) -> Action:
-        return Action(operator="draft", complexity=self.draft_complexity(view))
+        return Action(operator="draft", args={"complexity": self.draft_complexity(view)})
 
     def _ensemble_action(self, view: PolicyInput) -> Action:
         picks = self.ensemble_candidates(view)

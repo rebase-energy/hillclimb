@@ -152,3 +152,28 @@ def test_extra_files_must_be_bare_names(task, config):
             searcher._prepare(Action(operator="escaper"))
     finally:
         operators._OPERATORS.pop("escaper", None)
+
+
+def test_action_args_are_journaled_and_payload_never_is(task, config, reflect):
+    """`args` are the attempt's small knobs (kept with the candidate);
+    `payload` is bulk input for the operator (never written to the journal)."""
+    backend = FakeBackend()
+    backend.queue(script=ok_script(0.5), notes="draft\n")
+    backend.queue(script=ok_script(0.7), notes="reflected\n")
+    searcher, journal, search_dir = make_searcher(task, config, backend)
+    parent = searcher.run(Action(operator="draft", args={"complexity": "advanced"})).candidate
+
+    secret = "BULK-FEEDBACK-" + "x" * 5000
+    child = searcher.run(
+        Action(operator="reflect", target_id=parent.candidate_id,
+               args={"temperature_hint": "bold"}, payload={"feedback": secret})
+    ).candidate
+
+    assert journal.get(parent.candidate_id).args == {"complexity": "advanced"}
+    assert journal.get(parent.candidate_id).complexity == "advanced"  # what the views print
+    assert journal.get(child.candidate_id).args == {"temperature_hint": "bold"}
+    assert reflect.seen[-1].action.payload["feedback"] == secret  # the operator got it...
+    assert "BULK-FEEDBACK" not in (search_dir / "journal.jsonl").read_text()  # ...the journal did not
+    # a record written before `args` existed still loads, cue intact
+    old = Candidate.model_validate({"candidate_id": "c9", "operator": "draft", "complexity": "moderate"})
+    assert old.args == {"complexity": "moderate"} and old.complexity == "moderate"

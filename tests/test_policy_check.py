@@ -66,7 +66,7 @@ class RandomPolicy:
     name, params = "random", {}
 
     def propose(self, view):
-        return Action(operator="draft", complexity=random.choice(["minimal", "advanced"]))
+        return Action(operator="draft", args={"complexity": random.choice(["minimal", "advanced"])})
 
     def observe(self, view, candidate):
         pass
@@ -82,7 +82,7 @@ class CountingPolicy:
 
     def propose(self, view):
         self.n += 1
-        return Action(operator="draft", complexity="minimal" if self.n % 2 else "advanced")
+        return Action(operator="draft", args={"complexity": "minimal" if self.n % 2 else "advanced"})
 
     def observe(self, view, candidate):
         pass

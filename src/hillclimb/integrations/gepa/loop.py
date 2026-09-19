@@ -151,7 +151,7 @@ class GepaLoop(SearchLoop):
                 Action(
                     operator=OPERATOR_NAME,
                     target_id=parent_id,
-                    args={"feedback": feedback_json(reflective_dataset)},
+                    payload={"feedback": feedback_json(reflective_dataset)},
                     policy_meta={"optimizer": "gepa", "parent_source_hash": parent_hash},
                 )
             )
@@ -181,7 +181,7 @@ class GepaLoop(SearchLoop):
         outcome = self._harness.run(
             Action(
                 operator=INJECT_ACTION,
-                args={"source": source},
+                payload={"source": source},
                 policy_meta={"optimizer": "gepa"},
             )
         )

@@ -762,7 +762,7 @@ class Harness:
             raise FileNotFoundError(f"seed solution not found: {seed}")
         self.log(f"seeding incumbent {seed.name}")
         job = self._prepare_inject(
-            Action(operator=INJECT_ACTION, args={"source": seed.read_text()}),
+            Action(operator=INJECT_ACTION, payload={"source": seed.read_text()}),
             operator="seed",
             summary=f"incumbent model seeded from {seed.name}",
         )
@@ -777,9 +777,9 @@ class Harness:
         --seed-from) already has: write it, journal `created`, score it like
         any other attempt. The text itself is never journaled — its
         `solution_sha256` is."""
-        source = action.args.get("source")
+        source = action.payload.get("source")
         if not isinstance(source, str) or not source.strip():
-            raise ValueError(f"{operator} needs a non-empty args['source']")
+            raise ValueError(f"{operator} needs a non-empty payload['source']")
         target = self.journal.candidates.get(action.target_id) if action.target_id else None
         if action.target_id and target is None:
             raise KeyError(action.target_id)
@@ -798,6 +798,7 @@ class Harness:
             operator=operator,
             candidate_dir=str(candidate_dir),
             summary=summary,
+            args=dict(action.args),
             policy_meta=dict(action.policy_meta),
         )
         self.journal.candidate_created(candidate)
@@ -855,7 +856,6 @@ class Harness:
         if ensemble_inputs and prep.copy_inspirations:
             for i, cand in enumerate(ensemble_inputs, 1):
                 shutil.copy(Path(cand.candidate_dir) / "solution.py", candidate_dir / inspiration_filename(i))
-        complexity = action.complexity
         prompt = self._with_contract(prep.prompt, target, inherited)
         if action.extra_prompt_context:
             prompt += (
@@ -874,7 +874,7 @@ class Harness:
             parent_id=target.candidate_id if target else None,
             operator=operator,
             role=op.role,
-            complexity=complexity,
+            args=dict(action.args),
             debug_depth=(
                 sum(1 for c in self.journal.debug_chain(target.candidate_id) if c.role == "repair") + 1
                 if op.role == "repair" and target
@@ -1459,7 +1459,7 @@ class Harness:
             operator=operator,
             target_id=target.candidate_id if target else None,
             inspiration_ids=tuple(c.candidate_id for c in ensemble_inputs or ()),
-            complexity=complexity,
+            args={"complexity": complexity} if complexity else {},
         )
         _op, prep = self._prepare_attempt(action, target)
         return self._with_contract(prep.prompt, target, inherited)

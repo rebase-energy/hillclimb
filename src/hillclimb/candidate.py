@@ -205,7 +205,9 @@ class Candidate(BaseModel):
     # how a loop recognises a text it has already paid to evaluate
     solution_sha256: str | None = None
     status: str = "pending"  # one of STATUSES
-    complexity: str | None = None  # minimal | moderate | advanced (drafts only)
+    # the action's per-attempt knobs as proposed (`Action.args`), e.g. a
+    # draft's {"complexity": "minimal"}; bulk `Action.payload` is never here
+    args: dict = Field(default_factory=dict)
     debug_depth: int = 0
     candidate_dir: str = ""
     backend: BackendInfo = Field(default_factory=BackendInfo)
@@ -245,6 +247,12 @@ class Candidate(BaseModel):
         if isinstance(data, dict) and data.get("status") == "ok":
             data = dict(data)
             data["status"] = "passing"
+        if isinstance(data, dict) and "complexity" in data:
+            # pre-`args` records (and callers) carry the draft cue as its own field
+            data = dict(data)
+            complexity = data.pop("complexity")
+            if complexity is not None:
+                data["args"] = {"complexity": complexity, **(data.get("args") or {})}
         return data
 
     @model_validator(mode="before")
@@ -364,6 +372,11 @@ class Candidate(BaseModel):
             t.replicate_spread for t in self.trials
             if t.verdict not in ("failing", "buggy") and t.replicate_spread is not None
         ]
+
+    @property
+    def complexity(self) -> str | None:
+        """The draft complexity cue, when the attempt carried one."""
+        return self.args.get("complexity")
 
     @property
     def holdout_score(self) -> float | None:

@@ -83,7 +83,7 @@ def journal(tmp_path: Path) -> Journal:
 def test_propose_drafts_on_empty_journal(journal, config):
     policy = GreedyPolicy()
     action = policy.propose(make_view(journal, config))
-    assert action == Action(operator="draft", complexity="minimal")
+    assert action == Action(operator="draft", args={"complexity": "minimal"})
 
 
 def test_complexity_escalates_per_draft_with_offset(journal, config, tmp_path):

@@ -174,7 +174,7 @@ class OpenEvolvePolicy:
     def _draft_action(self, view: PolicyInput) -> Action:
         return Action(
             operator="draft",
-            complexity=self._greedy.draft_complexity(view),
+            args={"complexity": self._greedy.draft_complexity(view)},
             policy_meta={"island": self._added % self.db_config.num_islands},
         )
 

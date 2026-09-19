@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 
 
 TUNE_ACTION = "tune"
-# harness-native, agent-free: score `action.args["source"]` as a candidate
+# harness-native, agent-free: score `action.payload["source"]` as a candidate
 # (child of `target_id` when given). How a loop evaluates a text it produced
 # itself — an optimizer's merge, a seed — without an agent call.
 INJECT_ACTION = "inject"
@@ -69,12 +69,14 @@ class Action:
     operator: str
     target_id: str | None = None  # parent candidate (the tuned candidate for `tune`)
     inspiration_ids: tuple[str, ...] = ()  # extra candidates as prompt/candidate-dir context
-    complexity: str | None = None  # draft complexity cue (minimal | moderate | advanced)
     route: Route | None = None  # rare per-action override; routing config is the norm
     extra_prompt_context: str = ""  # rendered as an appended prompt section
-    # operator-specific payload (JSON-able): what `gepa-reflect` is told, the
-    # source an `inject` scores. Never journaled verbatim by the harness.
+    # the operator's knobs for THIS attempt (JSON-able, small): journaled on
+    # the candidate as `Candidate.args` — e.g. draft's {"complexity": "minimal"}
     args: Mapping = field(default_factory=dict)
+    # bulk input for the operator, NEVER journaled: the source an `inject`
+    # scores, the feedback `gepa-reflect` is shown
+    payload: Mapping = field(default_factory=dict)
     policy_meta: dict = field(default_factory=dict)  # journaled on the candidate
 
 

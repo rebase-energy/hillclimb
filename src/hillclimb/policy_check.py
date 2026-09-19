@@ -158,8 +158,8 @@ def _describe(action: Action | None) -> str:
         parts.append(f"-> {action.target_id}")
     if action.inspiration_ids:
         parts.append(f"+{list(action.inspiration_ids)}")
-    if action.complexity:
-        parts.append(f"({action.complexity})")
+    if action.args:
+        parts.append("(" + ", ".join(str(v) for v in action.args.values()) + ")")
     return " ".join(parts)
 
 
