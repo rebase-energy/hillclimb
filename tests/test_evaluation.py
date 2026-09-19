@@ -67,8 +67,8 @@ def test_single_trial_scores_the_candidate(tmp_path, task, config):
 
 
 def test_multi_trial_runs_in_index_order_and_copies_trial0_artifacts(tmp_path, task, config):
-    config.search.n_replicates = 3
-    config.search.replicate_mode = "serial"
+    config.evaluation.n_replicates = 3
+    config.evaluation.replicate_mode = "serial"
     candidate_dir = fresh_candidate_dir(tmp_path, task)
     (candidate_dir / "solution.py").write_text(ok_script(0.6))
     candidate = Candidate(candidate_id="c001", operator="draft", candidate_dir=str(candidate_dir))
@@ -88,8 +88,8 @@ def test_multi_trial_runs_in_index_order_and_copies_trial0_artifacts(tmp_path, t
 
 
 def test_parallel_trial_mode_also_scores(tmp_path, task, config):
-    config.search.n_replicates = 2
-    config.search.replicate_mode = "parallel"
+    config.evaluation.n_replicates = 2
+    config.evaluation.replicate_mode = "parallel"
     candidate_dir = fresh_candidate_dir(tmp_path, task)
     (candidate_dir / "solution.py").write_text(ok_script(0.4))
     candidate = Candidate(candidate_id="c001", operator="draft", candidate_dir=str(candidate_dir))
@@ -182,14 +182,14 @@ def test_accept_band_takes_max_of_floor_and_noise(tmp_path, config):
     journal = Journal(tmp_path / "journal.jsonl")
     journal.candidate_result(scored("c1", 1.0, 1.2))  # spread 0.1
 
-    config.search.min_improvement = 0.0
-    config.search.noise_k = 0.0
+    config.evaluation.min_improvement = 0.0
+    config.evaluation.noise_k = 0.0
     assert accept_band(config, journal) == 0.0  # strict default
 
-    config.search.noise_k = 2.0
+    config.evaluation.noise_k = 2.0
     assert isclose(accept_band(config, journal), 0.2)  # 2 x measured floor
 
-    config.search.min_improvement = 0.5
+    config.evaluation.min_improvement = 0.5
     assert accept_band(config, journal) == 0.5  # author's floor wins
 
 

@@ -44,7 +44,7 @@ class Generations(SearchLoop):
 
 
 def test_a_loop_that_is_not_a_policy_drives_a_search(task, config):
-    config.search.parallel_operators = 2
+    config.concurrency.parallel_operators = 2
     backend = FakeBackend()
     backend.queue(script=ok_script(0.5), notes="a\n")
     backend.queue(script=ok_script(0.7), notes="b\n")

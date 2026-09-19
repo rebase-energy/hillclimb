@@ -32,9 +32,29 @@ def make_harness(task, config, backend, *, name: str = "test-search", **kwargs):
 
 from hillclimb.candidate import Candidate  # noqa: E402
 from hillclimb.loop import PolicyLoop  # noqa: E402
-from hillclimb.policies import ConfigBackedParams  # noqa: E402
 from hillclimb.policies.greedy import GreedyPolicy  # noqa: E402
 from hillclimb.policy import TUNE_ACTION, Action, SearchPolicy  # noqa: E402
+
+
+class LiveParams(dict):
+    """`config.climber.params`, read at access time — tests set knobs on the
+    config after building the rig, and replace the dict wholesale."""
+
+    def __init__(self, config):
+        super().__init__()
+        self._config = config
+
+    def get(self, name, default=None):
+        return self._config.climber.params.get(name, default)
+
+    def __getitem__(self, name):
+        return self._config.climber.params[name]
+
+    def __contains__(self, name):
+        return name in self._config.climber.params
+
+    def __bool__(self):
+        return True  # an empty overlay is still THE params (`params or {}` must not drop the live view)
 
 
 class SearchRig(Harness):
@@ -51,7 +71,7 @@ class SearchRig(Harness):
         super().__init__(*args, **kwargs)
         self.complexity_start = complexity_start
         self.policy = policy or GreedyPolicy(
-            complexity_start=complexity_start, params=ConfigBackedParams(self.config)
+            complexity_start=complexity_start, params=LiveParams(self.config)
         )
         self._loop = PolicyLoop(self.policy)
         self._loop.catch_up(self)  # the resume contract: the policy replays the journal

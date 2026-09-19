@@ -146,7 +146,7 @@ class TestInjection:
         config.paths.runtime_python = Path(sys.executable)
         config.budget.stop_margin_s = 1
         config.holdout.enabled = False
-        config.search.num_drafts = 2
+        config.climber.params["num_drafts"] = 2
         backend = FakeBackend()
         monkeypatch.setattr("hillclimb.api.get_backend", lambda *a, **k: backend)
         config.budget.max_evaluations = 2  # two drafts, then stop

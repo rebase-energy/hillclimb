@@ -1346,10 +1346,8 @@ def policy_check(
 
     config = load_config()
     config.apply_overrides(_parse_set(set_ or []))
-    name = policy or config.search.policy
-    from hillclimb.policies import ConfigBackedParams
-
-    params = dict(ConfigBackedParams(config))  # what the search itself would hand the policy
+    name = policy or config.climber.ref
+    params = dict(config.climber.params)  # the user's overlay; the manifest's params are the base
     base_dir = policy_base_dir(config)
     source = policy_path(name, base_dir)
     if source is not None and not source.is_file():
@@ -1382,7 +1380,11 @@ def policy_check(
                     search_dir=record.search_dir,
                 )
             )
-    report = check_policy(make_policy, cases, config, prompts_dir=config.paths.prompts_dir)
+    from hillclimb.climber import load_climber
+
+    report = check_policy(
+        make_policy, cases, config, prompts_dir=load_climber(name, base_dir).prompts_dir
+    )
     if report.ok:
         resolved = getattr(make_policy(), "resolved_params", None)
         resolved_params = resolved() if callable(resolved) else params
@@ -1396,7 +1398,7 @@ def policy_check(
             raise typer.BadParameter("--smoke needs --problem")
         smoke_config = load_config(backend="dummy")
         smoke_config.apply_overrides(_parse_set(set_ or []))
-        smoke_config.search.policy = name
+        smoke_config.climber.ref = name
         smoke_config.learning.enabled = False
         outcome = run_search(
             problem,
@@ -1733,11 +1735,11 @@ def run(
         raise typer.BadParameter("--arm-set needs a mixed fleet (two or more --policy)")
     single_policy = None if mixed else (policies[0] if policies else None)
     if single_policy is not None:
-        config.search.policy = single_policy
+        config.climber.ref = single_policy
     if parallel_operators is not None:
-        config.search.parallel_operators = parallel_operators
+        config.concurrency.parallel_operators = parallel_operators
     if n_replicates is not None:
-        config.search.n_replicates = n_replicates
+        config.evaluation.n_replicates = n_replicates
     overrides = _parse_set(set_ or [])
     if mixed:
         if arm or run_id:
@@ -1828,7 +1830,7 @@ def _run_problem_fleet(
         engines=engines, experiment=experiment,
         log=typer.echo,
     )
-    operators = parallel_operators if parallel_operators is not None else config.search.parallel_operators
+    operators = parallel_operators if parallel_operators is not None else config.concurrency.parallel_operators
     if engines:
         arms = ", ".join(dict.fromkeys(engine.arm for engine in engines))
         typer.echo(
@@ -1926,8 +1928,8 @@ def resume(
     config.holdout.enabled = meta.holdout_enabled
     # the search resumes under the policy/routing it started with, not
     # whatever the live config currently says
-    config.search.policy = meta.climber
-    config.search.policy_params = meta.climber_params
+    config.climber.ref = meta.climber
+    config.climber.params = meta.climber_params
     if meta.climber_sha256 is not None:
         from hillclimb.climber import ClimberLoadError, load_climber, load_snapshot
         from hillclimb.policies import policy_base_dir
@@ -1952,8 +1954,8 @@ def resume(
                 err=True,
             )
     if meta.tuner is not None:
-        config.search.tuner = meta.tuner
-    config.search.tuner_params = meta.tuner_params
+        config.climber.tuner = meta.tuner
+    config.climber.tuner_params = meta.tuner_params
     config.routing = {op: RouteConfig(**route) for op, route in meta.routing.items()}
     problem = load_problem(meta.problem, config)
     from hillclimb.unit_tests import restore_frozen

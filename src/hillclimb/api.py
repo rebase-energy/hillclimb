@@ -323,8 +323,12 @@ def create_search(
     from hillclimb.climber import snapshot_climber
     from hillclimb.unit_tests import bundle_relative, freeze_for_run
 
-    # a climber that cannot be loaded fails here, before a search dir exists
+    # a climber that cannot be loaded — or whose prompts name a token nothing
+    # fills — fails here, before a search dir exists
     climber = search_climber(config)
+    problems = climber.lint_prompts()
+    if problems:
+        raise ValueError(f"climber {climber.name}: prompts do not lint clean:\n  " + "\n  ".join(problems))
     problem.unit_tests = freeze_for_run(problem, run_dir)
     search_dir = allocate_search_dir(run_dir, problem.problem_id)
     snapshot_climber(climber, search_dir)  # what the engine — and a resume — loads
@@ -337,13 +341,13 @@ def create_search(
         problem_key=problem.problem_key,
         backend=config.backend,
         model=config.model,
-        climber=config.search.policy,
+        climber=config.climber.ref,
         climber_sha256=climber.sha256,
         climber_manifest=climber.manifest.model_dump(exclude_defaults=False),
-        climber_params=config.search.policy_params,
+        climber_params=config.climber.params,
         hillclimb_version=__version__,
-        tuner=config.search.tuner if "tuner" in config.search.model_fields_set else None,
-        tuner_params=config.search.tuner_params,
+        tuner=config.climber.tuner,
+        tuner_params=config.climber.tuner_params,
         routing={
             op: route.model_dump(exclude_none=True)
             for op, route in config.routing.items()
@@ -675,7 +679,12 @@ def execute_search(
     parked/stopped/done; unexpected engine crashes finalize `failed` and
     re-raise."""
     run_dir = search_dir.parents[1]
-    _activate_prompt_overrides(config, log)
+    from hillclimb.search_strategy import effective_memory
+
+    if config.learning.enabled and effective_memory(config, search_dir) == "none":
+        config = config.model_copy(deep=True)
+        config.learning.enabled = False  # this search neither reads nor writes memory
+        log("memory: none (this climber runs without cross-search memory)")
     store = open_store(config)
     key = key_for(search_dir)
     store.clear_stale_stops(key)
@@ -761,7 +770,7 @@ def execute_search(
         raise
     from hillclimb.project import machine_cache_dir
 
-    machine_max = config.search.effective_machine_max_operators()
+    machine_max = config.concurrency.effective_machine_max_operators()
     slots = MachineSlots(machine_cache_dir() / "agent-slots", machine_max) if machine_max > 0 else None
     evaluator = build_evaluator(config, problem, search_dir, journal, status=status, log=log)
     from hillclimb.harness import Harness
@@ -834,24 +843,6 @@ def execute_search(
         cost_usd=harness.total_cost_usd(), log=log,
     )
     return SearchOutcome(run_dir, search_dir, selected, "done")
-
-
-def _activate_prompt_overrides(config: Config, log: Log) -> None:
-    """Point `prompts.render` at the hillclimb dir's prompts/ for this
-    engine process. A broken override is a config error, not something
-    to discover an hour in: refuse to start on lint findings."""
-    from hillclimb.prompts.render import lint_overrides, set_override_dir, templates_digest
-
-    prompts_dir = config.paths.prompts_dir
-    problems = lint_overrides(prompts_dir)
-    if problems:
-        raise ValueError(
-            f"prompt overrides in {prompts_dir} are invalid:\n  " + "\n  ".join(problems)
-        )
-    set_override_dir(prompts_dir)
-    overridden = templates_digest(prompts_dir).overridden
-    if overridden:
-        log(f"prompt overrides from {prompts_dir}: {', '.join(overridden)}")
 
 
 def _finish_holdout(

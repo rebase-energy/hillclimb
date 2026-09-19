@@ -244,9 +244,9 @@ def test_the_engine_uses_the_tuner_the_user_or_the_manifest_names(config, tmp_pa
     (root / "climber.yaml").write_text(
         "policy: hillclimb.policies.greedy:GreedyPolicy\ntuner: random\ntuner_params: {seed: 7}\n"
     )
-    config.search.policy = str(root)
+    config.climber.ref = str(root)
     assert build_tuner(config).params == {"seed": 7}  # the manifest's params
-    config.search.tuner_params = {"seed": 9}
+    config.climber.tuner_params = {"seed": 9}
     assert build_tuner(config).params == {"seed": 9}  # the user's lay over them
     pytest.importorskip("optuna")
     from hillclimb.config import Config
@@ -278,7 +278,7 @@ def test_execute_search_hands_the_harness_the_climbers_tuner(task, config, tmp_p
     config.learning.enabled = False
     config.holdout.enabled = False
     config.budget.max_evaluations = 1
-    config.search.tuner_params = {"seed": 11}
+    config.climber.tuner_params = {"seed": 11}
     run_dir = api.create_run(config, RunMeta(run_id="r1", name="r1", kind="problem", target="t", problem_ids=[task.problem_id]))
     search_dir = api.create_search(config, task, run_dir, "r1", 600)
 

@@ -190,7 +190,7 @@ class TestLiveSharing:
         config.paths.runtime_python = Path(sys.executable)
         config.budget.stop_margin_s = 1
         config.holdout.enabled = False
-        config.search.num_drafts = 1
+        config.climber.params["num_drafts"] = 1
         backend = FakeBackend()
         monkeypatch.setattr("hillclimb.api.get_backend", lambda *a, **k: backend)
         config.budget.max_evaluations = 2  # draft + improve, then stop
@@ -262,7 +262,7 @@ class TestEndToEnd:
 
         backend = FakeBackend()
         # first search: 1 draft then out of responses -> cap candidates
-        config.search.num_drafts = 1
+        config.climber.params["num_drafts"] = 1
         outcome1 = run_once("run-one", 0.7, "winning approach: gradient boosting")
         assert outcome1.state == "done"
         # cards live in family subdirs; the knowledge-dir root holds the

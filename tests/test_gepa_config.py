@@ -59,15 +59,15 @@ def test_invalid_params_rejected(bad):
 
 
 def test_parallel_operators_rejected_before_spend(config):
-    config.search.policy = "gepa"
-    config.search.parallel_operators = 2
+    config.climber.ref = "gepa"
+    config.concurrency.parallel_operators = 2
     with pytest.raises(ValueError, match="serial in the MVP"):
         validate_gepa_search_config(config)
 
 
 def test_valid_config_parses_policy_params(config):
-    config.search.policy = "gepa"
-    config.search.policy_params = {"max_metric_calls": 7}
+    config.climber.ref = "gepa"
+    config.climber.params = {"max_metric_calls": 7}
     assert validate_gepa_search_config(config).max_metric_calls == 7
 
 

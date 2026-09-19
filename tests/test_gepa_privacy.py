@@ -50,7 +50,7 @@ class DoneMarkingDriver(FakeGEPADriver):
 
 
 def run_search(task, config, tmp_path):
-    config.search.policy = "gepa"
+    config.climber.ref = "gepa"
     config.holdout.top_k = 2
     holdout = SentinelHoldout()
     driver = DoneMarkingDriver(holdout, steps=2)

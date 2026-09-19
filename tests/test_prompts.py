@@ -186,7 +186,7 @@ def test_search_record_pins_the_climber_and_snapshots_it(config, tmp_path):
     (climber_dir / "climber.yaml").write_text(
         "policy: hillclimb.policies.greedy:GreedyPolicy\nparams: {num_drafts: 1}\nprompts: prompts\n"
     )
-    config.search.policy = str(climber_dir)
+    config.climber.ref = str(climber_dir)
     search_dir = create_search(config, load_problem("p", config), run_dir, "r1", 60)
     meta = load_search_meta(search_dir)
     before = load_climber(str(climber_dir)).sha256
@@ -201,22 +201,25 @@ def test_search_record_pins_the_climber_and_snapshots_it(config, tmp_path):
     assert (snapshot.prompts_dir / "improve.md").read_text().startswith("tighter improve prompt")
 
 
-def test_engine_refuses_to_start_on_a_broken_override(config, tmp_path):
-    from hillclimb.api import _activate_prompt_overrides
-    from hillclimb.prompts import render as r
+def test_a_search_refuses_to_start_on_a_climber_whose_prompts_do_not_lint(config, tmp_path):
+    """A broken prompt is a config error, not something to discover an hour
+    in: create_search refuses before a search dir exists."""
+    from hillclimb.api import create_run, create_search
+    from hillclimb.problem import load_problem
+    from hillclimb.run import RunMeta
+    from tests.test_cli import write_problem
 
-    config.paths.prompts_dir = tmp_path / "prompts"
-    config.paths.prompts_dir.mkdir()
-    (config.paths.prompts_dir / "draft.md").write_text("{{typo_token}}\n")
-    logged: list[str] = []
-    previous = r.set_override_dir(None)
-    try:
-        with pytest.raises(ValueError, match="typo_token"):
-            _activate_prompt_overrides(config, logged.append)
-        assert r.override_dir() is None  # nothing activated
-        (config.paths.prompts_dir / "draft.md").write_text("{{description}}\n")
-        _activate_prompt_overrides(config, logged.append)
-        assert r.override_dir() == config.paths.prompts_dir
-        assert logged == [f"prompt overrides from {config.paths.prompts_dir}: draft"]
-    finally:
-        r.set_override_dir(previous)
+    root = tmp_path / "problems"
+    write_problem(root, "p")
+    config.paths.problems_dir = root
+    run_dir = create_run(config, RunMeta(run_id="r1", name="r1", kind="problem", target="p", problem_ids=["p"]))
+    climber = tmp_path / "mine"
+    (climber / "prompts").mkdir(parents=True)
+    (climber / "climber.yaml").write_text("policy: hillclimb.policies.greedy:GreedyPolicy\nprompts: prompts\n")
+    (climber / "prompts" / "draft.md").write_text("{{typo_token}}\n")
+    config.climber.ref = str(climber)
+    with pytest.raises(ValueError, match="typo_token"):
+        create_search(config, load_problem("p", config), run_dir, "r1", 60)
+    assert not list((run_dir / "searches").glob("*"))  # nothing was allocated
+    (climber / "prompts" / "draft.md").write_text("{{description}}\n")
+    assert create_search(config, load_problem("p", config), run_dir, "r1", 60).is_dir()

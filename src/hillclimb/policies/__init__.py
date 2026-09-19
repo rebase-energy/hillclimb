@@ -18,7 +18,6 @@ import hashlib
 import importlib.util
 import inspect
 import sys
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Callable
 
@@ -28,38 +27,6 @@ from hillclimb.policy import SearchPolicy
 POLICY_FILE_SUFFIX = ".py"
 
 
-class ConfigBackedParams(Mapping):
-    """A climber's params as the pre-manifest config spells them:
-    `search.policy_params`, over the config blocks that used to hold the
-    greedy knobs (`search.num_drafts`, `search.max_debug_depth`,
-    `ensemble.*`). Read live, so a config edited after construction still
-    applies. Harness-side glue: a policy only ever sees a Mapping. Goes away
-    with those config keys, when a climber's manifest carries its params."""
-
-    _BLOCKS = {
-        "num_drafts": lambda c: c.search.num_drafts,
-        "max_debug_depth": lambda c: c.search.max_debug_depth,
-        "ensemble": lambda c: c.ensemble.enabled,
-        "ensemble_reserve_fraction": lambda c: c.ensemble.reserve_fraction,
-        "ensemble_top_k": lambda c: c.ensemble.top_k,
-        "ensemble_max_attempts": lambda c: c.ensemble.max_attempts,
-    }
-
-    def __init__(self, config):
-        self._config = config
-
-    def _data(self) -> dict:
-        blocks = {name: read(self._config) for name, read in self._BLOCKS.items()}
-        return {**blocks, **self._config.search.policy_params}
-
-    def __getitem__(self, name):
-        return self._data()[name]
-
-    def __iter__(self):
-        return iter(self._data())
-
-    def __len__(self) -> int:
-        return len(self._data())
 POLICY_ATTR = "POLICY"
 
 

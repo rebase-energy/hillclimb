@@ -63,7 +63,7 @@ class GepaSearch:
 
 def make_gepa(task, config, tmp_path, *, backend=None, driver=None, seed_score: float | None = 0.5,
               budget_s: int = 3600, journal=None, search_dir=None, **harness_kwargs) -> GepaSearch:
-    config.search.policy = "gepa"
+    config.climber.ref = "gepa"
     search_dir = search_dir or create_search_dir(tmp_path / "runs" / "r", "s")
     seed = None
     if seed_score is not None:

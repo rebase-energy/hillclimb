@@ -57,8 +57,8 @@ def test_full_stack_with_real_gepa_loop(task, config, tmp_path):
     """GepaLoop -> CoreOptimizeDriver -> real gepa.optimize, with the
     fake backend as the mutation agent and the real executor as the
     verifier. Deterministic, no network."""
-    config.search.policy = "gepa"
-    config.search.policy_params = {"max_metric_calls": 6, "seed": 0}
+    config.climber.ref = "gepa"
+    config.climber.params = {"max_metric_calls": 6, "seed": 0}
     backend = FakeBackend()
     backend.queue(script=ok_script(0.6))
     backend.queue(script=ok_script(0.7))

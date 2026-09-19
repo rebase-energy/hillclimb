@@ -93,10 +93,10 @@ class TestOverrides:
             "search.policy=openevolve", "learning.enabled=false", "search.n_replicates=3",
             "search.policy_params={population_size: 50}", "search.policy_params.seed=7", "model=opus",
         ]))
-        assert config.search.policy == "openevolve"
+        assert config.climber.ref == "openevolve"
         assert config.learning.enabled is False
-        assert config.search.n_replicates == 3
-        assert config.search.policy_params == {"population_size": 50, "seed": 7}
+        assert config.evaluation.n_replicates == 3
+        assert config.climber.params == {"population_size": 50, "seed": 7}
         assert config.model == "opus"
         with pytest.raises(KeyError, match="search.nope"):
             config.apply_overrides({"search.nope": 1})
@@ -373,7 +373,7 @@ class TestCli:
             arm_overrides=parse_set_overrides(["learning.enabled=false", "search.policy_params={k: 1}"]),
         )
         assert seen["config"].learning.enabled is False
-        assert seen["config"].search.policy_params == {"k": 1}
+        assert seen["config"].climber.params == {"k": 1}
         meta = load_search_meta(seen["search_dir"])
         assert (meta.experiment, meta.arm, meta.repeat, meta.learning_enabled) == ("ab", "b", 1, False)
         assert meta.arm_overrides == {"learning.enabled": False, "search.policy_params": {"k": 1}}
@@ -556,17 +556,15 @@ class TestLegacyReplicateKeys:
     split; old specs, `--set` lines and config files keep working."""
 
     def test_config_load_maps_old_keys(self):
-        from hillclimb.config import SearchConfig
-
-        search = SearchConfig.model_validate({"n_trials": 2, "trial_mode": "serial"})
-        assert search.n_replicates == 2
-        assert search.replicate_mode == "serial"
+        config = Config.model_validate({"search": {"n_trials": 2, "trial_mode": "serial"}})
+        assert config.evaluation.n_replicates == 2
+        assert config.evaluation.replicate_mode == "serial"
 
     def test_apply_overrides_maps_old_keys(self):
         config = Config()
         config.apply_overrides(parse_set_overrides(["search.n_trials=3", "search.trial_mode=serial"]))
-        assert config.search.n_replicates == 3
-        assert config.search.replicate_mode == "serial"
+        assert config.evaluation.n_replicates == 3
+        assert config.evaluation.replicate_mode == "serial"
 
 
 class TestSummaryJson:

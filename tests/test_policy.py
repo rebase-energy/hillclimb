@@ -16,7 +16,7 @@ from hillclimb.candidate import Candidate
 from tests.conftest import local_executor
 from hillclimb.journal import Journal
 from hillclimb.evaluation import accept_band
-from hillclimb.policies import ConfigBackedParams, get_policy
+from hillclimb.policies import get_policy
 from hillclimb.policies.greedy import GreedyPolicy
 from hillclimb.policy import Action, BudgetView, InflightRef, PolicyInput
 from tests.harness_factory import SearchRig
@@ -242,24 +242,18 @@ def test_policy_replay_on_resume(task, config, tmp_path):
 
 def test_every_knob_is_one_dict_with_defaults(config):
     """A policy never sees the harness's config: knobs come from the
-    climber's params, else DEFAULTS. Until a manifest carries them, the old
-    config blocks reach the policy through ConfigBackedParams."""
+    climber's params (the manifest's, with the user's `climber.params` laid
+    over them), else DEFAULTS."""
+    from hillclimb.search_strategy import build_loop
+
     assert GreedyPolicy().resolved_params()["num_drafts"] == 3
-    config.search.num_drafts = 5
-    config.search.max_debug_depth = 1
-    config.ensemble.top_k = 4
-    resolved = GreedyPolicy(params=ConfigBackedParams(config)).resolved_params()
-    assert resolved["num_drafts"] == 5 and resolved["max_debug_depth"] == 1
-    assert resolved["ensemble_top_k"] == 4 and resolved["ensemble"] is True
-    assert resolved["tune_budget"] == 8
-    # read live: a config edited after construction still applies
-    live = GreedyPolicy(params=ConfigBackedParams(config))
-    config.search.num_drafts = 7
-    assert live.param("num_drafts") == 7
-    # policy_params win over the config block
-    config.search.policy_params = {"num_drafts": 1, "ensemble": False, "tune_budget": 0}
-    resolved = GreedyPolicy(params=ConfigBackedParams(config)).resolved_params()
+    resolved = build_loop(config).policy.resolved_params()  # the bundled manifest's params
+    assert resolved["num_drafts"] == 3 and resolved["ensemble_top_k"] == 3 and resolved["tune_budget"] == 8
+    # the user's overlay wins over the manifest
+    config.climber.params = {"num_drafts": 1, "ensemble": False, "tune_budget": 0}
+    resolved = build_loop(config).policy.resolved_params()
     assert resolved["num_drafts"] == 1 and resolved["ensemble"] is False and resolved["tune_budget"] == 0
+    assert resolved["max_debug_depth"] == 3  # untouched keys keep the manifest's value
     assert set(resolved) == {
         "num_drafts", "max_debug_depth", "ensemble", "ensemble_reserve_fraction",
         "ensemble_top_k", "ensemble_max_attempts",
@@ -410,8 +404,8 @@ def test_file_policy_drives_a_search_and_is_recorded(task, config, tmp_path):
 
     path = tmp_path / "drafts_only.py"
     path.write_text(FILE_POLICY)
-    config.search.policy = str(path)
-    config.search.policy_params = {"num_drafts": 1}
+    config.climber.ref = str(path)
+    config.climber.params = {"num_drafts": 1}
     backend = FakeBackend()
     backend.queue(script=ok_script(0.6), notes="one\n")
     backend.queue(script=ok_script(0.7), notes="two\n")
@@ -430,7 +424,7 @@ def test_file_policy_drives_a_search_and_is_recorded(task, config, tmp_path):
     assert meta.climber == str(path)
     import hashlib
     assert meta.climber_sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
-    config.search.policy = "greedy"
+    config.climber.ref = "greedy"
     meta = load_search_meta(create_search(config, load_problem("p", config), run_dir, "r1", 60))
     from hillclimb.climber import load_climber
     assert meta.climber_sha256 == load_climber("greedy").sha256  # a bundled climber has an identity too

@@ -56,7 +56,7 @@ def make_searcher(task, config, backend, **kwargs):
 
 class TestMultiSeedTrials:
     def test_trials_recorded_and_val_is_mean(self, task, config):
-        config.search.n_replicates = 3
+        config.evaluation.n_replicates = 3
         backend = FakeBackend()
         backend.queue(script=SEEDED_SCRIPT, notes="seeded draft\n")
         searcher, journal, _ = make_searcher(task, config, backend)
@@ -70,7 +70,7 @@ class TestMultiSeedTrials:
         assert candidate.val_score == pytest.approx(0.6)
 
     def test_trial_zero_artifacts_at_workspace_root(self, task, config):
-        config.search.n_replicates = 2
+        config.evaluation.n_replicates = 2
         backend = FakeBackend()
         backend.queue(script=SEEDED_SCRIPT, notes="seeded draft\n")
         searcher, _, _ = make_searcher(task, config, backend)
@@ -86,7 +86,7 @@ class TestMultiSeedTrials:
         assert not (t0 / "params.json").exists()  # nothing declared
 
     def test_seed_flaky_candidate_is_buggy(self, task, config):
-        config.search.n_replicates = 2
+        config.evaluation.n_replicates = 2
         backend = FakeBackend()
         backend.queue(script=FLAKY_SCRIPT, notes="flaky draft\n")
         searcher, _, _ = make_searcher(task, config, backend)
@@ -97,7 +97,7 @@ class TestMultiSeedTrials:
         assert len(candidate.trials[0].replicates) == 2
 
     def test_single_replicate_still_gets_a_trial_dir(self, task, config):
-        assert config.search.n_replicates == 1
+        assert config.evaluation.n_replicates == 1
         backend = FakeBackend()
         backend.queue(script=ok_script(0.7), notes="draft\n")
         searcher, _, _ = make_searcher(task, config, backend)
@@ -197,7 +197,7 @@ from hillclimb.search import ParkedSearch, StopRequested  # noqa: E402
 
 
 def pool_searcher(task, config, backend, n, max_candidates=10, **kwargs):
-    config.search.parallel_operators = n
+    config.concurrency.parallel_operators = n
     return make_searcher(task, config, backend, max_candidates=max_candidates, **kwargs)
 
 
@@ -668,7 +668,7 @@ class TestIncumbentSeeding:
         for _ in range(3):  # drafts all weaker than the incumbent
             backend.queue(script=ok_script(0.5), notes="d\n")
         backend.queue(script=ok_script(0.95), notes="improved incumbent\n")
-        config.search.num_drafts = 3
+        config.climber.params["num_drafts"] = 3
         searcher, journal, _ = make_searcher(task, config, backend, seed_solution=seed)
         searcher.max_candidates = 6  # baseline + seed + 3 drafts + 1 improve
 
@@ -703,7 +703,7 @@ class TestIncumbentSeeding:
 def test_worker_crash_does_not_hang_the_scheduler(task, config):
     """A worker that dies without reporting used to leave the candidate in
     flight and the scheduler blocked on the done-queue forever."""
-    config.search.parallel_operators = 2
+    config.concurrency.parallel_operators = 2
     backend = FakeBackend()
     backend.queue(script=ok_script(0.5), notes="d\n")
     search_dir = create_search_dir(config.paths.runs_dir, "crash-search")

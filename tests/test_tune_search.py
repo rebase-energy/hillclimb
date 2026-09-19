@@ -46,8 +46,8 @@ print(f"val_score: {0.5 + 0.01 * P['k']:.4f}")
 
 
 def make_searcher(task, config, backend, max_candidates=3, holdout=False, **policy_params):
-    config.search.policy_params = {"num_drafts": 1, "tune_budget": 2, **policy_params}
-    config.search.tuner_params = {"seed": 1}
+    config.climber.params = {"num_drafts": 1, "tune_budget": 2, **policy_params}
+    config.climber.tuner_params = {"seed": 1}
     search_dir = create_search_dir(config.paths.runs_dir, "tune-run")
     journal = Journal(search_dir / "journal.jsonl")
     kwargs = {}
@@ -63,7 +63,7 @@ def make_searcher(task, config, backend, max_candidates=3, holdout=False, **poli
         problem=task, config=config, journal=journal, backend=backend,
         executor=executor_for(task), budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir, max_candidates=max_candidates, log=lambda *_: None,
-        policy=GreedyPolicy(params=config.search.policy_params), **kwargs,
+        policy=GreedyPolicy(params=config.climber.params), **kwargs,
     )
     return searcher, journal, search_dir
 
@@ -171,7 +171,7 @@ def test_parallel_tune_jobs_get_distinct_indices(task, config):
     trial indices and both land. The two drafts may land in either order
     (the free slot may take an improve first), so the candidate cap and the
     response queue leave room for both orders."""
-    config.search.parallel_operators = 2
+    config.concurrency.parallel_operators = 2
     backend = FakeBackend()
     backend.queue(script=TUNED_SCRIPT, notes="tunable\n", files={"params.json": PARAMS})
     backend.queue(script=ok_script(0.3), notes="second draft (pool fills it)\n")
@@ -258,7 +258,7 @@ class TestGreedyTuneRule:
         assert GreedyPolicy(params={"tune_budget": 0}).tune_target(make_view(journal, config)) is None
 
     def test_gate_modes(self, tmp_path, config):
-        config.search.min_improvement = 0.05
+        config.evaluation.min_improvement = 0.05
         journal = seeded_journal(
             tmp_path, tunable("c001", 0.9, is_best=True), tunable("c002", 0.87), tunable("c003", 0.5),
         )

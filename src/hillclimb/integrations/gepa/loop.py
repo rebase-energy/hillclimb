@@ -77,7 +77,7 @@ class GepaLoop(SearchLoop):
     def __init__(self, params: GEPAParams | Mapping | None = None, driver: GEPADriver | None = None,
                  log=print, parallelism: int = 1):
         if parallelism > 1:
-            raise ValueError("the GEPA climber is serial: set search.parallel_operators=1")
+            raise ValueError("the GEPA climber is serial: set concurrency.parallel_operators=1")
         if not isinstance(params, GEPAParams):
             params = GEPAParams.model_validate(dict(params or {}))  # a typo fails before any spend
         self.params = params

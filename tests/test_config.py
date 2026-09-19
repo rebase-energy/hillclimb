@@ -9,7 +9,7 @@ from hillclimb.config import Config
 def test_defaults_load():
     config = Config.load()
     assert config.backend == "claude-code"
-    assert config.search.num_drafts == 3
+    assert config.climber.ref == "greedy" and config.climber.params == {}  # the manifest holds the defaults
 
 
 def test_overrides():
@@ -26,13 +26,13 @@ def test_none_overrides_ignored():
 
 def test_missing_file_uses_defaults(tmp_path: Path):
     config = Config.load(path=tmp_path / "nope.yaml")
-    assert config.search.max_debug_depth == 3
+    assert config.climber.ref == "greedy" and config.concurrency.parallel_operators == 1
 
 
 def test_policy_and_routing_defaults():
     config = Config()
-    assert config.search.policy == "greedy"
-    assert config.search.policy_params == {}
+    assert config.climber.ref == "greedy"
+    assert config.climber.params == {}
     assert config.routing == {}
 
 
@@ -53,13 +53,13 @@ search:
     assert config.routing["draft"].model == "opus-4.8"
     assert config.routing["improve"].backend is None  # inherits global backend
     assert config.routing["improve"].model == "haiku"
-    assert config.search.policy == "greedy"
-    assert config.search.policy_params == {"beam": 3}
+    assert config.climber.ref == "greedy"
+    assert config.climber.params == {"beam": 3}
 
 
 def test_policy_dotted_override():
     config = Config.load(**{"search.policy": "greedy"})
-    assert config.search.policy == "greedy"
+    assert config.climber.ref == "greedy"
 
 
 def test_subscription_env_strips_api_key(monkeypatch):
@@ -219,3 +219,80 @@ def test_explicit_config_loads_dotenv_and_local_models_path(tmp_path, monkeypatc
     config = Config.load(path=tmp_path / "config.yaml")
     assert config.pi.models_file == tmp_path / "models.json"
     assert os.environ["OPENROUTER_API_KEY"] == "local-test"
+
+
+# --- the 0.4 config surface: one `climber:` block, harness-only everything else ---
+
+
+def test_climber_block_and_its_shorthand():
+    from hillclimb.config import parse_set_overrides
+
+    assert Config.model_validate({"climber": "openevolve"}).climber.ref == "openevolve"
+    config = Config.model_validate(
+        {"climber": {"ref": "greedy", "params": {"num_drafts": 5}, "tuner": "optuna", "memory": "none",
+                     "operators": {"draft": {"retrieval": False}}}}
+    )
+    assert (config.climber.params, config.climber.tuner, config.climber.memory) == ({"num_drafts": 5}, "optuna", "none")
+    config.apply_overrides(parse_set_overrides(["climber.params.num_drafts=1", "climber.ref=gepa"]))
+    assert config.climber.params == {"num_drafts": 1} and config.climber.ref == "gepa"
+    with pytest.raises(ValueError):
+        Config.model_validate({"climber": {"ref": "greedy", "polcy": "x"}})  # a typo is not silently ignored
+
+
+def test_a_config_file_written_for_0_3_still_loads():
+    old = {
+        "model": "opus",
+        "search": {"policy": "openevolve", "policy_params": {"population_size": 50}, "num_drafts": 2,
+                   "tuner": "optuna", "parallel_agents": 3, "n_trials": 4, "noise_k": 2.0},
+        "ensemble": {"enabled": False, "top_k": 4},
+        "operators": {"draft_retrieval": False, "knowledge_tool": False},
+    }
+    config = Config.model_validate(old)
+    assert config.climber.ref == "openevolve" and config.climber.tuner == "optuna"
+    assert config.climber.params == {
+        "population_size": 50, "num_drafts": 2, "ensemble": False, "ensemble_top_k": 4,
+    }
+    assert config.climber.operators == {"draft": {"retrieval": False}}
+    assert config.learning.tool is False
+    assert (config.concurrency.parallel_operators, config.evaluation.n_replicates, config.evaluation.noise_k) == (3, 4, 2.0)
+    assert not hasattr(config, "search") and not hasattr(config, "ensemble")
+
+
+def test_legacy_set_overrides_keep_working_and_removed_keys_say_what_to_do():
+    from hillclimb.config import current_setting, parse_set_overrides
+
+    config = Config()
+    config.apply_overrides(parse_set_overrides(
+        ["search.policy=openevolve", "search.policy_params.population_size=9", "ensemble.top_k=5",
+         "search.parallel_operators=2", "operators.improve_ablation=false"]
+    ))
+    assert config.climber.ref == "openevolve"
+    assert config.climber.params == {"population_size": 9, "ensemble_top_k": 5}
+    assert config.concurrency.parallel_operators == 2
+    assert config.climber.operators == {"improve": {"ablation": False}}
+    assert current_setting("budget.total_s") == "budget.total_s"  # today's keys pass through
+    with pytest.raises(KeyError, match="prompts belong to a climber now"):
+        config.apply_overrides({"paths.prompts_dir": "x"})
+    with pytest.raises(KeyError, match="hillclimb climber new"):
+        Config.model_validate({"paths": {"prompts_dir": "hillclimb/prompts"}})
+
+
+def test_the_users_operator_overlay_reaches_the_operators():
+    from hillclimb.search_strategy import build_operators, effective_memory
+
+    config = Config()
+    assert build_operators(config).get("draft").params == {"retrieval": True}  # the manifest's
+    config.climber.operators = {"draft": {"retrieval": False}}
+    assert build_operators(config).get("draft").params == {"retrieval": False}
+    assert build_operators(config).get("improve").params == {"ablation": True}
+    config.climber.operators = {"crossover": {"x": 1}}
+    with pytest.raises(ValueError, match="this climber has no operator 'crossover'"):
+        build_operators(config)
+    # memory: the manifest's, the user's override, and the master switch
+    config = Config()
+    assert effective_memory(config) == "knowledge-graph"
+    config.climber.memory = "none"
+    assert effective_memory(config) == "none"
+    config.climber.memory = None
+    config.learning.enabled = False
+    assert effective_memory(config) == "none"

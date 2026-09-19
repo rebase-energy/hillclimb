@@ -53,8 +53,8 @@ def test_problem_rejects_unsafe_artifact_paths(task):
 
 def test_multi_trial_hoists_declared_json_artifact(tmp_path, task, config):
     problem = json_problem(tmp_path, task)
-    config.search.n_replicates = 2
-    config.search.replicate_mode = "serial"
+    config.evaluation.n_replicates = 2
+    config.evaluation.replicate_mode = "serial"
     search_dir = create_search_dir(tmp_path / "runs" / "r", "s")
     candidate_dir = create_candidate_dir(
         search_dir, "c001", problem.data_dir, problem.problem_dir
@@ -112,8 +112,8 @@ def test_greedy_runner_preserves_json_artifact(tmp_path, task, config):
     problem = json_problem(tmp_path, task).model_copy(
         update={"baseline_text": json_solution(0.1)}
     )
-    config.search.num_drafts = 1
-    config.ensemble.enabled = False
+    config.climber.params["num_drafts"] = 1
+    config.climber.params["ensemble"] = False
     backend = FakeBackend()
     backend.queue(script=json_solution(0.8), notes="json draft\n")
     search_dir = create_search_dir(tmp_path / "runs" / "greedy", "s")
@@ -139,7 +139,7 @@ def test_gepa_runner_preserves_json_artifact(tmp_path, task, config):
     problem = json_problem(tmp_path, task).model_copy(
         update={"baseline_text": json_solution(0.1)}
     )
-    config.search.policy = "gepa"
+    config.climber.ref = "gepa"
     backend = FakeBackend()
     backend.queue(script=json_solution(0.8), notes="json improvement\n")
     search_dir = create_search_dir(tmp_path / "runs" / "gepa", "s")

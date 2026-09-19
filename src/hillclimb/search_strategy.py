@@ -35,10 +35,10 @@ def search_climber(config: Config, search_dir=None) -> Climber:
     from hillclimb.policies import policy_base_dir, policy_label
 
     if search_dir is not None:
-        snapshot = load_snapshot(search_dir, name=policy_label(config.search.policy))
+        snapshot = load_snapshot(search_dir, name=policy_label(config.climber.ref))
         if snapshot is not None:
             return snapshot
-    return load_climber(config.search.policy, policy_base_dir(config))
+    return load_climber(config.climber.ref, policy_base_dir(config))
 
 
 def is_loop_climber(name: str, config: Config | None = None) -> bool:
@@ -60,45 +60,40 @@ def build_tuner(config: Config, search_dir=None):
     from hillclimb.tuners import get_tuner
 
     manifest = search_climber(config, search_dir).manifest
-    if "tuner" in config.search.model_fields_set:
-        return get_tuner(config.search.tuner, config.search.tuner_params)
-    return get_tuner(manifest.tuner, {**manifest.tuner_params, **config.search.tuner_params})
-
-
-def _user_params(config: Config) -> dict:
-    """What the USER set, to lay over the manifest's params: every
-    `search.policy_params` key, plus the pre-manifest config blocks where
-    they differ from their defaults (so a manifest's own value is not
-    overwritten by a default the user never touched)."""
-    from hillclimb.config import Config as ConfigModel
-    from hillclimb.policies import ConfigBackedParams
-
-    defaults = ConfigBackedParams(ConfigModel())
-    blocks = ConfigBackedParams(config)
-    touched = {name: blocks[name] for name in ConfigBackedParams._BLOCKS if blocks[name] != defaults[name]}
-    return {**touched, **config.search.policy_params}
+    if config.climber.tuner is not None:  # the user named one: it wins
+        return get_tuner(config.climber.tuner, config.climber.tuner_params)
+    return get_tuner(manifest.tuner, {**manifest.tuner_params, **config.climber.tuner_params})
 
 
 def build_loop(config: Config, *, complexity_start: int = 0, log=print, search_dir=None) -> SearchLoop:
     return search_climber(config, search_dir).build_loop(
-        params=_user_params(config),
+        params=config.climber.params,  # the user's overlay on the manifest's params
         complexity_start=complexity_start,
-        parallelism=max(1, config.search.parallel_operators),
+        parallelism=max(1, config.concurrency.parallel_operators),
         log=log,
     )
 
 
 def build_operators(config: Config, search_dir=None) -> OperatorSet:
-    """The climber's operators, with the pre-manifest `operators:` config
-    switches laid over them where the user turned one off."""
+    """The climber's operators, with the user's per-operator params
+    (`climber.operators: {draft: {retrieval: false}}`) laid over them."""
     from hillclimb.climber import OperatorSet
 
-    operators = search_climber(config, search_dir).operator_set()
-    switches = {"draft": ("retrieval", config.operators.draft_retrieval),
-                "improve": ("ablation", config.operators.improve_ablation)}
-    entries = dict(operators._entries)
-    for name, (key, enabled) in switches.items():
-        if name in entries and not enabled:
-            operator_cls, params = entries[name]
-            entries[name] = (operator_cls, {**params, key: False})
+    entries = dict(search_climber(config, search_dir).operator_set()._entries)
+    for name, overlay in config.climber.operators.items():
+        if name not in entries:
+            raise ValueError(
+                f"climber.operators.{name}: this climber has no operator {name!r} "
+                f"(it has {sorted(entries)})"
+            )
+        operator_cls, params = entries[name]
+        entries[name] = (operator_cls, {**params, **overlay})
     return OperatorSet(entries)
+
+
+def effective_memory(config: Config, search_dir=None) -> str:
+    """`knowledge-graph` or `none`: the user's `climber.memory`, else the
+    manifest's — and always `none` when learning is switched off."""
+    if not config.learning.enabled:
+        return "none"
+    return config.climber.memory or search_climber(config, search_dir).manifest.memory

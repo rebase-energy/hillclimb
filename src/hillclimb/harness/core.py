@@ -183,7 +183,7 @@ class Harness:
         if tuner is None:
             from hillclimb.tuners.random_search import RandomTuner
 
-            tuner = RandomTuner(config.search.tuner_params)
+            tuner = RandomTuner(config.climber.tuner_params)
         self.tuner = tuner  # which params a `tune` action tries; WHEN is the policy's call
         self.router = router  # None: everything routes to `backend` + config.model
         self.backends = backends
@@ -274,7 +274,7 @@ class Harness:
 
     @property
     def parallelism(self) -> int:
-        return max(1, self.config.search.parallel_operators)
+        return max(1, self.config.concurrency.parallel_operators)
 
     def view(self) -> PolicyInput:
         return self._view()
@@ -958,8 +958,8 @@ class Harness:
         if self.operators is not None:
             return self.operators.get(name)
         params = {
-            "draft": {"retrieval": self.config.operators.draft_retrieval},
-            "improve": {"ablation": self.config.operators.improve_ablation},
+            "draft": {"retrieval": self.config.climber.operators.get("draft", {}).get("retrieval", True)},
+            "improve": {"ablation": self.config.climber.operators.get("improve", {}).get("ablation", True)},
         }.get(name)
         return get_operator(name, params)
 
@@ -1272,7 +1272,7 @@ class Harness:
         ]
         index = len(target.trials) + len(pending)
         seed = tune_seed(
-            int(self.config.search.tuner_params.get("seed", 0)), target.candidate_id, index
+            int(self.config.climber.tuner_params.get("seed", 0)), target.candidate_id, index
         )
         try:
             values = self.tuner.ask(
@@ -1492,7 +1492,7 @@ class Harness:
         )
         contract_template = self.problem.contract_template
         tools_clause = ""
-        if self.config.operators.knowledge_tool and self.config.learning.enabled:
+        if self.config.learning.tool and self.config.learning.enabled:
             import sys as _sys
 
             # the engine's own interpreter — the agent's PATH may lack uv

@@ -417,7 +417,7 @@ def test_ensemble_not_triggered_outside_window_or_disabled(task, config):
     searcher.run_operator("draft", None)
     searcher.run_operator("draft", None)
     assert searcher._should_ensemble() is False  # plenty of budget left
-    config.ensemble.enabled = False
+    config.climber.params["ensemble"] = False
     searcher2, _, _ = make_ensemble_searcher(task, config, backend, spent_frac=0.9)
     assert searcher2._should_ensemble() is False
 
@@ -544,7 +544,7 @@ def report_script(score, split="validation", zones=None, body="json-report"):
 
 
 def test_trial_report_pickup_and_improve_injection(task, config):
-    config.search.num_drafts = 1
+    config.climber.params["num_drafts"] = 1
     backend = FakeBackend()
     backend.queue(script=report_script(0.6), notes="draft\n")
     backend.queue(script=ok_script(0.7), notes="improve\n")
@@ -565,7 +565,7 @@ def test_trial_report_pickup_and_improve_injection(task, config):
 def test_holdout_split_report_never_lands_on_trial(task, config):
     """Leakage guard: a holdout-split eval_result.json must not reach the
     journal (and therefore can never reach a prompt)."""
-    config.search.num_drafts = 1
+    config.climber.params["num_drafts"] = 1
     backend = FakeBackend()
     backend.queue(script=report_script(0.6, split="holdout"), notes="draft\n")
     searcher, journal, _ = make_searcher(task, config, backend, max_candidates=2)
@@ -576,7 +576,7 @@ def test_holdout_split_report_never_lands_on_trial(task, config):
 
 
 def test_malformed_eval_result_ignored(task, config):
-    config.search.num_drafts = 1
+    config.climber.params["num_drafts"] = 1
     backend = FakeBackend()
     backend.queue(script=report_script(0.6, body="malformed"), notes="draft\n")
     searcher, journal, _ = make_searcher(task, config, backend, max_candidates=2)
@@ -589,7 +589,7 @@ def test_malformed_eval_result_ignored(task, config):
 def test_report_injection_gated_by_config(task, config):
     """report.enabled=false stops injection but not recording — both A/B
     arms journal identical data."""
-    config.search.num_drafts = 1
+    config.climber.params["num_drafts"] = 1
     config.report.enabled = False
     backend = FakeBackend()
     backend.queue(script=report_script(0.6), notes="draft\n")
@@ -603,7 +603,7 @@ def test_report_injection_gated_by_config(task, config):
 def test_improve_prompt_carries_delta_vs_parent(task, config):
     """Second-generation improve: the target and its parent both have
     reports, so the prompt shows where the score moved."""
-    config.search.num_drafts = 1
+    config.climber.params["num_drafts"] = 1
     backend = FakeBackend()
     backend.queue(script=report_script(0.6), notes="draft\n")
     backend.queue(
@@ -671,7 +671,7 @@ def test_verifier_report_is_trusted_and_overrides_agent_file(task, config):
     report (evaluator trust) — anything the solution wrote is discarded,
     exactly like its val_score line."""
     task = add_verifier(task)
-    config.search.num_drafts = 1
+    config.climber.params["num_drafts"] = 1
     backend = FakeBackend()
     backend.queue(script=AGENT_FAKED_REPORT, notes="draft\n")
     backend.queue(script=ok_script(0.7), notes="improve\n")
@@ -693,7 +693,7 @@ def test_verifier_without_report_discards_agent_file(task, config):
     """The trust boundary also holds when the verifier writes no report:
     the agent's file must not survive as a fake evaluator report."""
     task = add_verifier(task, script='import json, os\njson.dump({"score": 0.66}, open(os.environ["HILLCLIMB_RESULT"], "w"))\n')
-    config.search.num_drafts = 1
+    config.climber.params["num_drafts"] = 1
     backend = FakeBackend()
     backend.queue(script=AGENT_FAKED_REPORT, notes="draft\n")
     searcher, journal, _ = make_searcher(task, config, backend, max_candidates=2)
@@ -707,7 +707,7 @@ def test_bare_number_result_has_no_report_and_does_not_crash(task, config):
     task = add_verifier(
         task, script='import os\nopen(os.environ["HILLCLIMB_RESULT"], "w").write("12.5")\n'
     )
-    config.search.num_drafts = 1
+    config.climber.params["num_drafts"] = 1
     backend = FakeBackend()
     backend.queue(script=ok_script(0.9), notes="draft\n")
     searcher, journal, _ = make_searcher(task, config, backend, max_candidates=2)
@@ -721,7 +721,7 @@ def test_bare_number_result_has_no_report_and_does_not_crash(task, config):
 def test_agent_report_labelled_self_reported(task, config):
     """Tier 2: verifier-less problems store the agent's own report, stamped
     source=agent and rendered with the self-reported caveat."""
-    config.search.num_drafts = 1
+    config.climber.params["num_drafts"] = 1
     backend = FakeBackend()
     backend.queue(script=report_script(0.6), notes="draft\n")
     backend.queue(script=ok_script(0.7), notes="improve\n")
@@ -800,7 +800,7 @@ def make_evaluator_searcher(config, tmp_path, backend, evaluate_py=EVALUATOR_EVA
 
 
 def test_evaluator_kind_full_loop(config, tmp_path):
-    config.search.num_drafts = 1
+    config.climber.params["num_drafts"] = 1
     backend = FakeBackend()
     backend.queue(script="def answer():\n    return 0.6\n", notes="first answer\n")
     backend.queue(script="def answer():\n    return 0.7\n", notes="better answer\n")
@@ -831,7 +831,7 @@ def test_evaluator_missing_result_json_wording(config, tmp_path):
     """An evaluator that scores but writes no eval_result.json is a contract
     violation — the debug prompt must name the missing artifact, not
     submission.csv."""
-    config.search.num_drafts = 1
+    config.climber.params["num_drafts"] = 1
     backend = FakeBackend()
     backend.queue(script="def answer():\n    return 0.5\n", notes="draft\n")
     backend.queue(script="def answer():\n    return 0.5\n", notes="fix attempt\n")
@@ -850,8 +850,8 @@ def test_evaluator_missing_result_json_wording(config, tmp_path):
 
 
 def test_evaluator_multi_trial_seeds(config, tmp_path):
-    config.search.num_drafts = 1
-    config.search.n_replicates = 2
+    config.climber.params["num_drafts"] = 1
+    config.evaluation.n_replicates = 2
     backend = FakeBackend()
     backend.queue(script="def answer():\n    return 0.6\n", notes="draft\n")
     searcher, journal, _ = make_evaluator_searcher(config, tmp_path, backend, max_candidates=2)

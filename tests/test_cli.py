@@ -206,8 +206,8 @@ def test_create_search_persists_policy_and_routing(task, config, tmp_path):
     from hillclimb.api import create_search
     from hillclimb.config import RouteConfig
 
-    config.search.policy = "greedy"
-    config.search.policy_params = {"beam": 3}
+    config.climber.ref = "greedy"
+    config.climber.params = {"beam": 3}
     config.routing = {"draft": RouteConfig(model="opus-4.8")}
     search_dir = create_search(config, task, tmp_path / "runs" / "r1", "r1", total_s=600)
     meta = load_search_meta(search_dir)
@@ -251,8 +251,8 @@ def test_resume_restores_policy_and_routing(config, tmp_path, monkeypatch):
     resume("run-1/a")
 
     restored = captured["config"]
-    assert restored.search.policy == "scripted"
-    assert restored.search.policy_params == {"depth": 2}
+    assert restored.climber.ref == "scripted"
+    assert restored.climber.params == {"depth": 2}
     assert restored.routing["draft"].model == "opus-4.8"
     assert restored.routing["draft"].backend is None
 
@@ -519,24 +519,25 @@ def test_wide_terminal_prints_the_mark(monkeypatch, capsys):
 
 
 def test_legacy_parallel_agents_key_maps_to_parallel_operators():
-    from hillclimb.config import SearchConfig
+    from hillclimb.config import Config
     from hillclimb.problem import SuiteEntry
 
-    assert SearchConfig(parallel_agents=4).parallel_operators == 4
+    old = Config.model_validate({"search": {"parallel_agents": 4, "machine_max_agents": 5}})
+    assert old.concurrency.parallel_operators == 4
     assert SuiteEntry(target="x", parallel_agents=2).parallel_operators == 2
-    assert SearchConfig(machine_max_agents=5).effective_machine_max_operators() == 5
+    assert old.concurrency.effective_machine_max_operators() == 5
 
 
 def test_machine_max_operators_defaults_to_cores_minus_two_capped(monkeypatch):
-    from hillclimb.config import SearchConfig
+    from hillclimb.config import ConcurrencyConfig
 
     monkeypatch.setattr("os.cpu_count", lambda: 10)
-    assert SearchConfig().effective_machine_max_operators() == 8
+    assert ConcurrencyConfig().effective_machine_max_operators() == 8
     monkeypatch.setattr("os.cpu_count", lambda: 32)
-    assert SearchConfig().effective_machine_max_operators() == 8
+    assert ConcurrencyConfig().effective_machine_max_operators() == 8
     monkeypatch.setattr("os.cpu_count", lambda: 4)
-    assert SearchConfig().effective_machine_max_operators() == 2
-    assert SearchConfig(machine_max_operators=0).effective_machine_max_operators() == 0  # off
+    assert ConcurrencyConfig().effective_machine_max_operators() == 2
+    assert ConcurrencyConfig(machine_max_operators=0).effective_machine_max_operators() == 0  # off
 
 
 def test_orphan_engines_are_those_whose_dir_is_gone(tmp_path, monkeypatch):
@@ -1007,7 +1008,7 @@ def test_run_with_several_policies_launches_a_mixed_fleet(config, monkeypatch, t
         FleetEngine(arm="gepa", policy="gepa", overrides=("search.parallel_operators=1",)),
     ]
     assert call["experiment"] == "three-way" and call["overrides"] == ["learning.enabled=false"]
-    assert config.search.policy == "greedy"  # the parent's config is not bent to any one arm
+    assert config.climber.ref == "greedy"  # the parent's config is not bent to any one arm
     assert "3 searches (greedy, openevolve, gepa)" in result.output
     assert "hillclimb experiment report three-way" in result.output
 
@@ -1067,7 +1068,7 @@ def test_resume_warns_when_the_policy_file_changed(config, tmp_path, monkeypatch
     monkeypatch.setattr("hillclimb.cli._execute", lambda config_arg, *a, **k: captured.setdefault("config", config_arg))
 
     resume("run-1/a")
-    assert captured["config"].search.policy == str(policy_file)
+    assert captured["config"].climber.ref == str(policy_file)
     err = capsys.readouterr().err
     assert "changed since the search started" in err and "000000000000 ->" in err
 

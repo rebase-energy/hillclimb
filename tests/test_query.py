@@ -88,8 +88,8 @@ class TestToolsClause:
         assert "uv run" not in prompt.split("knowledge query")[0].splitlines()[-1]
 
     def test_clause_gated_by_flag_and_learning(self, searcher):
-        searcher.config.operators.knowledge_tool = False
+        searcher.config.learning.tool = False
         assert "knowledge query" not in searcher.build_prompt("draft", None, "minimal", None)
-        searcher.config.operators.knowledge_tool = True
+        searcher.config.learning.tool = True
         searcher.config.learning.enabled = False
         assert "knowledge query" not in searcher.build_prompt("draft", None, "minimal", None)

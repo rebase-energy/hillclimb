@@ -1,4 +1,4 @@
-"""GEPA engine parameters: the validated subset of search.policy_params the
+"""GEPA engine parameters: the validated subset of the climber's params the
 MVP supports. extra="forbid" so a misspelled budget or privacy setting fails
 before any model spend."""
 
@@ -52,9 +52,9 @@ class GEPAParams(BaseModel):
 
 def validate_gepa_search_config(config: Config) -> GEPAParams:
     """Parse and gate the config before any candidate dir or model spend."""
-    params = GEPAParams.model_validate(config.search.policy_params or {})
-    if config.search.parallel_operators > 1:
+    params = GEPAParams.model_validate(config.climber.params or {})
+    if config.concurrency.parallel_operators > 1:
         raise ValueError(
-            "the GEPA engine is serial in the MVP: set search.parallel_operators=1"
+            "the GEPA engine is serial in the MVP: set concurrency.parallel_operators=1"
         )
     return params

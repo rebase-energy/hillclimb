@@ -47,8 +47,8 @@ def predictor_module(name: str, window: str) -> str:
 def test_full_emflow_search(config, tmp_path):
     config.paths.runs_dir = tmp_path / "runs"
     config.budget.exec_timeout_s = 300
-    config.search.num_drafts = 2
-    config.ensemble.enabled = False
+    config.climber.params["num_drafts"] = 2
+    config.climber.params["ensemble"] = False
     spec = load_problem(f"emflow://{PROBLEM}", config)
 
     search_dir = config.paths.runs_dir / "e2e" / "searches" / spec.problem_id

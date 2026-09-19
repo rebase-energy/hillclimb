@@ -116,7 +116,7 @@ class CandidateEvaluator:
             index = len(candidate.trials)
         tdir = create_trial_dir(candidate_dir, index, params_doc)
         trial = Trial(index=index, params=dict(params or {}))
-        n = max(1, n_replicates if n_replicates is not None else self.config.search.n_replicates)
+        n = max(1, n_replicates if n_replicates is not None else self.config.evaluation.n_replicates)
 
         def run(j: int) -> tuple[Replicate, bool]:
             rdir = create_replicate_dir(tdir, j)
@@ -172,7 +172,7 @@ class CandidateEvaluator:
 
         if trial.verdict == "passing" and n > 1:
             indexes = range(1, n)
-            if self.config.search.replicate_mode == "serial":
+            if self.config.evaluation.replicate_mode == "serial":
                 results.extend(run(j) for j in indexes)
             else:
                 with ThreadPoolExecutor(
@@ -392,11 +392,11 @@ def accept_band(config: Config, journal: Journal) -> float:
     `min_improvement` is the author's own floor in metric units; `noise_k`
     multiples of the measured noise floor is the search's own evidence
     about itself. Zero (the default) is the strict comparison."""
-    band = config.search.min_improvement
-    if config.search.noise_k > 0:
+    band = config.evaluation.min_improvement
+    if config.evaluation.noise_k > 0:
         floor = journal.noise_floor()
         if floor is not None:
-            band = max(band, config.search.noise_k * floor)
+            band = max(band, config.evaluation.noise_k * floor)
     return band
 
 

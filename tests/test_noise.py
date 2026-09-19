@@ -104,7 +104,7 @@ def test_band_defaults_to_off(task, config):
 
 
 def test_band_from_min_improvement(task, config):
-    config.search.min_improvement = 0.01
+    config.evaluation.min_improvement = 0.01
     searcher, _, _ = make_searcher(task, config)
     assert searcher.accept_band() == 0.01
     assert not searcher._improves(0.505, 0.5)
@@ -114,7 +114,7 @@ def test_band_from_min_improvement(task, config):
 
 
 def test_band_from_measured_noise(task, config):
-    config.search.noise_k = 2
+    config.evaluation.noise_k = 2
     searcher, journal, _ = make_searcher(task, config)
     assert searcher.accept_band() == 0.0  # nothing measured yet
 
@@ -125,7 +125,7 @@ def test_band_from_measured_noise(task, config):
 
 
 def test_band_respects_direction(task, config):
-    config.search.min_improvement = 0.01
+    config.evaluation.min_improvement = 0.01
     task = task.model_copy(update={"higher_is_better": False})
     searcher, _, _ = make_searcher(task, config)
     assert searcher._improves(0.9, 1.0)
@@ -135,8 +135,8 @@ def test_band_respects_direction(task, config):
 def test_within_noise_candidate_is_not_promoted(task, config):
     """The end-to-end point of the band: a draft that is nominally ahead but
     inside the noise band must not become the thing the search climbs."""
-    config.search.min_improvement = 0.05
-    config.search.num_drafts = 3
+    config.evaluation.min_improvement = 0.05
+    config.climber.params["num_drafts"] = 3
     logs: list[str] = []
     backend = FakeBackend()
     backend.queue(script=ok_script(0.60), notes="first\n")
@@ -195,8 +195,8 @@ def overlaps(path: Path) -> int:
 def test_serial_trials_do_not_share_the_machine(task, config):
     """Anything that measures the machine (time, throughput, memory) measures
     its own sibling trials when they run concurrently."""
-    config.search.n_replicates = 3
-    config.search.replicate_mode = "serial"
+    config.evaluation.n_replicates = 3
+    config.evaluation.replicate_mode = "serial"
     backend = FakeBackend()
     backend.queue(script=TIMED_SOLUTION, notes="timed\n")
     searcher, journal, _ = make_searcher(task, config, backend)
@@ -209,8 +209,8 @@ def test_serial_trials_do_not_share_the_machine(task, config):
 
 
 def test_parallel_trials_run_concurrently(task, config):
-    config.search.n_replicates = 3
-    config.search.replicate_mode = "parallel"  # the default
+    config.evaluation.n_replicates = 3
+    config.evaluation.replicate_mode = "parallel"  # the default
     backend = FakeBackend()
     backend.queue(script=TIMED_SOLUTION, notes="timed\n")
     searcher, journal, _ = make_searcher(task, config, backend)

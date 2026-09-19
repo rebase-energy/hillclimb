@@ -70,7 +70,7 @@ class FillEverySlot(SearchLoop):
 def test_in_flight_work_has_its_evaluation_reserved(task, config):
     """Four free slots, two evaluations left: only two attempts start — the
     cap is never overshot by work that was already running."""
-    config.search.parallel_operators = 4
+    config.concurrency.parallel_operators = 4
     config.budget.max_evaluations = 2
     backend = FakeBackend()
     for score in (0.5, 0.6, 0.7, 0.8):

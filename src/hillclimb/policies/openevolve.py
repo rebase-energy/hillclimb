@@ -22,7 +22,7 @@ Params (config `search.policy_params`, all optional):
       → passed straight to openevolve's DatabaseConfig
   num_inspirations (2)   inspirations copied in as candidate_<i>.py
   debug (true)           keep hillclimb's debug-the-buggy-tip rule
-  num_drafts             seed population size; default config.search.num_drafts
+  num_drafts             seed population size; default config.climber.params.get("num_drafts")
 
 Feature dimensions: the built-ins `complexity` (code length), `diversity`
 (edit distance to a reference set) and `score` need nothing from the

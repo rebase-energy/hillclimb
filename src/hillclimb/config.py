@@ -48,43 +48,88 @@ def default_machine_max_operators() -> int:
     return max(1, min(8, (os.cpu_count() or 4) - 2))
 
 
-# pre-rename config keys, mapped on load AND by apply_overrides (which walks
-# model_fields and would otherwise reject `--set search.n_replicates=3` or an old
-# experiment spec). "agent" was overloaded (the engine noun is operator);
-# "trial" moved up a level when trials gained parameters (a trial is one
-# parameter set, a replicate one seeded execution of it).
-LEGACY_SEARCH_KEYS = {
-    "parallel_agents": "parallel_operators",
-    "machine_max_agents": "machine_max_operators",
-    "n_trials": "n_replicates",
-    "trial_mode": "replicate_mode",
+# Every pre-0.4 spelling of a setting -> where it lives now. Applied to a
+# config file on load (`Config._from_legacy_blocks`) and to dotted overrides
+# (`apply_overrides`, so `--set search.policy=openevolve` and an old
+# experiment spec keep working). Prefix match: `search.policy_params.k` maps
+# to `climber.params.k`. The method knobs moved into the `climber:` block
+# (they are the climber's params now), the rest of `search:` split by what it
+# is about.
+LEGACY_SETTINGS = {
+    "search.policy_params": "climber.params",
+    "search.policy": "climber.ref",
+    "search.tuner_params": "climber.tuner_params",
+    "search.tuner": "climber.tuner",
+    "search.num_drafts": "climber.params.num_drafts",
+    "search.max_debug_depth": "climber.params.max_debug_depth",
+    "ensemble.enabled": "climber.params.ensemble",
+    "ensemble.reserve_fraction": "climber.params.ensemble_reserve_fraction",
+    "ensemble.top_k": "climber.params.ensemble_top_k",
+    "ensemble.max_attempts": "climber.params.ensemble_max_attempts",
+    "operators.draft_retrieval": "climber.operators.draft.retrieval",
+    "operators.improve_ablation": "climber.operators.improve.ablation",
+    "operators.knowledge_tool": "learning.tool",
+    "search.parallel_operators": "concurrency.parallel_operators",
+    "search.parallel_agents": "concurrency.parallel_operators",
+    "search.machine_max_operators": "concurrency.machine_max_operators",
+    "search.machine_max_agents": "concurrency.machine_max_operators",
+    "search.n_replicates": "evaluation.n_replicates",
+    "search.n_trials": "evaluation.n_replicates",
+    "search.replicate_mode": "evaluation.replicate_mode",
+    "search.trial_mode": "evaluation.replicate_mode",
+    "search.noise_k": "evaluation.noise_k",
+    "search.min_improvement": "evaluation.min_improvement",
 }
-LEGACY_SETTINGS = {f"search.{old}": f"search.{new}" for old, new in LEGACY_SEARCH_KEYS.items()}
+# settings that have no new home, and what to do instead
+REMOVED_SETTINGS = {
+    "paths.prompts_dir": (
+        "prompts belong to a climber now: `hillclimb climber new mine --from greedy`, "
+        "edit mine/prompts/, then run with `--climber mine`"
+    ),
+}
 
 
-class SearchConfig(BaseModel):
-    """Policy knobs for one Search (the `search:` config block), not the
-    Search entity itself — that lives in run.py as SearchMeta."""
+def current_setting(key: str) -> str:
+    """A dotted setting in today's spelling (longest legacy prefix wins)."""
+    for old in sorted(LEGACY_SETTINGS, key=len, reverse=True):
+        if key == old or key.startswith(old + "."):
+            return LEGACY_SETTINGS[old] + key[len(old):]
+    for old, advice in REMOVED_SETTINGS.items():
+        if key == old or key.startswith(old + "."):
+            raise KeyError(f"{old} is gone: {advice}")
+    return key
 
-    num_drafts: int = 3
-    max_debug_depth: int = 3
-    parallel_operators: int = 1  # >1 enables the worker pool; 1 = serial (default)
+
+class ClimberConfig(BaseModel):
+    """Which climber drives the search, and what the USER lays over it (the
+    `climber:` block; `climber: greedy` is shorthand for `{ref: greedy}`).
+
+    `ref` is a bundled name (greedy | openevolve | gepa), a directory holding
+    climber.yaml, or one .py file — relative paths resolve from the folder
+    holding the hillclimb dir. The rest are the manifest keys that are always
+    the user's to change without copying the climber: its `params`, its
+    operators' params, its tuner, its memory."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ref: str = "greedy"
+    params: dict = Field(default_factory=dict)  # laid over the manifest's params
+    # per-operator params laid over the manifest's: {draft: {retrieval: false}}
+    operators: dict[str, dict] = Field(default_factory=dict)
+    tuner: str | None = None  # None = the manifest's (random | optuna)
+    tuner_params: dict = Field(default_factory=dict)
+    memory: Literal["knowledge-graph", "none"] | None = None  # None = the manifest's
 
     @model_validator(mode="before")
     @classmethod
-    def _legacy_parallel_agents(cls, data):
-        # pre-rename keys; "agent" is overloaded, the engine noun is operator
-        if isinstance(data, dict):
-            data = dict(data)
-            for old, new in LEGACY_SEARCH_KEYS.items():
-                if old in data:
-                    data.setdefault(new, data.pop(old))
-        return data
+    def _shorthand(cls, data):
+        return {"ref": data} if isinstance(data, str) else data
 
-    def effective_machine_max_operators(self) -> int:
-        if self.machine_max_operators is None:
-            return default_machine_max_operators()
-        return self.machine_max_operators
+
+class EvaluationConfig(BaseModel):
+    """How a candidate is measured (the `evaluation:` block) — the harness's,
+    never a climber's."""
+
     # seeded executions per trial (one parameter set); the trial's score is
     # their MEDIAN. Replicate variance is noise, never something to climb.
     n_replicates: int = 1
@@ -100,33 +145,21 @@ class SearchConfig(BaseModel):
     # Both default to 0 = off, which is the strict comparison.
     min_improvement: float = 0.0
     noise_k: float = 0.0
+
+
+class ConcurrencyConfig(BaseModel):
+    """How much runs at once (the `concurrency:` block)."""
+
+    parallel_operators: int = 1  # attempts in flight per search; 1 = serial (default)
     # Machine-wide cap on concurrent operators across every search on this
     # machine (flock slots in ~/.cache/hillclimb/agent-slots/). Operators
     # beyond it wait (`waiting-slot` in watch). 0 = off; None = default_machine_max_operators().
     machine_max_operators: int | None = None
-    policy: str = "greedy"  # search policy (policies registry)
-    policy_params: dict = Field(default_factory=dict)  # opaque; validated by the policy factory
-    # which parameter set a `tune` action tries next on a candidate that
-    # declares params.json (tuners registry: random | optuna). WHEN to tune is
-    # the policy's call (greedy: policy_params.tune_budget etc.)
-    tuner: str = "random"
-    tuner_params: dict = Field(default_factory=dict)  # opaque; validated by the tuner factory
 
-
-class OperatorsConfig(BaseModel):
-    """Operator-scaffold knobs (the `operators:` config block). Both gate
-    ONLY prompt injection, so A/B arms differ in what the agent is told, not
-    in what the engine records."""
-
-    # draft: instruct the agent to web-search current SOTA methods for the
-    # problem class before writing code (counters training-data staleness)
-    draft_retrieval: bool = True
-    # improve: instruct the agent to run a component ablation of the parent
-    # solution and target only the highest-impact component
-    improve_ablation: bool = True
-    # all operators: contract clause advertising the read-only
-    # `hillclimb knowledge query` memory lookup (needs learning enabled)
-    knowledge_tool: bool = True
+    def effective_machine_max_operators(self) -> int:
+        if self.machine_max_operators is None:
+            return default_machine_max_operators()
+        return self.machine_max_operators
 
 
 class RouteConfig(BaseModel):
@@ -175,23 +208,12 @@ class HoldoutConfig(BaseModel):
     timing: Literal["inline", "after"] = "inline"
 
 
-class EnsembleConfig(BaseModel):
-    enabled: bool = True
-    reserve_fraction: float = 0.2  # final slice of budget reserved for ensembling
-    top_k: int = 3
-    max_attempts: int = 2
-
-
 class PathsConfig(BaseModel):
     # Relative runs_dir/problems_dir resolve at load time against the folder
     # holding the hillclimb dir; everything hillclimb writes stays inside the
     # hillclimb/ folder by default.
     runs_dir: Path = Path("hillclimb/runs")
     problems_dir: Path = Path("hillclimb/problems")
-    # operator prompt overrides: `<prompts_dir>/<template>.md` shadows the
-    # package template of the same name (prompts/render.py); the effective
-    # set is hashed into SearchMeta.templates_sha256
-    prompts_dir: Path = Path("hillclimb/prompts")
     # None = shared machine venv under ~/.cache/hillclimb/venvs/, keyed by a
     # hash of the requirements (+ emflow source). Set explicitly to pin.
     runtime_python: Path | None = None
@@ -216,6 +238,9 @@ class LearningConfig(BaseModel):
     search and inject prior experience into draft prompts."""
 
     enabled: bool = True
+    # advertise the read-only `hillclimb knowledge query` lookup to every
+    # agent (a clause of the contract; needs `enabled`)
+    tool: bool = True
     # default: <hillclimb dir>/knowledge (git-versionable); explicit
     # path overrides; None + no hillclimb dir = learning off
     dir: Path | None = None
@@ -332,9 +357,10 @@ class Config(BaseModel):
     # scalars above (except distill's model, which defaults to haiku).
     routing: dict[str, RouteConfig] = Field(default_factory=dict)
     budget: BudgetConfig = BudgetConfig()
-    search: SearchConfig = SearchConfig()
+    climber: ClimberConfig = ClimberConfig()
+    evaluation: EvaluationConfig = EvaluationConfig()
+    concurrency: ConcurrencyConfig = ConcurrencyConfig()
     holdout: HoldoutConfig = HoldoutConfig()
-    ensemble: EnsembleConfig = EnsembleConfig()
     paths: PathsConfig = PathsConfig()
     store: StoreConfig = StoreConfig()
     emflow: EmflowConfig = EmflowConfig()
@@ -343,10 +369,42 @@ class Config(BaseModel):
     similarity: SimilarityConfig = SimilarityConfig()
     learning: LearningConfig = LearningConfig()
     report: ReportConfig = ReportConfig()
-    operators: OperatorsConfig = OperatorsConfig()
     # Resolved at load time; None for embedders that construct Config()
     # directly and set absolute paths themselves (e.g. the hosted container).
     hillclimb_dir: Path | None = Field(default=None, exclude=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from_legacy_blocks(cls, data):
+        """A config file written for 0.3 (`search:`, `ensemble:`,
+        `operators:` blocks) still loads: every setting is moved to where it
+        lives now (LEGACY_SETTINGS). A setting with no new home raises with
+        what to do instead."""
+        if not isinstance(data, dict) or not any(k in data for k in ("search", "ensemble", "operators")) and not (
+            isinstance(data.get("paths"), dict) and "prompts_dir" in data["paths"]
+        ):
+            return data
+        data = {key: (dict(value) if isinstance(value, dict) else value) for key, value in data.items()}
+        moved: dict[str, object] = {}
+        for block in ("search", "ensemble", "operators"):
+            for name, value in (data.pop(block, None) or {}).items():
+                moved[current_setting(f"{block}.{name}")] = value
+        if isinstance(data.get("paths"), dict) and "prompts_dir" in data["paths"]:
+            current_setting("paths.prompts_dir")  # raises with the advice
+        for key, value in moved.items():
+            target = data
+            *parents, leaf = key.split(".")
+            for part in parents:
+                node = target.get(part)
+                if isinstance(node, str) and part == "climber":
+                    node = {"ref": node}
+                target[part] = node = dict(node or {})
+                target = node
+            if isinstance(value, dict) and isinstance(target.get(leaf), dict):
+                target[leaf] = {**value, **target[leaf]}  # an explicit new-style value wins
+            else:
+                target.setdefault(leaf, value)
+        return data
 
     @model_validator(mode="after")
     def _check_backend_auth(self):
@@ -444,11 +502,14 @@ class Config(BaseModel):
         for key, value in overrides.items():
             if value is None:
                 continue
-            if "." in key:
-                section, field = key.split(".", 1)
-                setattr(getattr(config, section), field, value)
+            *parents, leaf = current_setting(key).split(".")
+            target: object = config
+            for part in parents:
+                target = target[part] if isinstance(target, dict) else getattr(target, part)
+            if isinstance(target, dict):
+                target[leaf] = value
             else:
-                setattr(config, key, value)
+                setattr(target, leaf, value)
         # Keyword overrides are applied after loading so they need the same
         # validation pass as file values (including routed sampling rules).
         hillclimb_dir = config.hillclimb_dir
@@ -465,7 +526,7 @@ class Config(BaseModel):
         KeyError naming the offending key."""
         working = self.model_copy(deep=True)
         for key, value in overrides.items():
-            key = LEGACY_SETTINGS.get(key, key)
+            key = current_setting(key)
             parts = key.split(".")
             target: object = working
             for part in parts[:-1]:
@@ -508,7 +569,6 @@ class Config(BaseModel):
         for section, name in (
             (self.paths, "runs_dir"),
             (self.paths, "problems_dir"),
-            (self.paths, "prompts_dir"),
             (self.store, "sqlite_path"),
             (self.pi, "models_file"),
         ):
