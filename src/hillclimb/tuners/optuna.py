@@ -19,8 +19,7 @@ import inspect
 import warnings
 from typing import Sequence
 
-from hillclimb.params import ParamSpace, coerce
-from hillclimb.tuner import Observation
+from hillclimb.sdk import Observation, ParamSpace, coerce
 
 MISSING_EXTRA = "the optuna tuner needs the `optuna` package: pip install 'hillclimb[optuna]'"
 DEFAULT_STARTUP_TRIALS = 3  # TPE's own default (10) would make a small tune budget pure random

@@ -9,8 +9,7 @@ import math
 import random
 from typing import Sequence
 
-from hillclimb.params import ParamSpace, ParamSpec, coerce
-from hillclimb.tuner import Observation
+from hillclimb.sdk import Observation, ParamSpace, ParamSpec, coerce
 
 REDRAWS = 16
 

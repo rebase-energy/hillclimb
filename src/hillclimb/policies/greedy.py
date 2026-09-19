@@ -40,9 +40,7 @@ import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from hillclimb import evaluation
-from hillclimb.candidate import Candidate
-from hillclimb.policy import TUNE_ACTION, Action, PolicyInput
+from hillclimb.sdk import TUNE_ACTION, Action, Candidate, PolicyInput, accept_band, improves
 
 if TYPE_CHECKING:
     from hillclimb.config import Config
@@ -153,7 +151,7 @@ class GreedyPolicy:
         headroom = view.budget.remaining_s - view.budget.stop_margin_s
         journal = view.journal
         best = journal.best_candidate(view.higher_is_better)
-        band = evaluation.accept_band(view.config, journal)
+        band = accept_band(view.config, journal)
         gate = str(self.tune_param("tune_gate"))
         parallel = int(self.tune_param("tune_parallel"))
         burst = int(self.tune_param("tune_burst"))
@@ -194,7 +192,7 @@ class GreedyPolicy:
         if gate == "best":
             return False
         # "band": the best does not beat this candidate by more than the band
-        return not evaluation.improves(
+        return not improves(
             best.val_score, candidate.val_score, higher_is_better=higher_is_better, band=band
         )
 

@@ -7,7 +7,7 @@ import io
 import tokenize
 from collections import Counter
 
-from hillclimb.similarity_scores.base import SimilarityScore, Solution
+from hillclimb.sdk import SimilarityScore, Solution
 
 _CODE_TOKENS = frozenset({tokenize.NAME, tokenize.OP, tokenize.NUMBER, tokenize.STRING})
 

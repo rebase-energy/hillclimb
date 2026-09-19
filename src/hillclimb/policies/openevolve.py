@@ -37,9 +37,8 @@ from dataclasses import fields as dataclass_fields
 from datetime import datetime
 from pathlib import Path
 
-from hillclimb.candidate import Candidate
 from hillclimb.policies.greedy import GreedyPolicy, _improvable
-from hillclimb.policy import Action, PolicyInput
+from hillclimb.sdk import Action, Candidate, PolicyInput
 
 BUILTIN_FEATURES = ("complexity", "diversity", "score")
 DEFAULT_SEED = 42
