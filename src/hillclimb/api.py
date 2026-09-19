@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
 from hillclimb.backends import get_backend
+from hillclimb.backends.base import OperatorRequest
 from hillclimb.budget import BudgetManager
 from hillclimb.candidate import Candidate
 from hillclimb.config import Config
@@ -187,6 +188,21 @@ def build_executor(config: Config, problem: ProblemSpec, log: Log = print):
     )
 
 
+def build_unit_test_runner(config: Config, problem: ProblemSpec, log: Log = print):
+    """The run-frozen correctness gate, or None for verifier-only problems."""
+    if problem.unit_tests is None:
+        return None
+    from hillclimb.unit_tests import UnitTestRunner
+
+    return UnitTestRunner(
+        ensure_runtime_venv(
+            config, kind=problem.runtime, log=log, requirements=problem.requirements_file
+        ),
+        problem.unit_tests,
+        pythonpath=interface_shim(log),
+    )
+
+
 def build_holdout_scorer(config: Config, problem: ProblemSpec, search_dir: Path, log: Log = print):
     """Hidden-split scorer, or None when holdout is off for this search —
     selection then climbs on validation alone."""
@@ -236,6 +252,7 @@ def build_evaluator(
 
     return CandidateEvaluator(
         executor=build_executor(config, problem, log),
+        unit_test_runner=build_unit_test_runner(config, problem, log),
         problem=problem,
         config=config,
         holdout_scorer=build_holdout_scorer(config, problem, search_dir, log),
@@ -253,6 +270,7 @@ def spent_seconds(journal: Journal) -> float:
     return sum(
         (c.backend.agent_duration_s or 0)
         + sum(r.duration_s or 0 for t in c.trials for r in t.replicates)
+        + sum(t.unit_tests.duration_s for t in c.trials if t.unit_tests is not None)
         for c in journal.candidates.values()
     )
 
@@ -301,45 +319,52 @@ def create_search(
 ) -> Path:
     from hillclimb.policies import policy_base_dir, policy_sha256
     from hillclimb.prompts.render import templates_digest
+    from hillclimb.unit_tests import bundle_relative, freeze_for_run
 
     # a file policy that cannot be read fails here, before a search dir exists
     policy_digest = policy_sha256(config.search.policy, policy_base_dir(config))
+    problem.unit_tests = freeze_for_run(problem, run_dir)
     search_dir = allocate_search_dir(run_dir, problem.problem_id)
     templates = templates_digest(config.paths.prompts_dir)
     meta = SearchMeta(
-            search_id=search_dir.name,
-            run_id=run_id,
-            search_uid=new_search_uid(),
-            problem=problem.target or str(problem.problem_dir),
-            problem_id=problem.problem_id,
-            problem_key=problem.problem_key,
-            backend=config.backend,
-            model=config.model,
-            policy=config.search.policy,
-            policy_params=config.search.policy_params,
-            policy_sha256=policy_digest,
-            tuner=config.search.tuner,
-            tuner_params=config.search.tuner_params,
-            routing={
-                op: route.model_dump(exclude_none=True)
-                for op, route in config.routing.items()
-            },
-            metric=problem.metric_name,
-            higher_is_better=problem.higher_is_better,
-            chart_baselines=problem.chart_baselines,
-            provider_revision=problem.provider_revision,
-            output_artifacts=problem.output_artifacts,
-            budget_s=total_s,
-            holdout_enabled=config.holdout.enabled and problem.holdout_cmd is not None,
-            seed_from=str(seed_from) if seed_from else None,
-            seed_sha256=_sha256(seed_from) if seed_from else None,
-            templates_sha256=templates.sha256,
-            templates_overridden=templates.overridden,
-            learning_enabled=config.learning.enabled,
-            experiment=experiment,
-            arm=arm,
-            repeat=repeat,
-            arm_overrides=dict(arm_overrides or {}),
+        search_id=search_dir.name,
+        run_id=run_id,
+        search_uid=new_search_uid(),
+        problem=problem.target or str(problem.problem_dir),
+        problem_id=problem.problem_id,
+        problem_key=problem.problem_key,
+        backend=config.backend,
+        model=config.model,
+        policy=config.search.policy,
+        policy_params=config.search.policy_params,
+        policy_sha256=policy_digest,
+        tuner=config.search.tuner,
+        tuner_params=config.search.tuner_params,
+        routing={
+            op: route.model_dump(exclude_none=True)
+            for op, route in config.routing.items()
+        },
+        metric=problem.metric_name,
+        higher_is_better=problem.higher_is_better,
+        chart_baselines=problem.chart_baselines,
+        provider_revision=problem.provider_revision,
+        output_artifacts=problem.output_artifacts,
+        unit_tests_bundle=(
+            bundle_relative(problem.unit_tests, run_dir) if problem.unit_tests else None
+        ),
+        unit_tests_command=(list(problem.unit_tests.command) if problem.unit_tests else []),
+        unit_tests_sha256=(problem.unit_tests.sha256 if problem.unit_tests else None),
+        budget_s=total_s,
+        holdout_enabled=config.holdout.enabled and problem.holdout_cmd is not None,
+        seed_from=str(seed_from) if seed_from else None,
+        seed_sha256=_sha256(seed_from) if seed_from else None,
+        templates_sha256=templates.sha256,
+        templates_overridden=templates.overridden,
+        learning_enabled=config.learning.enabled,
+        experiment=experiment,
+        arm=arm,
+        repeat=repeat,
+        arm_overrides=dict(arm_overrides or {}),
     )
     with closing(open_store(config)) as store:
         store.record_search(meta)
@@ -558,6 +583,82 @@ def _raise_stop_requested(signum, frame):
     raise StopRequested(f"signal {signal.Signals(signum).name}")
 
 
+def _preflight_pi_routes(config: Config, search_dir: Path, router, backends, log: Log) -> None:
+    """Validate every statically reachable pi model/sampling combination.
+
+    This deliberately happens before the baseline or first draft. Provider
+    incompatibilities (notably models that reject temperature) therefore cost
+    one tiny no-tools call rather than an entire failed candidate.
+    """
+    import hashlib
+    import json
+
+    operators = {"draft", "debug", "improve", "ensemble"}
+    if config.search.policy == "gepa":
+        operators.add("gepa")
+    if config.learning.enabled and config.learning.claims:
+        operators.add("distill")
+    operators.update(
+        name
+        for name in config.routing
+        if name not in {"default", "distill", "consolidate"}
+    )
+
+    pending: dict[str, tuple] = {}
+    for operator in sorted(operators):
+        route = router.resolve(operator)
+        if route.backend != "pi":
+            continue
+        models = [route.model]
+        for layer in (
+            config.routing.get(operator),
+            config.routing.get("default"),
+        ):
+            if layer is None:
+                continue
+            if layer.models:
+                models = list(layer.models)
+                break
+            if layer.model:
+                break
+        for model in models:
+            key = json.dumps(
+                [route.backend_auth, model, route.sampling],
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            pending.setdefault(key, (operator, route, model))
+
+    for key, (operator, route, model) in pending.items():
+        digest = hashlib.sha256(key.encode()).hexdigest()[:12]
+        work_dir = search_dir / "pi-preflight" / digest
+        work_dir.mkdir(parents=True, exist_ok=True)
+        backend = backends.get("pi", route.backend_auth)
+        preflight = getattr(backend, "preflight", None)
+        if preflight is None:
+            raise RuntimeError("pi backend does not implement preflight")
+        log(
+            f"pi preflight: model={model}"
+            + (f" sampling={route.sampling}" if route.sampling else "")
+        )
+        result = preflight(
+            OperatorRequest(
+                operator=operator,
+                prompt="Reply with exactly pong.",
+                candidate_dir=work_dir,
+                timeout_s=min(120, max(10, config.budget.agent_timeout_s)),
+                model=model,
+                sampling=route.sampling,
+            )
+        )
+        (work_dir / "result.json").write_text(result.model_dump_json(indent=2))
+        if not result.ok:
+            detail = result.error_message or result.error_kind or "unknown provider error"
+            raise RuntimeError(
+                f"pi preflight failed for model={model}, sampling={route.sampling}: {detail}"
+            )
+
+
 def execute_search(
     config: Config,
     problem: ProblemSpec,
@@ -629,13 +730,31 @@ def execute_search(
                     log(f"learning: reference solution from {skill.run_ref} ({reference_note})")
             except Exception as exc:  # noqa: BLE001
                 log(f"learning: skill selection failed (draft unaffected): {exc}")
-    backend_obj = get_backend(config.backend, auth=config.backend_auth)
+    backend_obj = get_backend(
+        config.backend,
+        auth=config.backend_auth,
+        pi_models_file=config.pi.models_file,
+    )
     if hasattr(backend_obj, "abort"):
         backend_obj.abort = abort
     from hillclimb.routing import BackendPool, Router
 
-    backends = BackendPool(abort=abort)
+    backends = BackendPool(
+        abort=abort, pi_models_file=config.pi.models_file
+    )
     backends.seed(config.backend, config.backend_auth, backend_obj)
+    router = Router(config)
+
+    try:
+        _preflight_pi_routes(config, search_dir, router, backends, log)
+    except (StopRequested, KeyboardInterrupt) as exc:
+        status.finalize("stopped", last_error=str(exc)[:500] or None)
+        store.close()
+        return SearchOutcome(run_dir, search_dir, None, "stopped", error=str(exc) or None)
+    except Exception as exc:
+        status.finalize("failed", last_error=f"{type(exc).__name__}: {exc}"[:500])
+        store.close()
+        raise
     from hillclimb.project import machine_cache_dir
 
     machine_max = config.search.effective_machine_max_operators()
@@ -659,7 +778,7 @@ def execute_search(
         reference_solution=reference_solution,
         reference_note=reference_note,
         complexity_start=_offset,
-        router=Router(config),
+        router=router,
         backends=backends,
         drain_commands=lambda: store.drain_commands(key),
     )
@@ -1096,6 +1215,12 @@ def run_fleet(
     ensure_runtime_venv(config, problem.runtime, log=log, requirements=problem.requirements_file)
     name = run_name or problem.problem_id
     run_dir = create_problem_run(config, name, target, problem.problem_id)
+    # Freeze before starting any child engine. Every search in the fleet then
+    # binds to this same run-owned bundle, even if the live problem tree changes
+    # while the fleet is running.
+    from hillclimb.unit_tests import freeze_for_run
+
+    problem.unit_tests = freeze_for_run(problem, run_dir)
     shared = dict(
         budget=budget, backend=backend, model=model,
         parallel_operators=parallel_operators, n_replicates=n_replicates, holdout=holdout,

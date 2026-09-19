@@ -398,8 +398,10 @@ def _entities_block(entities: list[Entity], limit: int = 80) -> str:
     return "\n".join(lines) or "(none yet)"
 
 
-def resolve_pass_route(config: Config, operator: str, default_model: str) -> tuple[str, str, str]:
-    """(backend, model, auth) for a knowledge pass (distill / consolidate).
+def resolve_pass_route(
+    config: Config, operator: str, default_model: str
+) -> tuple[str, str, str, dict[str, int | float] | None]:
+    """(backend, model, auth, sampling) for a knowledge pass.
     Falls through the normal routing layers, but when neither the operator
     key nor `default` pins a model the global scalar is overridden by the
     pass's own default — these passes don't need the search's operator
@@ -409,8 +411,8 @@ def resolve_pass_route(config: Config, operator: str, default_model: str) -> tup
         key in config.routing and (config.routing[key].model or config.routing[key].models)
         for key in (operator, "default")
     )
-    model = route.model if explicit else default_model
-    return route.backend, model, route.backend_auth
+    model = route.model if explicit or route.backend != "claude-code" else default_model
+    return route.backend, model, route.backend_auth, route.sampling
 
 
 def invoke_knowledge_agent(
@@ -427,16 +429,20 @@ def invoke_knowledge_agent(
     inspection). Resolved through the api seam tests patch."""
     work_dir.mkdir(parents=True, exist_ok=True)
     (work_dir / "prompt.md").write_text(prompt)
-    backend_name, model, auth = resolve_pass_route(config, operator, default_model)
+    backend_name, model, auth, sampling = resolve_pass_route(
+        config, operator, default_model
+    )
     # resolve through the api namespace — the seam tests patch to keep every
     # agent call fake; lazy import avoids the module cycle
     from hillclimb.api import get_backend
 
-    backend = get_backend(backend_name, auth=auth)
+    backend = get_backend(
+        backend_name, auth=auth, pi_models_file=config.pi.models_file
+    )
     return backend.invoke(
         OperatorRequest(
             operator=operator, prompt=prompt, candidate_dir=work_dir,
-            timeout_s=timeout_s, model=model,
+            timeout_s=timeout_s, model=model, sampling=sampling,
         )
     )
 

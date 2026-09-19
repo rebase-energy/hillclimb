@@ -192,7 +192,7 @@ class TestCollect:
             started_at=f"2026-08-23T0{repeat}:00:00+00:00",
         ))
         journal = Journal(search_dir / "journal.jsonl")
-        c = make_candidate("c001", operator="draft", status="ok", val_score=holdout or 0.1,
+        c = make_candidate("c001", operator="draft", status="passing", val_score=holdout or 0.1,
                            finished_at=f"2026-08-23T0{repeat}:10:00+00:00")
         c.backend = BackendInfo(name="dummy", total_tokens=1000)
         journal.candidate_result(c)

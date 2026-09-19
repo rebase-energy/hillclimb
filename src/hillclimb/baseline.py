@@ -4,8 +4,8 @@ import shutil
 from pathlib import Path
 
 from hillclimb.candidate import Candidate, Replicate, Trial, utcnow
+from hillclimb.dirs import create_candidate_dir
 from hillclimb.problem import ProblemSpec
-from hillclimb.dirs import create_candidate_dir, create_replicate_dir, create_trial_dir, hoist_replicate
 
 
 def unscored_placeholder(search_dir: Path, files: dict[str, Path] | None = None) -> Candidate:
@@ -23,7 +23,7 @@ def unscored_placeholder(search_dir: Path, files: dict[str, Path] | None = None)
     return Candidate(
         candidate_id="c000",
         operator="baseline",
-        status="ok",
+        status="passing",
         candidate_dir=str(candidate_dir),
         summary="baseline: none shipped with this problem (unscored placeholder)",
         finished_at=utcnow(),
@@ -41,7 +41,7 @@ def declared_floor(search_dir: Path, score: float, summary: str) -> Candidate:
     return Candidate(
         candidate_id="c000",
         operator="baseline",
-        status="ok",
+        status="passing",
         candidate_dir=str(candidate_dir),
         summary=summary,
         trials=[Trial(
@@ -69,12 +69,13 @@ def run_scored_baseline(
     the baseline and, when holdout timing is inline, its scorer scores the
     hidden split (the floor is never gated)."""
     candidate_dir = create_candidate_dir(
-        search_dir, "c000", problem.data_dir, problem.problem_dir
+        search_dir, "c000", problem.data_dir, problem.problem_dir,
+        unit_tests_dir=(problem.unit_tests.root if problem.unit_tests else None),
     )
     candidate = Candidate(
         candidate_id="c000",
         operator="baseline",
-        status="ok",
+        status="passing",
         candidate_dir=str(candidate_dir),
         summary=summary,
     )
@@ -82,27 +83,12 @@ def run_scored_baseline(
     solution.write_text(solution_text)
     (candidate_dir / "notes.md").write_text(summary + "\n")
 
-    rdir = create_replicate_dir(create_trial_dir(candidate_dir, 0), 0)
-    exec_result = evaluator.executor.execute(rdir / "solution.py", rdir, timeout_s)
-    replicate = Replicate(
-        returncode=exec_result.returncode,
-        duration_s=exec_result.duration_s,
-        cpu_s=exec_result.cpu_s,
-        timed_out=exec_result.timed_out,
-        submission_ok=exec_result.submission_ok,
-        val_score=exec_result.val_score,
-        finished_at=utcnow(),
+    trial, all_ok = evaluator.run_trial(
+        candidate, solution, candidate_dir, timeout_s, n_replicates=1
     )
-    hoist_replicate(candidate_dir, rdir, problem.output_artifacts)
     (search_dir / "best").mkdir(parents=True, exist_ok=True)
-    if exec_result.ok:
-        trial = Trial(is_best=True, replicates=[replicate])
-        if evaluator.holdout_scorer is not None and evaluator.holdout_timing == "inline":
-            trial.holdout_score, trial.holdout_error, trial.holdout_cpu_s = (
-                evaluator.score_holdout(candidate_dir, trial)
-            )
-        trial.finished_at = utcnow()
-        candidate.trials.append(trial)
+    if all_ok:
+        candidate.status = "passing"
         candidate.is_best = True
         shutil.copy(solution, search_dir / "best" / "solution.py")
         # the artifacts the baseline produced (e.g. submission.csv) ship
@@ -111,7 +97,10 @@ def run_scored_baseline(
             if (candidate_dir / name).exists():
                 shutil.copy(candidate_dir / name, search_dir / "best" / name)
     else:
-        candidate.summary += " (baseline eval failed; unscored)"
+        candidate.status = (
+            trial.verdict if trial.verdict in ("failing", "buggy") else "buggy"
+        )
+        candidate.summary += " (baseline evaluation did not pass; unscored)"
         for name, source in problem.baseline_files.items():
             shutil.copy(source, search_dir / "best" / name)
     candidate.finished_at = utcnow()

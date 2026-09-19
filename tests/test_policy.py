@@ -47,7 +47,7 @@ def add_candidate(
     journal: Journal,
     candidate_id: str,
     operator: str,
-    status: str = "ok",
+    status: str = "passing",
     val_score: float | None = None,
     parent_id: str | None = None,
     candidate_dir: str = "",
@@ -439,3 +439,79 @@ def test_mixed_fleet_names_file_policy_arms_by_stem():
         ("drafts_only", "hillclimb/policies/drafts_only.py"),
         ("drafts_only-2", "hillclimb/policies/drafts_only.py"),
     ]
+
+
+# --- the policy seam is holdout-blind ---
+
+
+def _add_with_holdout(journal, tmp_path, candidate_id, val, holdout, selected=False):
+    ws = tmp_path / candidate_id
+    ws.mkdir(parents=True, exist_ok=True)
+    (ws / "solution.py").write_text(f"{candidate_id}\n")
+    journal.candidate_result(
+        Candidate(
+            candidate_id=candidate_id, operator="draft", status="passing",
+            candidate_dir=str(ws), is_selected=selected,
+            trials=[mk_trial(val_score=val, submission_ok=True, holdout_score=holdout, holdout_cpu_s=1.5)],
+        )
+    )
+
+
+def test_policy_view_never_carries_holdout(journal, config, tmp_path):
+    _add_with_holdout(journal, tmp_path, "c001", val=0.9, holdout=0.1)
+    _add_with_holdout(journal, tmp_path, "c002", val=0.8, holdout=0.95, selected=True)
+    view = make_view(journal, config)
+
+    for candidate in view.journal.candidates.values():
+        assert candidate.holdout_score is None and not candidate.is_selected
+        assert all(t.holdout_score is None and t.holdout_cpu_s is None for t in candidate.trials)
+    assert "holdout" not in "".join(
+        k for c in view.journal.candidates.values() for k, v in c.trials[0].model_dump().items() if v is not None
+    )
+    # every selection mode degrades to val order on the view
+    for mode in ("rank-blend", "holdout", "val"):
+        assert [c.candidate_id for c in view.journal.ranked_candidates(True, mode)] == ["c001", "c002"]
+    assert view.journal.path is None
+    # the engine's journal is untouched, and the view cannot write
+    assert journal.get("c002").holdout_score == 0.95 and journal.get("c002").is_selected
+    assert journal.selected_candidate(True, "holdout").candidate_id == "c002"
+    with pytest.raises(TypeError):
+        view.journal.candidate_result(view.journal.get("c001"))
+
+
+def test_greedy_ensemble_inputs_ignore_holdout(journal, config, tmp_path):
+    # holdout ranks c003 > c002 > c001, val the reverse; selection=holdout
+    # must still not steer which candidates a policy ensembles
+    for cid, val, hold in (("c001", 0.9, 0.1), ("c002", 0.8, 0.5), ("c003", 0.7, 0.9)):
+        _add_with_holdout(journal, tmp_path, cid, val, hold)
+    config.holdout.selection = "holdout"
+    config.ensemble.top_k = 2
+    action = GreedyPolicy().propose(
+        make_view(journal, config, remaining_s=100.0, total_s=3600, stop_margin_s=300)
+    )
+    assert action.operator == "ensemble"
+    assert action.inspiration_ids == ("c001", "c002")
+
+
+def test_searcher_hands_observe_a_holdout_blind_candidate(task, config, tmp_path):
+    seen: list[Candidate] = []
+
+    class Spy(GreedyPolicy):
+        def observe(self, view, candidate):
+            seen.append(candidate)
+            seen.extend(view.journal.candidates.values())
+
+    search_dir = create_search_dir(config.paths.runs_dir, "test-run")
+    journal = Journal(search_dir / "journal.jsonl")
+    _add_with_holdout(journal, tmp_path, "c001", val=0.5, holdout=0.42, selected=True)
+    searcher = GreedySearcher(
+        problem=task, config=config, journal=journal, backend=FakeBackend([]),
+        executor=local_executor(), budget=BudgetManager(60, stop_margin_s=1),
+        search_dir=search_dir, log=lambda *_: None, policy=Spy(),
+    )
+    live = journal.get("c001").model_copy(deep=True)
+    searcher._record_result(live)
+
+    assert len(seen) >= 4  # construction replay + the runtime observe
+    assert all(c.holdout_score is None and not c.is_selected for c in seen)
+    assert journal.get("c001").holdout_score == 0.42

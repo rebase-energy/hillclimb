@@ -119,7 +119,7 @@ def test_buggy_proposal_gets_failure_fitness_and_feedback(task, config, tmp_path
     assert last_feedback["valid"] is False
     assert "broken proposal" in str(last_feedback["trials"])
     recovered = [c for c in journal.candidates.values() if c.val_score == 0.9]
-    assert recovered and recovered[0].status == "ok"
+    assert recovered and recovered[0].status == "passing"
 
 
 def test_failure_fitness_dominates_all_valid_scores(task, config, tmp_path):

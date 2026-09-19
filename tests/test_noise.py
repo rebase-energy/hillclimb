@@ -21,13 +21,13 @@ from tests.conftest import executor_for, ok_script
 
 def candidate(cid: str, *scores: float, parent: str | None = None, trials=None) -> Candidate:
     if trials is not None:
-        return Candidate(candidate_id=cid, operator="draft", parent_id=parent, status="ok",
+        return Candidate(candidate_id=cid, operator="draft", parent_id=parent, status="passing",
                          candidate_dir="/tmp", trials=trials)
     return Candidate(
         candidate_id=cid,
         operator="draft",
         parent_id=parent,
-        status="ok",
+        status="passing",
         candidate_dir="/tmp",
         trials=[mk_trial(*scores, submission_ok=True)] if scores else [],
     )

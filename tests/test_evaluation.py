@@ -37,7 +37,7 @@ def scored(cid: str, *scores: float) -> Candidate:
     return Candidate(
         candidate_id=cid,
         operator="draft",
-        status="ok",
+        status="passing",
         candidate_dir="/tmp/x",
         trials=[mk_trial(*scores, submission_ok=True)] if scores else [],
     )

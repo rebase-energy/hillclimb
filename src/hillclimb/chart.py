@@ -377,6 +377,10 @@ def _candidate_cost(cand: Candidate) -> tuple[float, float]:
     tokens = float(cand.backend.total_tokens or 0)
     cpu = sum(
         sum((r.cpu_s if r.cpu_s is not None else r.duration_s or 0.0) for r in t.replicates)
+        + (
+            (t.unit_tests.cpu_s if t.unit_tests.cpu_s is not None else t.unit_tests.duration_s)
+            if t.unit_tests is not None else 0.0
+        )
         + (t.holdout_cpu_s or 0.0)
         for t in cand.trials
     )

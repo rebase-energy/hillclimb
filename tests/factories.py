@@ -11,7 +11,10 @@ from __future__ import annotations
 
 from hillclimb.candidate import Candidate, Replicate, Trial
 
-TRIAL_FIELDS = {"index", "params", "is_best", "holdout_score", "holdout_error", "holdout_cpu_s"}
+TRIAL_FIELDS = {
+    "index", "params", "is_best", "verdict", "unit_tests",
+    "holdout_score", "holdout_error", "holdout_cpu_s",
+}
 REPLICATE_FIELDS = set(Replicate.model_fields)
 
 
@@ -56,7 +59,7 @@ def candidate(candidate_id: str, *scores: float | None, trials: list[Trial] | No
     """A candidate with one trial of `*scores` replicates (or the given
     `trials`); every other keyword is a Candidate field."""
     fields.setdefault("operator", "draft")
-    fields.setdefault("status", "ok")
+    fields.setdefault("status", "passing")
     if trials is None:
         trials = [trial(*scores)] if scores else []
     return Candidate(candidate_id=candidate_id, trials=trials, **fields)

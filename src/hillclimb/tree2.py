@@ -5,19 +5,25 @@ Same layout as `tree` (`tree.build_tree`: roots on top, one row per operator
 step, children left to right in creation order) with a different encoding
 on every node, all of it read off the journal at render time:
 
-* the **number inside** the circle is the iteration — the candidate's
+* the **number inside** the circle is the candidate number — the candidate's
   sequence number (`c017` → `17`), the order the search created it in;
 * the **fill** is the candidate's score on a viridis ramp over the search's
   own scored range, oriented so the best score is always the bright end
-  (lower-is-better searches flip the ramp); unscored nodes are near black;
-* the **ring** is how far the candidate got — the paper's "10 / 60 / 200
-  tasks" ladder, which in hillclimb is the fate ladder: red = no working
-  solution (buggy, abandoned, parked, pruned), yellow = scored but never
-  built on, green = selected as a parent (children were built on it, or it
-  is the current best, where the next improve hangs);
+  (lower-is-better searches flip the ramp) — colour is the only place hue
+  means score, so a node with colour ran and scored, and a **hollow** node
+  (filled with the plot's background) never produced a working solution;
+* the **ring** is what the search did with it — the paper's "10 / 60 / 200
+  tasks" ladder, which in hillclimb is the fate ladder, drawn without any
+  hue viridis uses: white = expanded (children were built on it, or it is
+  the current best, where the next improve hangs), so the white rings are
+  the spine the policy walked; no ring (a hairline in the background tone)
+  = scored, never built on; red = no working solution (buggy, abandoned,
+  parked, pruned) — red is reserved for failure;
 * the **lineage** of the final best — its parent chain, not the accepted
-  staircase — is drawn as one thick line under the grey edges;
-* the best itself is a **star** with a gold ring.
+  staircase — is drawn as one thick line, the rings' white, under the grey
+  edges: the subset of the spine that leads to the star;
+* the best itself is a **star**, white-ringed like the rest of the spine —
+  its shape is what sets it apart.
 
 One plotui Graph3d trace carries all of it: fill = node colour, ring =
 `set_graph_borders`, number = `set_graph_labels` (drawn by plotui inside the
@@ -43,25 +49,36 @@ RGB = tuple[int, int, int]
 # the legend paints in terminal cells is the ramp the nodes are filled with
 VIRIDIS: tuple[RGB, ...] = ((68, 1, 84), (59, 82, 139), (33, 145, 140), (94, 201, 98), (253, 231, 37))
 
-# Ring colours: the fate ladder, legend order. The paper's red / yellow / green.
+# The plot's ground (`theme.PLOT_BG`, kept literal: this module imports no
+# Textual). A fill in this tone is a hollow node; a ring in it is no ring —
+# plotui always strokes a border, so "none" is a hairline the ground swallows
+# (it still cuts a halo through an edge the node sits on, which separates
+# them nicely).
+HOLLOW_RGB = (14, 17, 19)
+WHITE_RGB = (235, 238, 240)         # the spine: built-on rings, the star's ring and the lineage line
+
+# Ring colours: the fate ladder, legend order. The paper's traffic light,
+# redrawn so the ring never shares a hue with the score fill: white for the
+# spine, the ground for leaves, red — which viridis never reaches — for
+# failure, grey for a candidate still running.
 STAGES = ("expanded", "scored", "failed")
 STAGE_RGB: dict[str, RGB] = {
-    "expanded": (58, 178, 104),
-    "scored": (243, 190, 52),
+    "expanded": WHITE_RGB,
+    "scored": HOLLOW_RGB,
     "failed": (228, 55, 48),
     "pending": (120, 126, 132),
 }
 STAGE_HELP = {
-    "expanded": "built on (children, or the current best)",
+    "expanded": "children were built on it, or it is the current best",
     "scored": "scored, never built on",
     "failed": "no working solution (buggy / abandoned / pruned)",
 }
-BEST_RING_RGB = (255, 200, 40)      # the best's ring: gold
-LINEAGE_RGB = (235, 238, 240)       # the thick path to the best: the paper's bold black, on a dark ground
+BEST_RING_RGB = WHITE_RGB           # the best's ring: the spine's white — the star shape sets it apart
+LINEAGE_RGB = WHITE_RGB             # the thick path to the best: the paper's bold black, on a dark ground
 LINEAGE_WIDTH = 3.5
 EDGE_RGB = (78, 86, 94)             # every other parent edge: thin grey
 ENSEMBLE_EDGE_RGB = (110, 80, 130)  # extra ensemble inputs, faintly purple
-UNSCORED_RGB = (30, 30, 38)         # fill for nodes with no score: off the ramp, near black
+UNSCORED_RGB = HOLLOW_RGB           # fill for nodes with no score: hollow
 BEST_SIZE_SCALE = 1.4               # the star is drawn larger than the discs
 
 # Mark sizing: a node's radius comes from the closest pair of projected
@@ -78,7 +95,7 @@ R_MAX_PX = 24.0                     # never larger, however far the tree is zoom
 DEFAULT_RADIUS = 4.5                # before the first projection
 
 # plotui fits the tree's bounding box into the view with one scale, so a
-# wide, shallow archive (80 iterations, 8 deep) would be a flat strip at
+# wide, shallow archive (80 candidates, 8 deep) would be a flat strip at
 # `tree`'s row height. Rows stretch with the width until the picture is
 # about ASPECT wide for 1 tall — the paper's figure — never below ROW_H.
 ASPECT = 1.6
@@ -221,7 +238,7 @@ def fit_radius(plot, px_w: int, px_h: int, best_index: int | None = None) -> tup
 # --- per-node encoding ------------------------------------------------------
 
 def node_number(node_id: str) -> str:
-    """The iteration a candidate id stands for: `c017` → `17`. Ids that are
+    """The candidate number an id stands for: `c017` → `17`. Ids that are
     not of that form are shown as they are."""
     match = _CANDIDATE_ID.match(node_id)
     return match.group(1) if match else node_id
@@ -273,12 +290,22 @@ def best_lineage(tree: SearchTree) -> tuple[str, ...]:
     return tuple(chain)
 
 
+def lineage_nodes(tree: SearchTree) -> tuple[TreeNode, ...]:
+    """`best_lineage` as nodes, root first — what the thick line is drawn
+    through."""
+    by_id = {n.id: n for n in tree.nodes}
+    return tuple(by_id[i] for i in best_lineage(tree) if i in by_id)
+
+
 def stage_counts(tree: SearchTree) -> dict[str, int]:
+    """Nodes per legend stage — counted by the fates each entry hides
+    (`ENTRY_FATES`), so the number beside an entry is the number of circles
+    its toggle removes: the best is its own entry, not an "expanded"."""
     counts = {s: 0 for s in STAGES}
     for node in tree.nodes:
-        s = stage(node)
-        if s in counts:
-            counts[s] += 1
+        for s in STAGES:
+            if node.fate in ENTRY_FATES[s]:
+                counts[s] += 1
     return counts
 
 
@@ -287,15 +314,20 @@ def stage_counts(tree: SearchTree) -> dict[str, int]:
 def build_tree2_plot(
     tree: SearchTree, higher_is_better: bool = True, *,
     selected: str | None = None, frame: SearchTree | None = None, radius: float = DEFAULT_RADIUS,
-    star: float = BEST_SIZE_SCALE,
+    star: float = BEST_SIZE_SCALE, show_lineage: bool = True, lineage: tuple[TreeNode, ...] | None = None,
+    legend: list[LegendEntry] | None = None,
 ):
     """SearchTree → a fresh plotui Plot: the best's lineage as a thick line
-    (underneath), then one Graph3d trace — score fills, stage rings, the
-    numbers inside, the best a star — with marks of `radius` (plotui units)
-    and the star `star` times that (see `fit_radius`); face-on camera at
-    zoom 1; plus the flat-index →
-    node-id list. `frame` pins the view to another tree's extent and row
-    height, as `build_tree_plot` does with its extent."""
+    (underneath, unless `show_lineage` is off — the legend's toggle; `lineage`
+    names the chain's nodes root first, else it is read off `tree` — the
+    widget passes the unfiltered tree's, so hiding nodes, the best among
+    them, thins the circles and never the line; `legend` puts the ring
+    ladder in the plot's own top-left legend box, see `legend_entries`), then
+    one Graph3d trace — score fills, stage rings, the numbers inside, the
+    best a star — with marks of `radius` (plotui units) and the star `star`
+    times that (see `fit_radius`); face-on camera at zoom 1; plus the
+    flat-index → node-id list. `frame` pins the view to another tree's
+    extent and row height, as `build_tree_plot` does with its extent."""
     from hillclimb.theme import themed_plot
 
     ids = [n.id for n in tree.nodes]
@@ -304,7 +336,9 @@ def build_tree2_plot(
     plot = themed_plot()
     plot.set_show_box(False)
     if hasattr(type(plot), "legend_visible"):
-        plot.legend_visible = False  # the legend is a text overlay (`legend_spans`); traces keep names for hover
+        plot.legend_visible = False  # no per-trace rows; the ladder comes in through `legend`, the ramp is text
+    if legend is not None:
+        apply_legend(plot, legend)
     plot.set_camera_state(0.0, 0.0, 1.0, 0.0, 0.0)
     extent = tree_extent(frame, row_h) if frame is not None else None
     if extent is not None:
@@ -319,16 +353,19 @@ def build_tree2_plot(
     # trace has no pickable nodes, so the discs still start at flat index 0.
     # Its parent edges are left out of the grey set: drawn in the same plane
     # they would cut a grey seam through the thick line
-    chain = [i for i in best_lineage(tree) if i in index_of]
-    lineage = [index_of[i] for i in chain]
+    if lineage is None:
+        lineage = lineage_nodes(tree)
+    chain_nodes = list(lineage) if show_lineage else []
+    chain = [n.id for n in chain_nodes]
     on_lineage = set(zip(chain, chain[1:]))
     edges = [
         e for e in tree.edges
         if e.src in index_of and e.dst in index_of and (e.src, e.dst) not in on_lineage
     ]
-    if len(lineage) > 1:
+    if len(chain_nodes) > 1:
+        path = [world_xy(n, row_h) for n in chain_nodes]
         plot.add_line3d(
-            [xs[i] for i in lineage], [0.0] * len(lineage), [ys[i] for i in lineage],
+            [x for x, _y in path], [0.0] * len(path), [y for _x, y in path],
             color=LINEAGE_RGB, width=LINEAGE_WIDTH, name="lineage",
         )
     handle = plot.add_graph3d(
@@ -365,13 +402,81 @@ def label_nodes(tree: SearchTree, frame: SearchTree | None = None) -> list[VNode
 
 
 # --- the legend -------------------------------------------------------------
-# Two overlays, both terminal text so they cost the canvas nothing: the ring
-# ladder at the top left, and the score ramp — a column of block cells in
-# viridis with the best and worst score beside it — at the top right.
+# Two legends. The ring ladder at the top left is plotui's own legend box
+# with rows this module declares (`legend_entries`): drawn in the image, so
+# a swatch can be the node it stands for — the score-coloured disc inside
+# its white ring for expanded, the same disc bare for scored, the dark disc
+# in its red ring for failed, the star, the line — which a terminal cell
+# (one colour) never could. The score ramp at the top right stays terminal
+# text (`legend_spans`): a column of block cells in viridis with the best
+# and worst score beside it.
+#
+# The ladder is a filter, like `tree`'s legend: each entry hides what it
+# names (hotkey 1-5, or a click, resolved by plotui's `legend_entry_hit`) —
+# the three stages and the best hide those nodes, "lineage" hides the thick
+# line — and a hidden entry stays in the legend, drained, as the way back.
 
-LEGEND_ROW, LEGEND_COL = 1, 1
+LEGEND_ENTRIES = STAGES + ("best", "lineage")
+LEGEND_KEYS = "12345"
+LEGEND_ROW = 1          # the ramp's caption row
 RAMP_ROWS = 8
 RAMP_MARGIN = 1
+SWATCH_FILL_T = 0.5     # where on the ramp the legend's discs are filled from
+
+# What each legend entry hides, in `tree.FATES` terms (the filter the tree
+# widget applies); "lineage" hides no node, only the line.
+ENTRY_FATES: dict[str, frozenset[str]] = {
+    "expanded": frozenset({"expanded"}),
+    "scored": frozenset({"discontinued"}),
+    "failed": frozenset({"failed", "pruned"}),
+    "best": frozenset({"best"}),
+    "lineage": frozenset(),
+}
+
+# plotui legend rows: (label, swatch, colour, border, visible)
+LegendEntry = tuple[str, str, RGB, RGB | None, bool]
+
+
+def hidden_fates(hidden: frozenset[str] | set[str]) -> frozenset[str]:
+    """The fates the tree widget's filter drops for the hidden legend entries."""
+    return frozenset().union(*(ENTRY_FATES.get(entry, frozenset()) for entry in hidden))
+
+
+def legend_entries(
+    tree: SearchTree | None, hidden: frozenset[str] | set[str] = frozenset(),
+) -> list[LegendEntry]:
+    """The ladder as plotui legend rows, in `LEGEND_ENTRIES` order: hotkey
+    and name (with the count of nodes the entry hides, from the unfiltered
+    `tree`), a swatch that is a miniature of the node — the same mid-ramp
+    fill for expanded and scored, the white ring the only difference —
+    and `visible` off for a hidden entry."""
+    counts = stage_counts(tree) if tree is not None else {}
+    fill = viridis(SWATCH_FILL_T)
+    swatch: dict[str, tuple[str, RGB, RGB | None]] = {
+        "expanded": ("disc", fill, STAGE_RGB["expanded"]),
+        "scored": ("disc", fill, None),
+        "failed": ("disc", UNSCORED_RGB, STAGE_RGB["failed"]),
+        "best": ("star", viridis(1.0), BEST_RING_RGB),
+        "lineage": ("line", LINEAGE_RGB, None),
+    }
+    rows: list[LegendEntry] = []
+    for index, entry in enumerate(LEGEND_ENTRIES):
+        count = f" {counts[entry]}" if counts.get(entry) else ""
+        kind, color, border = swatch[entry]
+        rows.append((f"{LEGEND_KEYS[index]} {entry}{count}", kind, color, border, entry not in hidden))
+    return rows
+
+
+def apply_legend(plot, entries: list[LegendEntry]) -> bool:
+    """Put `entries` on `plot` as its top-left legend. False on a plotui
+    build without host legend rows — the plot then has no ladder."""
+    if not hasattr(plot, "set_legend_entries"):
+        return False
+    plot.set_legend_entries([(label, kind, color, border, visible) for label, kind, color, border, visible in entries])
+    plot.set_legend_corner("top-left")
+    if hasattr(type(plot), "legend_visible"):
+        plot.legend_visible = True
+    return True
 
 
 def _fmt(value: float) -> str:
@@ -381,19 +486,10 @@ def _fmt(value: float) -> str:
 def legend_spans(
     tree: SearchTree | None, metric: str = "score", higher_is_better: bool = True, cols: int = 80,
 ) -> list[tuple[int, int, str, str]]:
-    """`(row, col, text, style)` spans: the ring ladder with counts, the
-    best's star, and the ramp with its two end values."""
+    """`(row, col, text, style)` spans of the text overlay: the score ramp
+    at the top right with its two end values (the ladder is plotui's legend,
+    see `legend_entries`). Empty when nothing is scored."""
     spans: list[tuple[int, int, str, str]] = []
-    counts = stage_counts(tree) if tree is not None else {}
-    for index, entry in enumerate(STAGES):
-        r, g, b = STAGE_RGB[entry]
-        count = f" {counts[entry]}" if counts.get(entry) else ""
-        spans.append((LEGEND_ROW + index, LEGEND_COL, "◯", f"rgb({r},{g},{b})"))
-        spans.append((LEGEND_ROW + index, LEGEND_COL + 2, f"{entry}{count}", "white"))
-    r, g, b = BEST_RING_RGB
-    spans.append((LEGEND_ROW + len(STAGES), LEGEND_COL, "★", f"rgb({r},{g},{b})"))
-    spans.append((LEGEND_ROW + len(STAGES), LEGEND_COL + 2, "best", "white"))
-
     span = score_range(tree) if tree is not None else None
     if span is None:
         return spans

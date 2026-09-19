@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 
+import pytest
+
 from hillclimb.config import Config
 
 
@@ -128,6 +130,8 @@ def test_openrouter_auth_requires_the_codex_backend():
         backend_auth="openrouter",
         routing={"draft": {"backend": "claude-code", "backend_auth": "subscription"}},
     )
+    # pi implements OpenRouter natively as well.
+    Config(backend="pi", backend_auth="openrouter")
 
 
 def test_unknown_backend_auth_is_rejected():
@@ -135,3 +139,83 @@ def test_unknown_backend_auth_is_rejected():
 
     with pytest.raises(ValueError, match="unknown backend_auth"):
         Config(backend_auth="open-router")
+
+
+def test_sampling_requires_pi_and_rejects_route_typos():
+    import pytest
+
+    Config(
+        backend="pi",
+        routing={"draft": {"sampling": {"temperature": 0.9, "top_p": 0.95}}},
+    )
+    Config(
+        backend="claude-code",
+        routing={"default": {"backend": "pi"}, "draft": {"sampling": {"temperature": 0.9}}},
+    )
+    with pytest.raises(ValueError, match="sampling needs backend: pi"):
+        Config(routing={"draft": {"sampling": {"temperature": 0.9}}})
+    with pytest.raises(ValueError, match="samplids"):
+        Config(routing={"draft": {"backend": "pi", "samplids": {"temperature": 0.9}}})
+
+
+def test_sampling_dotted_override_is_revalidated():
+    config = Config(backend="pi")
+    config.apply_overrides({"routing.draft.sampling.temperature": 0.7})
+
+    assert config.routing["draft"].sampling == {"temperature": 0.7}
+
+    config = Config()
+    with pytest.raises(ValueError, match="sampling needs backend: pi"):
+        config.apply_overrides({"routing.draft.sampling.temperature": 0.7})
+
+
+def test_pi_models_file_resolves_from_project_root(tmp_path: Path, monkeypatch):
+    hillclimb_dir = tmp_path / "hillclimb"
+    hillclimb_dir.mkdir()
+    (hillclimb_dir / "config.yaml").write_text("pi:\n  models_file: models.json\n")
+    monkeypatch.chdir(hillclimb_dir)
+
+    config = Config.load()
+
+    assert config.pi.models_file == tmp_path / "models.json"
+
+
+def test_sampling_validation_checks_inherited_routes_and_action_override():
+    from hillclimb.policy import Route
+    from hillclimb.routing import Router
+
+    with pytest.raises(ValueError, match="routing.improve: sampling"):
+        Config(routing={
+            "default": {"backend": "pi", "sampling": {"temperature": 0.8}},
+            "improve": {"backend": "codex"},
+        })
+    config = Config(routing={
+        "default": {"backend": "pi", "sampling": {"temperature": 0.8}},
+        "improve": {"backend": "codex", "sampling": {}},
+    })
+    assert Router(config).resolve("improve").sampling == {}
+    with pytest.raises(ValueError, match="sampling needs backend"):
+        Router(config).resolve("draft", Route(backend="codex"))
+
+
+def test_sampling_overrides_are_atomic_and_keep_integer_parameters():
+    from hillclimb.config import RouteConfig
+
+    config = Config(backend="pi", routing={"draft": RouteConfig()})
+    config.apply_overrides({"routing.draft.sampling.top_k": 40})
+    assert type(config.routing["draft"].sampling["top_k"]) is int
+    with pytest.raises(ValueError):
+        config.apply_overrides({"backend": "codex"})
+    assert config.backend == "pi"
+    with pytest.raises(ValueError, match="finite"):
+        config.apply_overrides({"routing.draft.sampling.temperature": float("nan")})
+    assert config.routing["draft"].sampling == {"top_k": 40}
+
+
+def test_explicit_config_loads_dotenv_and_local_models_path(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    (tmp_path / "config.yaml").write_text("pi: {models_file: models.json}\n")
+    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=local-test\n")
+    config = Config.load(path=tmp_path / "config.yaml")
+    assert config.pi.models_file == tmp_path / "models.json"
+    assert os.environ["OPENROUTER_API_KEY"] == "local-test"

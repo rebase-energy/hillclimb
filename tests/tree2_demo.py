@@ -50,7 +50,7 @@ def stamp(i, offset=0):
     return (t0 + timedelta(minutes=3 * i + offset)).isoformat()
 
 scores = {}  # id -> score of working candidates (parents are drawn from these)
-def add(cid, operator, parent, score, status="ok", i=0):
+def add(cid, operator, parent, score, status="passing", i=0):
     journal.candidate_result(Candidate(
         candidate_id=cid, operator=operator, parent_id=parent, status=status,
         trials=[mk_trial(val_score=score)] if score is not None else [],

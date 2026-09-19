@@ -27,7 +27,7 @@ def cand(
     duration: float | None = None,
     holdout_cpu: float | None = None,
     t: int = 0,
-    status: str = "ok",
+    status: str = "passing",
     pruned: bool = False,
 ) -> Candidate:
     trials = []

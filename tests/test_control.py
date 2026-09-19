@@ -73,10 +73,10 @@ def test_clear_stale_stops_keeps_prunes(tmp_path: Path):
 
 def test_apply_prune_subtree(tmp_path: Path):
     search_dir, journal = make_search(tmp_path)
-    add_candidate(journal, search_dir, "c001", status="ok", val_score=0.5)
+    add_candidate(journal, search_dir, "c001", status="passing", val_score=0.5)
     add_candidate(journal, search_dir, "c002", operator="improve", parent_id="c001", status="buggy")
-    add_candidate(journal, search_dir, "c003", operator="debug", parent_id="c002", status="ok", val_score=0.6)
-    add_candidate(journal, search_dir, "c004", status="ok", val_score=0.4)  # separate branch
+    add_candidate(journal, search_dir, "c003", operator="debug", parent_id="c002", status="passing", val_score=0.6)
+    add_candidate(journal, search_dir, "c004", status="passing", val_score=0.4)  # separate branch
 
     pruned = apply_prune(journal, "c002", reason="overfitting", source="cli")
 
@@ -92,7 +92,7 @@ def test_apply_prune_subtree(tmp_path: Path):
 
 def test_apply_prune_refuses_baseline_and_unknown(tmp_path: Path):
     search_dir, journal = make_search(tmp_path)
-    add_candidate(journal, search_dir, "c000", operator="baseline", status="ok")
+    add_candidate(journal, search_dir, "c000", operator="baseline", status="passing")
     with pytest.raises(ValueError, match="baseline"):
         apply_prune(journal, "c000")
     with pytest.raises(ValueError, match="No candidate"):
@@ -101,15 +101,15 @@ def test_apply_prune_refuses_baseline_and_unknown(tmp_path: Path):
 
 def test_apply_prune_idempotent(tmp_path: Path):
     search_dir, journal = make_search(tmp_path)
-    add_candidate(journal, search_dir, "c001", status="ok", val_score=0.5)
+    add_candidate(journal, search_dir, "c001", status="passing", val_score=0.5)
     assert apply_prune(journal, "c001") == ["c001"]
     assert apply_prune(journal, "c001") == []
 
 
 def test_resync_best_repoints_after_pruning_selected(tmp_path: Path):
     search_dir, journal = make_search(tmp_path)
-    add_candidate(journal, search_dir, "c001", status="ok", val_score=0.5)
-    winner = add_candidate(journal, search_dir, "c002", status="ok", val_score=0.9, is_selected=True)
+    add_candidate(journal, search_dir, "c001", status="passing", val_score=0.5)
+    winner = add_candidate(journal, search_dir, "c002", status="passing", val_score=0.9, is_selected=True)
     (search_dir / "best" / "submission.csv").write_text(
         (Path(winner.candidate_dir) / "submission.csv").read_text()
     )
@@ -125,8 +125,8 @@ def test_resync_best_repoints_after_pruning_selected(tmp_path: Path):
 
 def test_resync_best_falls_back_to_baseline(tmp_path: Path):
     search_dir, journal = make_search(tmp_path)
-    add_candidate(journal, search_dir, "c000", operator="baseline", status="ok")
-    add_candidate(journal, search_dir, "c001", status="ok", val_score=0.5)
+    add_candidate(journal, search_dir, "c000", operator="baseline", status="passing")
+    add_candidate(journal, search_dir, "c001", status="passing", val_score=0.5)
 
     apply_prune(journal, "c001")
     selected = resync_best(search_dir, journal, higher_is_better=True, selection_mode="rank-blend")
@@ -138,7 +138,7 @@ def test_resync_best_falls_back_to_baseline(tmp_path: Path):
 
 def test_request_prune_offline_applies_directly(tmp_path: Path):
     search_dir, journal = make_search(tmp_path)
-    add_candidate(journal, search_dir, "c001", status="ok", val_score=0.5)
+    add_candidate(journal, search_dir, "c001", status="passing", val_score=0.5)
 
     store = FileDataStore(search_dir.parents[2])
     outcome = request_prune(
@@ -152,7 +152,7 @@ def test_request_prune_offline_applies_directly(tmp_path: Path):
 
 def test_request_prune_queues_when_running(tmp_path: Path, monkeypatch):
     search_dir, journal = make_search(tmp_path)
-    add_candidate(journal, search_dir, "c001", status="ok", val_score=0.5)
+    add_candidate(journal, search_dir, "c001", status="passing", val_score=0.5)
     monkeypatch.setattr("hillclimb.control.derive_state", lambda _: "running")
 
     store = FileDataStore(search_dir.parents[2])

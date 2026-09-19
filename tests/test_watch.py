@@ -74,8 +74,8 @@ def make_run_with_search(
         ),
     )
     journal = Journal(search_dir / "journal.jsonl")
-    journal.candidate_result(make_candidate("c000", operator="baseline", status="ok"))
-    c001 = make_candidate("c001", operator="draft", status="ok", val_score=0.7)
+    journal.candidate_result(make_candidate("c000", operator="baseline", status="passing"))
+    c001 = make_candidate("c001", operator="draft", status="passing", val_score=0.7)
     c001.backend = BackendInfo(name="claude-code", total_tokens=240_000, cost_usd=0.5)
     journal.candidate_result(c001)
     c002 = make_candidate("c002", operator="improve", parent_id="c001", status="buggy", pruned=True)
@@ -103,7 +103,7 @@ def make_demo_search(
             journal.candidate_result(
                 make_candidate(
                     f"c{i:03d}",
-                    status="ok",
+                    status="passing",
                     val_score=float(i),
                     summary="wide summary " * 20,
                 )
@@ -144,7 +144,7 @@ def test_scan_runs_and_searches_with_status(tmp_path: Path):
     assert search_rows[0].problem == "circle-packing"
     assert search_rows[0].policy == "greedy"  # the default optimizer
     assert search_rows[0].backend == "claude-code"
-    assert search_rows[0].candidates == "3 (2 ok)"
+    assert search_rows[0].candidates == "3 (2 passing)"
     assert search_rows[0].buggy == 1  # c002 crashed: the cell goes red
     assert search_rows[0].tokens == "1.24M"  # 240k + 1.0M, summed across candidates
     assert search_rows[0].spend == "$2.25"  # 0.5 + 1.75, summed the same way
@@ -339,7 +339,7 @@ def test_search_row_shows_resolved_model_id(tmp_path: Path):
     assert row.model == "sonnet-4-5-20250929"  # live stream, journal not yet
 
     journal = Journal(search_dir / "journal.jsonl")
-    c003 = make_candidate("c003", operator="draft", status="ok")
+    c003 = make_candidate("c003", operator="draft", status="passing")
     c003.backend = BackendInfo(name="claude-code", model="sonnet",
                                model_id="claude-sonnet-4-5-20250929")
     journal.candidate_result(c003)
@@ -406,7 +406,7 @@ def test_scan_searches_backend_lists_every_harness_a_route_used(tmp_path: Path):
     runs_dir = tmp_path / "runs"
     search_dir = make_run_with_search(runs_dir, "routed-run")
     journal = Journal(search_dir / "journal.jsonl")
-    c003 = make_candidate("c003", operator="improve", parent_id="c001", status="ok", val_score=0.8)
+    c003 = make_candidate("c003", operator="improve", parent_id="c001", status="passing", val_score=0.8)
     c003.backend = BackendInfo(name="codex", model="gpt-5")
     journal.candidate_result(c003)
     assert scan_searches(runs_dir, "routed-run")[0].backend == "claude-code+codex"
@@ -437,7 +437,7 @@ def test_candidates_cell_is_red_on_any_crash_else_green(tmp_path: Path):
     search_dir = make_run_with_search(runs_dir, "r")  # c002 is buggy
     assert candidates_style(scan_searches(runs_dir, "r")[0]) == "red"
     journal = Journal(search_dir / "journal.jsonl")
-    journal.candidate_result(make_candidate("c002", operator="improve", parent_id="c001", status="ok", val_score=0.8))
+    journal.candidate_result(make_candidate("c002", operator="improve", parent_id="c001", status="passing", val_score=0.8))
     row = scan_searches(runs_dir, "r")[0]  # replay keeps the last record: healed
     assert (row.buggy, candidates_style(row)) == (0, "green")
     # a candidate the clock cut off is a warning, not a bug
@@ -485,8 +485,8 @@ def test_candidate_rows_branch_guides(tmp_path: Path):
     """Siblings get ├─/└─ and a │ continuation runs past an open branch."""
     search_dir = make_run_with_search(tmp_path / "runs", "r")
     journal = Journal(search_dir / "journal.jsonl")
-    journal.candidate_created(make_candidate("c003", parent_id="c001", status="ok"))
-    journal.candidate_created(make_candidate("c004", parent_id="c002", status="ok"))
+    journal.candidate_created(make_candidate("c003", parent_id="c001", status="passing"))
+    journal.candidate_created(make_candidate("c004", parent_id="c002", status="passing"))
     journal = Journal(search_dir / "journal.jsonl")
     labels = {r.candidate_id: r.label for r in candidate_rows(journal)}
     assert labels["c002"] == "├─ c002"  # no longer the last child of c001
@@ -504,7 +504,7 @@ def test_candidate_rows_show_pending_as_running_or_stale(tmp_path: Path):
     live = {r.candidate_id: r.status for r in candidate_rows(journal, live=True)}
     dead = {r.candidate_id: r.status for r in candidate_rows(journal, live=False)}
     assert live["c003"] == "running" and dead["c003"] == "stale"
-    assert live["c001"] == dead["c001"] == "ok"  # only pending is remapped
+    assert live["c001"] == dead["c001"] == "passing"  # only pending is remapped
     assert display_status("buggy", True) == "buggy"
 
 
@@ -526,7 +526,7 @@ def test_candidate_detail_lines_include_scores_lineage_and_notes(tmp_path: Path)
         candidate_detail_lines(_record(search_dir), Journal(search_dir / "journal.jsonl"), "c001")
     )
 
-    assert "Candidate c001 | draft | ok" in detail
+    assert "Candidate c001 | draft | passing" in detail
     assert "Score: val=0.7  holdout=-  metric=score (higher is better)" in detail
     assert "Parent: root  Children: 1  Path: c001" in detail
     assert "c002  improve  buggy  val=-  PRUNED" in detail
@@ -547,7 +547,7 @@ def test_candidate_detail_lines_baseline_without_trial(tmp_path: Path):
     detail = "\n".join(
         candidate_detail_lines(_record(search_dir), Journal(search_dir / "journal.jsonl"), "c000")
     )
-    assert "Candidate c000 | baseline | ok" in detail
+    assert "Candidate c000 | baseline | passing" in detail
     assert "Trial: (not executed)" in detail
 
 
@@ -955,7 +955,7 @@ async def test_candidate_table_refresh_preserves_scroll_offsets(tmp_path: Path):
         journal.candidate_result(
             make_candidate(
                 f"c{i:03d}",
-                status="ok",
+                status="passing",
                 val_score=float(i),
                 summary="wide summary " * 20,
             )
@@ -993,9 +993,9 @@ async def test_t_opens_the_tree_panel_and_follows_the_cursor(tmp_path: Path):
     journal2 = Journal(second / "journal.jsonl")
     # scrubber ticks come from finished_at (real searches always stamp it)
     for i, (cid, kwargs) in enumerate([
-        ("c000", dict(operator="baseline", status="ok")),
-        ("c001", dict(operator="draft", status="ok", val_score=0.7)),
-        ("c777", dict(operator="improve", parent_id="c001", status="ok", val_score=0.9)),
+        ("c000", dict(operator="baseline", status="passing")),
+        ("c001", dict(operator="draft", status="passing", val_score=0.7)),
+        ("c777", dict(operator="improve", parent_id="c001", status="passing", val_score=0.9)),
     ]):
         candidate = make_candidate(cid, **kwargs)
         candidate.finished_at = f"2026-08-23T10:0{i}:00+00:00"
@@ -1088,8 +1088,8 @@ async def test_a_opens_the_gantt_panel(tmp_path: Path):
     )
     journal2 = Journal(second / "journal.jsonl")
     for i, (cid, kwargs) in enumerate([
-        ("c000", dict(operator="baseline", status="ok")),
-        ("c777", dict(operator="improve", status="ok", val_score=0.9)),
+        ("c000", dict(operator="baseline", status="passing")),
+        ("c777", dict(operator="improve", status="passing", val_score=0.9)),
     ]):
         candidate = make_candidate(cid, **kwargs)
         candidate.created_at = f"2026-08-23T10:0{i}:00+00:00"
@@ -1164,7 +1164,7 @@ async def test_hold_column_only_for_holdout_searches(tmp_path: Path):
 
         # a holdout score on any candidate brings the column back
         Journal(search_dir / "journal.jsonl").candidate_result(
-            Candidate(candidate_id="c009", operator="draft", status="ok",
+            Candidate(candidate_id="c009", operator="draft", status="passing",
                       trials=[mk_trial(val_score=0.9, holdout_score=0.8)])
         )
         app.screen.refresh_data()
@@ -1924,7 +1924,7 @@ async def test_running_candidate_detail_has_a_following_console(tmp_path: Path):
 
         # the result lands: the console goes away and the overview's own tails take over
         done = journal.candidates["c003"]
-        done.status = "ok"
+        done.status = "passing"
         Journal(search_dir / "journal.jsonl").candidate_result(done)
         screen.refresh_data()
         await pilot.pause()

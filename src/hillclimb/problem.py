@@ -12,14 +12,45 @@ from hillclimb.config import Config
 from hillclimb.direction import legacy_direction_key
 
 
+class UnitTestSpec(BaseModel):
+    """Optional, framework-neutral correctness gate for a problem.
+
+    ``root`` is the tree snapshotted at run start.  The command is argv, not
+    a shell string, and may reference ``{python}``, ``{solution}``, and
+    ``{tests}``.  ``sha256`` is filled only for a frozen run bundle.
+    """
+
+    root: Path
+    command: list[str]
+    sha256: str | None = None
+
+    @field_validator("command")
+    @classmethod
+    def _valid_command(cls, value: list[str]) -> list[str]:
+        if not value or not all(isinstance(token, str) and token for token in value):
+            raise ValueError("unit_tests.command must be a non-empty argv list")
+        allowed = {"python", "solution", "tests"}
+        import string
+
+        for token in value:
+            for _literal, field, _format, _conversion in string.Formatter().parse(token):
+                if field is not None and field not in allowed:
+                    raise ValueError(
+                        f"unknown unit-test command token {{{field}}}; "
+                        "allowed: {python}, {solution}, {tests}"
+                    )
+        return value
+
+
 class ProblemSpec(BaseModel):
     """Portable problem definition.
 
-    A problem is defined by its **verifier command**: the only process the
-    engine starts, which drives `solution.py` and writes the score to
-    `$HILLCLIMB_RESULT` (see `executor.py` for the contract). A directory
-    problem supplies it as `verifier.sh`; providers (`emflow://`,
-    `mlebench://`) supply their own argv for the same contract.
+    A problem is defined by its **verifier command**: the scoring process,
+    which drives `solution.py` and writes the score to `$HILLCLIMB_RESULT`
+    (see `executor.py` for the contract). A directory problem supplies it as
+    `verifier.sh`; providers (`emflow://`, `mlebench://`) supply their own argv
+    for the same contract. An optional unit-test command is a second,
+    framework-neutral correctness gate.
     """
 
     problem_id: str
@@ -50,6 +81,7 @@ class ProblemSpec(BaseModel):
     holdout_needs_credentials: bool = False  # fail fast when the hidden split is gated
     runtime: Literal["csv", "emflow"] = "csv"  # which shared runtime venv to build
     requirements_file: Path | None = None  # per-problem venv requirements
+    unit_tests: UnitTestSpec | None = None
 
     # --- prompt assembly ---
     contract_template: str = "contract_verifier"  # prompts/<name>.md
@@ -384,6 +416,23 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
             **{label: value for label, value in chart_baselines.items() if label != "baseline"},
         }
     baseline_path = None if baseline_score is not None else _optional_file(problem_dir, meta, "baseline")
+    unit_tests = None
+    if meta.get("unit_tests") is not None:
+        raw_tests = meta["unit_tests"]
+        if not isinstance(raw_tests, dict):
+            raise ValueError(f"{problem_yaml}: unit_tests must be a mapping")
+        root_value = raw_tests.get("root")
+        command = raw_tests.get("command")
+        if not isinstance(root_value, str) or not root_value:
+            raise ValueError(f"{problem_yaml}: unit_tests.root must be a relative directory")
+        test_root = (problem_dir / root_value).resolve()
+        try:
+            test_root.relative_to(problem_dir.resolve())
+        except ValueError as exc:
+            raise ValueError(f"{problem_yaml}: unit_tests.root must stay inside the problem dir") from exc
+        if not test_root.is_dir():
+            raise FileNotFoundError(f"unit test directory not found: {test_root}")
+        unit_tests = UnitTestSpec(root=test_root, command=command)
     if baseline_score is not None:
         baseline_summary = f"baseline: {baseline_score:g} (declared)"
     elif baseline_path:
@@ -402,6 +451,7 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
         surface_metrics=list(meta.get("surface_metrics") or ["x", "y"]),
         fingerprint_path=_optional_file(problem_dir, meta, "fingerprint", default="fingerprint.py"),
         requirements_file=_optional_file(problem_dir, meta, "requirements"),
+        unit_tests=unit_tests,
         baseline_text=baseline_path.read_text() if baseline_path else None,
         baseline_score=baseline_score,
         baseline_summary=baseline_summary,

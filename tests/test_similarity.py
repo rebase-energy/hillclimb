@@ -34,7 +34,7 @@ def _fresh_caches():
 
 def cand(
     cid: str, operator: str = "improve", parent: str | None = None, score: float | None = None,
-    status: str = "ok", t: int = 0, submission_ok: bool = True, report: dict | None = None,
+    status: str = "passing", t: int = 0, submission_ok: bool = True, report: dict | None = None,
     metrics: dict | None = None, **kwargs,
 ) -> Candidate:
     trials = []

@@ -103,11 +103,11 @@ def test_build_tree_marks_best_and_edges(tmp_path):
     from hillclimb.viz import build_tree
 
     journal = Journal(tmp_path / "j.jsonl")
-    journal.candidate_result(Candidate(candidate_id="c001", operator="draft", status="ok",
+    journal.candidate_result(Candidate(candidate_id="c001", operator="draft", status="passing",
                                        trials=[mk_trial(val_score=0.6)]))
     journal.candidate_result(Candidate(candidate_id="c002", operator="debug", parent_id="c001", status="buggy"))
     journal.candidate_result(Candidate(candidate_id="c003", operator="improve", parent_id="c001",
-                                       status="ok", trials=[mk_trial(val_score=0.8)],
+                                       status="passing", trials=[mk_trial(val_score=0.8)],
                                        summary="one change"))
     graph = build_tree(journal, higher_is_better=True)
     unq = lambda s: str(s).strip('"')

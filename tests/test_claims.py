@@ -47,7 +47,7 @@ class FakeProblem:
 
 def scored(cid, op, val, summary="", candidate_dir="w"):
     return dict(
-        candidate_id=cid, operator=op, status="ok", candidate_dir=candidate_dir,
+        candidate_id=cid, operator=op, status="passing", candidate_dir=candidate_dir,
         summary=summary, trials=[mk_trial(val_score=val)],
     )
 

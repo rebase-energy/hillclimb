@@ -31,7 +31,7 @@ FATE_HELP = {
     "pruned": "cut by the user",
 }
 # Status values that count as "did not produce a scorable solution".
-FAILED_STATUSES = frozenset({"buggy", "abandoned", "parked"})
+FAILED_STATUSES = frozenset({"failing", "buggy", "abandoned", "parked"})
 
 
 @dataclass(frozen=True)
@@ -95,7 +95,7 @@ def accepted_lineage(candidates: list[Candidate], higher_is_better: bool) -> lis
     accepted: list[str] = []
     for cand in sorted(candidates, key=_when):
         score = cand.val_score
-        if score is None or cand.status != "ok" or cand.pruned:
+        if score is None or cand.status != "passing" or cand.pruned:
             continue
         if best is None or better(score, best, higher_is_better):
             best = score

@@ -88,7 +88,7 @@ def test_resync_best_uses_declared_json_artifact(tmp_path):
             candidate_id=cid,
             operator=operator,
             candidate_dir=str(directory),
-            status="ok",
+            status="passing",
             trials=[] if score is None else [mk_trial(val_score=score)],
         )
         journal.candidate_result(candidate)

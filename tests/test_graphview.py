@@ -296,15 +296,19 @@ class TestSearchAndScrub:
         assert snap_to_event([], 0.5) == 0
 
     def test_render_scrubber(self):
+        from rich.cells import cell_len
+
+        from hillclimb.graphview import KNOB, TICK
+
         track, label = render_scrubber(["t1", "t2"], None, 60).plain.split("\n")
-        assert len(track) == 60 and track.endswith("●") and track[0] == "┿"
+        assert cell_len(track) == 60 and track.endswith(KNOB) and track.startswith("━" + TICK) and KNOB == "●"
         assert "━" in track and "─" not in track, "live: the whole track is elapsed"
         assert label.startswith("live · 2 searches") and label.endswith("end live")
         # too narrow for the hint: the label alone, never a wrapped second line
         narrow = render_scrubber(["t1", "t2"], None, 40).plain.split("\n")[1]
         assert narrow == "live · 2 searches"
         track, label = render_scrubber(["t1", "t2"], 0, 40).plain.split("\n")
-        assert track[0] == "●" and track[-1] == "┼" and "━" not in track
+        assert track[0] == KNOB and track.endswith("─" + TICK) and "━" not in track
         assert label.startswith("as of t1 · search 1 of 2")  # non-ISO stamps pass through
         assert render_scrubber([], None, 40).plain.endswith("no finished searches yet")
 
@@ -636,6 +640,37 @@ async def test_hovering_and_clicking_a_label_hits_its_node(graph_workspace):
         await pilot.click("#graph-canvas", offset=(col, row))
         await pilot.pause()
         assert canvas.selected == node_id
+
+
+def test_scrubber_ticks_are_evenly_spaced():
+    """Many events on a narrow track used to round onto cells as gaps of
+    two and three — pairs. The graduations are a ruler: equal gaps, fewer
+    marks than events when they would not fit; one per event when they do."""
+    from hillclimb.graphview import tick_columns
+
+    def gaps(cols: set[int]) -> set[int]:
+        ordered = sorted(cols)
+        return {b - a for a, b in zip(ordered, ordered[1:])}
+
+    # 81 events over 190 columns: 189 = 3^3 * 7, so a 3-column ruler lands on both ends
+    ticks = tick_columns(190, 81)
+    assert gaps(ticks) == {3} and 0 in ticks and 189 in ticks and len(ticks) == 64
+    # few events: one tick per event at its own column, so the cursor sits on a tick
+    assert tick_columns(190, 8) == {round(i / 7 * 189) for i in range(8)}
+    assert gaps(tick_columns(190, 8)) <= {27}
+    assert tick_columns(100, 8) == {round(i / 7 * 99) for i in range(8)}  # 14/15: not seen
+    # a prime span has no divisor near the density: equal gaps, the odd one at the far end
+    prime = tick_columns(192, 81)
+    assert gaps(prime) <= {2, 3} and 0 in prime and max(prime) >= 189
+    assert tick_columns(60, 1) == {0} and tick_columns(60, 0) == {0}
+    # the marks are the line's own cells with a centred stroke over them: never a box cross
+    from rich.cells import cell_len
+
+    from hillclimb.graphview import TICK
+
+    track = render_scrubber([f"t{i}" for i in range(81)], 40, 190).plain.split("\n")[0]
+    assert "┼" not in track and "┿" not in track and cell_len(track) == 190
+    assert ("━" + TICK) in track and ("─" + TICK) in track and track.count(TICK) == 64
 
 
 def test_render_scrubber_units():

@@ -33,7 +33,7 @@ def _search(
     ))
     journal = Journal(search_dir / "journal.jsonl")
     journal.candidate_result(Candidate(
-        candidate_id="c001", operator="draft", status="ok",
+        candidate_id="c001", operator="draft", status="passing",
         trials=[mk_trial(val_score=best)] if best is not None else [],
         created_at=started, finished_at=started,
     ))

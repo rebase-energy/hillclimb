@@ -174,7 +174,7 @@ def test_dangling_and_missing_targets_are_breaches(config, tmp_path):
 def test_operator_target_mismatch_is_a_breach(config, tmp_path):
     report = check_policy(WrongTargetPolicy, _cases(tmp_path), config)
     details = [f.detail for f in _by_check(report, "references", "t/one") if not f.ok]
-    assert details and "debug targets c003 whose status is ok" in details[0]
+    assert details and "debug targets c003 whose status is passing" in details[0]
 
 
 def test_mutating_the_journal_is_a_breach(config, tmp_path):

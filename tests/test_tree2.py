@@ -14,6 +14,7 @@ from hillclimb.tree2 import (
     BEST_SIZE_SCALE,
     BORDER,
     GAP_PX,
+    LINEAGE_RGB,
     R_MAX_PX,
     R_MIN_PX,
     RAMP_ROWS,
@@ -59,6 +60,13 @@ def rgba_colours(plot, w: int, h: int) -> set[tuple[int, int, int]]:
     return {tuple(data[i : i + 3]) for i in range(0, len(data), 4) if data[i + 3]}
 
 
+def colour_pixels(plot, w: int, h: int, rgb: tuple[int, int, int]) -> int:
+    """How many pixels of the frame are exactly `rgb` — the spine's white is
+    shared by rings and the lineage line, so a hidden line is fewer of them."""
+    data = plot.render_rgba(w, h)
+    return sum(1 for i in range(0, len(data), 4) if data[i + 3] and tuple(data[i : i + 3]) == rgb)
+
+
 class TestColour:
     def test_viridis_ends_on_plotui_stops_and_clamps(self):
         assert viridis(0.0) == VIRIDIS[0]
@@ -87,7 +95,7 @@ class TestColour:
 
 
 class TestEncoding:
-    def test_number_is_the_iteration(self):
+    def test_number_is_the_candidate_number(self):
         assert node_number("c000") == "0"
         assert node_number("c017") == "17"
         assert node_number("c1234") == "1234"
@@ -100,8 +108,23 @@ class TestEncoding:
             "c000": "scored", "c001": "scored", "c002": "expanded", "c003": "scored",
             "c004": "expanded", "c005": "failed", "c006": "failed", "c007": "expanded",
         }
-        assert stage_counts(tree) == {"expanded": 3, "scored": 3, "failed": 2}
+        assert stage_counts(tree) == {"expanded": 2, "scored": 3, "failed": 2}  # the best is its own entry
         assert set(STAGE_RGB) >= set(STAGES) | {"pending"}
+
+    def test_rings_never_borrow_a_viridis_hue(self):
+        """Fill is the only place hue means score: the spine (expanded, the
+        best, the lineage) is one white, a scored node's ring is the ground — the
+        same tone a failed node is filled with, so it reads hollow — and red
+        is reserved for failure."""
+        from hillclimb.theme import PLOT_BG
+        from hillclimb.tree2 import HOLLOW_RGB, LINEAGE_RGB, WHITE_RGB
+
+        assert HOLLOW_RGB == PLOT_BG == STAGE_RGB["scored"] == UNSCORED_RGB
+        assert STAGE_RGB["expanded"] == BEST_RING_RGB == LINEAGE_RGB == WHITE_RGB
+        red = STAGE_RGB["failed"]
+        assert red[0] > 200 and red[1] < 80 and red[2] < 80
+        ramp = {viridis(i / 50) for i in range(51)}
+        assert not ramp & {WHITE_RGB, red, STAGE_RGB["pending"]}
 
     def test_best_is_a_bigger_star_everything_else_a_disc(self):
         tree = build_tree(forest())
@@ -252,7 +275,7 @@ class TestPlot:
         tree = build_tree(forest())
         plot, _ = build_tree2_plot(tree, radius=8.0)
         colours = rgba_colours(plot, 1200, 800)
-        assert BEST_RING_RGB in colours                  # the best's gold ring
+        assert BEST_RING_RGB in colours                  # the spine's white: the star, the built-on rings, the line
         assert STAGE_RGB["failed"] in colours            # a red ring
         assert STAGE_RGB["expanded"] in colours
         assert VIRIDIS[-1] in colours                    # the top score's fill
@@ -319,7 +342,8 @@ class TestLegend:
         tree = build_tree(forest())
         spans = legend_spans(tree, metric="score", higher_is_better=True, cols=60)
         text = {s[2].strip() for s in spans}
-        assert {"expanded 3", "scored 3", "failed 2", "best", "score", "0.9", "0.1"} <= text
+        assert {"score", "0.9", "0.1"} <= text  # the ramp; the ladder is plotui's legend (legend_entries)
+        assert not any("expanded" in t for t in text)
         blocks = [s for s in spans if s[2] == "█"]
         assert len(blocks) == RAMP_ROWS
         assert all(s[1] == 58 for s in blocks)  # one column, at the right edge
@@ -334,20 +358,81 @@ class TestLegend:
         top = next(s for s in spans if s[0] == blocks[0][0] and 10 < s[1] < bar_col)
         assert top[2].strip() == "0.1"
 
+    def test_entries_are_plotui_legend_rows_with_node_swatches(self):
+        from hillclimb.tree2 import LEGEND_ENTRIES, WHITE_RGB, hidden_fates, legend_entries
+
+        assert LEGEND_ENTRIES == ("expanded", "scored", "failed", "best", "lineage")
+        tree = build_tree(forest())
+        rows = legend_entries(tree)
+        assert [r[0] for r in rows] == ["1 expanded 2", "2 scored 3", "3 failed 2", "4 best", "5 lineage"]
+        expanded, scored, failed, best, lineage = rows
+        # the same fill for expanded and scored; the white ring is the only difference
+        assert expanded[1:4] == ("disc", viridis(0.5), WHITE_RGB)
+        assert scored[1:4] == ("disc", viridis(0.5), None)
+        assert failed[1:4] == ("disc", UNSCORED_RGB, STAGE_RGB["failed"])
+        assert best[1] == "star" and best[3] == BEST_RING_RGB
+        assert lineage[1:4] == ("line", LINEAGE_RGB, None)
+        assert all(r[4] for r in rows)
+        # a hidden entry keeps its row, switched off
+        hidden = legend_entries(tree, hidden={"failed", "lineage"})
+        assert [r[4] for r in hidden] == [True, True, False, True, False]
+        assert [r[0] for r in legend_entries(None)] == ["1 expanded", "2 scored", "3 failed", "4 best", "5 lineage"]
+        # stages map onto the tree widget's fate filter; the lineage hides no node
+        assert hidden_fates({"scored"}) == {"discontinued"}
+        assert hidden_fates({"failed", "best"}) == {"failed", "pruned", "best"}
+        assert hidden_fates({"lineage"}) == frozenset()
+
+    def test_legend_is_drawn_in_the_plot_top_left_and_hit_by_row(self):
+        from hillclimb.tree2 import legend_entries
+
+        tree = build_tree(forest())
+        plot, _ids = build_tree2_plot(tree, legend=legend_entries(tree))
+        assert [r[0] for r in plot.legend_entries()] == ["1 expanded 2", "2 scored 3", "3 failed 2", "4 best", "5 lineage"]
+        w, h = 400, 300
+        data = plot.render_rgba(w, h)
+        top_left = {tuple(data[(y * w + x) * 4:(y * w + x) * 4 + 3]) for y in range(h // 2) for x in range(w // 2)}
+        assert viridis(0.5) in top_left and STAGE_RGB["failed"] in top_left  # the discs' fill, the red ring
+        assert plot.legend_entry_hit(w, h, 40.0, 12.0) == 0
+        assert plot.legend_entry_hit(w, h, w - 5.0, h - 5.0) is None
+        bare, _ids = build_tree2_plot(tree)
+        assert bare.legend_entries() == [] and bare.legend_entry_hit(w, h, 40.0, 12.0) is None
+
+    def test_show_lineage_off_drops_the_thick_line(self):
+        tree = build_tree(forest())
+        with_line = colour_pixels(build_tree2_plot(tree)[0], 320, 200, LINEAGE_RGB)
+        without = colour_pixels(build_tree2_plot(tree, show_lineage=False)[0], 320, 200, LINEAGE_RGB)
+        assert 0 < without < with_line  # the white rings stay, the thick line goes
+
+    def test_hiding_the_best_keeps_the_lineage(self):
+        from hillclimb.treeview import filter_hidden
+        from hillclimb.tree2 import hidden_fates, lineage_nodes
+
+        tree = build_tree(forest())
+        without_best = filter_hidden(tree, hidden_fates({"best"}))
+        assert [n.id for n in lineage_nodes(tree)] == ["c002", "c004", "c007"]
+        assert lineage_nodes(without_best) == ()  # nothing to walk back from once the best is gone...
+        # ...but drawn with the unfiltered tree's chain, the path still runs to the star's place:
+        # the line trace adds one vertex per ancestor over the node marks
+        plot, ids = build_tree2_plot(without_best, lineage=lineage_nodes(tree))
+        assert "c007" not in ids and plot.vertex_count() == len(ids) + 3
+        bare, _ids = build_tree2_plot(without_best)
+        assert bare.vertex_count() == len(ids)
+
     def test_unscored_tree_has_no_ramp(self):
         spans = legend_spans(build_tree([cand("c001", status="buggy")]), cols=60)
         assert not [s for s in spans if s[2] == "█"]
-        assert legend_spans(None, cols=40)  # the ladder alone still draws
+        assert legend_spans(None, cols=40) == []  # no ramp without scores; the ladder is plotui's
 
 
 class TestWidget:
-    def test_screen_is_a_tree_screen_without_the_filter(self):
+    def test_screen_is_a_tree_screen_with_its_own_legend_keys(self):
         from hillclimb.tree2view import Tree2Screen
         from hillclimb.treeview import TreeScreen
 
         assert issubclass(Tree2Screen, TreeScreen)
-        keys = {b.key for b in Tree2Screen.BINDINGS}
-        assert "1" not in keys and "j" in keys and "n" in keys
+        keys = [b.key for b in Tree2Screen.BINDINGS]
+        assert {"1", "5", "j", "n", "l"} <= set(keys) and "6" not in keys  # five legend entries, no more
+        assert keys.index("b") + 1 == keys.index("l")  # lineage sits right after best in the footer
 
     def test_hooks(self):
         from hillclimb.tree2view import Tree2PlotWidget
@@ -355,7 +440,7 @@ class TestWidget:
         widget = Tree2PlotWidget()
         widget._ids = ["c000", "c001"]
         assert widget._flat_to_id(1) == "c001" and widget._flat_to_id(2) is None
-        assert widget._legend_entry_at(1, 1) is None
+        assert widget._legend_entry_at(1, 1) is None  # unmounted: no frame to hit-test against
 
 
 def test_cli_lists_tree2():
@@ -401,16 +486,45 @@ async def test_tree2_app_mounts_sizes_marks_selects_and_scrubs(tree_workspace):
         assert canvas.selected == "c007"
         assert set(canvas._label_cells.values()) == {"c007"}
         assert app.screen.query_one("#node-detail").styles.display == "block"
-        # the legend keys of `tree` do nothing here
+        # the legend filters: 1 hides the built-on nodes, again shows them; 5 hides the lineage line
         await pilot.press("1")
         await pilot.pause()
-        assert len(canvas._ids) == 8
+        assert canvas.hidden == {"expanded"} and len(canvas._ids) == 6
+        rows = canvas._plot.legend_entries()
+        assert rows[0][0] == "1 expanded 2" and rows[0][4] is False and rows[1][4] is True
+        # a click on the first legend row resolves through plotui's hit test
+        assert canvas._legend_entry_at(4, 1) == "expanded"
+        # the lit legend row survives a rebuild (a hover elsewhere rebuilds the plot)
+        canvas._plot.set_legend_hover_index(2)
+        canvas.rebuild()
+        assert canvas._plot.legend_hover() == 2
+        canvas._plot.set_legend_hover_index(None)
+        await pilot.press("1")
+        await pilot.pause()
+        assert not canvas.hidden and len(canvas._ids) == 8
+        with_line = colour_pixels(canvas._plot, 320, 200, LINEAGE_RGB)
+        await pilot.press("5")
+        await pilot.pause()
+        assert canvas.hidden == {"lineage"} and len(canvas._ids) == 8
+        assert 0 < colour_pixels(canvas._plot, 320, 200, LINEAGE_RGB) < with_line  # rings stay, line goes
+        await pilot.press("l")  # the lineage's own key brings it back
+        await pilot.pause()
+        assert not canvas.hidden and LINEAGE_RGB in rgba_colours(canvas._plot, 320, 200)
+        await pilot.press("4")  # hiding the best removes the star only: the lineage stays
+        await pilot.pause()
+        assert canvas.hidden == {"best"} and len(canvas._ids) == 7 and "c007" not in canvas._ids
+        assert LINEAGE_RGB in rgba_colours(canvas._plot, 320, 200)
+        await pilot.press("4")
+        await pilot.pause()
         await pilot.press("j")
         await pilot.pause()
         assert app.screen._tree.best_id != "c007"
         await pilot.press("end")
         await pilot.pause()
         assert app.screen._tree.best_id == "c007"
+        # the footer reads esc, b, l, n …: lineage right after best
+        keys = list(app.screen._bindings.key_to_bindings)
+        assert keys.index("b") < keys.index("l") < keys.index("n")
         await pilot.press("question_mark")
         await pilot.pause()
         assert app.screen.query(Tree2Keys)

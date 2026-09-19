@@ -70,6 +70,43 @@ holdout: true
     assert spec.holdout_cmd == [str(problem_dir / "verifier.sh"), "--holdout"]
 
 
+def test_load_problem_with_unit_tests(problem_dir, config):
+    tests_dir = problem_dir / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_solution.py").write_text("def test_answer(): assert True\n")
+    yaml_path = problem_dir / "problem.yaml"
+    yaml_path.write_text(
+        yaml_path.read_text()
+        + "unit_tests:\n"
+        + "  root: tests\n"
+        + "  command: ['{python}', '-m', 'pytest', '-q', '{tests}']\n"
+    )
+
+    spec = load_problem(problem_dir, config)
+
+    assert spec.unit_tests.root == tests_dir
+    assert spec.unit_tests.command[-1] == "{tests}"
+
+
+def test_unit_tests_reject_missing_root_and_unknown_tokens(problem_dir, config):
+    yaml_path = problem_dir / "problem.yaml"
+    original = yaml_path.read_text()
+    yaml_path.write_text(
+        original
+        + "unit_tests:\n  root: missing\n  command: ['{python}', '{tests}']\n"
+    )
+    with pytest.raises(FileNotFoundError, match="unit test directory not found"):
+        load_problem(problem_dir, config)
+
+    (problem_dir / "tests").mkdir()
+    yaml_path.write_text(
+        original
+        + "unit_tests:\n  root: tests\n  command: ['{python}', '{unknown}']\n"
+    )
+    with pytest.raises(ValueError, match="unknown unit-test command token"):
+        load_problem(problem_dir, config)
+
+
 def test_verifier_must_exist_and_be_executable(problem_dir, config):
     (problem_dir / "verifier.sh").chmod(0o644)
     with pytest.raises(PermissionError, match="chmod \\+x"):

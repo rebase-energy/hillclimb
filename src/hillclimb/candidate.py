@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from statistics import median
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 OPERATORS = ("baseline", "draft", "debug", "improve", "ensemble")
-STATUSES = ("pending", "ok", "buggy", "parked", "abandoned")
+STATUSES = ("pending", "passing", "failing", "buggy", "parked", "abandoned")
+# Trial fields the hidden split produces (Candidate.holdout_blind strips them)
+HOLDOUT_FIELDS = ("holdout_score", "holdout_error", "holdout_cpu_s")
 
 
 def utcnow() -> str:
@@ -19,6 +22,7 @@ class BackendInfo(BaseModel):
 
     name: str = ""
     model: str | None = None  # requested model/route alias (bandit arm on replay)
+    sampling: dict[str, int | float] | None = None
     # fully-qualified model that served the call, from the agent stream
     # (e.g. "claude-sonnet-4-5-20250929"); None on old journals and backends
     # that only know the alias
@@ -73,6 +77,20 @@ class Replicate(BaseModel):
     finished_at: str | None = None
 
 
+class UnitTestResult(BaseModel):
+    """One execution of the run-frozen unit-test suite for a Trial."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    passed: bool = False
+    returncode: int | None = None
+    duration_s: float = 0.0
+    cpu_s: float | None = None
+    timed_out: bool = False
+    stdout_tail: str = ""
+    stderr_tail: str = ""
+
+
 def _per_key_median(dicts) -> dict[str, float]:
     pooled: dict[str, list[float]] = {}
     for entries in dicts:
@@ -94,6 +112,10 @@ class Trial(BaseModel):
     index: int = 0
     params: dict = Field(default_factory=dict)
     replicates: list[Replicate] = Field(default_factory=list)
+    # None is the backward-compatible value for historical trials and for
+    # problems without a unit-test gate.
+    verdict: Literal["passing", "failing", "buggy"] | None = None
+    unit_tests: UnitTestResult | None = None
     is_best: bool = False
     holdout_score: float | None = None  # orchestrator-computed, hidden from agent
     holdout_error: str | None = None  # why holdout predictions couldn't be scored
@@ -194,6 +216,9 @@ class Candidate(BaseModel):
             data = dict(data)
             data.setdefault("candidate_dir", data.pop("workspace"))
             data.pop("workspace", None)
+        if isinstance(data, dict) and data.get("status") == "ok":
+            data = dict(data)
+            data["status"] = "passing"
         return data
 
     @model_validator(mode="before")
@@ -219,7 +244,7 @@ class Candidate(BaseModel):
         for entry in old:
             entry = dict(entry)
             params = entry.pop("params", None) or params
-            for key in ("holdout_score", "holdout_error", "holdout_cpu_s"):
+            for key in HOLDOUT_FIELDS:
                 value = entry.pop(key, None)
                 if value is not None:
                     holdout[key] = value
@@ -250,7 +275,10 @@ class Candidate(BaseModel):
         replicates; ties keep the earliest). Engines call this after every
         trial lands; the flag is journaled so every reader sees the same
         aggregate without knowing the direction."""
-        scored = [t for t in self.trials if t.val_score is not None]
+        scored = [
+            t for t in self.trials
+            if t.val_score is not None and t.verdict not in ("failing", "buggy")
+        ]
         for trial in self.trials:
             trial.is_best = False
         if not scored:
@@ -268,7 +296,10 @@ class Candidate(BaseModel):
     # parameter sets would describe no run that actually happened.
     @property
     def best_trial(self) -> Trial | None:
-        scored = [t for t in self.trials if t.val_score is not None]
+        scored = [
+            t for t in self.trials
+            if t.val_score is not None and t.verdict not in ("failing", "buggy")
+        ]
         if not scored:
             return None
         flagged = [t for t in scored if t.is_best]
@@ -303,13 +334,31 @@ class Candidate(BaseModel):
     def replicate_spreads(self) -> list[float]:
         """Every trial's replicate spread — the search's evidence about its
         own noise (spread ACROSS parameter sets is signal, not noise)."""
-        return [t.replicate_spread for t in self.trials if t.replicate_spread is not None]
+        return [
+            t.replicate_spread for t in self.trials
+            if t.verdict not in ("failing", "buggy") and t.replicate_spread is not None
+        ]
 
     @property
     def holdout_score(self) -> float | None:
         best = self.best_trial
         return best.holdout_score if best is not None else None
 
+    def holdout_blind(self) -> Candidate:
+        """A copy with everything the hidden split produced removed: the
+        trials' holdout fields and `is_selected` (one bit of the same
+        signal). What a search policy is handed (`journal.PolicyJournal`) —
+        a process that may be optimized must never see what it must not
+        optimize. A trial that FAILED holdout keeps its not-passing verdict:
+        that is an execution failure, not a score."""
+        blank = dict.fromkeys(HOLDOUT_FIELDS)
+        return self.model_copy(
+            update={
+                "is_selected": False,
+                "trials": [trial.model_copy(update=blank) for trial in self.trials],
+            }
+        )
+
     @property
     def is_scored(self) -> bool:
-        return self.status == "ok" and self.val_score is not None
+        return self.status == "passing" and self.val_score is not None

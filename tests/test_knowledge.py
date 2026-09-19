@@ -42,7 +42,7 @@ class FakeProblem:
 
 def scored(cid, op, val, summary="", complexity=None, candidate_dir="w", holdout=None):
     return dict(
-        candidate_id=cid, operator=op, status="ok", complexity=complexity,
+        candidate_id=cid, operator=op, status="passing", complexity=complexity,
         candidate_dir=candidate_dir, summary=summary,
         trials=[mk_trial(val_score=val, holdout_score=holdout)],
     )
@@ -54,7 +54,7 @@ class TestDistill:
         ws.mkdir()
         (ws / "solution.py").write_text("import lightgbm\nfrom scipy.stats import beta\n")
         journal = make_journal(tmp_path, [
-            dict(candidate_id="c000", operator="baseline", status="ok", candidate_dir="w"),
+            dict(candidate_id="c000", operator="baseline", status="passing", candidate_dir="w"),
             scored("c001", "draft", 0.02, "GBM with lag features", "minimal", str(ws)),
             scored("c002", "improve", 0.015, "added clearsky ratio", "minimal", str(ws), holdout=0.016),
             dict(candidate_id="c003", operator="draft", status="buggy", candidate_dir="w",
@@ -66,7 +66,7 @@ class TestDistill:
         )
         assert card.family == "gefcom2014"
         assert card.n_candidates == 3  # baseline excluded
-        assert card.n_ok == 2 and card.n_buggy == 1
+        assert card.n_ok == 2 and card.n_failing == 0 and card.n_buggy == 1
         assert card.selected_val == 0.015
         assert card.top_approaches[0].summary == "added clearsky ratio"
         assert "lightgbm" in card.top_approaches[0].libraries

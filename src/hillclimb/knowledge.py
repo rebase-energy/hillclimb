@@ -79,6 +79,7 @@ class KnowledgeCard(BaseModel):
     cost_usd: float = 0.0
     n_candidates: int = 0
     n_ok: int = 0
+    n_failing: int = 0
     n_buggy: int = 0
     selected_val: float | None = None
     selected_holdout: float | None = None
@@ -127,6 +128,16 @@ def _failure_phrase(candidate) -> str | None:
     replicate = candidate.last_replicate
     if trial is None or replicate is None:
         return None
+    if trial.unit_tests is not None:
+        tests = trial.unit_tests
+        if tests.timed_out:
+            return "unit tests timed out"
+        if not tests.passed:
+            tail = (tests.stderr_tail or tests.stdout_tail).strip()
+            match = re.findall(r"([A-Za-z_]*(?:Error|Exception)[^\n]{0,80})", tail)
+            if match:
+                return f"unit tests: {match[-1].strip()}"
+            return f"unit tests failed (exit {tests.returncode})"
     if replicate.timed_out:
         return "execution timed out"
     if trial.holdout_error:
@@ -158,7 +169,7 @@ def distill_card(
     for c in candidates:
         stat = stats.setdefault(c.operator, OperatorStat())
         stat.attempts += 1
-        if c.status == "ok":
+        if c.status == "passing":
             stat.ok += 1
             if c.val_score is not None and (
                 stat.best_val is None or direction * c.val_score < direction * stat.best_val
@@ -166,7 +177,7 @@ def distill_card(
                 stat.best_val = c.val_score
 
     scored = sorted(
-        (c for c in candidates if c.status == "ok" and c.val_score is not None),
+        (c for c in candidates if c.status == "passing" and c.val_score is not None),
         key=lambda c: direction * c.val_score,
     )
     seen_summaries: set[str] = set()
@@ -191,7 +202,7 @@ def distill_card(
             break
 
     failures = Counter(
-        phrase for c in candidates if c.status == "buggy" and (phrase := _failure_phrase(c))
+        phrase for c in candidates if c.status in ("failing", "buggy") and (phrase := _failure_phrase(c))
     )
     selected = journal.selected_candidate(problem.higher_is_better, selection)
     return KnowledgeCard(
@@ -204,7 +215,8 @@ def distill_card(
         budget_s=budget_s,
         cost_usd=round(cost_usd, 4),
         n_candidates=len(candidates),
-        n_ok=sum(1 for c in candidates if c.status == "ok"),
+        n_ok=sum(1 for c in candidates if c.status == "passing"),
+        n_failing=sum(1 for c in candidates if c.status == "failing"),
         n_buggy=sum(1 for c in candidates if c.status == "buggy"),
         selected_val=selected.val_score if selected else None,
         selected_holdout=selected.holdout_score if selected else None,

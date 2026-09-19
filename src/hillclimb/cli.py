@@ -26,6 +26,7 @@ from hillclimb.api import (
     create_search,
     build_evaluator,
     build_executor,
+    build_unit_test_runner,
     build_holdout_scorer,
     ensure_runtime_venv,
     execute_search,
@@ -198,6 +199,11 @@ model: sonnet
 #   enabled: true
 #   top_k: 5             # holdout scored only for top-k-by-val candidates
 
+# similarity:            # `hillclimb similarity scores`: name (or my_score.py) -> params
+#   scores:
+#     solution-card: {card_model: anthropic/claude-haiku-4.5, embedding_model: voyageai/voyage-4}
+#     api-calls: {}
+
 # learning:
 #   enabled: true        # knowledge cards in hillclimb/knowledge/ inform new searches
 #   max_cards: 3
@@ -216,6 +222,9 @@ description: description.md
 time_budget_s: 900
 # verifier: verifier.sh   # the default; a problem IS its verifier
 # holdout: true           # engine also runs `verifier.sh --holdout`
+# unit_tests:             # optional frozen correctness gate, run once per trial
+#   root: tests
+#   command: ["{python}", "-m", "pytest", "-q", "{tests}"]
 # baseline: baseline.py   # scored at t=0 as the floor to beat (or a number, e.g. 0.5)
 # requirements: requirements.txt
 # interface: interface.py  # optional machine-checked I/O declaration (hillclimb spaces)
@@ -460,7 +469,8 @@ def init(
     typer.echo(f"  {MARKER_DIR}/problems/      — problem definitions (example/ is a working one)")
     typer.echo(f"  {MARKER_DIR}/specs/         — committed run specs")
     typer.echo(f"  {MARKER_DIR}/runs/          — search artifacts (gitignored)")
-    typer.echo("Next: hillclimb verify example   (then: hillclimb run example --budget 30m)")
+    typer.echo("Next: hillclimb connect          (which agent runs the operators, and who pays)")
+    typer.echo("      hillclimb verify example  (then: hillclimb run example --budget 30m)")
 
 
 @app.command()
@@ -493,14 +503,19 @@ def verify(
             err=True,
         )
         raise typer.Exit(1)
-    executor = build_executor(config, problem)
     scores: list[float] = []
     with tempfile.TemporaryDirectory(prefix="hillclimb-verify-") as tmp:
         root = Path(tmp)
+        from hillclimb.unit_tests import freeze_for_run
+
+        problem.unit_tests = freeze_for_run(problem, root)
+        executor = build_executor(config, problem)
+        test_runner = build_unit_test_runner(config, problem)
         typer.echo(f"{problem.problem_id}: {' '.join(problem.verifier_cmd)}")
         for index in range(max(1, repeat)):
             candidate_dir = create_candidate_dir(
-                root, f"v{index}", problem.data_dir, problem.problem_dir
+                root, f"v{index}", problem.data_dir, problem.problem_dir,
+                unit_tests_dir=(problem.unit_tests.root if problem.unit_tests else None),
             )
             script = candidate_dir / "solution.py"
             script.write_text(source)
@@ -519,6 +534,29 @@ def verify(
                 raise typer.Exit(1)
             scores.append(result.val_score)
             typer.echo(f"  run {index}: {problem.metric_name} = {result.val_score:.6g}")
+            if index == 0 and test_runner is not None:
+                remaining = config.budget.exec_timeout_s - result.duration_s
+                if remaining <= 0:
+                    typer.echo("  unit tests: BUGGY (no execution time remaining)", err=True)
+                    raise typer.Exit(1)
+                test_result = test_runner.run(script, candidate_dir, remaining)
+                if test_result.timed_out:
+                    typer.echo("  unit tests: BUGGY (timed out)", err=True)
+                    raise typer.Exit(1)
+                if test_result.returncode is None or test_result.returncode < 0:
+                    typer.echo(
+                        f"  unit tests: BUGGY (crashed with {test_result.returncode})",
+                        err=True,
+                    )
+                    raise typer.Exit(1)
+                if not test_result.passed:
+                    typer.echo(
+                        f"  unit tests: FAILING (exit {test_result.returncode}); "
+                        f"logs: {candidate_dir / 'tests_stdout.log'}",
+                        err=True,
+                    )
+                    raise typer.Exit(1)
+                typer.echo("  unit tests: PASSING")
             if index == 0 and problem.interface_path:
                 # authoring lint: the baseline the verifier just accepted must
                 # also satisfy the declared interface — the two drifting apart
@@ -703,7 +741,8 @@ def knowledge_live(run: str = typer.Argument("latest", help="Run id, or `latest`
     for card in cards:
         val = f"{card.selected_val:.5g}" if card.selected_val is not None else "-"
         typer.echo(
-            f"  {card.run_ref}: {card.n_ok} ok / {card.n_buggy} buggy of "
+            f"  {card.run_ref}: {card.n_ok} passing / {card.n_failing} failing / "
+            f"{card.n_buggy} buggy of "
             f"{card.n_candidates}, best {card.metric or 'score'} {val}"
         )
     typer.echo("")
@@ -1572,6 +1611,12 @@ def _run_suite(
             problem_ids=problem_ids,
         ),
     )
+    # Snapshot every suite before launching the first child search. A child
+    # only reuses these run-owned bundles; it never observes later live edits.
+    from hillclimb.unit_tests import freeze_for_run
+
+    for problem_target in problem_targets:
+        freeze_for_run(load_problem(problem_target, config), run_dir)
     launched = []
     for index, (entry, problem_target) in enumerate(zip(suite.problems, problem_targets), 1):
         slug = Path(problem_target).name or f"problem-{index}"
@@ -1618,7 +1663,7 @@ def _run_suite(
 def run(
     target: str,
     budget: str = typer.Option(None, help="Wall-clock budget, e.g. 2h / 30m"),
-    backend: str = typer.Option(None, help="Operator backend: claude-code | codex | dummy"),
+    backend: str = typer.Option(None, help="Operator backend: claude-code | codex | pi | dummy"),
     model: str = typer.Option(None, help="Model for operator calls, e.g. sonnet / opus"),
     policy: list[str] = typer.Option(
         None, "--policy",
@@ -1898,6 +1943,15 @@ def resume(
     config.search.tuner_params = meta.tuner_params
     config.routing = {op: RouteConfig(**route) for op, route in meta.routing.items()}
     problem = load_problem(meta.problem, config)
+    from hillclimb.unit_tests import restore_frozen
+
+    problem = restore_frozen(
+        problem,
+        search_dir.parents[1],
+        bundle_path=getattr(meta, "unit_tests_bundle", None),
+        command=getattr(meta, "unit_tests_command", []),
+        sha256=getattr(meta, "unit_tests_sha256", None),
+    )
     journal = Journal(store.journal(record.key))
     spent = resume_spent_seconds(store.read_status(record.key), journal)
     typer.echo(
@@ -2533,11 +2587,11 @@ def tree2(
 ):
     """Live archive tree of one search, drawn like the Darwin Gödel Machine's.
 
-    Same layout as `tree`; each circle carries its iteration (the candidate
-    number) inside, is filled with its score on a viridis ramp (bright =
-    best), and ringed by how far it got: red = no working solution, yellow =
-    scored but never built on, green = built on. The final best is a gold
-    star, and its parent chain is drawn bold. Circles never overlap: they
+    Same layout as `tree`; each circle carries its candidate number (`c017` → 17) inside, is filled with its score on a viridis ramp (bright =
+    best; hollow = no working solution), and ringed by what the search did
+    with it: white = expanded (the spine the policy walked), no ring =
+    scored and never built on, red = failed. The final best is a white
+    star, and its parent chain is drawn bold in the same white. Circles never overlap: they
     are sized to the zoom, and the numbers appear as they grow. Scroll
     zooms, drag pans, click a node for details, enter opens it, j/k scrub
     through time, n/p switch search, `?` keys.
@@ -2560,11 +2614,11 @@ def archive(
     Machine's two-panel figure for one search.
 
     Left, the `tree2` archive tree; right, every scored candidate as a dot
-    at (iteration, score) with the best-so-far staircase, a brighter dot
+    at (candidate number, score) with the best-so-far staircase, a brighter dot
     where a candidate set a new best, and the lineage of the final best as
     a thick line — the same parent chain drawn bold in the tree, one
-    candidate per iteration number on both. j/k scrub both panels through
-    time together (a cursor marks the iteration on the chart); click a node
+    circle and one dot per candidate number on both. j/k scrub both panels through
+    time together (a cursor marks the candidate on the chart); click a node
     to ring its dot on the chart and see its detail, enter opens it, n/p
     switch search, `?` keys.
     """
@@ -2688,6 +2742,128 @@ def similarity_reference(search: str = _SIMILARITY_SEARCH, single: bool = _SIMIL
     _open_similarity(search, single, view="reference")
 
 
+@similarity_app.command("scores")
+def similarity_scores(
+    search: str = _SIMILARITY_SEARCH,
+    score: list[str] = typer.Option(
+        None, "--score", "-s",
+        help="Score to compute (repeatable): a registry name, a .py file, or module:Class. "
+        "Default: similarity.scores from config",
+    ),
+    candidates: str = typer.Option(None, "--candidates", "-c", help="Comma-separated candidate ids (default: all)"),
+    files: list[Path] = typer.Option(None, "--file", "-f", help="Compare these solution files instead of a search (repeatable)"),
+    explain: bool = typer.Option(False, "--explain", help="Print each solution's representation text (e.g. its solution card)"),
+    as_json: bool = typer.Option(False, "--json", help="Emit the matrices as JSON"),
+    list_scores: bool = typer.Option(False, "--list", help="List the registered scores and exit"),
+):
+    """Pairwise similarity matrices between solutions, one per score.
+
+    Scores are pluggable: `solution-card` (an LLM writes a method card per
+    solution, cards are embedded, cosine between them — needs
+    OPENROUTER_API_KEY), `api-calls` (imports + library calls, no LLM),
+    `code-tokens` (token overlap), or your own `SimilarityScore` subclass in
+    a .py file. 1.0 = the same; representations are cached per file content
+    in ~/.cache/hillclimb/similarity/, nothing is written into the run.
+    """
+    from hillclimb.policies import policy_base_dir
+    from hillclimb.similarity import dir_for
+    from hillclimb.similarity_scores import (
+        SimilarityUnavailable,
+        Solution,
+        get_score,
+        registered_scores,
+        similarity_matrix,
+    )
+
+    if list_scores:
+        for name, cls in sorted(registered_scores().items()):
+            typer.echo(f"{name:15} {cls.description}")
+        return
+    config = _config_or_default() if files else load_config()
+    if files:
+        if search:
+            raise typer.BadParameter("pass a search or --file, not both")
+        solutions = [Solution.from_file(path, id=sid) for path, sid in zip(files, _file_ids(files))]
+    else:
+        store, record = _similarity_anchor(config, search)
+        journal = Journal(store.journal(record.key)).candidates
+        wanted = [c.strip() for c in candidates.split(",")] if candidates else None
+        if wanted:
+            missing = [cid for cid in wanted if cid not in journal]
+            if missing:
+                raise typer.BadParameter(f"not in {record.ref}: {', '.join(missing)}")
+        solutions = []
+        for cid in wanted or list(journal):
+            cand = journal[cid]
+            solution = Solution(id=cid, dir=dir_for(record.search_dir, cand), candidate=cand)
+            if solution.path.is_file():
+                solutions.append(solution)
+            elif wanted:
+                typer.echo(f"{cid}: no solution.py — skipped", err=True)
+    if len(solutions) < 2:
+        raise typer.BadParameter("need at least two solutions with a solution.py to compare")
+
+    requested = {name: config.similarity.scores.get(name, {}) for name in score} if score else config.similarity.scores
+    results = []
+    for name, params in requested.items():
+        try:
+            instance = get_score(name, params, base_dir=policy_base_dir(config))
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        try:
+            matrix = similarity_matrix(instance, solutions)
+        except SimilarityUnavailable as exc:
+            typer.echo(f"{instance.name}: unavailable — {exc}", err=True)
+            continue
+        explanations = {s.id: instance.explain(s) for s in solutions} if explain else {}
+        results.append((matrix, explanations))
+
+    if as_json:
+        typer.echo(json.dumps([
+            {**m.to_dict(), **({"explain": e} if explain else {})} for m, e in results
+        ], indent=2))
+        return
+    for matrix, explanations in results:
+        typer.echo(_format_similarity_matrix(matrix))
+        for sid, text in explanations.items():
+            if text:
+                typer.echo(f"\n--- {sid}\n{text}")
+        typer.echo("")
+
+
+def _config_or_default() -> Config:
+    """--file works outside a hillclimb dir: built-in defaults then."""
+    from hillclimb.project import HillclimbDirNotFound
+
+    try:
+        return load_config(raise_not_found=True)
+    except HillclimbDirNotFound:
+        return Config()
+
+
+def _file_ids(paths: list[Path]) -> list[str]:
+    """Each file's trailing path, at the shortest depth that tells all of
+    them apart (`c001/solution.py`, `c002/solution.py`)."""
+    parts = [Path(p).resolve().parts for p in paths]
+    for depth in range(1, max(len(p) for p in parts) + 1):
+        tails = [str(Path(*p[-depth:])) for p in parts]
+        if len(set(tails)) == len(tails):
+            return tails
+    return [str(p) for p in paths]
+
+
+def _format_similarity_matrix(matrix) -> str:
+    width = max(8, *(len(i) for i in matrix.ids)) + 1
+    lines = [f"== {matrix.score}  (similarity, 1.0 = same)"]
+    lines.append(" " * width + "".join(i.rjust(width) for i in matrix.ids))
+    for row_id, row in zip(matrix.ids, matrix.values):
+        cells = "".join(("—" if v != v else f"{v:.3f}").rjust(width) for v in row)
+        lines.append(row_id.ljust(width) + cells)
+    if matrix.unrepresented:
+        lines.append(f"unrepresented: {', '.join(matrix.unrepresented)}")
+    return "\n".join(lines)
+
+
 def _open_similarity(search: str | None, single: bool, view: str, metric: str = "behavioral") -> None:
     try:
         from hillclimb.similarity import build_run_similarity, build_similarity
@@ -2789,9 +2965,12 @@ def _demo_preflight(backend: str) -> None:
         missing.append(
             "codex (Codex CLI) is not on PATH — install it and run `codex login`"
         )
+    if backend == "pi" and shutil.which("pi") is None:
+        missing.append("pi (pi coding-agent CLI) is not on PATH — install pi before running this backend")
     if missing:
         for line in missing:
             typer.echo(f"error: {line}", err=True)
+        typer.echo("`hillclimb connect` checks every backend's credential.", err=True)
         raise typer.Exit(1)
 
 
@@ -2837,7 +3016,7 @@ def demo(
         3, "--parallel-operators", min=1, help="Concurrent operators (one candidate each) per search"
     ),
     model: str = typer.Option(None, help="Model for operator calls, e.g. sonnet / opus"),
-    backend: str = typer.Option(None, help="Operator backend: claude-code | codex | dummy"),
+    backend: str = typer.Option(None, help="Operator backend: claude-code | codex | pi | dummy"),
 ):
     """Try hillclimb in one command: agents climb the circle-packing problem.
 
@@ -2866,11 +3045,366 @@ def demo(
     typer.echo(f"Engine logs in {run_dir / 'logs'}")
 
 
+# ---------------------------------------------------------------- connect --
+
+connect_app = typer.Typer(
+    cls=HillclimbGroup,
+    invoke_without_command=True,
+    help="Connect the agents that run operators (claude, codex, pi) and the OpenRouter route that pays for them.",
+)
+app.add_typer(connect_app, name="connect")
+
+_CONNECT_AUTH = typer.Option(
+    None, "--auth", help="Who pays: subscription (default) | api-key | openrouter"
+)
+# claude-code has no OpenRouter route — offering it in the help would be a lie
+_CONNECT_AUTH_CLAUDE = typer.Option(
+    None, "--auth", help="Who pays: subscription (default) | api-key"
+)
+_CONNECT_MODEL = typer.Option(None, "--model", help="Model to ping with (default: the configured one)")
+_CONNECT_PROBE = typer.Option(
+    True, "--probe/--no-probe", help="Make one tool-free agent call to prove the route works"
+)
+_CONNECT_DEFAULT = typer.Option(
+    None,
+    "--default/--no-default",
+    help="Write this backend into config.yaml. Default: only when no backend is pinned there yet",
+)
+_CONNECT_USER = typer.Option(
+    False, "--user", help="Write the defaults to ~/.config/hillclimb/config.yaml instead of the hillclimb dir"
+)
+
+
+def _connect_config() -> Config:
+    """`connect` runs before `hillclimb init` too: checking a credential
+    needs no hillclimb dir, only writing defaults and keys does."""
+    from hillclimb.project import HillclimbDirNotFound
+
+    try:
+        return load_config(raise_not_found=True)
+    except HillclimbDirNotFound:
+        return Config()
+
+
+def _connect_target_config(config: Config, *, user: bool) -> Path | None:
+    """The config.yaml `connect` would write defaults into."""
+    from hillclimb.project import MARKER_FILE, user_config_path
+
+    if user:
+        return user_config_path()
+    if config.hillclimb_dir is None:
+        return None
+    return config.hillclimb_dir / MARKER_FILE
+
+
+def _write_defaults(path: Path | None, updates: dict[str, str], *, wanted: bool | None) -> None:
+    """Persist `backend`/`backend_auth`, unless the config already pins a
+    backend on purpose — connecting a second agent to try it out must not
+    silently repoint an existing setup."""
+    from hillclimb import connect as connect_mod
+
+    if wanted is False:
+        return
+    if path is None:
+        if wanted:
+            typer.echo(
+                "error: no hillclimb dir to write to — run `hillclimb init`, or pass --user",
+                err=True,
+            )
+            raise typer.Exit(1)
+        return
+    text = path.read_text() if path.exists() else ""
+    if wanted is None and connect_mod.pins_backend(text):
+        current = f"{updates['backend']}/{updates['backend_auth']}"
+        typer.echo(
+            f"{path} already pins a backend — left as is "
+            f"(`hillclimb connect … --default` switches it to {current})"
+        )
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(connect_mod.apply_config_defaults(text, updates))
+    settings = ", ".join(f"{key}: {value}" for key, value in updates.items())
+    typer.echo(f"wrote {settings} to {path}")
+
+
+def _print_status(status) -> None:
+    """One connection, coloured by verdict. Provider text is escaped: an
+    error message full of brackets is not rich markup."""
+    from rich.console import Console
+    from rich.markup import escape
+
+    colour = "green" if status.ok else ("yellow" if status.state != "error" else "red")
+    detail = f" — {escape(status.detail)}" if status.detail else ""
+    Console(highlight=False).print(
+        f"[bold]{status.target}[/] ({status.auth}): [{colour}]{status.state}[/]{detail}"
+    )
+    if not status.ok and status.fix:
+        typer.echo(f"  fix: {status.fix}")
+
+
+def _run_probe(backend: str, auth: str, model: str, config: Config) -> bool:
+    """One real call through the connected route. Returns whether it worked;
+    a failure here is the whole reason the command exists, so it is loud."""
+    from hillclimb import connect as connect_mod
+
+    typer.echo(f"pinging {backend} with model {model} …")
+    result = connect_mod.ping(backend, auth, model, models_file=config.pi.models_file)
+    if not result.ok:
+        detail = result.error_message or result.error_kind or "unknown error"
+        typer.echo(f"error: the ping failed ({result.error_kind or 'error'}): {detail.strip()[:400]}", err=True)
+        # the model is the usual culprit: aliases like `sonnet` mean nothing
+        # to codex, and pi resolves a bare one against whichever provider
+        # matches first
+        typer.echo(f"  pinged model {model!r} — `--model <id>` tries another", err=True)
+        return False
+    tokens = result.total_tokens or 0
+    model_id = result.model_id or model
+    typer.echo(f"ping ok: {model_id}, {tokens} tokens, {result.duration_s:.1f}s")
+    return True
+
+
+def _connect_backend(
+    target: str,
+    *,
+    auth: str | None,
+    model: str | None,
+    probe: bool,
+    login: bool,
+    default: bool | None,
+    user: bool,
+) -> None:
+    """Shared flow for claude / codex / pi: check, log in, import, ping, pin."""
+    from hillclimb import connect as connect_mod
+
+    config = _connect_config()
+    auth = auth or connect_mod.configured_auth(config, target) or "subscription"
+    if auth not in connect_mod.AUTHS_FOR[target]:
+        raise typer.BadParameter(
+            f"{target} has no {auth} route (one of {', '.join(connect_mod.AUTHS_FOR[target])})",
+            param_hint="--auth",
+        )
+    backend = connect_mod.BACKEND_FOR[target]
+
+    status = connect_mod.check(target, auth)
+    if status.state == "missing-cli":
+        _print_status(status)
+        raise typer.Exit(1)
+    if not status.ok and login and connect_mod.login_command(target):
+        typer.echo(f"{status.detail} — starting `{' '.join(connect_mod.login_command(target))}`")
+        connect_mod.run_login(target)
+        status = connect_mod.check(target, auth)
+    if not status.ok:
+        _print_status(status)
+        raise typer.Exit(1)
+
+    home = connect_mod.import_credentials(target, auth, config.pi.models_file)
+    if home is not None:
+        typer.echo(f"credentials staged for searches in {home}")
+    _print_status(status)
+
+    model = model or config.model
+    if probe:
+        if auth == "openrouter" and "/" not in model:
+            typer.echo(
+                f"no OpenRouter model id to ping with ({model!r}) — "
+                "re-run with --model <provider>/<model> to check the route"
+            )
+        elif not _run_probe(backend, auth, model, config):
+            raise typer.Exit(1)
+
+    _write_defaults(
+        _connect_target_config(config, user=user),
+        {"backend": backend, "backend_auth": auth},
+        wanted=default,
+    )
+
+
+@connect_app.callback()
+def connect(
+    ctx: typer.Context,
+    as_json: bool = typer.Option(False, "--json", help="The same rows as data"),
+):
+    """Which agents this machine can run operators with, and who pays.
+
+    A bare `hillclimb connect` checks every target — the credential is read
+    through the same environment an operator gets, so an inherited
+    `ANTHROPIC_API_KEY` shadowing your subscription shows up here instead of
+    on a bill. `●` marks the backend this config runs by default.
+
+    `hillclimb connect <claude|codex|pi|openrouter>` sets one up: it runs the
+    agent's own login, stages the credentials searches will read, pings the
+    route with one tool-free call, and pins the defaults in config.yaml.
+    `hillclimb smoke` is the next step up — a whole DRAFT on a real problem.
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+    from hillclimb import connect as connect_mod
+    from rich.console import Console
+    from rich.table import Table
+
+    config = _connect_config()
+    rows = connect_mod.status_rows(config)
+    if as_json:
+        typer.echo(
+            json.dumps(
+                [{**status.as_dict(), "default": is_default} for status, is_default in rows],
+                indent=2,
+            )
+        )
+        return
+    from rich.markup import escape
+
+    console = Console(highlight=False)
+    table = Table(box=None, pad_edge=False, header_style="bold")
+    table.add_column("")
+    table.add_column("target", style="bold cyan")
+    table.add_column("billing")
+    table.add_column("state")
+    table.add_column("")
+    for status, is_default in rows:
+        colour = "green" if status.ok else ("red" if status.state == "error" else "yellow")
+        table.add_row(
+            "[cyan]●[/]" if is_default else " ",
+            status.target,
+            status.auth,
+            f"[{colour}]{status.state}[/]",
+            escape(status.detail),
+        )
+    console.print()
+    console.print(table)
+    console.print()
+    for status, _ in rows:
+        if not status.ok and status.fix:
+            console.print(f"  [bold]{status.target}[/]: {status.fix}")
+    if config.hillclimb_dir is None:
+        console.print("  no hillclimb dir here — `hillclimb init` before connecting anything")
+    console.print()
+
+
+@connect_app.command("claude")
+def connect_claude(
+    auth: str = _CONNECT_AUTH_CLAUDE,
+    model: str = _CONNECT_MODEL,
+    probe: bool = _CONNECT_PROBE,
+    login: bool = typer.Option(True, "--login/--no-login", help="Run `claude auth login` when logged out"),
+    default: bool = _CONNECT_DEFAULT,
+    user: bool = _CONNECT_USER,
+):
+    """Claude Code as the operator backend, billed to your Claude subscription.
+
+    The login is Claude Code's own (`claude auth login`); hillclimb only
+    checks it the way an operator will — with `ANTHROPIC_API_KEY` stripped,
+    so a key left in the environment cannot masquerade as the subscription.
+    `--auth api-key` keeps the key instead, for headless machines.
+    """
+    _connect_backend(
+        "claude", auth=auth, model=model, probe=probe, login=login, default=default, user=user
+    )
+
+
+@connect_app.command("codex")
+def connect_codex(
+    auth: str = _CONNECT_AUTH,
+    model: str = _CONNECT_MODEL,
+    probe: bool = _CONNECT_PROBE,
+    login: bool = typer.Option(True, "--login/--no-login", help="Run `codex login` when logged out"),
+    default: bool = _CONNECT_DEFAULT,
+    user: bool = _CONNECT_USER,
+):
+    """The Codex CLI as the operator backend.
+
+    Runs `codex login`, then copies the credential into the isolated
+    `CODEX_HOME` searches use, so your personal `~/.codex` settings change
+    neither a search's results nor its token bill. `--auth openrouter` bills
+    OpenRouter credits instead (`hillclimb connect openrouter` first).
+    """
+    _connect_backend(
+        "codex", auth=auth, model=model, probe=probe, login=login, default=default, user=user
+    )
+
+
+@connect_app.command("pi")
+def connect_pi(
+    auth: str = _CONNECT_AUTH,
+    model: str = _CONNECT_MODEL,
+    probe: bool = _CONNECT_PROBE,
+    default: bool = _CONNECT_DEFAULT,
+    user: bool = _CONNECT_USER,
+):
+    """The pi coding agent as the operator backend — the one that can sample.
+
+    pi logs in inside its own TUI, so this imports what that login wrote
+    (`~/.pi/agent/auth.json`) into pi's isolated hillclimb home, together
+    with `pi.models_file` if the config names one.
+    """
+    _connect_backend(
+        "pi", auth=auth, model=model, probe=probe, login=False, default=default, user=user
+    )
+
+
+@connect_app.command("openrouter")
+def connect_openrouter(
+    key: str = typer.Option(None, "--key", help="The API key; omitted, connect asks for it (input hidden)"),
+    backend: str = typer.Option(None, "--backend", help="Also route this backend through OpenRouter: codex | pi"),
+    model: str = typer.Option(None, "--model", help="OpenRouter model id, e.g. qwen/qwen3-coder"),
+    probe: bool = _CONNECT_PROBE,
+    default: bool = _CONNECT_DEFAULT,
+    user: bool = _CONNECT_USER,
+):
+    """OpenRouter credits as the bill for codex or pi operators.
+
+    The only credential hillclimb stores itself: the key is validated against
+    OpenRouter (one unbilled call), then written to the `.env` beside
+    config.yaml that `hillclimb init` gitignores — never into config.yaml,
+    where it could be journaled. `--backend codex` also pins the route.
+    """
+    from hillclimb import connect as connect_mod
+    from hillclimb.openrouter import OpenRouterError, key_info
+
+    config = _connect_config()
+    # an ambient key is already usable — only a key typed here gets stored
+    ambient = os.environ.get("OPENROUTER_API_KEY")
+    provided = key
+    if provided is None and not ambient:
+        provided = typer.prompt("OpenRouter API key", hide_input=True).strip()
+    candidate = provided or ambient
+    try:
+        info = key_info(candidate)
+    except OpenRouterError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1)
+    typer.echo(f"key accepted: {connect_mod.describe_key(info)}")
+
+    if provided:
+        env_path = connect_mod.env_file(config)
+        if env_path is None:
+            typer.echo(
+                "error: no hillclimb dir to store the key in — run `hillclimb init`, "
+                "or export OPENROUTER_API_KEY yourself",
+                err=True,
+            )
+            raise typer.Exit(1)
+        connect_mod.write_env_key(env_path, "OPENROUTER_API_KEY", candidate)
+        os.environ["OPENROUTER_API_KEY"] = candidate  # usable by the ping below
+        typer.echo(f"stored OPENROUTER_API_KEY in {env_path}")
+    else:
+        typer.echo("key came from the environment — nothing stored")
+
+    if backend is None:
+        typer.echo("pin it to a backend with: hillclimb connect openrouter --backend codex --model <id>")
+        return
+    if backend not in ("codex", "pi"):
+        raise typer.BadParameter("OpenRouter runs through codex or pi", param_hint="--backend")
+    _connect_backend(
+        backend, auth="openrouter", model=model, probe=probe, login=False, default=default, user=user
+    )
+
+
 @app.command()
 def smoke(
     target: str = typer.Argument("circle-packing"),
     model: str = typer.Option(None),
-    backend: str = typer.Option(None, help="Operator backend: claude-code | codex | dummy"),
+    backend: str = typer.Option(None, help="Operator backend: claude-code | codex | pi | dummy"),
 ):
     """One real DRAFT call through the selected backend, end to end.
 
@@ -2883,6 +3417,7 @@ def smoke(
     version_cmd = {
         "claude-code": ["claude", "-v"],
         "codex": ["codex", "--version"],
+        "pi": ["pi", "--version"],
     }.get(config.backend)
     if version_cmd:
         version = subprocess.run(
@@ -2901,13 +3436,22 @@ def smoke(
         ),
     )
     search_dir = create_search(config, problem, run_dir, run_id, total_s=1800)
+    from hillclimb.routing import BackendPool, Router
+
+    backend_instance = get_backend(
+        config.backend, auth=config.backend_auth, pi_models_file=config.pi.models_file
+    )
+    backends = BackendPool(pi_models_file=config.pi.models_file)
+    backends.seed(config.backend, config.backend_auth, backend_instance)
     journal = Journal(open_store(config).journal(key_for(search_dir)))
     evaluator = build_evaluator(config, problem, search_dir, journal, log=typer.echo)
     searcher = GreedySearcher(
         problem=problem,
         config=config,
         journal=journal,
-        backend=get_backend(config.backend, auth=config.backend_auth),
+        backend=backend_instance,
+        router=Router(config),
+        backends=backends,
         executor=evaluator.executor,
         budget=BudgetManager(1800, stop_margin_s=0),
         search_dir=search_dir,

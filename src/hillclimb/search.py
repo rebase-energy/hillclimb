@@ -72,6 +72,7 @@ class OutcomeMsg:
     # budget rather than the problem's own execution limit: a trial killed
     # by that timeout was cut off by the clock, not shown to be buggy
     budget_clamped: bool = False
+    error: BaseException | None = None
 
 
 class GreedySearcher:
@@ -169,7 +170,7 @@ class GreedySearcher:
         # stale-pending recovery)
         replay_view = self._view()
         for candidate in journal.candidates.values():
-            self.policy.observe(replay_view, candidate)
+            self.policy.observe(replay_view, replay_view.journal.get(candidate.candidate_id))
             self._observe_route(candidate)
 
     @property
@@ -307,6 +308,12 @@ class GreedySearcher:
             try:
                 outcome = self._execute_job(job)
             except BaseException as exc:  # noqa: BLE001
+                from hillclimb.unit_tests import UnitTestInfrastructureError
+
+                if isinstance(exc, UnitTestInfrastructureError):
+                    outcome = OutcomeMsg(job=job, kind="infrastructure_failed", error=exc)
+                    self._done_q.put(outcome)
+                    return
                 # a worker that dies without reporting would leave the
                 # candidate in flight and the scheduler waiting forever
                 self.log(f"  worker for {job.candidate.candidate_id} crashed: {exc!r}")
@@ -445,7 +452,8 @@ class GreedySearcher:
             "candidates",
             CandidateCounts(
                 total=len(self.journal.candidates),
-                ok=sum(1 for c in candidates if c.status == "ok"),
+                passing=sum(1 for c in candidates if c.status == "passing"),
+                failing=sum(1 for c in candidates if c.status == "failing"),
                 buggy=sum(1 for c in candidates if c.status == "buggy"),
                 pruned=sum(1 for c in candidates if c.pruned),
             ),
@@ -536,6 +544,7 @@ class GreedySearcher:
             self.data_dir,
             self.problem.problem_dir,
             parent_solution=seed,
+            unit_tests_dir=(self.problem.unit_tests.root if self.problem.unit_tests else None),
         )
         candidate = Candidate(
             candidate_id=candidate_id,
@@ -555,7 +564,11 @@ class GreedySearcher:
             all_ok=all_ok,
         )
         committed = self._commit(msg)
-        score = f"val={committed.val_score}" if committed.val_score is not None else "buggy"
+        score = (
+            f"val={committed.val_score}"
+            if committed.status == "passing"
+            else committed.status
+        )
         self.log(f"  seed scored: {score}")
         return committed
 
@@ -598,6 +611,7 @@ class GreedySearcher:
             self.data_dir,
             self.problem.problem_dir,
             parent_solution,
+            unit_tests_dir=(self.problem.unit_tests.root if self.problem.unit_tests else None),
         )
         if self._wants_reference(operator):
             shutil.copy(self.reference_solution, candidate_dir / "reference_solution.py")
@@ -616,10 +630,11 @@ class GreedySearcher:
             )
         (candidate_dir / "prompt.md").write_text(prompt)
 
-        # NOTE: no session resume across candidates — Claude Code scopes
+        # Claude Code scopes
         # sessions to the cwd, and every candidate has its own candidate_dir, so
         # --resume can't find a sibling candidate dir's session. The debug prompt
         # carries the chain's failed-fix history from the journal instead.
+        # pi can fork that history into the child's cwd (see request below).
         candidate = Candidate(
             candidate_id=candidate_id,
             parent_id=target.candidate_id if target else None,
@@ -641,7 +656,9 @@ class GreedySearcher:
         route = self._resolve_route(action)
         # known before the call starts, so a running candidate's detail view
         # can say who is writing it; the result fills in the rest
-        candidate.backend = BackendInfo(name=route.backend, model=route.model)
+        candidate.backend = BackendInfo(
+            name=route.backend, model=route.model, sampling=route.sampling
+        )
         self.journal.candidate_created(candidate)
 
         request = OperatorRequest(
@@ -652,6 +669,15 @@ class GreedySearcher:
                 self.config.budget.agent_timeout_s, max(60, int(self.budget.remaining()))
             ),
             model=route.model,
+            sampling=route.sampling,
+            resume_session_id=(
+                target.backend.session_id
+                if operator == "debug"
+                and route.backend == "pi"
+                and target is not None
+                and target.backend.name == "pi"
+                else None
+            ),
         )
         if self.status is not None:
             self.status.add_current(
@@ -722,6 +748,7 @@ class GreedySearcher:
         candidate.backend = BackendInfo(
             name=backend.name,
             model=job.request.model,
+            sampling=job.request.sampling,
             model_id=result.model_id,
             session_id=result.session_id,
             cost_usd=result.cost_usd,
@@ -787,6 +814,8 @@ class GreedySearcher:
             candidate, result = msg.job.candidate, msg.result
             self._inflight.pop(msg.job.key, None)
             try:
+                if msg.kind == "infrastructure_failed":
+                    raise RuntimeError(f"unit-test infrastructure failed: {msg.error}") from msg.error
                 if msg.kind == "parked":
                     candidate.status = "parked"
                     candidate.summary = f"parked: {result.error_message}"
@@ -836,8 +865,8 @@ class GreedySearcher:
                 # kind == "executed"; a failed hidden split arrives as
                 # all_ok=False with the reason on the trial (evaluator's call)
                 if msg.all_ok:
-                    candidate.status = "ok"
-                    if candidate.status == "ok":
+                    candidate.status = "passing"
+                    if candidate.status == "passing":
                         previous_best = self.journal.best_candidate(self.problem.higher_is_better)
                         if previous_best is None:
                             candidate.is_best = True
@@ -869,7 +898,8 @@ class GreedySearcher:
                     )
                     self.log(f"  {candidate.candidate_id} cut off at the budget wall (not buggy)")
                 else:
-                    candidate.status = "buggy"
+                    verdict = candidate.last_trial.verdict if candidate.last_trial else None
+                    candidate.status = verdict if verdict in ("failing", "buggy") else "buggy"
                 candidate.finished_at = utcnow()
                 if candidate.params_error:
                     self.log(
@@ -877,7 +907,7 @@ class GreedySearcher:
                         f"own defaults, not tunable: {candidate.params_error}"
                     )
                 self._record_result(candidate)
-                if candidate.status == "ok":
+                if candidate.status == "passing":
                     self._sync_selection()
                 self._publish_live_card()
                 return candidate
@@ -908,7 +938,7 @@ class GreedySearcher:
         params.json. None = hold: the target cannot be tuned (policy asked
         for the impossible) or the tuner failed — logged, never fatal."""
         target = self.journal.candidates.get(action.target_id) if action.target_id else None
-        if target is None or target.status != "ok" or target.pruned or not target.tunable:
+        if target is None or target.status != "passing" or target.pruned or not target.tunable:
             self.log(f"  tune: {action.target_id} is not tunable (ignored)")
             return None
         candidate_dir = Path(target.candidate_dir)
@@ -1007,7 +1037,7 @@ class GreedySearcher:
                 self._inflight.pop(job.key, None)
                 # the trial arrives with whatever the evaluator stamped on it;
                 # a parameter set whose hidden split failed still climbs on
-                # val (it is just never selectable) — the candidate stays ok
+                # val (it is just never selectable) — the candidate stays passing
                 trial = job.candidate.trials[-1]
                 live.trials.append(trial)
                 live.trials.sort(key=lambda t: t.index)  # parallel tune commits land in any order
@@ -1034,8 +1064,8 @@ class GreedySearcher:
                                 f"than the accept band ({self.accept_band():.3g}): within noise, not promoted"
                             )
                 self.journal.candidate_result(live)
-                self.policy.observe(self._view(), live)
-                if live.status == "ok" and not live.pruned:
+                self._policy_observe(live)
+                if live.status == "passing" and not live.pruned:
                     if trial.is_best and live.candidate_id == self._selection_id:
                         # the selected candidate's shipped values changed: best/
                         # must be re-materialized even though selection did not move
@@ -1052,8 +1082,14 @@ class GreedySearcher:
         """Journal a terminal result and let the policy see it (the runtime
         half of the observe contract; construction replays history)."""
         self.journal.candidate_result(candidate)
-        self.policy.observe(self._view(), candidate)
+        self._policy_observe(candidate)
         self._observe_route(candidate)
+
+    def _policy_observe(self, candidate: Candidate) -> None:
+        """Hand the policy the just-journaled candidate as its view holds it
+        (holdout-blind), never the engine's own object."""
+        view = self._view()
+        self.policy.observe(view, view.journal.get(candidate.candidate_id))
 
     def _observe_route(self, candidate: Candidate) -> None:
         """Credit the model that authored this candidate in the routing
@@ -1163,6 +1199,22 @@ class GreedySearcher:
             params_section=self._params_section(target, inherited),
             tools_clause=tools_clause,
         )
+        if self.problem.unit_tests is not None:
+            import shlex
+
+            visible = [
+                token.replace("{python}", "python")
+                .replace("{solution}", "./solution.py")
+                .replace("{tests}", "./unit_tests")
+                for token in self.problem.unit_tests.command
+            ]
+            contract += (
+                "\n\n# Frozen unit tests\n\n"
+                "Your solution must pass the unit tests copied into `./unit_tests`. "
+                "You may inspect and run this copy, but edits to it do not change the "
+                "frozen suite used by evaluation. Run them with:\n\n"
+                f"    {shlex.join(visible)}\n"
+            )
         direction = "higher is better" if self.problem.higher_is_better else "lower is better"
         if operator == "draft":
             live = self._live_experience()
@@ -1200,12 +1252,19 @@ class GreedySearcher:
             chain = self.journal.debug_chain(target.candidate_id)
             root, attempts = chain[0], chain[1:]
             last_replicate = target.last_replicate
+            test_result = target.last_trial.unit_tests if target.last_trial else None
             return render(
                 "debug",
                 parent_summary=root.summary or "(no summary)",
                 failure_reason=self._failure_reason(target),
-                stderr_tail=tail(Path(target.candidate_dir) / "exec_stderr.log"),
-                stdout_tail=last_replicate.stdout_tail if last_replicate else "",
+                stderr_tail=(
+                    test_result.stderr_tail if test_result and test_result.stderr_tail
+                    else tail(Path(target.candidate_dir) / "exec_stderr.log")
+                ),
+                stdout_tail=(
+                    test_result.stdout_tail if test_result and test_result.stdout_tail
+                    else (last_replicate.stdout_tail if last_replicate else "")
+                ),
                 debug_history=self._candidate_summaries(attempts) or "(none — this is the first fix attempt)",
                 contract=contract,
             )
@@ -1257,6 +1316,13 @@ class GreedySearcher:
         replicate = candidate.last_replicate
         if trial is None or replicate is None:
             return "The script failed."
+        if trial.verdict == "failing" and trial.unit_tests is not None:
+            return (
+                "The script ran and the verifier scored it, but the frozen unit-test "
+                f"suite failed (exit code {trial.unit_tests.returncode})."
+            )
+        if trial.unit_tests is not None and trial.unit_tests.timed_out:
+            return "The script ran, but its frozen unit-test suite timed out."
         if replicate.timed_out:
             return "The script exceeded its execution time limit and was killed."
         if replicate.returncode not in (0, None):

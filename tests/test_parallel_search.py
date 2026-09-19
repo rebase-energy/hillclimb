@@ -63,7 +63,7 @@ class TestMultiSeedTrials:
 
         candidate = searcher.run_operator("draft", None)
 
-        assert candidate.status == "ok"
+        assert candidate.status == "passing"
         assert len(candidate.trials) == 1
         assert [r.seed for r in candidate.trials[0].replicates] == [0, 1, 2]
         # seeds 0,1,2 -> scores 0.5, 0.6, 0.7 -> median 0.6
@@ -104,7 +104,7 @@ class TestMultiSeedTrials:
 
         candidate = searcher.run_operator("draft", None)
 
-        assert candidate.status == "ok"
+        assert candidate.status == "passing"
         assert len(candidate.trials) == 1
         assert candidate.trials[0].replicates[0].seed is None
         assert candidate.val_score == 0.7
@@ -163,7 +163,7 @@ print("val_score: {val}")
         strong1, strong2, weak = journal.get("c000"), journal.get("c001"), journal.get("c002")
         assert strong1.holdout_score is not None
         assert strong2.holdout_score is not None
-        assert weak.status == "ok"  # still climbs on val
+        assert weak.status == "passing"  # still climbs on val
         assert weak.holdout_score is None  # gated: no holdout query spent
 
     def test_gate_disabled_scores_everyone(self, task, config):
@@ -265,60 +265,60 @@ GOLDEN_SCENARIOS = {
 # Repeated candidate_result lines are the selection resync flipping is_selected.
 GOLDEN_SEQUENCES = {
     "drafts-then-improve": [
-        ("candidate_result", "c000", "baseline", "ok", None),
+        ("candidate_result", "c000", "baseline", "passing", None),
         ("candidate_created", "c001", "draft", "pending", None),
-        ("candidate_result", "c001", "draft", "ok", None),
-        ("candidate_result", "c001", "draft", "ok", None),
+        ("candidate_result", "c001", "draft", "passing", None),
+        ("candidate_result", "c001", "draft", "passing", None),
         ("candidate_created", "c002", "draft", "pending", None),
-        ("candidate_result", "c002", "draft", "ok", None),
-        ("candidate_result", "c002", "draft", "ok", None),
+        ("candidate_result", "c002", "draft", "passing", None),
+        ("candidate_result", "c002", "draft", "passing", None),
         ("candidate_created", "c003", "draft", "pending", None),
-        ("candidate_result", "c003", "draft", "ok", None),
+        ("candidate_result", "c003", "draft", "passing", None),
         ("candidate_created", "c004", "improve", "pending", "c002"),
-        ("candidate_result", "c004", "improve", "ok", "c002"),
-        ("candidate_result", "c004", "improve", "ok", "c002"),
+        ("candidate_result", "c004", "improve", "passing", "c002"),
+        ("candidate_result", "c004", "improve", "passing", "c002"),
     ],
     "debug-chain": [
-        ("candidate_result", "c000", "baseline", "ok", None),
+        ("candidate_result", "c000", "baseline", "passing", None),
         ("candidate_created", "c001", "draft", "pending", None),
         ("candidate_result", "c001", "draft", "buggy", None),
         ("candidate_created", "c002", "debug", "pending", "c001"),
         ("candidate_result", "c002", "debug", "buggy", "c001"),
         ("candidate_created", "c003", "debug", "pending", "c002"),
-        ("candidate_result", "c003", "debug", "ok", "c002"),
-        ("candidate_result", "c003", "debug", "ok", "c002"),
+        ("candidate_result", "c003", "debug", "passing", "c002"),
+        ("candidate_result", "c003", "debug", "passing", "c002"),
         ("candidate_created", "c004", "draft", "pending", None),
-        ("candidate_result", "c004", "draft", "ok", None),
-        ("candidate_result", "c004", "draft", "ok", None),
+        ("candidate_result", "c004", "draft", "passing", None),
+        ("candidate_result", "c004", "draft", "passing", None),
         ("candidate_created", "c005", "draft", "pending", None),
-        ("candidate_result", "c005", "draft", "ok", None),
+        ("candidate_result", "c005", "draft", "passing", None),
     ],
     "ensemble-window": [
-        ("candidate_result", "c000", "baseline", "ok", None),
+        ("candidate_result", "c000", "baseline", "passing", None),
         ("candidate_created", "c001", "draft", "pending", None),
-        ("candidate_result", "c001", "draft", "ok", None),
-        ("candidate_result", "c001", "draft", "ok", None),
+        ("candidate_result", "c001", "draft", "passing", None),
+        ("candidate_result", "c001", "draft", "passing", None),
         ("candidate_created", "c002", "draft", "pending", None),
-        ("candidate_result", "c002", "draft", "ok", None),
-        ("candidate_result", "c002", "draft", "ok", None),
+        ("candidate_result", "c002", "draft", "passing", None),
+        ("candidate_result", "c002", "draft", "passing", None),
         ("candidate_created", "c003", "ensemble", "pending", "c002"),
-        ("candidate_result", "c003", "ensemble", "ok", "c002"),
-        ("candidate_result", "c003", "ensemble", "ok", "c002"),
+        ("candidate_result", "c003", "ensemble", "passing", "c002"),
+        ("candidate_result", "c003", "ensemble", "passing", "c002"),
         ("candidate_created", "c004", "draft", "pending", None),
-        ("candidate_result", "c004", "draft", "ok", None),
+        ("candidate_result", "c004", "draft", "passing", None),
     ],
     "improve-tie": [
-        ("candidate_result", "c000", "baseline", "ok", None),
+        ("candidate_result", "c000", "baseline", "passing", None),
         ("candidate_created", "c001", "draft", "pending", None),
-        ("candidate_result", "c001", "draft", "ok", None),
-        ("candidate_result", "c001", "draft", "ok", None),
+        ("candidate_result", "c001", "draft", "passing", None),
+        ("candidate_result", "c001", "draft", "passing", None),
         ("candidate_created", "c002", "draft", "pending", None),
-        ("candidate_result", "c002", "draft", "ok", None),
+        ("candidate_result", "c002", "draft", "passing", None),
         ("candidate_created", "c003", "draft", "pending", None),
-        ("candidate_result", "c003", "draft", "ok", None),
+        ("candidate_result", "c003", "draft", "passing", None),
         ("candidate_created", "c004", "improve", "pending", "c001"),
-        ("candidate_result", "c004", "improve", "ok", "c001"),
-        ("candidate_result", "c004", "improve", "ok", "c001"),
+        ("candidate_result", "c004", "improve", "passing", "c001"),
+        ("candidate_result", "c004", "improve", "passing", "c001"),
     ],
 }
 
@@ -411,7 +411,7 @@ class TestWorkerPool:
         assert isinstance(outcome.get("exc"), ParkedSearch)
         statuses = sorted(c.status for c in journal.candidates.values())
         # baseline ok + two scored drafts + the parked one
-        assert statuses == ["ok", "ok", "ok", "parked"]
+        assert statuses == ["parked", "passing", "passing", "passing"]
 
     def test_graceful_stop_drains_in_flight(self, task, config):
         backend = GateBackend()
@@ -655,7 +655,7 @@ class TestIncumbentSeeding:
 
         seeds = [c for c in journal.candidates.values() if c.operator == "seed"]
         assert len(seeds) == 1
-        assert seeds[0].status == "ok"
+        assert seeds[0].status == "passing"
         assert seeds[0].val_score == 0.8
         # the weaker draft cannot displace the incumbent floor
         best = journal.best_candidate(task.higher_is_better)

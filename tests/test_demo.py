@@ -53,7 +53,7 @@ def _search(runs_dir: Path, run_id: str, name: str, scores: list[tuple[str, floa
     journal = Journal(search_dir / "journal.jsonl")
     for index, (finished, score) in enumerate(scores):
         journal.candidate_result(Candidate(
-            candidate_id=f"c{index:03d}", operator="draft", status="ok",
+            candidate_id=f"c{index:03d}", operator="draft", status="passing",
             trials=[mk_trial(val_score=score)], finished_at=finished,
         ))
     return search_dir
@@ -351,7 +351,7 @@ def test_chart_groups_searches_by_problem_key_across_runs(tmp_path):
         model="m", metric="score", started_at="2026-08-22T10:00:30+00:00",
     ))
     Journal(second / "journal.jsonl").candidate_result(Candidate(
-        candidate_id="c000", operator="draft", status="ok",
+        candidate_id="c000", operator="draft", status="passing",
         trials=[mk_trial(val_score=2.0)], finished_at="2026-08-22T10:02:00+00:00",
     ))
     curves = climb_curves(runs, "p")

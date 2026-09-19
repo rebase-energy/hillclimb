@@ -320,7 +320,7 @@ class TreePlotWidget(PlotWidget):
         if self._tree is None:
             return
         _yaw, _pitch, zoom, pan_x, pan_y = self._plot.camera_state()
-        self._visible = filter_hidden(self._tree, self.hidden)
+        self._visible = self._filter(self._tree)
         if self.selected is not None and self._visible.node(self.selected) is None:
             self.selected = None
             self.post_message(self.NodeSelected(None))
@@ -334,6 +334,9 @@ class TreePlotWidget(PlotWidget):
                 self._hover = None
         plot.set_camera_state(0.0, 0.0, zoom, pan_x, pan_y)  # face-on, always
         _lock_face_on(plot)  # every rebuild is a new plot, so re-lock it
+        if hasattr(plot, "set_legend_hover_index") and hasattr(self._plot, "legend_hover"):
+            # the lit legend row survives the rebuild a hover may trigger
+            plot.set_legend_hover_index(self._plot.legend_hover())
         self._plot = plot
         self._refresh_overlay()
         self.invalidate()
@@ -341,6 +344,11 @@ class TreePlotWidget(PlotWidget):
     # -- the encoding hooks: what a subclass swaps to draw the same tree
     # another way (tree2view.py) while keeping picking, scrubbing, the
     # legend hit-test and the detail dock --
+
+    def _filter(self, tree: SearchTree) -> SearchTree:
+        """What the legend filter leaves to draw: here `hidden` names
+        operators and fates directly."""
+        return filter_hidden(tree, self.hidden)
 
     def _build_plot(self, tree: SearchTree, selected: str | None, frame: SearchTree | None):
         return build_tree_plot(tree, selected=selected, frame=frame)
@@ -629,7 +637,7 @@ class TreeScreen(LiveScreen):
         self._live_tree = build_tree(candidates, bool(record.meta.higher_is_better))
         keys = [r.key for r in self._all_searches()]
         self._position = (keys.index(record.key), len(keys)) if record.key in keys else None
-        self.query_one("#time-scrubber", TimeScrubber).set_events(tree_events(candidates))
+        self.query_one("#time-scrubber", TimeScrubber).set_events(tree_events(candidates), unit="candidate")
         self._apply_view()
 
     def _apply_view(self) -> None:

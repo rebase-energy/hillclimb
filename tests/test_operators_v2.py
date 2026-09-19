@@ -61,7 +61,7 @@ def scored_target(task, config, backend):
     backend.queue(script=ok_script(0.6), notes="draft one\n")
     searcher, journal, _ = make_searcher(task, config, backend)
     target = searcher.run_operator("draft", None)
-    assert target.status == "ok"
+    assert target.status == "passing"
     return searcher, journal, target
 
 

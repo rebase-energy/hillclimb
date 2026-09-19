@@ -98,7 +98,8 @@ class GEPAEvaluatorBridge:
         self.checkpoint()
         candidate_id = self.journal.next_candidate_id()
         candidate_dir = create_candidate_dir(
-            self.search_dir, candidate_id, self.problem.data_dir, self.problem.problem_dir
+            self.search_dir, candidate_id, self.problem.data_dir, self.problem.problem_dir,
+            unit_tests_dir=(self.problem.unit_tests.root if self.problem.unit_tests else None),
         )
         (candidate_dir / COMPONENT).write_text(source)
         record = self.bridge.pop(key)
@@ -139,9 +140,12 @@ class GEPAEvaluatorBridge:
         return result
 
     def _commit(self, candidate: Candidate, all_ok: bool) -> None:
-        candidate.status = "ok" if all_ok else "buggy"
+        verdict = candidate.last_trial.verdict if candidate.last_trial else None
+        candidate.status = "passing" if all_ok else (
+            verdict if verdict in ("failing", "buggy") else "buggy"
+        )
         candidate.finished_at = utcnow()
-        if candidate.status == "ok":
+        if candidate.status == "passing":
             previous_best = self.journal.best_candidate(self.problem.higher_is_better)
             band = evaluation.accept_band(self.config, self.journal)
             if previous_best is None or evaluation.improves(

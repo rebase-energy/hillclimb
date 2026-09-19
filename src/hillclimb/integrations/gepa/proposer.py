@@ -163,6 +163,7 @@ class GEPAProposer:
                 self.config.budget.agent_timeout_s, max(60, int(self.budget.remaining()))
             ),
             model=route.model,
+            sampling=route.sampling,
         )
         (scratch / "prompt.md").write_text(request.prompt)
         slot = None
@@ -183,6 +184,7 @@ class GEPAProposer:
         info = BackendInfo(
             name=route.backend,
             model=route.model,
+            sampling=route.sampling,
             model_id=result.model_id,
             session_id=result.session_id,
             cost_usd=result.cost_usd,

@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from hillclimb.candidate import Candidate, Replicate, Trial, utcnow
+from hillclimb.candidate import Candidate, Replicate, Trial, UnitTestResult, utcnow
 from hillclimb.config import Config
 from hillclimb.executor import RESULT_FILE, Executor, HoldoutScorer, read_result
 from hillclimb.journal import Journal
@@ -41,6 +41,7 @@ from hillclimb.problem import ProblemSpec
 
 if TYPE_CHECKING:
     from hillclimb.status import StatusWriter
+    from hillclimb.unit_tests import UnitTestRunner
 
 HOLDOUT_TIMINGS = ("inline", "after")
 # floors are always holdout-scored: they are the selection floor a re-search
@@ -66,6 +67,7 @@ class CandidateEvaluator:
     executor: Executor
     problem: ProblemSpec
     config: Config
+    unit_test_runner: UnitTestRunner | None = None
     holdout_scorer: HoldoutScorer | None = None
     # host wiring for holdout (see the module docstring); a strategy sets none of it
     holdout_timing: str = "inline"
@@ -89,6 +91,7 @@ class CandidateEvaluator:
         params: dict | None = None,
         params_doc: dict | None = None,
         index: int | None = None,
+        n_replicates: int | None = None,
     ) -> tuple[Trial, bool]:
         """Run one trial — one parameter set — as `search.n_replicates`
         seeded executions, each in its own replicate dir, and append it to
@@ -113,7 +116,7 @@ class CandidateEvaluator:
             index = len(candidate.trials)
         tdir = create_trial_dir(candidate_dir, index, params_doc)
         trial = Trial(index=index, params=dict(params or {}))
-        n = max(1, self.config.search.n_replicates)
+        n = max(1, n_replicates if n_replicates is not None else self.config.search.n_replicates)
 
         def run(j: int) -> tuple[Replicate, bool]:
             rdir = create_replicate_dir(tdir, j)
@@ -123,11 +126,61 @@ class CandidateEvaluator:
                 rdir / solution.name, rdir, exec_timeout, seed=j if n > 1 else None
             )
 
-        if n == 1 or self.config.search.replicate_mode == "serial":
-            results = [run(j) for j in range(n)]
+        # The first verifier run proves that the solution is executable before
+        # correctness failures are classified. Tests then run exactly once for
+        # this code+params trial; only a passing trial earns further score
+        # replicates.
+        results = [run(0)]
+        first_ok = results[0][1]
+        if not first_ok:
+            trial.verdict = "buggy"
+        elif self.unit_test_runner is not None:
+            if self.status is not None:
+                self.status.update_current(candidate.candidate_id, explicit_index, phase="tests")
+            elapsed = results[0][0].duration_s or 0.0
+            remaining = exec_timeout - elapsed
+            if remaining <= 0:
+                trial.unit_tests = UnitTestResult(
+                    timed_out=True,
+                    duration_s=0.0,
+                    stderr_tail="unit tests had no time remaining after the verifier run",
+                )
+                trial.verdict = "buggy"
+            else:
+                trial.unit_tests = self.unit_test_runner.run(
+                    tdir / solution.name, tdir, remaining
+                )
+                import shutil
+
+                for log_name in ("tests_stdout.log", "tests_stderr.log"):
+                    log_path = tdir / log_name
+                    if log_path.exists():
+                        shutil.copy(log_path, candidate_dir / log_name)
+                if trial.unit_tests.timed_out:
+                    trial.verdict = "buggy"
+                elif (
+                    trial.unit_tests.returncode is None
+                    or trial.unit_tests.returncode < 0
+                ):
+                    trial.verdict = "buggy"
+                elif not trial.unit_tests.passed:
+                    trial.verdict = "failing"
+                else:
+                    trial.verdict = "passing"
         else:
-            with ThreadPoolExecutor(max_workers=n, thread_name_prefix="replicate") as pool:
-                results = list(pool.map(run, range(n)))
+            trial.verdict = "passing"
+
+        if trial.verdict == "passing" and n > 1:
+            indexes = range(1, n)
+            if self.config.search.replicate_mode == "serial":
+                results.extend(run(j) for j in indexes)
+            else:
+                with ThreadPoolExecutor(
+                    max_workers=n - 1, thread_name_prefix="replicate"
+                ) as pool:
+                    results.extend(pool.map(run, indexes))
+            if not all(ok for _, ok in results):
+                trial.verdict = "buggy"
         trial.replicates.extend(r for r, _ in results)
         trial.finished_at = utcnow()
         candidate.trials.append(trial)
@@ -136,7 +189,7 @@ class CandidateEvaluator:
         # (the engine re-hoists when a later trial becomes the best one)
         if index == 0:
             hoist_replicate(candidate_dir, replicate_dir(tdir, 0), self.problem.output_artifacts)
-        all_ok = all(ok for _, ok in results)
+        all_ok = trial.verdict == "passing" and all(ok for _, ok in results)
         if all_ok and self._holdout_now(candidate, trial):
             # the host scores the hidden split as part of evaluation: a trial
             # that fails it is not ok, exactly like one that fails the verifier
@@ -388,6 +441,9 @@ class TrialSummary:
     index: int
     params: dict
     val_score: float | None
+    verdict: str | None = None
+    test_stdout_tail: str = ""
+    test_stderr_tail: str = ""
     replicates: tuple[ReplicateSummary, ...] = ()
 
 
@@ -408,6 +464,9 @@ def summarize_trial(trial: Trial) -> TrialSummary:
         index=trial.index,
         params=dict(trial.params),
         val_score=trial.val_score,
+        verdict=trial.verdict,
+        test_stdout_tail=(trial.unit_tests.stdout_tail if trial.unit_tests else ""),
+        test_stderr_tail=(trial.unit_tests.stderr_tail if trial.unit_tests else ""),
         replicates=tuple(summarize_replicate(r) for r in trial.replicates),
     )
 
@@ -432,12 +491,13 @@ class EvalResult:
 def eval_result_for(candidate: Candidate, *, feedback: str = "") -> EvalResult:
     """Project a committed candidate into an EvalResult. `feedback` is
     caller-supplied (engines assemble their own reflection text)."""
+    valid = candidate.status == "passing"
     return EvalResult(
         candidate_id=candidate.candidate_id,
-        score=candidate.val_score,
-        valid=candidate.status == "ok",
-        instance_scores=dict(candidate.instance_scores),
-        features=dict(candidate.metrics),
+        score=candidate.val_score if valid else None,
+        valid=valid,
+        instance_scores=dict(candidate.instance_scores) if valid else {},
+        features=dict(candidate.metrics) if valid else {},
         feedback=feedback,
         trials=tuple(summarize_trial(t) for t in candidate.trials),
         cost_usd=candidate.backend.cost_usd or 0.0,

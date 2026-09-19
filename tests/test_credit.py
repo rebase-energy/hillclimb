@@ -45,7 +45,7 @@ def make_journal(tmp_path, entries) -> Journal:
     return journal
 
 
-def cand(cid, op, val, status="ok"):
+def cand(cid, op, val, status="passing"):
     trials = [mk_trial(val_score=val)] if val is not None else []
     return dict(candidate_id=cid, operator=op, status=status, candidate_dir="w", trials=trials)
 

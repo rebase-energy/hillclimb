@@ -122,7 +122,7 @@ def _replayed(make_policy: Callable[[], SearchPolicy], case: JournalCase, config
     GreedySearcher does on construction."""
     policy = make_policy()
     view = _view(case, config, 1.0)
-    for candidate in case.journal.candidates.values():
+    for candidate in view.journal.candidates.values():
         policy.observe(view, candidate)
     return policy
 
@@ -170,7 +170,7 @@ def _reference_problems(action: Action, journal: Journal) -> list[str]:
             problems.append(f"references {cid} which is not in the journal")
     target = journal.candidates.get(action.target_id) if action.target_id else None
     if target is not None:
-        if action.operator == "debug" and target.status != "buggy":
+        if action.operator == "debug" and target.status not in ("failing", "buggy"):
             problems.append(f"debug targets {target.candidate_id} whose status is {target.status}")
         if action.operator in ("improve", TUNE_ACTION) and not target.is_scored:
             problems.append(f"{action.operator} targets unscored {target.candidate_id}")
@@ -233,13 +233,17 @@ def check_policy(
         except Exception as exc:  # noqa: BLE001
             findings.append(Finding("replay", False, f"observe raised {type(exc).__name__}: {exc}", case.label))
             continue
-        replay_ok, idem_ok = True, True
+        replay_ok, idem_ok, view_mutated = True, True, False
         proposals: list[str] = []
         for fraction in budget_points:
             try:
                 view = _view(case, config, fraction)
+                handed = _snapshot_journal(view.journal)
                 x = a.propose(view)
-                y = b.propose(view)
+                # a policy only ever holds its holdout-blind view, so that is
+                # where a write lands — the engine's journal is out of reach
+                view_mutated = view_mutated or _snapshot_journal(view.journal) != handed
+                y = b.propose(_view(case, config, fraction))
                 x_again = a.propose(_view(case, config, fraction))
             except Exception as exc:  # noqa: BLE001
                 findings.append(
@@ -275,7 +279,7 @@ def check_policy(
             findings.append(Finding("idempotent", True, "propose is stable", case.label))
         if not any(f.check == "references" and f.journal == case.label for f in findings):
             findings.append(Finding("references", True, "every id resolves", case.label))
-        journal_same = _snapshot_journal(case.journal) == before_journal
+        journal_same = _snapshot_journal(case.journal) == before_journal and not view_mutated
         tree_same = _snapshot_tree(case.search_dir) == before_tree
         findings.append(
             Finding(

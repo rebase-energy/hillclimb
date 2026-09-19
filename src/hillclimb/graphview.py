@@ -477,31 +477,67 @@ SCRUBBER_STYLES = {  # component class -> fallback Rich style (outside Textual)
 }
 
 
+MIN_TICK_GAP = 2   # columns between graduations, at the densest
+# Glyphs. The line is box drawing: terminals draw it natively, edge to edge
+# and centred in the cell. The ticks are a combining vertical stroke over
+# the line's own cell — centred and shorter than a box-drawing cross where
+# the terminal draws combining marks on box glyphs; iTerm2's native
+# box-drawing path drops them, leaving a clean line. The knob is a round ●
+# by choice: a font glyph placed on the baseline, so with extra line
+# spacing it sits a little under the line's centre; a `┃` would be
+# centred, but is a bar.
+ELAPSED, REMAINING = "\u2501", "\u2500"   # ━ heavy up to the cursor, ─ light past it
+TICK = "\u20d2"    # COMBINING LONG VERTICAL LINE OVERLAY: a centred stroke through the line's cell
+KNOB = "\u25cf"    # ● the cursor
+SPARSE_GAP = 6     # per-event ticks above this many columns apart: a cell of rounding is not seen
+
+
+def tick_columns(width: int, n_events: int) -> set[int]:
+    """Where the track's graduations go. With events `SPARSE_GAP` or more
+    columns apart, one tick per event at its proportional column — the
+    cursor lands on a tick, and a cell of rounding is lost in the gap.
+    Denser than that, rounding alternates gaps of two and three and the
+    ticks read as pairs, so the track becomes a ruler instead: marks every
+    `d` columns from the left, fewer than the events, all gaps equal — `d`
+    the smallest spacing that does not exceed the event count, nudged up
+    to a divisor of the track length when one is near so the last gap
+    matches too."""
+    if n_events <= 1 or width <= 1:
+        return {0}
+    span = width - 1
+    if span / (n_events - 1) >= SPARSE_GAP:
+        return {round(i / (n_events - 1) * span) for i in range(n_events)}
+    d_min = max(MIN_TICK_GAP, -(-span // (n_events - 1)))  # ceil
+    d = next((d for d in range(d_min, 2 * d_min) if span % d == 0), d_min)
+    return set(range(0, width, d))
+
+
 def render_scrubber(
     events: list[str], index: int | None, width: int,
     styles: dict[str, str | Style] | None = None,
     unit: str = "search",
 ) -> Text:
     """Two rows. A media-player track: the stretch up to the cursor is drawn
-    solid in the accent, the rest thin and dim, one tick per event — a
-    finished search, or every graph change when `unit` says so — and `●` at
-    the cursor (the right end is live). Under it, what the cursor means —
-    the event it rests on and its position in the sequence — with the key
-    hints right-aligned and muted."""
+    heavy in the accent, the rest light and dim, evenly spaced graduations
+    (`tick_columns`: one per event while they fit — a finished search, or
+    every graph change when `unit` says so) as a centred stroke over the
+    line's own cell, and `●` at the cursor (the right end is live). Under it, what the
+    cursor means — the event it rests on and its position in the sequence
+    — with the key hints right-aligned and muted."""
     st = {**SCRUBBER_STYLES, **(styles or {})}
     width = max(width, 12)
     n = len(events)
     plural = f"{unit}es" if unit.endswith(("s", "ch")) else f"{unit}s"
     cursor = width - 1 if index is None else (0 if n <= 1 else round(index / (n - 1) * (width - 1)))
-    ticks = {0 if n <= 1 else round(i / (n - 1) * (width - 1)) for i in range(n)}
+    ticks = tick_columns(width, n)
     text = Text()
     for col in range(width):
         if col == cursor and n:
-            text.append("●", st["scrubber--cursor"])
+            text.append(KNOB, st["scrubber--cursor"])
         elif col <= cursor:
-            text.append("┿" if col in ticks else "━", st["scrubber--elapsed"])
+            text.append(f"{ELAPSED}{TICK}" if col in ticks else ELAPSED, st["scrubber--elapsed"])
         else:
-            text.append("┼" if col in ticks else "─", st["scrubber--remaining"])
+            text.append(f"{REMAINING}{TICK}" if col in ticks else REMAINING, st["scrubber--remaining"])
     text.append("\n")
     if not n:
         text.append("no finished searches yet", st["scrubber--hint"])

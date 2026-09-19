@@ -25,7 +25,7 @@ def trial(started: float, finished: float, score: float | None = None) -> Trial:
 
 def cand(
     cid: str, start: float, end: float | None, operator: str = "improve",
-    status: str = "ok", trials: list[Trial] | None = None, **kwargs,
+    status: str = "passing", trials: list[Trial] | None = None, **kwargs,
 ) -> Candidate:
     return Candidate(
         candidate_id=cid, operator=operator, status=status,

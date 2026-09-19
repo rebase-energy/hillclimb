@@ -22,20 +22,20 @@ def test_append_and_replay(tmp_path: Path):
     journal = Journal(path)
     candidate = make_candidate("c001")
     journal.candidate_created(candidate)
-    candidate.status = "ok"
+    candidate.status = "passing"
     candidate.trials.append(mk_trial(val_score=0.5))
     journal.candidate_result(candidate)
 
     reloaded = Journal(path)
-    assert reloaded.get("c001").status == "ok"
+    assert reloaded.get("c001").status == "passing"
     assert reloaded.get("c001").val_score == 0.5
     assert len(path.read_text().splitlines()) == 2  # append-only
 
 
 def test_best_candidate_direction(tmp_path: Path):
     journal = Journal(tmp_path / "j.jsonl")
-    journal.candidate_result(make_candidate("c001", status="ok", val_score=0.5))
-    journal.candidate_result(make_candidate("c002", status="ok", val_score=0.9))
+    journal.candidate_result(make_candidate("c001", status="passing", val_score=0.5))
+    journal.candidate_result(make_candidate("c002", status="passing", val_score=0.9))
     journal.candidate_result(make_candidate("c003", status="buggy"))
     assert journal.best_candidate(higher_is_better=True).candidate_id == "c002"
     assert journal.best_candidate(higher_is_better=False).candidate_id == "c001"
@@ -43,7 +43,7 @@ def test_best_candidate_direction(tmp_path: Path):
 
 def test_best_candidate_ignores_unscored_baseline(tmp_path: Path):
     journal = Journal(tmp_path / "j.jsonl")
-    journal.candidate_result(make_candidate("c000", operator="baseline", status="ok"))
+    journal.candidate_result(make_candidate("c000", operator="baseline", status="passing"))
     assert journal.best_candidate(higher_is_better=True) is None
 
 
@@ -71,9 +71,9 @@ def test_rank_blend_selection_robust_to_holdout_outlier(tmp_path):
     """The leaf-classification failure: a lucky-holdout early candidate must
     not beat one that ranks well on BOTH signals (higher_is_better metric)."""
     journal = Journal(tmp_path / "j.jsonl")
-    journal.candidate_result(make_candidate("cA", status="ok", val_score=0.046, holdout_score=0.093))
-    journal.candidate_result(make_candidate("cB", status="ok", val_score=0.138, holdout_score=0.084))
-    journal.candidate_result(make_candidate("cC", status="ok", val_score=0.054, holdout_score=0.099))
+    journal.candidate_result(make_candidate("cA", status="passing", val_score=0.046, holdout_score=0.093))
+    journal.candidate_result(make_candidate("cB", status="passing", val_score=0.138, holdout_score=0.084))
+    journal.candidate_result(make_candidate("cC", status="passing", val_score=0.054, holdout_score=0.099))
     assert journal.selected_candidate(False).candidate_id == "cA"           # rank-blend
     assert journal.selected_candidate(False, "holdout").candidate_id == "cB"  # naive argmax
     assert journal.selected_candidate(False, "val").candidate_id == "cA"
@@ -81,21 +81,21 @@ def test_rank_blend_selection_robust_to_holdout_outlier(tmp_path):
 
 def test_rank_blend_vetoes_val_overfit(tmp_path):
     journal = Journal(tmp_path / "j.jsonl")
-    journal.candidate_result(make_candidate("honest", status="ok", val_score=0.80, holdout_score=0.85))
-    journal.candidate_result(make_candidate("overfit", status="ok", val_score=0.99, holdout_score=0.40))
+    journal.candidate_result(make_candidate("honest", status="passing", val_score=0.80, holdout_score=0.85))
+    journal.candidate_result(make_candidate("overfit", status="passing", val_score=0.99, holdout_score=0.40))
     assert journal.selected_candidate(True).candidate_id == "honest"
 
 
 def test_rank_blend_ties_and_missing_holdout(tmp_path):
     journal = Journal(tmp_path / "j.jsonl")
-    journal.candidate_result(make_candidate("c1", status="ok", val_score=0.5))
+    journal.candidate_result(make_candidate("c1", status="passing", val_score=0.5))
     assert journal.selected_candidate(True).candidate_id == "c1"  # no holdout anywhere → val
 
 
 def test_replay_skips_non_candidate_events(tmp_path: Path):
     path = tmp_path / "j.jsonl"
     journal = Journal(path)
-    journal.candidate_result(make_candidate("c001", status="ok", val_score=0.5))
+    journal.candidate_result(make_candidate("c001", status="passing", val_score=0.5))
     journal.control_event("prune", candidate_id="c001", pruned=["c001"], source="cli")
 
     reloaded = Journal(path)
@@ -117,7 +117,7 @@ def test_replay_rejects_v1_node_records(tmp_path: Path):
 def test_pruned_reappend_wins_on_replay(tmp_path: Path):
     path = tmp_path / "j.jsonl"
     journal = Journal(path)
-    candidate = make_candidate("c001", status="ok", val_score=0.5)
+    candidate = make_candidate("c001", status="passing", val_score=0.5)
     journal.candidate_result(candidate)
     candidate.pruned = True
     journal.candidate_result(candidate)
@@ -128,8 +128,8 @@ def test_pruned_reappend_wins_on_replay(tmp_path: Path):
 
 def test_queries_exclude_pruned(tmp_path: Path):
     journal = Journal(tmp_path / "j.jsonl")
-    journal.candidate_result(make_candidate("c001", status="ok", val_score=0.5))
-    journal.candidate_result(make_candidate("c002", status="ok", val_score=0.9, pruned=True))
+    journal.candidate_result(make_candidate("c001", status="passing", val_score=0.5))
+    journal.candidate_result(make_candidate("c002", status="passing", val_score=0.9, pruned=True))
     journal.candidate_result(make_candidate("c003", operator="improve", parent_id="c001", pruned=True))
 
     assert [c.candidate_id for c in journal.scored_candidates()] == ["c001"]
@@ -160,7 +160,7 @@ def test_trial_report_roundtrip_and_prefeature_replay(tmp_path: Path):
     path = tmp_path / "j.jsonl"
     journal = Journal(path)
     report = {"version": 1, "overall": {"score": 0.5}}
-    candidate = make_candidate("c001", status="ok")
+    candidate = make_candidate("c001", status="passing")
     candidate.trials.append(mk_trial(val_score=0.5, report=report))
     journal.candidate_result(candidate)
 
@@ -182,7 +182,7 @@ def test_trial_cpu_roundtrip_and_prefeature_replay(tmp_path: Path):
     keys on the trial) must replay unchanged under extra="forbid"."""
     path = tmp_path / "j.jsonl"
     journal = Journal(path)
-    candidate = make_candidate("c001", status="ok")
+    candidate = make_candidate("c001", status="passing")
     candidate.trials.append(mk_trial(val_score=0.5, cpu_s=1.25, holdout_cpu_s=0.5))
     journal.candidate_result(candidate)
 
@@ -227,6 +227,7 @@ def test_flat_trials_fold_into_one_trial_of_replicates(tmp_path: Path):
     path.write_text(json.dumps({"event": "candidate_result", **record}) + "\n")
 
     candidate = Journal(path).get("c001")
+    assert candidate.status == "passing"  # historical `ok` migrates on replay
     assert len(candidate.trials) == 1
     trial = candidate.trials[0]
     assert trial.index == 0 and trial.params == {} and trial.is_best

@@ -41,7 +41,8 @@ STATE_STYLE = {
     "unknown": "dim",
 }
 STATUS_STYLE = {
-    "ok": "green",
+    "passing": "green",
+    "failing": "yellow",
     "buggy": "red",
     "abandoned": "dim",
     "parked": "yellow",
@@ -87,12 +88,13 @@ class SearchRow:
     tokens: str  # summed agent tokens across the search's candidates
     spend: str  # summed agent cost in USD, climbing while operators stream
     state: str
-    candidates: str  # "7 (5 ok)"
+    candidates: str  # "7 (5 passing, 1 failing)"
     best_val: str
     selected: str
     duration: str  # time spent so far, ticking while running, with the budget alongside
     best_score: float | None = None  # `best_val` as a number, for sorting
     higher_is_better: bool = True
+    failing: int = 0  # runnable candidates that failed the frozen tests
     buggy: int = 0  # candidates whose verifier run crashed or scored invalid
     abandoned: int = 0  # candidates the clock or a stop cut off, never shown wrong
 
@@ -184,6 +186,7 @@ class _StreamUsage:
 
     per_turn: dict[str, dict] = field(default_factory=dict)
     model_by_turn: dict[str, str] = field(default_factory=dict)
+    cost_by_turn: dict[str, float] = field(default_factory=dict)
     final_usage: dict | None = None
     final_cost_usd: float | None = None
     announced_model: str | None = None  # the init message's model, per-turn fallback
@@ -195,6 +198,7 @@ def _read_stream_usage(candidate_dir: Path) -> _StreamUsage:
     if not path.exists():
         return usage
     try:
+        pi_turn = 0
         for line in path.read_text().splitlines():
             if not line.strip():
                 continue
@@ -218,6 +222,36 @@ def _read_stream_usage(candidate_dir: Path) -> _StreamUsage:
                     model = body.get("model") or usage.announced_model
                     if model:
                         usage.model_by_turn[body["id"]] = model
+            elif kind == "message_end":
+                # pi's raw JSON mode uses message_end rather than Claude's
+                # assistant envelope. Each event is already final (no dedupe
+                # by message id is needed).
+                body = msg.get("message") or {}
+                turn_usage = body.get("usage") or {}
+                if body.get("role") == "assistant" and turn_usage:
+                    pi_turn += 1
+                    turn_id = body.get("responseId") or f"pi-{pi_turn}"
+                    usage.per_turn[turn_id] = {
+                        "input_tokens": int(turn_usage.get("input") or 0),
+                        "output_tokens": int(turn_usage.get("output") or 0),
+                        "cache_creation_input_tokens": int(
+                            turn_usage.get("cacheWrite") or 0
+                        ),
+                        "cache_read_input_tokens": int(
+                            turn_usage.get("cacheRead") or 0
+                        ),
+                    }
+                    provider = body.get("provider")
+                    model = body.get("responseModel") or body.get("model")
+                    if model:
+                        usage.model_by_turn[turn_id] = (
+                            f"{provider}/{model}"
+                            if provider and not str(model).startswith(f"{provider}/")
+                            else str(model)
+                        )
+                    cost = turn_usage.get("cost") or {}
+                    if isinstance(cost.get("total"), (int, float)):
+                        usage.cost_by_turn[turn_id] = float(cost["total"])
     except OSError:
         return _StreamUsage()
     return usage
@@ -246,8 +280,11 @@ def _stream_cost_usd(candidate_dir: Path) -> float:
         return usage.final_cost_usd
     total = 0.0
     for turn_id, turn_usage in usage.per_turn.items():
-        estimate = estimate_cost_usd(turn_usage, usage.model_by_turn.get(turn_id))
-        total += estimate or 0.0
+        if turn_id in usage.cost_by_turn:
+            total += usage.cost_by_turn[turn_id]
+        else:
+            estimate = estimate_cost_usd(turn_usage, usage.model_by_turn.get(turn_id))
+            total += estimate or 0.0
     return total
 
 
@@ -300,6 +337,17 @@ def _stream_model_id(candidate_dir: Path) -> str | None:
                 except json.JSONDecodeError:
                     continue
                 model_id = msg.get("model") if msg.get("type") == "system" else None
+                if msg.get("type") == "message_end":
+                    body = msg.get("message") or {}
+                    if body.get("role") == "assistant":
+                        model = body.get("responseModel") or body.get("model")
+                        provider = body.get("provider")
+                        if model:
+                            model_id = (
+                                f"{provider}/{model}"
+                                if provider and not str(model).startswith(f"{provider}/")
+                                else str(model)
+                            )
                 if is_concrete_model_id(model_id):
                     return model_id
     except OSError:
@@ -332,7 +380,8 @@ def _search_row(store: DataStore, record: SearchRecord) -> SearchRow:
     meta, search_dir, state = record.meta, record.search_dir, record.state
     status = store.read_status(record.key)
     journal = Journal(store.journal(record.key))
-    n_ok = sum(1 for c in journal.candidates.values() if c.status == "ok")
+    n_passing = sum(1 for c in journal.candidates.values() if c.status == "passing")
+    n_failing = sum(1 for c in journal.candidates.values() if c.status == "failing")
     n_buggy = sum(1 for c in journal.candidates.values() if c.status == "buggy")
     n_abandoned = sum(1 for c in journal.candidates.values() if c.status == "abandoned")
     tokens = sum(c.backend.total_tokens or 0 for c in journal.candidates.values())
@@ -372,12 +421,17 @@ def _search_row(store: DataStore, record: SearchRecord) -> SearchRow:
         tokens=_fmt_tokens(tokens),
         spend=_fmt_cost(spend),
         state=state,
-        candidates=f"{len(journal.candidates)} ({n_ok} ok)",
+        candidates=(
+            f"{len(journal.candidates)} ({n_passing} passing"
+            + (f", {n_failing} failing" if n_failing else "")
+            + ")"
+        ),
         best_val=best_val,
         selected=selected,
         duration=duration,
         best_score=best_score,
         higher_is_better=bool(meta.higher_is_better),
+        failing=n_failing,
         buggy=n_buggy,
         abandoned=n_abandoned,
     )
@@ -389,7 +443,7 @@ def candidates_style(row: SearchRow) -> str:
     cut one off (abandoned), green while every finished one verified."""
     if row.buggy:
         return "red"
-    return "yellow" if row.abandoned else "green"
+    return "yellow" if row.failing or row.abandoned else "green"
 
 
 def sort_search_rows(rows: list[SearchRow], by_best: bool) -> list[SearchRow]:
@@ -620,6 +674,8 @@ def parse_stream_line(raw: str) -> StreamEntry | None:
         return None
     ts = _local_clock(message.get("ts"))
     kind = message.get("type")
+    if kind == "session":
+        return StreamEntry(ts, "system", f"[system] init session={message.get('id', '?')}")
     if kind == "system":
         subtype = message.get("subtype", "")
         if subtype not in _SYSTEM_SHOWN:
@@ -641,6 +697,33 @@ def parse_stream_line(raw: str) -> StreamEntry | None:
         if not parts:
             return None
         return StreamEntry(ts, "tool" if tool and len(parts) == 1 else "text", "\n".join(parts))
+    if kind == "message_end":
+        body = message.get("message") or {}
+        if body.get("role") != "assistant":
+            return None
+        parts = []
+        tool = False
+        for block in body.get("content") or []:
+            if block.get("type") == "text" and block.get("text", "").strip():
+                parts.append(block["text"].strip())
+            elif block.get("type") == "toolCall":
+                parts.append(
+                    f"→ {block.get('name', 'tool')}({_tool_arg_preview(block.get('arguments') or {})})"
+                )
+                tool = True
+        if body.get("stopReason") == "error":
+            return StreamEntry(ts, "error", body.get("errorMessage") or "pi provider error")
+        if not parts:
+            return None
+        return StreamEntry(ts, "tool" if tool and len(parts) == 1 else "text", "\n".join(parts))
+    if kind == "agent_end":
+        assistants = [m for m in message.get("messages", []) if m.get("role") == "assistant"]
+        if not assistants:
+            return None
+        last = assistants[-1]
+        reason = last.get("stopReason")
+        failed = reason not in {"stop", "toolUse"}
+        return StreamEntry(ts, "error" if failed else "result", f"[result] {reason}")
     if kind == "result":
         cost = message.get("total_cost_usd")
         cost_s = f"${cost:.2f}" if isinstance(cost, (int, float)) else "?"
@@ -851,6 +934,15 @@ def candidate_detail_lines(record: SearchRecord, journal: Journal, candidate_id:
         )
         if trial.holdout_error:
             lines.append(f"Holdout error: {trial.holdout_error}")
+        if trial.unit_tests is not None:
+            tests = trial.unit_tests
+            test_status = "buggy" if tests.timed_out else "passing" if tests.passed else "failing"
+            lines.append(
+                "Unit tests: "
+                f"{test_status}  "
+                f"returncode={tests.returncode if tests.returncode is not None else '-'}  "
+                f"duration={tests.duration_s:.5g}s  timed_out={tests.timed_out}"
+            )
     else:
         lines.append("Trial: (not executed)")
     if candidate.backend.name or candidate.backend.session_id or candidate.backend.error_kind:
@@ -886,6 +978,12 @@ def candidate_detail_lines(record: SearchRecord, journal: Journal, candidate_id:
         lines += ["", "Stderr:", stderr]
     if stdout:
         lines += ["", "Stdout:", stdout]
+    tests_stderr = _tail_text(candidate_dir / "tests_stderr.log", max_chars=3000)
+    tests_stdout = _tail_text(candidate_dir / "tests_stdout.log", max_chars=3000)
+    if tests_stderr:
+        lines += ["", "Unit-test stderr:", tests_stderr]
+    if tests_stdout:
+        lines += ["", "Unit-test stdout:", tests_stdout]
 
     stream = stream_tail(candidate_dir, max_lines=80)
     if stream:
@@ -966,7 +1064,11 @@ def candidate_detail_renderables(
     trial = candidate.best_trial or candidate.last_trial
     replicate = trial.last_replicate if trial is not None else None
     title_style = "dim" if candidate.pruned else STATUS_STYLE.get(candidate.status, "")
-    border_style = "red" if candidate.status == "buggy" else "yellow" if candidate.pruned else "cyan"
+    border_style = (
+        "red" if candidate.status == "buggy"
+        else "yellow" if candidate.status == "failing" or candidate.pruned
+        else "cyan"
+    )
 
     overview = Table.grid(expand=True)
     overview.add_column("label", style="dim", ratio=1)
@@ -1019,6 +1121,15 @@ def candidate_detail_renderables(
         )
         if trial.holdout_error:
             overview.add_row("holdout error", Text(trial.holdout_error, style="yellow"), "", "")
+        if trial.unit_tests is not None:
+            tests = trial.unit_tests
+            test_status = "buggy" if tests.timed_out else "passing" if tests.passed else "failing"
+            overview.add_row(
+                "unit tests",
+                Text(test_status, style=STATUS_STYLE[test_status]),
+                "test duration",
+                Text(f"{tests.duration_s:.5g}s", style="cyan"),
+            )
     else:
         overview.add_row("trial", Text("(not executed)", style="dim"), "", "")
     backend = candidate.backend
@@ -1116,6 +1227,8 @@ def candidate_detail_renderables(
 
     stderr = _tail_text(candidate_dir / "exec_stderr.log", max_chars=3000)
     stdout = _tail_text(candidate_dir / "exec_stdout.log", max_chars=3000)
+    tests_stderr = _tail_text(candidate_dir / "tests_stderr.log", max_chars=3000)
+    tests_stdout = _tail_text(candidate_dir / "tests_stdout.log", max_chars=3000)
     if stderr:
         renderables.append(
             Panel(Text(stderr, style="red"), title="Stderr", title_align="left", border_style="red")
@@ -1123,6 +1236,24 @@ def candidate_detail_renderables(
     if stdout:
         renderables.append(
             Panel(Text(stdout), title="Stdout", title_align="left", border_style="dim cyan")
+        )
+    if tests_stderr:
+        renderables.append(
+            Panel(
+                Text(tests_stderr, style="yellow"),
+                title="Unit-test stderr",
+                title_align="left",
+                border_style="yellow",
+            )
+        )
+    if tests_stdout:
+        renderables.append(
+            Panel(
+                Text(tests_stdout),
+                title="Unit-test stdout",
+                title_align="left",
+                border_style="dim yellow",
+            )
         )
 
     stream = stream_entries(candidate_dir, max_lines=80)
@@ -2364,7 +2495,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
             canvas.selected = None
             canvas.hidden = frozenset()
             self._show_node_detail(None)
-        scrubber.set_events(tree_events(candidates))
+        scrubber.set_events(tree_events(candidates), unit="candidate")
         fingerprint = (
             search_id,
             scrubber.index,

@@ -118,7 +118,7 @@ def test_malformed_declaration_is_scored_on_defaults_and_never_tuned(task, confi
     searcher.run()
 
     draft = journal.get("c001")
-    assert draft.status == "ok" and draft.val_score == pytest.approx(0.51)
+    assert draft.status == "passing" and draft.val_score == pytest.approx(0.51)
     assert not draft.tunable and draft.params_error
     assert len(draft.trials) == 1 and draft.trials[0].params == {}
     assert [r.operator for r in backend.requests] == ["draft", "improve"]

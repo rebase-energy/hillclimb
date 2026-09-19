@@ -356,7 +356,7 @@ def _assemble(
         coords = procrustes_align(coords, ids, previous)
 
     scored = [
-        m for m in members if m.candidate.val_score is not None and m.candidate.status == "ok"
+        m for m in members if m.candidate.val_score is not None and m.candidate.status == "passing"
     ]
     scored.sort(key=lambda m: m.candidate.val_score, reverse=not higher_is_better)  # type: ignore[arg-type,return-value]
     bins = {m.node_id: i * N_BINS // len(scored) for i, m in enumerate(scored)} if scored else {}

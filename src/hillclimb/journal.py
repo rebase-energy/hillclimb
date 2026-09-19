@@ -213,3 +213,30 @@ class Journal:
             for c in self.candidates.values()
             if c.parent_id == candidate.parent_id and c.candidate_id != candidate_id
         ]
+
+
+class PolicyJournal(Journal):
+    """What a search policy sees of a journal: every query, no holdout, no
+    writes. The candidates are `holdout_blind()` copies taken at construction,
+    so `ranked_candidates`/`selected_candidate` degrade to val order whatever
+    mode they are asked for — the hidden split stays the host's. Snapshot
+    semantics: a view never follows later appends; build one per policy call
+    (`PolicyInput` does)."""
+
+    def __init__(self, source: Journal):
+        if isinstance(source, PolicyJournal):
+            source = source.source
+        self.source = source
+        self.lock = source.lock
+        with source.lock:
+            self.candidates = {
+                cid: candidate.holdout_blind() for cid, candidate in source.candidates.items()
+            }
+
+    @property
+    def path(self) -> Path | None:
+        # the file would hand back what the view strips
+        return None
+
+    def _append_line(self, record: dict) -> None:
+        raise TypeError("a policy's journal view is read-only: the engine is the single writer")

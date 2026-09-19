@@ -5,7 +5,7 @@ tree2.py).
 A thin skin over `treeview.py`: the widget swaps the plot builder and the
 legend through the hooks `TreePlotWidget` exposes and keeps its picking,
 camera, hover and selection; the screen swaps the widget and drops the
-legend filter (the ring ladder is a key, not a switch). Scrubbing through
+legend filter for one of its own (the ring ladder toggles stages, the best and the lineage). Scrubbing through
 time, the candidate detail dock, n/p between searches and enter into the
 candidate screen are inherited unchanged.
 
@@ -31,9 +31,10 @@ from hillclimb.header import HillclimbHeader, TimezoneMixin
 from hillclimb.theme import HILLCLIMB_CSS, apply_theme
 from hillclimb.tree import SearchTree
 from hillclimb.tree2 import (
-    BEST_SIZE_SCALE, DEFAULT_RADIUS, build_tree2_plot, fit_radius, label_nodes, legend_spans,
+    BEST_SIZE_SCALE, DEFAULT_RADIUS, LEGEND_ENTRIES, LEGEND_KEYS, build_tree2_plot, fit_radius, hidden_fates,
+    label_nodes, legend_entries, legend_spans, lineage_nodes,
 )
-from hillclimb.treeview import TreePlotWidget, TreeScreen
+from hillclimb.treeview import TreePlotWidget, TreeScreen, filter_hidden
 
 
 class Tree2PlotWidget(TreePlotWidget):
@@ -51,9 +52,15 @@ class Tree2PlotWidget(TreePlotWidget):
     def _build_plot(self, tree: SearchTree, selected: str | None, frame: SearchTree | None):
         # build once to project at the camera the widget holds now, size
         # the marks to that projection, then build the plot that is shown
+        # the lineage comes from the unfiltered tree: hiding a stage, or the
+        # best itself, removes circles, never the path (that is its own toggle)
+        lineage = lineage_nodes(self._tree) if self._tree is not None else None
+        legend = legend_entries(self._tree, self.hidden)  # counts from the unfiltered tree
+
         def build(radius: float, star: float):
             return build_tree2_plot(
                 tree, self.higher_is_better, selected=selected, frame=frame, radius=radius, star=star,
+                show_lineage="lineage" not in self.hidden, lineage=lineage, legend=legend,
             )
 
         probe, ids = build(self.radius, self.star)
@@ -76,11 +83,21 @@ class Tree2PlotWidget(TreePlotWidget):
             zoom=0.0, selected=self.selected, hovered=self._hover,
         )
 
+    def _filter(self, tree: SearchTree) -> SearchTree:
+        # the legend names stages, the widget's filter names fates
+        return filter_hidden(tree, hidden_fates(self.hidden))
+
     def _legend_spans(self) -> list[tuple[int, int, str, str]]:
         return legend_spans(self._tree, self.metric, self.higher_is_better, cols=self.size.width)
 
     def _legend_entry_at(self, col: int, row: int) -> str | None:
-        return None  # the ring ladder is not a filter
+        # the ladder is drawn in the image: ask plotui which row the cell is on
+        hit = getattr(self._plot, "legend_entry_hit", None)
+        if hit is None or self.size.width <= 0 or self.size.height <= 0:
+            return None
+        px_w, px_h, px, py, _radius = self._pixel_geometry(col, row)
+        index = hit(px_w, px_h, px, py)
+        return LEGEND_ENTRIES[index] if index is not None and index < len(LEGEND_ENTRIES) else None
 
     # -- the mark radius follows the projection: rebuild on every change of
     # scale (zoom, reset, resize); a pan keeps the spacing --
@@ -105,11 +122,12 @@ class Tree2Keys(GraphKeys):
         ("r", "reset view"),
         ("click", "select"),
         ("click again", "open"),
+        ("click legend", "hide a stage, the best or the lineage (1-5 too)"),
         ("n / p", "next / previous search"),
     ]
 
 
-class Tree2Screen(TreeScreen):
+class Tree2Screen(TreeScreen, inherit_bindings=False):
     """Canvas + time scrubber + candidate detail, archive-tree encoding.
     Reached via `hillclimb tree2 [search]`."""
 
@@ -121,14 +139,22 @@ class Tree2Screen(TreeScreen):
         Binding("-", "zoom_out", "zoom out", show=False),
         Binding("f,0", "fit", "fit", show=False, tooltip="frame the whole tree"),
         Binding("b", "select_best", "best", tooltip="select the current best"),
+        Binding("l", "toggle_lineage", "lineage", tooltip="show / hide the best's lineage"),
         Binding("n", "next_search", "next search", tooltip="the next search in the store"),
         Binding("p", "prev_search", "prev search", show=False, tooltip="the previous search"),
         Binding("j", "scrub_back", "back in time", show=False, tooltip="one tick per landed result"),
         Binding("k", "scrub_forward", "forward", show=False),
         Binding("end", "scrub_live", "live", show=False, tooltip="jump to now"),
+        # The legend's keys: one binding per entry, only the first described,
+        # so the `?` panel shows a single "1-5" row for the lot.
+        Binding(LEGEND_KEYS[0], "toggle_type(0)", "hide/show a stage, the best or the lineage", show=False, key_display="1-5"),
+        *(Binding(LEGEND_KEYS[i], f"toggle_type({i})", show=False) for i in range(1, len(LEGEND_ENTRIES))),
         Binding("question_mark", "toggle_help", "keys"),
         Binding("q", "app.quit", "quit"),
     ]
+    # `inherit_bindings=False`: Textual merges bindings base class first, so a
+    # key only this screen defines (`l`) would land after every inherited one
+    # in the footer. Owning the whole list keeps `l` beside `b`.
 
     def compose(self) -> ComposeResult:
         yield HillclimbHeader()
@@ -147,7 +173,11 @@ class Tree2Screen(TreeScreen):
         super()._apply_view()
 
     def action_toggle_type(self, index: int) -> None:
-        return  # no legend filter in this view
+        if 0 <= index < len(LEGEND_ENTRIES):
+            self._toggle_type(LEGEND_ENTRIES[index])
+
+    def action_toggle_lineage(self) -> None:
+        self._toggle_type("lineage")
 
     def action_toggle_help(self) -> None:
         panel = self.query(Tree2Keys)

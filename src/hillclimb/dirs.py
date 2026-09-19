@@ -108,6 +108,7 @@ def create_candidate_dir(
     data_dir: Path,
     problem_dir: Path,
     parent_solution: Path | None = None,
+    unit_tests_dir: Path | None = None,
 ) -> Path:
     """Per-candidate working directory.
 
@@ -125,4 +126,8 @@ def create_candidate_dir(
         problem_link.symlink_to(problem_dir.resolve(), target_is_directory=True)
     if parent_solution and parent_solution.exists():
         shutil.copy(parent_solution, candidate_dir / "solution.py")
+    if unit_tests_dir is not None:
+        from hillclimb.unit_tests import copy_visible_root
+
+        copy_visible_root(unit_tests_dir, candidate_dir)
     return candidate_dir

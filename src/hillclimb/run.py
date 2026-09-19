@@ -70,6 +70,12 @@ class SearchMeta(BaseModel):
     # control operations and summit never need to rematerialize the problem.
     provider_revision: str | None = None
     output_artifacts: list[str] = Field(default_factory=lambda: ["submission.csv"])
+    # Optional run-frozen correctness suite. The bundle path is relative to
+    # the run dir; command and digest are copied here so resume never consults
+    # an edited live problem.yaml.
+    unit_tests_bundle: str | None = None
+    unit_tests_command: list[str] = Field(default_factory=list)
+    unit_tests_sha256: str | None = None
 
     @field_validator("output_artifacts")
     @classmethod

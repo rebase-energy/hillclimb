@@ -67,7 +67,7 @@ def test_candidate_instance_scores_is_per_key_median():
     candidate = Candidate(
         candidate_id="c1",
         operator="draft",
-        status="ok",
+        status="passing",
         candidate_dir="/tmp/x",
         trials=[mk_trial(replicates=[
             Replicate(val_score=1.0, submission_ok=True, instance_scores={"a": 1.0, "b": 5.0}),
@@ -109,7 +109,7 @@ def test_instances_flow_from_verifier_to_eval_result(tmp_path, task, config):
     assert trial.replicates[0].instance_scores == {"z1": 1.0, "z2": 0.5}
     assert trial.instance_scores == {"z1": 1.0, "z2": 0.5}
     assert candidate.instance_scores == {"z1": 1.0, "z2": 0.5}
-    candidate.status = "ok"
+    candidate.status = "passing"
     assert eval_result_for(candidate).instance_scores == {"z1": 1.0, "z2": 0.5}
 
 

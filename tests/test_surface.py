@@ -44,7 +44,7 @@ def landscape(tmp_path: Path):
 
 def cand(
     cid: str, operator: str = "improve", parent: str | None = None, score: float | None = None,
-    pos: tuple[float, float] | None = None, status: str = "ok", t: int = 0, **kwargs,
+    pos: tuple[float, float] | None = None, status: str = "passing", t: int = 0, **kwargs,
 ) -> Candidate:
     trials = []
     if score is not None:

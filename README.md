@@ -185,13 +185,49 @@ the backend seam in `src/hillclimb/backends/`:
 | `claude-code` | Claude Code in headless mode — the production backend; bills your Claude subscription |
 | `codex` | Codex CLI in non-interactive mode; uses your Codex login by default |
 | `codex` + `backend_auth: openrouter` | the same Codex CLI pointed at OpenRouter: cheap open models billed to OpenRouter credits, no subscription touched |
+| `pi` | pi coding agent in JSON mode; subscription login, API keys, OpenRouter or custom local providers, with per-operator sampling |
 | `dummy` | no model calls: a scripted operator for exercising the engine, TUIs and run layout |
 | `fake` | deterministic canned operator for the test suite |
 
-Other agents (Codex, Pi, OpenCode, …) plug in at the same seam: a backend
+Other agents (OpenCode, …) plug in at the same seam: a backend
 implements the `OperatorBackend` protocol in `backends/base.py` — take a prompt plus a
 working directory, return the agent's JSON result — and is selected with
 `--backend <name>`.
+
+### Connecting an agent
+
+```
+$ hillclimb connect
+   target      billing       state
+●  claude      subscription  ready       logged in (claude.ai, you@example.com) — 6% of the 5-hour window used
+   codex       subscription  ready       Logged in using ChatGPT
+   pi          subscription  logged-out  no provider logged in at ~/.pi/agent/auth.json
+   openrouter  openrouter    no-key      OPENROUTER_API_KEY is not set
+```
+
+Every credential is read **through the same environment an operator gets**, so
+what the table says is what a search will find — an `ANTHROPIC_API_KEY` left in
+your shell, which would quietly rebill a "subscription" search to the API, shows
+up here rather than on an invoice. `●` is the backend this config runs by
+default.
+
+`hillclimb connect claude` (or `codex`, `pi`, `openrouter`) sets one up: it runs
+that agent's own login, stages the credential in the isolated per-auth home
+searches read (`~/.cache/hillclimb/codex-home/…`, `pi-home/…`), pings the route
+with one tool-free agent call — which is where a model the account cannot use
+fails, in seconds instead of mid-search — and pins `backend`/`backend_auth` in
+`config.yaml`. It leaves a config that already pins a backend alone unless you
+pass `--default`. `--no-probe` skips the ping, `--auth api-key|openrouter`
+picks a different bill, `--user` writes the defaults to
+`~/.config/hillclimb/config.yaml`.
+
+`hillclimb connect openrouter` is the one credential hillclimb stores itself:
+the key is validated against OpenRouter (one unbilled call) and written to the
+`.env` beside `config.yaml` that `hillclimb init` gitignores — never into
+`config.yaml`, where it could be journaled. `--backend codex --model
+qwen/qwen3-coder` pins the route in the same command.
+
+`hillclimb smoke` is the next step up: a whole DRAFT on a real problem.
 
 ### Cheap operators through OpenRouter
 
@@ -223,6 +259,70 @@ To compare models head to head, give an experiment one arm per model
 (`arm_overrides: {model: …}`); the chart and `experiment report` group on the
 arm tags.
 
+### Sampling with pi
+
+Install pi and select a provider-qualified model. Subscription mode copies
+the credentials from pi's own `/login` (`~/.pi/agent/auth.json`); `api-key`
+uses provider environment variables such as `ANTHROPIC_API_KEY`. OpenRouter
+requires `OPENROUTER_API_KEY` in the environment or `.env` beside `config.yaml`:
+
+```yaml
+backend: pi
+backend_auth: openrouter
+model: openrouter/deepseek/deepseek-v3.2
+routing:
+  draft:   {sampling: {temperature: 1.0, top_p: 0.95}}
+  improve: {sampling: {temperature: 0.2}}
+```
+
+| setting | meaning |
+|---|---|
+| `routing.<op>.sampling` | Numeric provider request parameters, e.g. `temperature`, `top_p`, `top_k`, `min_p`; only supported by pi |
+| `routing.default.sampling` | Fallback for all operators; an operator's dict replaces it, and `{}` disables inherited sampling |
+| `pi.models_file` | Optional pi `models.json` for custom providers, including vLLM and llama.cpp |
+
+Sampling follows action → operator → default routing precedence and is
+recorded on each candidate. Unsupported backend combinations fail config
+validation. A short, tool-free preflight checks each distinct pi model and
+sampling combination (including every model in a pool) before search work
+starts. Provider rejection fails startup, including errors pi emits with
+exit code 0. Preflight streams and accounting are under `pi-preflight/`;
+their small provider cost is separate from candidate spend.
+
+Pi runs with an isolated `PI_CODING_AGENT_DIR` under
+`~/.cache/hillclimb/pi-home/<auth>/`, with discovery of personal extensions,
+skills, prompt templates and context files disabled. Custom model files get
+a content-hashed subdirectory so concurrent searches cannot overwrite each
+other's providers. `PI_OFFLINE=1` disables startup updates and telemetry;
+install/update pi explicitly to update its bundled catalogue. Tested with
+pi 0.73.1. Its `update --models` flag is not supported.
+
+Debug children fork the parent's pi session into their own candidate
+directory. Raw pi events remain in `agent_stream.jsonl` and are visible in
+`watch`, including token usage and pi's reported cost. For OpenRouter models
+with zero reported cost, Hillclimb falls back to its pricing catalogue.
+
+For a local OpenAI-compatible server, set `backend_auth: api-key`,
+`model: vllm/Qwen/Qwen3-Coder-30B-A3B-Instruct` and point `pi.models_file`
+at a file like:
+
+```json
+{"providers": {"vllm": {"baseUrl": "http://localhost:8000/v1",
+  "api": "openai-completions", "apiKey": "none",
+  "models": [{"id": "Qwen/Qwen3-Coder-30B-A3B-Instruct", "contextWindow": 131072}]}}}
+```
+
+Relative model-file paths resolve from the project root; with an explicit
+config-file load they resolve beside that config. Provider/model support
+determines which sampling fields are accepted. Use the preflight to check
+compatibility; reasoning effort remains a separate follow-up.
+
+`hillclimb/experiments/temperature.yaml` compares temperatures 0.2, 0.7 and
+1.0 on circle-packing, with three repeats and three concurrent searches.
+Run `hillclimb experiment run temperature --dry-run` to inspect the jobs;
+`hillclimb experiment report temperature --json` reports the arm verdicts
+after the experiment finishes.
+
 ## Search policies
 
 *What to try next* is the search engine, and it is a seam of its own:
@@ -232,7 +332,7 @@ holdout, journaling, `best/` — is harness, and a policy never touches it.
 
 | policy | what it does |
 |---|---|
-| `greedy` | debug the newest buggy tip > ensemble in the final budget window > draft until `num_drafts` branches are scored > improve the best |
+| `greedy` | debug the newest failing/buggy tip > ensemble in the final budget window > draft until `num_drafts` branches are scored > improve the best |
 | `openevolve` | [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve)'s MAP-Elites database decides what to expand: a population kept diverse over feature dimensions, split across islands with migration; parent + inspirations sampled per island (exploration / elite archive / fitness-weighted). Hillclimb's operators do the mutating, the verifier the scoring, and the `debug` rule is kept. `pip install 'hillclimb[openevolve]'` |
 | `gepa` | [GEPA](https://github.com/gepa-ai/gepa) owns the whole loop — reflective mutation over evaluation feedback and Pareto selection over the verifier's per-instance scores — while hillclimb evaluates, journals, and holds the private holdout. A full *engine*, not a policy (see below). `pip install 'hillclimb[gepa]'` |
 
@@ -363,7 +463,7 @@ the policy with no agent or verifier and reports each contract breach it
 can see: a hold with empty slots on an empty journal (the search would
 never start), two fresh instances disagreeing at some budget point (resume
 would diverge), a target or inspiration id that does not exist, an
-operator that needs a target without one, a `debug` on a non-buggy
+operator that needs a target without one, a `debug` on a non-failing/non-buggy
 candidate, a mutated journal or a file written under a search dir, a
 factory that hands back the same object, and a prompt override that
 lints dirty. `--smoke --problem P` then runs a short `--backend dummy`
@@ -527,6 +627,9 @@ baseline: 0.5                    # scored at t=0 as the floor candidate; numeric
 chart_baselines:                 # optional named horizontal lines in `hillclimb chart`
   previous best: 0.73
 requirements: requirements.txt   # per-problem venv (default: shared csv venv)
+unit_tests:                      # optional correctness gate, frozen at run start
+  root: tests
+  command: ["{python}", "-m", "pytest", "-q", "{tests}"]
 data_dir: data
 allow_network: false
 ```
@@ -539,7 +642,7 @@ but cannot become a fixed reference line until its score is known.
 
 ### The verifier contract
 
-`verifier.sh` is the only process the engine starts. It drives `solution.py`
+The verifier is the scoring process the engine starts. It drives `solution.py`
 itself — run it, import it, shell out to it — and reports the score:
 
 ```bash
@@ -554,7 +657,8 @@ exec "$HILLCLIMB_PYTHON" problem/verify.py  # writes $HILLCLIMB_RESULT
 
 | | |
 |---|---|
-| exit 0 | the candidate is valid; non-zero routes it to the `debug` operator |
+| exit 0 | the verifier accepted the candidate; declared unit tests must still pass |
+| non-zero | the candidate is `buggy` and routes to the `debug` operator |
 | `$HILLCLIMB_RESULT` | the score: `{"score": <float>, "report": {...}, <other numeric keys>}`, or a bare number |
 | `$HILLCLIMB_PYTHON` | the managed runtime venv's interpreter (bare `python` resolves via PATH: wrong interpreter) |
 | `$HILLCLIMB_SOLUTION` | the solution path for this run (replicate-dir aware) |
@@ -580,6 +684,21 @@ uv run hillclimb verify my-problem --repeat 5   # score it outside a search
 reports the spread between identical runs — an improvement smaller than that
 is noise, not progress. `problems/bin-packing/` and `problems/circle-packing/`
 are the two reference shapes (evaluator-driven, and run-then-score).
+
+### Frozen unit tests (optional)
+
+When `unit_tests` is declared, hillclimb snapshots the test tree and command
+before any search worker in the run starts. Agents receive a disposable copy at `./unit_tests`,
+but evaluation always uses the frozen bundle. Each parameter trial first runs
+the verifier, then runs the suite once; score replicates continue only after
+the suite passes. `{python}`, `{solution}`, and `{tests}` are available in the
+argv command, and the problem's `requirements.txt` must install its runner.
+
+Candidate statuses separate correctness from executability: `passing` means
+the verifier and tests succeeded, `failing` means the verifier succeeded and
+the suite completed with failing tests, and `buggy` means execution crashed,
+timed out, or broke the evaluation contract. Failing and buggy candidates may be debugged, but only passing
+candidates can rank, tune, reach holdout, or ship.
 
 ### Replicate metrics (optional)
 
@@ -860,6 +979,8 @@ the run has a single search), or `latest` (the default).
 | `problem get [circle-packing\|knapsack\|heilbronn-convex-13]` | copy a bundled problem into `hillclimb/problems/` (creates the `hillclimb/` dir if needed) and list its files (`fetch` is a deprecated alias) |
 | `demo [--budget 10m] [--parallel-searches 3] [--parallel-operators 3]` | `problem get` + `run --parallel-searches` in one command |
 | `init [dir]` | create the `hillclimb/` dir (config, problems/, specs/, runs/) with an example problem |
+| `connect` | which agents this machine can run operators with, and who pays — each credential read through the same environment an operator gets |
+| `connect <claude\|codex\|pi\|openrouter> [--auth ...] [--model ...] [--no-probe] [--default]` | run that agent's login, stage the credentials searches read, ping the route with one tool-free call, pin `backend`/`backend_auth` in config.yaml |
 | `verify <problem> [--repeat N] [--holdout]` | run a problem's verifier once, outside a search; `--repeat` measures the noise floor |
 | `run <target> [--name ...] [--budget 2h] [--backend ...] [--model ...]` | start a run for one problem or a suite YAML |
 | `run <problem> --parallel-searches N --parallel-operators M` | N independent searches (detached engines, one run) each running M agents at once |
@@ -876,8 +997,8 @@ the run has a single search), or `latest` (the default).
 | `kill [search]` | SIGTERM the engine now (state finalized, resumable) |
 | `prune <search> <candidate-id>` | cut a candidate and its subtree from the search |
 | `tree [search]` | live 3D exploration tree of one search: colour is the operator, silhouette the fate (expanded / discontinued / best / failed); `j`/`k` scrub through time |
-| `tree2 [search]` | the same tree drawn like the Darwin Gödel Machine's archive: the iteration number inside each circle, fill = score (viridis, bright = best), ring = how far it got (red no working solution / yellow scored / green built on), star = best, bold path = the best's lineage; circles are sized to the zoom so they never overlap, numbers appear as they grow |
-| `archive [search]` | the `tree2` archive tree on the left and the progress chart on the right — every scored candidate at (iteration, score), the best-so-far staircase, and the lineage of the final best as a thick line, the same parent chain drawn bold in the tree; `j`/`k` scrub both panels together, click a node to ring its dot on the chart |
+| `tree2 [search]` | the same tree drawn like the Darwin Gödel Machine's archive: the candidate number inside each circle, fill = score (viridis, bright = best; hollow = no working solution), ring = what the search did with it (white expanded — the spine the policy walked / none a scored, scored and left / red failed), star = best, bold white path = the best's lineage; circles are sized to the zoom so they never overlap, numbers appear as they grow; the legend toggles each stage, the best and the lineage (`1`-`5` or click) |
+| `archive [search]` | the `tree2` archive tree on the left and the progress chart on the right — every scored candidate at (candidate number, score), the best-so-far staircase, and the lineage of the final best as a thick line, the same parent chain drawn bold in the tree; `j`/`k` scrub both panels together, click a node to ring its dot on the chart; the chart's legend sits in the corner the climb leaves empty and toggles its series (`6`-`9` or click), the hover readout keeps off it |
 | `surface [search]` | live 3D fitness surface: the search's candidates on the problem's terrain (needs a `landscape.py` in the problem; `problems/fitness-landscape/` is the reference) |
 | `summit [problem]` | copy the best solution found so far across every run of a problem next to your `hillclimb/` folder; works mid-climb |
 | `smoke [problem]` | one real agent call end-to-end (auth / contract check) |

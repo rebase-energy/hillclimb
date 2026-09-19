@@ -7,7 +7,8 @@ import pydot
 from hillclimb.journal import Journal
 
 STATUS_FILL = {
-    "ok": "#c8e6c9",        # green: executed and scored
+    "passing": "#c8e6c9",   # green: verifier and unit tests passed
+    "failing": "#fff3b0",   # amber: runnable, but unit tests failed
     "buggy": "#ffcdd2",     # red: crashed or violated the contract
     "abandoned": "#e0e0e0", # gray: agent call failed / nothing to evaluate
     "parked": "#ffe0b2",    # orange: interrupted by rate limit
@@ -34,7 +35,7 @@ def _label(candidate, higher_is_better: bool) -> str:
         if candidate.holdout_score is not None:
             line += f" / hold = {candidate.holdout_score:.5g}"
         parts.append(line)
-    elif candidate.status != "ok":
+    elif candidate.status != "passing":
         parts.append(candidate.status)
     summary = (candidate.summary or "").strip()
     if summary:
@@ -106,7 +107,8 @@ def build_tree(journal: Journal, higher_is_better: bool, title: str = "") -> pyd
             )
 
     legend = pydot.Cluster(graph_name="legend", label="legend", fontsize=10, fontname="Helvetica")
-    for name, color in (("scored", STATUS_FILL["ok"]), ("failed", STATUS_FILL["buggy"]),
+    for name, color in (("passing", STATUS_FILL["passing"]), ("failing", STATUS_FILL["failing"]),
+                        ("buggy", STATUS_FILL["buggy"]),
                         ("abandoned", STATUS_FILL["abandoned"]), ("selected", BEST_FILL)):
         legend.add_node(pydot.Node(f"legend_{name}", label=name, shape="box",
                                    style="rounded,filled", fillcolor=color,

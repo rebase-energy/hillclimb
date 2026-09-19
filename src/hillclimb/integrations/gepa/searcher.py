@@ -101,7 +101,9 @@ class GEPASearcher:
         if router is None:
             router = Router(config)
         if backends is None:
-            backends = BackendPool(abort=self.abort)
+            backends = BackendPool(
+                abort=self.abort, pi_models_file=config.pi.models_file
+            )
             backends.seed(config.backend, config.backend_auth, backend)
         # the host's evaluate service; the host registers gepa with holdout
         # timing `after`, so nothing scores the hidden split while the
@@ -365,7 +367,8 @@ class GEPASearcher:
             "candidates",
             CandidateCounts(
                 total=len(self.journal.candidates),
-                ok=sum(1 for c in candidates if c.status == "ok"),
+                passing=sum(1 for c in candidates if c.status == "passing"),
+                failing=sum(1 for c in candidates if c.status == "failing"),
                 buggy=sum(1 for c in candidates if c.status == "buggy"),
                 pruned=sum(1 for c in candidates if c.pruned),
             ),

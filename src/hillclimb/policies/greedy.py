@@ -25,7 +25,7 @@ Strategy params (fallback in brackets):
 
 Tune params:
   tune_budget (8)     extra trials per candidate beyond its defaults trial; 0 = off
-  tune_gate ("band")  which ok+tunable candidates qualify: "band" = within the
+  tune_gate ("band")  which passing+tunable candidates qualify: "band" = within the
                       accept band of the current best (best included), "best" =
                       the best only, "always" = every scored one
   tune_parallel (1)   tune jobs in flight per candidate (>1 engages the
@@ -212,14 +212,14 @@ class GreedyPolicy:
     # --- decision helpers (moved verbatim from GreedySearcher) ---
 
     def debuggable_tip(self, view: PolicyInput) -> Candidate | None:
-        """Newest buggy candidate with no active child and chain depth under
+        """Newest failing/buggy candidate with no active child and chain depth under
         the cap. In serial history this is exactly the serial debug rule."""
         journal = view.journal
         for candidate in reversed(list(journal.candidates.values())):
-            if candidate.status != "buggy" or candidate.pruned:
+            if candidate.status not in ("failing", "buggy") or candidate.pruned:
                 continue
             children = journal.children(candidate.candidate_id, include_pruned=True)
-            if any(c.status in ("pending", "ok", "buggy") for c in children):
+            if any(c.status in ("pending", "passing", "failing", "buggy") for c in children):
                 continue
             chain = journal.debug_chain(candidate.candidate_id)
             depth = sum(1 for c in chain if c.operator == "debug")
@@ -263,7 +263,7 @@ class GreedyPolicy:
 
     def ensemble_succeeded(self, view: PolicyInput) -> bool:
         for candidate in view.journal.candidates.values():
-            if candidate.status != "ok":
+            if candidate.status != "passing":
                 continue
             root = view.journal.debug_chain(candidate.candidate_id)[0]
             if root.operator == "ensemble":
@@ -271,11 +271,10 @@ class GreedyPolicy:
         return False
 
     def ensemble_candidates(self, view: PolicyInput) -> list[Candidate]:
-        """Top-k scored non-ensemble candidates by the selection rule, deduped
-        by script content so near-identical improves don't fill the slots."""
-        ranked = view.journal.ranked_candidates(
-            view.higher_is_better, view.config.holdout.selection
-        )
+        """Top-k scored non-ensemble candidates by val score, deduped by
+        script content so near-identical improves don't fill the slots.
+        (`holdout.selection` decides what SHIPS; a policy never sees holdout.)"""
+        ranked = view.journal.ranked_candidates(view.higher_is_better, "val")
         top_k = int(self.param("ensemble_top_k", view.config))
         picked, seen_hashes = [], set()
         for candidate in ranked:

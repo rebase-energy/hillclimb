@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, FiniteFloat
 
 
 class OperatorRequest(BaseModel):
@@ -12,6 +12,7 @@ class OperatorRequest(BaseModel):
     candidate_dir: Path
     timeout_s: int
     model: str = "sonnet"
+    sampling: dict[str, int | FiniteFloat] | None = None
     resume_session_id: str | None = None  # set within a debug chain
 
 

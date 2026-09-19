@@ -46,7 +46,7 @@ def _populate(store: DataStore) -> None:
         for index, score in enumerate(scores):
             cand = Candidate(candidate_id=f"c{index:03d}", operator="draft")
             journal.candidate_created(cand)
-            cand.status = "ok"
+            cand.status = "passing"
             cand.trials = [mk_trial(val_score=score)]
             cand.finished_at = f"2026-08-22T10:0{index + 1}:00+00:00"
             journal.candidate_result(cand)

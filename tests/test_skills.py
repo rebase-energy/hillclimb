@@ -38,7 +38,7 @@ def winner_journal(tmp_path, val=0.8, operator="improve", code="import sklearn\n
     ws.mkdir(parents=True, exist_ok=True)
     (ws / "solution.py").write_text(code)
     return make_journal(tmp_path, [dict(
-        candidate_id="c001", operator=operator, status="ok", candidate_dir=str(ws),
+        candidate_id="c001", operator=operator, status="passing", candidate_dir=str(ws),
         summary="gradient boosting", trials=[mk_trial(val_score=val)],
     )])
 

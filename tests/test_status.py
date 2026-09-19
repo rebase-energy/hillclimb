@@ -139,7 +139,7 @@ def test_search_updates_status(task, config):
     loaded = read_status(search_dir)
     assert loaded.state == "done"
     assert loaded.candidates.total == 4  # baseline + 3 drafts
-    assert loaded.candidates.ok == 4  # baseline counts as ok
+    assert loaded.candidates.passing == 4  # baseline counts as ok
     assert loaded.best is not None and loaded.best.val_score == 0.7
     assert loaded.selected is not None
 

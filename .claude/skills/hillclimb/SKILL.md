@@ -6,7 +6,7 @@ description: Drive hillclimb searches — start, monitor, stop, prune, and resum
 # Driving hillclimb runs
 
 `hillclimb` is a headless engine: it greedily hillclimbs a verifier-defined problem by spawning
-headless Claude Code agents (draft → debug → improve → ensemble), executing each
+headless coding agents (Claude Code, Codex or pi; draft → debug → improve → ensemble), executing each
 candidate solution, and keeping the best submission in
 `runs/<run-id>/searches/<search-id>/best/`. You (the interactive agent) are the
 front door: start runs, watch them, and control them on the user's behalf. The
@@ -38,6 +38,12 @@ uv run hillclimb run mlebench://spaceship-titanic --budget 2h  # MLE-bench comp 
 uv run hillclimb run mlebench://lite --budget 4h             # virtual suite: MLE-bench Lite (22 comps)
 uv run hillclimb run <problem> --backend dummy   # fast no-agent backend for testing
 ```
+
+Before the first real run on a machine, `uv run hillclimb connect --json` says
+which backends have a working credential (checked through the same environment
+an operator gets) and which one is the default; `hillclimb connect <claude|
+codex|pi|openrouter>` sets one up. A dead credential there is why a search
+would otherwise fail on its first operator call.
 
 Exit codes: `0` done, `2` parked or stopped (resumable). Rate limits park the
 search automatically.
@@ -140,6 +146,17 @@ uv run hillclimb run <problem> --policy greedy --policy openevolve --policy gepa
 
 ## Rules
 
+- Pi routes support `routing.<op>.sampling: {temperature: 0.7}` and
+  `pi.models_file` for local providers. OpenRouter uses
+  `backend: pi`, `backend_auth: openrouter`, a provider-qualified model
+  such as `openrouter/deepseek/deepseek-v3.2`, and `OPENROUTER_API_KEY` in
+  the environment or `.env` beside config.yaml. Search startup runs cheap
+  no-tools preflights; a failed preflight means fix that model/sampling
+  combination before retrying. Pi errors can exit 0: use Hillclimb's parsed
+  status and `agent_stream.jsonl`. The `temperature` experiment spec compares
+  three temperatures; inspect with `experiment run temperature --dry-run`,
+  then use `experiment report temperature --json` for the verdicts.
+
 - **Never edit `journal.jsonl`, `status.json`, or `control/` by hand.**
   With `store.backend: sqlite` those records live in `hillclimb/store.sqlite`
   instead of the search dir — use `hillclimb status` / `store searches` rather
@@ -151,5 +168,5 @@ uv run hillclimb run <problem> --policy greedy --policy openevolve --policy gepa
   still starting.
 - A `crashed` state is a heuristic (dead pid or stale heartbeat); `resume` is
   always safe — the journal is append-only and replay-consistent.
-- Agent operator calls bill the user's Claude subscription; keep budgets modest
+- Agent operator calls bill the selected subscription or API provider; keep budgets modest
   unless the user says otherwise.

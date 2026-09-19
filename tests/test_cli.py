@@ -400,7 +400,7 @@ def test_show_lists_trials_with_their_params(config, tmp_path, monkeypatch, caps
     (ws / "solution.py").write_text("x = 1\n")
     journal = Journal(search_dir / "journal.jsonl")
     journal.candidate_result(Candidate(
-        candidate_id="c001", operator="draft", status="ok", candidate_dir=str(ws), tunable=True,
+        candidate_id="c001", operator="draft", status="passing", candidate_dir=str(ws), tunable=True,
         trials=[
             mk_trial(0.5, params={"k": 1}, is_best=False),
             mk_trial(0.6, 0.62, params={"k": 4}, index=1, holdout_score=0.55),
@@ -443,11 +443,11 @@ def test_show_renders_report_diff_and_notes(config, tmp_path, monkeypatch, capsy
     }
     journal = Journal(search_dir / "journal.jsonl")
     journal.candidate_result(
-        Candidate(candidate_id="c001", operator="draft", status="ok",
+        Candidate(candidate_id="c001", operator="draft", status="passing",
                   candidate_dir=str(parent_ws), trials=[mk_trial(val_score=0.6)])
     )
     journal.candidate_result(
-        Candidate(candidate_id="c002", operator="improve", parent_id="c001", status="ok",
+        Candidate(candidate_id="c002", operator="improve", parent_id="c001", status="passing",
                   candidate_dir=str(child_ws), summary="added lag features",
                   trials=[mk_trial(val_score=0.7, report=report)])
     )
@@ -760,7 +760,7 @@ def _summit_search(
             Candidate(
                 candidate_id=f"c{i:03d}",
                 operator="draft",
-                status="ok",
+                status="passing",
                 trials=[mk_trial(val_score=score, submission_ok=True)],
             )
         )
@@ -931,6 +931,41 @@ def test_verify_without_interface_stays_silent(config, tmp_path, monkeypatch, ca
     _lintable_problem(tmp_path, VERIFY_BASELINE_OK, with_interface=False)
     _run_verify(config, tmp_path, monkeypatch)
     assert "interface:" not in capsys.readouterr().out
+
+
+def test_verify_runs_declared_unit_tests(config, tmp_path, monkeypatch, capsys):
+    problem = _lintable_problem(tmp_path, VERIFY_BASELINE_OK, with_interface=False)
+    tests = problem / "tests"
+    tests.mkdir()
+    (tests / "check.py").write_text("print('suite passed')\n")
+    with (problem / "problem.yaml").open("a") as fh:
+        fh.write(
+            "unit_tests:\n"
+            "  root: tests\n"
+            '  command: ["{python}", "{tests}/check.py"]\n'
+        )
+
+    _run_verify(config, tmp_path, monkeypatch)
+
+    assert "unit tests: PASSING" in capsys.readouterr().out
+
+
+def test_verify_reports_completed_test_failure(config, tmp_path, monkeypatch, capsys):
+    problem = _lintable_problem(tmp_path, VERIFY_BASELINE_OK, with_interface=False)
+    tests = problem / "tests"
+    tests.mkdir()
+    (tests / "check.py").write_text("raise AssertionError('wrong answer')\n")
+    with (problem / "problem.yaml").open("a") as fh:
+        fh.write(
+            "unit_tests:\n"
+            "  root: tests\n"
+            '  command: ["{python}", "{tests}/check.py"]\n'
+        )
+
+    with pytest.raises(typer.Exit):
+        _run_verify(config, tmp_path, monkeypatch)
+
+    assert "unit tests: FAILING" in capsys.readouterr().err
 
 
 def _capture_fleet(monkeypatch, config, tmp_path):

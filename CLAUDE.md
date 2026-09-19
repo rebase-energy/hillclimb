@@ -22,16 +22,23 @@ canonical cross-run identity (`emflow://…`, `mlebench://…`, or the local
 problem id; backfilled on read like hillclimb-go's `EffectiveProblemKey`) —
 and every problem-scoped view (chart, best-ever, knowledge) groups on it.
 
-A problem **is its verifier**: `problems/<id>/verifier.sh` is the only process
+A problem **is its verifier**: `problems/<id>/verifier.sh` is the scoring process
 the engine starts. It drives `solution.py` and writes the score to
 `$HILLCLIMB_RESULT` (a `{"score": …}` object or a bare number; other numeric
 keys are journaled as `Replicate.metrics` — feature dimensions for policies,
 never a score); exit 0 means valid. A replicate the engine kills under a
 timeout clamped by the search's *remaining budget* is journaled `abandoned`
-("cut off at the budget wall"), never `buggy`: only a non-zero exit or the
-problem's own `exec_timeout_s` makes a candidate buggy and thus a debug
-target (`watch` colours the candidates cell red/yellow/green on
-buggy/abandoned/clean). `holdout: true` in `problem.yaml` makes the engine run the same script
+("cut off at the budget wall"), never `buggy`: verifier crashes/contract
+failures and unit-test timeouts make a candidate buggy and thus a debug target.
+Optional `unit_tests` in `problem.yaml` declares a framework-neutral
+root + argv (`{python}`, `{solution}`, `{tests}`). The suite is frozen once per
+run/problem, copied visibly but non-authoritatively into candidates, and run
+once per trial after the first verifier replicate establishes runnability.
+Candidate/trial verdicts are `passing` (verifier + tests), `failing` (verifier
+ran and the suite completed with failing tests), and `buggy` (execution/contract failure); old
+`ok` journal values load as `passing`. Only passing trials rank or ship, while
+failing and buggy candidates are debug targets. `holdout: true` in
+`problem.yaml` makes the engine run the same script
 with `--holdout` in a directory agents never see. Holdout scoring is the
 HOST's, never a search strategy's: `CandidateEvaluator` (`evaluation.py`)
 scores the hidden split as part of `run_trial` — a trial that fails it is
@@ -84,15 +91,35 @@ shim).
   `min(8, cores-2)`); verifier and agent envs are single-threaded
   (`executor.SINGLE_THREAD_ENV`, parent values win). `hillclimb ps` lists the
   engine process trees; `stop --all` reaps engines whose hillclimb dir was deleted; `reset` kills only the engines pinned to this folder's hillclimb dir, then deletes the dir
+- Operator backends: `claude-code`, `codex`, `pi` and `dummy`. Pi supports
+  `routing.<op>.sampling` (numeric provider fields), with action → operator →
+  default precedence and candidate-journal persistence. Sampling on other
+  backends fails validation. `pi.models_file` adds custom/local providers;
+  copied configs live under isolated `~/.cache/hillclimb/pi-home/<auth>/`
+  (content-hashed subdir for custom models). Pi startup is offline, search
+  startup preflights each model/sampling route, and provider errors are read
+  from JSON `stopReason` even on exit 0. Debug children use `--fork` to keep
+  history while binding tools to the child's cwd; `--session` restores the
+  parent's cwd and must not be used across candidates.
 - Agent billing: `backend_auth` picks who pays — `subscription` (the Claude or
-  ChatGPT login), `api-key`, or `openrouter`, which points the codex backend at
+  ChatGPT login), `api-key`, or `openrouter`, which points codex or pi at
   OpenRouter (`wire_api: responses`; the key comes from the environment or a
   `.env` beside config.yaml) and bills OpenRouter credits instead. Every codex
   call runs under an isolated `CODEX_HOME` in
   `~/.cache/hillclimb/codex-home/<auth>/`, so personal `~/.codex` settings
   change neither a search's results nor its token bill; a provider 402 parks
   the search as `out_of_credits`, and `pricing.py` fills `cost_usd` from
-  OpenRouter's catalogue so `budget.max_cost_usd` applies
+  OpenRouter's catalogue so `budget.max_cost_usd` applies. `hillclimb connect`
+  (`connect.py`) is where a credential is checked on purpose instead of at the
+  first spawn: every probe runs through the SAME env builders the backends use
+  (`subscription_env`/`codex_env`/`pi_env`), so an inherited `ANTHROPIC_API_KEY`
+  shadowing a subscription shows up in the table; a bare `connect` is the
+  status of all four targets (`claude`/`codex`/`pi` are backends and own their
+  login, `openrouter` is a billing route), `connect <target>` runs that login,
+  materializes the isolated home, pings the route with one tool-free call
+  (`connect.ping`) and pins `backend`/`backend_auth` with a line-level edit of
+  config.yaml that keeps its comments — and only when no backend is pinned yet,
+  unless `--default`. Keys live in the `.env`, never in `Config`
 - DataStore (`store.py`): the one read/write path for a search's records —
   run/search metadata, the append-only journal (`Journal(store.journal(key))`,
   append order is the replay contract), the status record, and the stop/prune
@@ -128,10 +155,33 @@ shim).
   inherit its best trial's values as their defaults (`prompts/params_cue.md`
   tells the agent); `best/params.json` ships the selected candidate's best
   trial values. Seeds are never tuned.
+- Similarity scores (`similarity_scores/`): pluggable "how alike are two
+  solutions" measures. A `SimilarityScore` subclass implements
+  `represent(solution)` (once per solution; None = no row) and optionally
+  `compare(a, b)` (higher = more alike, 1.0 = same; the default is cosine for
+  vectors/`{feature: weight}` dicts, Jaccard for sets); `represent_many` is
+  the batch hook, `SimilarityUnavailable` aborts the whole score, any other
+  exception leaves one solution unrepresented. Named like policies: registry
+  (`solution-card` — an LLM writes a domain-free method card, cards are
+  embedded, cosine; `api-calls` — imports + alias-resolved library calls +
+  `method=` strings, rename-invariant; `code-tokens` — the map's structural
+  Jaccard), a `.py` file (`SIMILARITY_SCORE = cls` or exactly one subclass),
+  `module:Class`, or `register_score`. `cache = True` persists JSON
+  representations in `~/.cache/hillclimb/similarity/` keyed by name +
+  `version` + params + `cache_key` (file bytes) — never in a run.
+  `solution-card` caches cards and vectors separately and calls OpenRouter
+  directly (`openrouter.py`, `OPENROUTER_API_KEY`); its card noise is ~0.02.
+  `similarity.scores` (config) lists the defaults for `hillclimb similarity
+  scores [search] [-s name] [-c ids] [-f file…] [--explain] [--json]`
 - Search policies (`policies/`): `greedy` (default) and `openevolve`
   (OpenEvolve's MAP-Elites database as the what-next brain; optional extra,
   `search.policy_params` pass through to its `DatabaseConfig`). A policy
-  owns only `propose`/`observe`; it must stay replay-deterministic — the
+  owns only `propose`/`observe` and is holdout-blind: `PolicyInput` wraps
+  whatever journal it is given in `journal.PolicyJournal` (snapshot of
+  `Candidate.holdout_blind()` copies — no holdout fields, no `is_selected`,
+  no `path`, writes raise), and `observe()` receives the candidate from that
+  view, so `holdout.selection` decides what ships and never what a policy
+  expands. It must stay replay-deterministic — the
   openevolve policy seeds/restores the global RNG around every OpenEvolve call
   because that library samples via the `random` module. The exploration
   process is ONE dict: every greedy knob (`num_drafts`, `max_debug_depth`,
@@ -212,8 +262,9 @@ shim).
   exploration tree on the curve), `tree` (one search's exploration tree —
   `tree.py` is the pure layout + fates, `treeview.py` the plotui screen with a
   face-on locked camera), `tree2` (the same layout drawn like the Darwin
-  Gödel Machine's archive tree: iteration number inside each circle, fill =
-  score on a viridis ramp, ring = fate ladder red/yellow/green, star = best,
+  Gödel Machine's archive tree: candidate number inside each circle, fill =
+  score on a viridis ramp (hollow = never scored), ring = fate ladder in no
+  viridis hue — white = expanded, none = scored, red = failed — star = best,
   the best's parent chain bold — `tree2.py` pure encoding + one Graph3d
   trace using plotui's `set_graph_borders`/`set_graph_labels`/`"star"`
   (labels are drawn by plotui inside the mark only where they fit);
@@ -221,19 +272,28 @@ shim).
   overlap, and `tree2view.py` rebuilds on every zoom/reset/resize to apply
   it, subclassing the `tree` widget/screen through `TreePlotWidget`'s
   `_build_plot`/`_label_nodes`/`_legend_spans`/`_legend_entry_at`/
-  `_flat_to_id`/`_place_labels` hooks; a candidate for replacing `tree`),
+  `_flat_to_id`/`_place_labels` hooks; the ring ladder is plotui's own
+  legend box with host rows (`tree2.legend_entries` → `Plot.set_legend_entries`,
+  top-left, node-style swatches so expanded/scored share a fill and differ
+  only by the white ring; clicks resolve via `legend_entry_hit`, keys 1-5),
+  the score ramp stays a text overlay; a candidate for replacing `tree`),
   `archive` (the DGM two-panel figure: `tree2` on the left, the progress
-  chart on the right — `archive.py` pure: scored nodes at (iteration,
-  score) where iteration is the circle number (`tree2.node_number`, else
-  creation order), best-so-far walked in ITERATION order (same final
+  chart on the right — `archive.py` pure: scored nodes at (candidate
+  number, score) where the number is the circle number (`tree2.node_number`, else
+  creation order), best-so-far walked in NUMBER order (same final
   best as `tree.accepted`, intermediate steps may differ from `chart`'s
   landing order), the best's parent chain as a thick line, a cursor at
-  the scrub tick's iteration, axes pinned to the live tree; `archiveview.py`
+  the scrub tick's candidate, axes pinned to the live tree; `archiveview.py`
   subclasses `Tree2Screen`, keeps its ids so scrubbing/detail/n-p are
   inherited, and re-shows the chart from the same scrubbed tree in
   `_apply_view`. Two plots on one screen need two Kitty image-id pairs:
   plotui's `PlotWidget(image_slot=n)` (the chart takes slot 1;
-  `PlotWidget.kitty_cleanup()` names every slot taken)), `surface` (one search's candidates on the problem's
+  `PlotWidget.kitty_cleanup()` names every slot taken) and distinct
+  placement ids (iTerm2 keys placements by `p=` alone, so plotui places
+  each frame as `p=<image id>`); the chart's legend is a text overlay in
+  the empty corner (top-left rising, bottom-left falling), hotkeys 6-9
+  after the tree legend's 1-5, and plotui's `Plot.keep_out` (set by the
+  widget from its overlay spans) keeps the hover readout off it), `surface` (one search's candidates on the problem's
   3D terrain — needs the problem to ship `landscape.py` (`elevation(x, y)` +
   `grid(n)`, picked up by default like `contract.md`) and journal each
   candidate's position as `surface_metrics` keys (default x/y) in

@@ -10,9 +10,9 @@ without any extra persistence.
 Reward scale is [0, 1] (classic UCB1 assumptions), scale-free across metrics:
 
 - improved on a scored parent          -> 1.0   (the move that matters)
-- ok, parentless/unscored parent, best -> 1.0   (a draft that took the lead)
-- ok but no improvement                -> 0.25  (working code, no progress)
-- buggy                                -> 0.0
+- passing, parentless/unscored parent, best -> 1.0 (a draft that took the lead)
+- passing but no improvement               -> 0.25 (working code, no progress)
+- failing/buggy                             -> 0.0
 - parked/abandoned/pending             -> None  (not the model's doing; skip)
 """
 
@@ -36,9 +36,9 @@ def candidate_reward(
     None = no update (no arm recorded, or a non-terminal/harness failure)."""
     if not candidate.backend.model:
         return None
-    if candidate.status == "buggy":
+    if candidate.status in ("failing", "buggy"):
         return 0.0
-    if candidate.status != "ok":
+    if candidate.status != "passing":
         return None
     val = candidate.val_score
     if val is None:

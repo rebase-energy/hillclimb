@@ -38,7 +38,7 @@ from tests.test_watch import make_run_with_search
 
 def cand(
     cid: str, operator: str = "improve", parent: str | None = None, score: float | None = None,
-    status: str = "ok", t: int = 0, **kwargs,
+    status: str = "passing", t: int = 0, **kwargs,
 ) -> Candidate:
     """A candidate created at minute `t` and finished a minute later."""
     return Candidate(
@@ -627,7 +627,7 @@ async def test_chart_defaults_to_holdout_when_the_search_scores_one(tree_workspa
     write_search_meta(search_dir, meta)
     journal = Journal(search_dir / "journal.jsonl")
     journal.candidate_result(Candidate(
-        candidate_id="c100", operator="draft", status="ok",
+        candidate_id="c100", operator="draft", status="passing",
         trials=[mk_trial(val_score=0.5, holdout_score=0.6)],
     ))
     app = ChartApp(config, "r1/circle-packing")

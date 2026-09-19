@@ -81,7 +81,7 @@ def test_debug_path(task, config):
     assert "boom" in backend.requests[1].prompt  # stderr tail injected
     debug_node = journal.get("c002")
     assert debug_node.parent_id == "c001"
-    assert debug_node.status == "ok"
+    assert debug_node.status == "passing"
 
 
 def test_debug_depth_cap_then_redraft(task, config):
@@ -131,7 +131,7 @@ def test_contract_violation_no_solution(task, config):
     searcher, journal, _ = make_searcher(task, config, backend, max_candidates=3)
     searcher.run()
     assert journal.get("c001").status == "abandoned"
-    assert journal.get("c002").status == "ok"
+    assert journal.get("c002").status == "passing"
 
 
 def test_prompt_contents(task, config):
@@ -209,7 +209,7 @@ def test_stop_is_graceful_current_operator_finishes(task, config):
     with pytest.raises(StopRequested):
         searcher.run()
     # the operator that was in flight when stop arrived completed and scored
-    assert journal.get("c001").status == "ok"
+    assert journal.get("c001").status == "passing"
     assert journal.get("c001").val_score == 0.6
 
 
@@ -397,7 +397,7 @@ def test_ensemble_triggers_in_reserve_window(task, config):
     assert tgt.candidate_id == "c001"  # top candidate (val 0.7) is the lineage parent
     node = searcher.run_operator(op, tgt)
     assert node.operator == "ensemble"
-    assert node.status == "ok"
+    assert node.status == "passing"
     # candidates were seeded into the candidate_dir
     ws = Path(node.candidate_dir)
     assert (ws / "candidate_1.py").exists() and (ws / "candidate_2.py").exists()
@@ -448,7 +448,7 @@ def test_buggy_ensemble_gets_debugged_and_counts_as_success(task, config):
     op2, tgt2 = searcher.decide()
     assert op2 == "debug" and tgt2.candidate_id == bad.candidate_id
     fixed = searcher.run_operator(op2, tgt2)
-    assert fixed.status == "ok"
+    assert fixed.status == "passing"
     assert searcher._ensemble_succeeded() is True  # via the debug chain root
 
 
@@ -570,7 +570,7 @@ def test_holdout_split_report_never_lands_on_trial(task, config):
     searcher, journal, _ = make_searcher(task, config, backend, max_candidates=2)
     searcher.run()
     draft = journal.get("c001")
-    assert draft.status == "ok"
+    assert draft.status == "passing"
     assert draft.trials[0].report is None
 
 
@@ -581,7 +581,7 @@ def test_malformed_eval_result_ignored(task, config):
     searcher, journal, _ = make_searcher(task, config, backend, max_candidates=2)
     searcher.run()
     draft = journal.get("c001")
-    assert draft.status == "ok"
+    assert draft.status == "passing"
     assert draft.trials[0].report is None
 
 
@@ -712,7 +712,7 @@ def test_bare_number_result_has_no_report_and_does_not_crash(task, config):
     searcher, journal, _ = make_searcher(task, config, backend, max_candidates=2)
     searcher.run()
     draft = journal.get("c001")
-    assert draft.status == "ok"
+    assert draft.status == "passing"
     assert draft.val_score == 12.5
     assert draft.trials[0].report is None
 

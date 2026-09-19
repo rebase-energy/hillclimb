@@ -49,6 +49,21 @@ def test_router_field_level_precedence():
     assert action_route.model == "haiku"
 
 
+def test_router_sampling_precedence_and_explicit_empty_override():
+    config = Config(
+        backend="pi",
+        routing={
+            "default": RouteConfig(sampling={"temperature": 0.7}),
+            "draft": RouteConfig(sampling={"temperature": 1.0, "top_p": 0.95}),
+        },
+    )
+    router = Router(config)
+
+    assert router.resolve("draft").sampling == {"temperature": 1.0, "top_p": 0.95}
+    assert router.resolve("improve").sampling == {"temperature": 0.7}
+    assert router.resolve("draft", Route(sampling={})).sampling == {}
+
+
 def test_backend_pool_caches_and_wires_abort():
     abort = threading.Event()
     pool = BackendPool(abort=abort)
@@ -127,3 +142,41 @@ def test_no_routing_matches_default_backend_and_model(task, config):
     candidate = searcher.run_operator("draft", None)
     assert candidate.backend.name == "fake"
     assert backend.requests[0].model == config.model
+
+
+def test_search_threads_sampling_and_resumes_pi_debug_session(task, config):
+    backend = FakeBackend()
+    backend.name = "pi"
+    backend.queue(
+        script=ok_script(0.5),
+        result={"session_id": "pi-parent"},
+    )
+    backend.queue(script=ok_script(0.6), result={"session_id": "pi-child"})
+    sampling = {"temperature": 0.9}
+    config.backend = "pi"
+    config.routing = {
+        "default": RouteConfig(backend="pi", sampling=sampling),
+    }
+    pool = BackendPool()
+    pool.seed("pi", config.backend_auth, backend)
+    search_dir = create_search_dir(config.paths.runs_dir, "test-run")
+    searcher = GreedySearcher(
+        problem=task,
+        config=config,
+        journal=Journal(search_dir / "journal.jsonl"),
+        backend=backend,
+        executor=local_executor(),
+        budget=BudgetManager(3600, stop_margin_s=1),
+        search_dir=search_dir,
+        log=lambda *_: None,
+        router=Router(config),
+        backends=pool,
+    )
+
+    parent = searcher.run_operator("draft", None)
+    child = searcher.run_operator("debug", parent)
+
+    assert backend.requests[0].sampling == sampling
+    assert backend.requests[1].sampling == sampling
+    assert backend.requests[1].resume_session_id == "pi-parent"
+    assert child.backend.sampling == sampling

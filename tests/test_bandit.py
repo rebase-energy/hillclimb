@@ -21,7 +21,7 @@ from hillclimb.dirs import create_search_dir
 from tests.conftest import ok_script
 
 
-def cand(cid, operator="improve", parent=None, status="ok", val=None, model="m1", best=False):
+def cand(cid, operator="improve", parent=None, status="passing", val=None, model="m1", best=False):
     return Candidate(
         candidate_id=cid,
         parent_id=parent,

@@ -17,6 +17,10 @@ Contracts every policy must honor:
   through `observe()` in journal order, so `hillclimb resume` works.
 - Ensemble-style actions must carry their inputs in `inspiration_ids`; the
   harness copies those candidates' solutions into the new candidate_dir.
+- A policy never sees holdout: `PolicyInput.journal` is a `PolicyJournal`
+  (holdout-blind copies, unwritable) and `observe()` gets the candidate from
+  that view. A process that may be optimized — by hand or by a meta-search —
+  must not be able to select on the split that judges it.
 
 Harness-owned, NOT policy: candidate-dir creation, journal writes, prompt
 assembly, `OperatorRequest` construction, trials, holdout gating and scoring
@@ -47,6 +51,7 @@ class Route:
 
     backend: str | None = None
     model: str | None = None
+    sampling: dict[str, int | float] | None = None
 
 
 @dataclass(frozen=True)
@@ -89,15 +94,22 @@ class BudgetView:
 
 @dataclass(frozen=True)
 class PolicyInput:
-    """Read-only view of search state handed to the policy on every call.
-    The journal is shared by reference (scheduler-thread only); everything
-    else is a snapshot computed at call time."""
+    """Read-only view of search state handed to the policy on every call,
+    all of it a snapshot computed at call time. The journal is always a
+    `PolicyJournal` — holdout-blind and unwritable; a plain `Journal` passed
+    in is wrapped here, so no construction site can forget the mask."""
 
     journal: Journal
     inflight: tuple[InflightRef, ...]
     budget: BudgetView
     config: Config
     higher_is_better: bool
+
+    def __post_init__(self) -> None:
+        from hillclimb.journal import PolicyJournal
+
+        if not isinstance(self.journal, PolicyJournal):
+            object.__setattr__(self, "journal", PolicyJournal(self.journal))
 
 
 class SearchPolicy(Protocol):

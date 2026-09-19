@@ -33,7 +33,7 @@ def scored(journal: Journal, tmp_path: Path, cid: str, op: str, score: float,
     d.mkdir(parents=True, exist_ok=True)
     (d / "solution.py").write_text(code)
     cand = Candidate(
-        candidate_id=cid, operator=op, status="ok", parent_id=parent_id,
+        candidate_id=cid, operator=op, status="passing", parent_id=parent_id,
         candidate_dir=str(d), policy_meta=policy_meta or {},
         trials=[mk_trial(val_score=score, submission_ok=True, metrics=metrics or {})],
     )
@@ -131,7 +131,7 @@ def test_lower_is_better_flips_fitness(config, tmp_path):
 
 def test_buggy_and_code_less_floor_are_not_programs(config, tmp_path):
     journal = Journal(tmp_path / "j.jsonl")
-    journal.candidate_result(Candidate(candidate_id="c000", operator="baseline", status="ok",
+    journal.candidate_result(Candidate(candidate_id="c000", operator="baseline", status="passing",
                                        trials=[mk_trial(val_score=0.3, submission_ok=True)]))
     journal.candidate_result(Candidate(candidate_id="c001", operator="draft", status="buggy",
                                        candidate_dir=str(tmp_path)))

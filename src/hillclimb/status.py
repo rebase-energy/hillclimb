@@ -36,15 +36,24 @@ class CandidateCounts(BaseModel):
     eight trials is still one candidate here."""
 
     total: int = 0
-    ok: int = 0
+    passing: int = 0
+    failing: int = 0
     buggy: int = 0
     pruned: int = 0
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_ok_count(cls, data):
+        if isinstance(data, dict) and "ok" in data:
+            data = dict(data)
+            data.setdefault("passing", data.pop("ok"))
+        return data
 
 
 class CurrentCandidate(BaseModel):
     candidate_id: str
     operator: str  # the creating operator, or `tune` for an extra trial
-    phase: str  # agent | exec | holdout | waiting-slot
+    phase: str  # agent | exec | tests | holdout | waiting-slot
     candidate_dir: str
     agent_pid: int | None = None
     trial_index: int | None = None  # set for tune jobs (one candidate, several in flight)

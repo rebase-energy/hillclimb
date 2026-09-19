@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from hillclimb.project import (
     find_hillclimb_dir,
@@ -124,14 +124,29 @@ class RouteConfig(BaseModel):
     """Per-operator backend/model override (the `routing:` config block).
     None fields inherit the global `backend`/`model`/`backend_auth` scalars."""
 
+    model_config = ConfigDict(extra="forbid")
+
     backend: str | None = None
     model: str | None = None
     backend_auth: str | None = None
+    sampling: dict[str, int | float] | None = None
     # model POOL: when set (2+ entries), a UCB1 bandit picks the model per
     # call, rewarded by whether the candidate improved on its parent
     # (bandit.py). Takes precedence over `model` in the same layer; a
     # single-entry pool behaves like `model`.
     models: list[str] | None = None
+
+    @field_validator("sampling")
+    @classmethod
+    def _finite_sampling(cls, value: dict[str, int | float] | None):
+        if value is None:
+            return None
+        import math
+
+        bad = [name for name, number in value.items() if not math.isfinite(number)]
+        if bad:
+            raise ValueError(f"sampling values must be finite: {', '.join(bad)}")
+        return value
 
 
 class HoldoutConfig(BaseModel):
@@ -142,7 +157,7 @@ class HoldoutConfig(BaseModel):
     climb_on: str = "val"  # seam only; 'holdout' climbing is a future experiment
     selection: str = "rank-blend"  # rank-blend | holdout | val
     # holdout hygiene: only candidates whose val score ranks top-k get a
-    # holdout evaluation (0 = score every ok candidate). Non-top-k candidates
+    # holdout evaluation (0 = score every passing candidate). Non-top-k candidates
     # climb on val but cannot win rank-blend selection.
     top_k: int = 5
 
@@ -245,6 +260,24 @@ class EinsteinArenaConfig(BaseModel):
     request_timeout_s: float = Field(default=30.0, gt=0, le=300)
 
 
+class SimilarityConfig(BaseModel):
+    """Similarity scores `hillclimb similarity scores` computes, name -> params.
+    A name is a registry entry (solution-card, api-calls, code-tokens), a
+    `.py` file (relative to the folder holding the hillclimb dir), or
+    `module:Class` — see similarity_scores/__init__.py."""
+
+    scores: dict[str, dict] = Field(default_factory=lambda: {
+        "solution-card": {},
+        "api-calls": {},
+    })
+
+
+class PiConfig(BaseModel):
+    """pi backend settings shared by routed pi instances."""
+
+    models_file: Path | None = None
+
+
 def _read_yaml(path: Path) -> dict:
     if not path.exists():
         return {}
@@ -293,6 +326,8 @@ class Config(BaseModel):
     store: StoreConfig = StoreConfig()
     emflow: EmflowConfig = EmflowConfig()
     einsteinarena: EinsteinArenaConfig = EinsteinArenaConfig()
+    pi: PiConfig = PiConfig()
+    similarity: SimilarityConfig = SimilarityConfig()
     learning: LearningConfig = LearningConfig()
     report: ReportConfig = ReportConfig()
     operators: OperatorsConfig = OperatorsConfig()
@@ -302,15 +337,34 @@ class Config(BaseModel):
 
     @model_validator(mode="after")
     def _check_backend_auth(self):
-        """`openrouter` only means something to the codex backend; anywhere
-        else it would silently run as `subscription`, and a typo would too."""
+        """Reject auth/sampling combinations a backend would silently ignore.
+
+        `openrouter` is implemented by codex and pi. Sampling is implemented
+        only by pi's explicitly loaded provider-payload extension.
+        """
+        default_route = self.routing.get("default")
+
+        def effective_backend(name: str, route: RouteConfig) -> str:
+            if route.backend:
+                return route.backend
+            if name != "default" and default_route and default_route.backend:
+                return default_route.backend
+            return self.backend
+
+        def effective_auth(name: str, route: RouteConfig) -> str:
+            if route.backend_auth:
+                return route.backend_auth
+            if name != "default" and default_route and default_route.backend_auth:
+                return default_route.backend_auth
+            return self.backend_auth
+
         layers = [("backend_auth", self.backend, self.backend_auth)]
         for name, route in self.routing.items():
             layers.append(
                 (
                     f"routing.{name}",
-                    route.backend or self.backend,
-                    route.backend_auth or self.backend_auth,
+                    effective_backend(name, route),
+                    effective_auth(name, route),
                 )
             )
         for where, backend, auth in layers:
@@ -319,10 +373,19 @@ class Config(BaseModel):
                     f"{where}: unknown backend_auth {auth!r} "
                     f"(one of {', '.join(BACKEND_AUTHS)})"
                 )
-            if auth == "openrouter" and backend != "codex":
+            if auth == "openrouter" and backend not in {"codex", "pi"}:
                 raise ValueError(
-                    f"{where}: backend_auth: openrouter needs backend: codex, "
+                    f"{where}: backend_auth: openrouter needs backend: codex or pi, "
                     f"not {backend!r}"
+                )
+        for name, route in self.routing.items():
+            backend = effective_backend(name, route)
+            sampling = route.sampling
+            if sampling is None and default_route is not None:
+                sampling = default_route.sampling
+            if sampling and backend != "pi":
+                raise ValueError(
+                    f"routing.{name}: sampling needs backend: pi, not {backend!r}"
                 )
         return self
 
@@ -345,6 +408,10 @@ class Config(BaseModel):
         if path is not None:
             config = cls.model_validate(_read_yaml(path))
             config.hillclimb_dir = None
+            if (path.parent / ".env").exists():
+                _load_dotenv(path.parent / ".env")
+            if config.pi.models_file is not None:
+                config.pi.models_file = path.parent / config.pi.models_file.expanduser()
         else:
             found = find_hillclimb_dir()
             if found is None and require_dir:
@@ -369,6 +436,11 @@ class Config(BaseModel):
                 setattr(getattr(config, section), field, value)
             else:
                 setattr(config, key, value)
+        # Keyword overrides are applied after loading so they need the same
+        # validation pass as file values (including routed sampling rules).
+        hillclimb_dir = config.hillclimb_dir
+        config = cls.model_validate(config.model_dump())
+        config.hillclimb_dir = hillclimb_dir
         config._resolve_paths()
         return config
 
@@ -378,14 +450,17 @@ class Config(BaseModel):
         pydantic validation at each level — the one way an experiment arm
         or `hillclimb run --set` changes a setting. Unknown paths raise
         KeyError naming the offending key."""
+        working = self.model_copy(deep=True)
         for key, value in overrides.items():
             key = LEGACY_SETTINGS.get(key, key)
             parts = key.split(".")
-            target: object = self
+            target: object = working
             for part in parts[:-1]:
                 if isinstance(target, dict):
                     target = target.setdefault(part, {})
                 elif isinstance(target, BaseModel) and part in type(target).model_fields:
+                    if part == "sampling" and getattr(target, part) is None:
+                        setattr(target, part, {})
                     target = getattr(target, part)
                 else:
                     raise KeyError(f"unknown config setting {key!r}")
@@ -397,6 +472,17 @@ class Config(BaseModel):
                 setattr(target, leaf, _coerce(value, annotation))
             else:
                 raise KeyError(f"unknown config setting {key!r}")
+
+        # Dotted traversal may have built raw dictionaries inside typed
+        # sections (notably routing.<op>.sampling). Re-validate once so
+        # experiment/CLI overrides have exactly the same guarantees as YAML.
+        hillclimb_dir = self.hillclimb_dir
+        validated = type(self).model_validate(working.model_dump(warnings=False))
+        for field in type(self).model_fields:
+            if field != "hillclimb_dir":
+                setattr(self, field, getattr(validated, field))
+        self.hillclimb_dir = hillclimb_dir
+        self._resolve_paths()
 
 
     def _resolve_paths(self) -> None:
@@ -411,9 +497,10 @@ class Config(BaseModel):
             (self.paths, "problems_dir"),
             (self.paths, "prompts_dir"),
             (self.store, "sqlite_path"),
+            (self.pi, "models_file"),
         ):
             value: Path = getattr(section, name)
-            if not value.is_absolute():
+            if value is not None and not value.is_absolute():
                 setattr(section, name, self.hillclimb_dir.parent / value)
 
 

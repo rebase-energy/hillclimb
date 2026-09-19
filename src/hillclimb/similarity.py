@@ -643,7 +643,10 @@ def _finish(
         _p95([p.structural for p in placed]),
         _p95([p.lineage for p in placed]),
     )
-    scored = [p for p in placed if p.candidate.val_score is not None and p.candidate.status == "ok"]
+    scored = [
+        p for p in placed
+        if p.candidate.val_score is not None and p.candidate.status == "passing"
+    ]
     scored.sort(key=lambda p: p.candidate.val_score, reverse=not higher_is_better)  # type: ignore[arg-type,return-value]
     bins = {
         (p.search_id, p.candidate.candidate_id): i * N_BINS // len(scored) for i, p in enumerate(scored)
@@ -771,7 +774,7 @@ def shared_seed_references(
 def _run_champion(searches: Sequence[SearchInput], higher_is_better: bool) -> tuple[SearchInput, Candidate] | None:
     pool = [
         (s, c) for s in searches for c in s.candidates
-        if c.val_score is not None and c.status == "ok" and not c.pruned
+        if c.val_score is not None and c.status == "passing" and not c.pruned
     ]
     if not pool:
         return None
