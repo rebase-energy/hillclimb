@@ -15,7 +15,7 @@ from hillclimb.evaluation import CandidateEvaluator, eval_result_for
 from hillclimb.journal import Journal
 from hillclimb.problem import UnitTestSpec
 from hillclimb.run import load_search_meta
-from hillclimb.search import GreedySearcher
+from tests.harness_factory import SearchRig
 from hillclimb.unit_tests import (
     UnitTestInfrastructureError,
     UnitTestRunner,
@@ -156,7 +156,7 @@ def test_failing_candidate_is_debugged_but_never_selected(tmp_path, task, config
         config=config,
         unit_test_runner=UnitTestRunner(Path(sys.executable), spec),
     )
-    searcher = GreedySearcher(
+    searcher = SearchRig(
         problem=task,
         config=config,
         journal=journal,

@@ -26,3 +26,82 @@ def make_harness(task, config, backend, *, name: str = "test-search", **kwargs):
         **kwargs,
     )
     return harness, journal, search_dir
+
+
+# --- a policy-driven rig for tests -----------------------------------------
+
+from hillclimb.candidate import Candidate  # noqa: E402
+from hillclimb.loop import PolicyLoop  # noqa: E402
+from hillclimb.policies.greedy import GreedyPolicy  # noqa: E402
+from hillclimb.policy import TUNE_ACTION, Action, SearchPolicy  # noqa: E402
+
+
+class SearchRig(Harness):
+    """A harness with a policy attached, for tests that poke at both: the
+    serial `run_operator(op, target)` (what the policy WOULD attach to that
+    operator, run on the calling thread), `decide()`, and the greedy
+    introspection helpers. Production code never sees this class — a real
+    search is `PolicySearch(Harness, PolicyLoop(policy))`.
+
+    `run()` with no action runs the whole search; with one it is
+    `Harness.run(action)`."""
+
+    def __init__(self, *args, complexity_start: int = 0, policy: SearchPolicy | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.complexity_start = complexity_start
+        self.policy = policy or GreedyPolicy(complexity_start=complexity_start)
+        self._loop = PolicyLoop(self.policy)
+        self._loop.catch_up(self)  # the resume contract: the policy replays the journal
+
+    def run(self, action: Action | None = None):
+        if action is not None:
+            return super().run(action)
+        return self.execute(self._loop)
+
+    def run_operator(self, operator: str, target: Candidate | None) -> Candidate:
+        if operator == TUNE_ACTION:
+            job = self._prepare_tune(self._action_for(operator, target))
+            if job is None:
+                raise ValueError(f"{target.candidate_id if target else None} cannot be tuned")
+        else:
+            job = self._prepare(self._action_for(operator, target))
+        try:
+            return self._commit(self._execute_job(job))
+        finally:
+            live = self.journal.candidates.get(job.candidate.candidate_id)
+            self._loop.observe(self, live.holdout_blind() if live is not None else None)
+
+    def _action_for(self, operator: str, target: Candidate | None) -> Action:
+        target_id = target.candidate_id if target else None
+        maker = getattr(self.policy, "action_for", None)
+        if maker is not None:
+            return maker(self._view(), operator, target_id)
+        return Action(operator=operator, target_id=target_id)
+
+    def decide(self) -> tuple[str, Candidate | None]:
+        action = self.policy.propose(self._view())
+        if action is None:
+            return ("hold", None)
+        target = self.journal.candidates.get(action.target_id) if action.target_id else None
+        return (action.operator, target)
+
+    def _debuggable_tip(self) -> Candidate | None:
+        return self.policy.debuggable_tip(self._view())
+
+    def _prospective_branches(self) -> int:
+        return self.policy.prospective_branches(self._view())
+
+    def _in_ensemble_window(self) -> bool:
+        return self.policy.in_ensemble_window(self._view())
+
+    def _should_ensemble(self) -> bool:
+        return self.policy.should_ensemble(self._view())
+
+    def _ensemble_succeeded(self) -> bool:
+        return self.policy.ensemble_succeeded(self._view())
+
+    def _ensemble_candidates(self) -> list[Candidate]:
+        return self.policy.ensemble_candidates(self._view())
+
+    def _draft_complexity(self) -> str:
+        return self.policy.draft_complexity(self._view())

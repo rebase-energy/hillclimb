@@ -122,7 +122,7 @@ def _view(case: JournalCase, config: Config, fraction: float) -> PolicyInput:
 
 def _replayed(make_policy: Callable[[], SearchPolicy], case: JournalCase, config: Config) -> SearchPolicy:
     """A fresh policy that has observed the journal in order — exactly what
-    GreedySearcher does on construction."""
+    `PolicyLoop.catch_up` does when a search starts."""
     policy = make_policy()
     view = _view(case, config, 1.0)
     for candidate in view.journal.candidates.values():

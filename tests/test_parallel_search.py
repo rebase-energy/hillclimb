@@ -14,7 +14,7 @@ from hillclimb.backends.fake import FakeBackend
 from hillclimb.budget import BudgetManager
 from tests.conftest import local_executor
 from hillclimb.journal import Journal
-from hillclimb.search import GreedySearcher
+from tests.harness_factory import SearchRig
 from hillclimb.dirs import create_search_dir
 from tests.conftest import ok_script
 
@@ -41,7 +41,7 @@ def make_searcher(task, config, backend, **kwargs):
     search_dir = create_search_dir(config.paths.runs_dir, "test-search")
     journal = Journal(search_dir / "journal.jsonl")
     kwargs.setdefault("budget", BudgetManager(3600, stop_margin_s=1))
-    searcher = GreedySearcher(
+    searcher = SearchRig(
         problem=task,
         config=config,
         journal=journal,
@@ -129,7 +129,7 @@ class TestHoldoutTopK:
             executor=local_executor(), problem=problem, config=config,
             holdout_scorer=FileHoldoutScorer(), journal=journal,
         )
-        searcher = GreedySearcher(
+        searcher = SearchRig(
             problem=problem,
             config=config,
             journal=journal,
@@ -689,7 +689,7 @@ class TestIncumbentSeeding:
 
         from hillclimb.budget import BudgetManager as BM
 
-        resumed = GreedySearcher(
+        resumed = SearchRig(
             problem=task, config=config, journal=Journal(search_dir / "journal.jsonl"),
             backend=backend, executor=local_executor(),
             budget=BM(3600, stop_margin_s=1), search_dir=search_dir,
@@ -713,7 +713,7 @@ def test_worker_crash_does_not_hang_the_scheduler(task, config):
         def execute(self, script, candidate_dir, timeout_s, seed=None):
             raise RuntimeError("executor blew up")
 
-    searcher = GreedySearcher(
+    searcher = SearchRig(
         problem=task, config=config, journal=journal, backend=backend,
         executor=ExplodingExecutor(),
         budget=BudgetManager(3600, stop_margin_s=1),

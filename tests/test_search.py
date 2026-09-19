@@ -13,7 +13,8 @@ from hillclimb.control import ControlCommand, write_command
 from tests.conftest import executor_for, local_executor
 from hillclimb.evaluation import CandidateEvaluator
 from hillclimb.journal import Journal
-from hillclimb.search import GreedySearcher, ParkedSearch, StopRequested
+from tests.harness_factory import SearchRig
+from hillclimb.search import ParkedSearch, StopRequested
 from hillclimb.dirs import create_search_dir
 from tests.conftest import CRASH_SCRIPT, ok_script
 
@@ -21,7 +22,7 @@ from tests.conftest import CRASH_SCRIPT, ok_script
 def make_searcher(task, config, backend, max_candidates=10, budget_s=3600):
     search_dir = create_search_dir(config.paths.runs_dir, "test-run")
     journal = Journal(search_dir / "journal.jsonl")
-    searcher = GreedySearcher(
+    searcher = SearchRig(
         problem=task,
         config=config,
         journal=journal,
@@ -114,7 +115,7 @@ def test_rate_limit_parks_run(task, config):
     backend2.queue(script=ok_script(0.7), notes="draft after resume\n")
     backend2.queue(script=ok_script(0.9), notes="another\n")
     search_dir2_journal = Journal(search_dir / "journal.jsonl")
-    searcher2 = GreedySearcher(
+    searcher2 = SearchRig(
         problem=task, config=config, journal=search_dir2_journal, backend=backend2,
         executor=local_executor(),
         budget=BudgetManager(3600, stop_margin_s=1),
@@ -200,7 +201,7 @@ def test_stop_is_graceful_current_operator_finishes(task, config):
     backend = StopDroppingBackend(search_dir_probe)
     backend.queue(script=ok_script(0.6), notes="draft\n")
     journal = Journal(search_dir_probe / "journal.jsonl")
-    searcher = GreedySearcher(
+    searcher = SearchRig(
         problem=task, config=config, journal=journal, backend=backend,
         executor=local_executor(),
         budget=BudgetManager(3600, stop_margin_s=1),
@@ -292,7 +293,7 @@ def make_holdout_searcher(task, config, backend, tmp_path, max_candidates=10):
         executor=executor_for(task), problem=task, config=config,
         holdout_scorer=FileHoldoutScorer(), journal=journal,
     )
-    searcher = GreedySearcher(
+    searcher = SearchRig(
         problem=task, config=config, journal=journal, backend=backend,
         executor=evaluator.executor,
         budget=BudgetManager(3600, stop_margin_s=1),
@@ -366,7 +367,7 @@ def make_ensemble_searcher(task, config, backend, spent_frac=0.0, max_candidates
     """Searcher with controllable budget position (spent_frac of total)."""
     search_dir = create_search_dir(config.paths.runs_dir, "test-run")
     journal = Journal(search_dir / "journal.jsonl")
-    searcher = GreedySearcher(
+    searcher = SearchRig(
         problem=task, config=config, journal=journal, backend=backend,
         executor=local_executor(),
         budget=BudgetManager(1000, stop_margin_s=1, spent_s=1000 * spent_frac),
@@ -499,7 +500,7 @@ def test_stale_pending_node_recovered_on_resume(task, config):
 
     backend = FakeBackend()
     backend.queue(script=ok_script(0.5), notes="post-crash draft\n")
-    searcher = GreedySearcher(
+    searcher = SearchRig(
         problem=task, config=config, journal=journal, backend=backend,
         executor=local_executor(),
         budget=BudgetManager(3600, stop_margin_s=1),
@@ -784,7 +785,7 @@ def make_evaluator_searcher(config, tmp_path, backend, evaluate_py=EVALUATOR_EVA
     )
     search_dir = create_search_dir(config.paths.runs_dir, "eval-run")
     journal = Journal(search_dir / "journal.jsonl")
-    searcher = GreedySearcher(
+    searcher = SearchRig(
         problem=problem,
         config=config,
         journal=journal,

@@ -1,6 +1,6 @@
 """Shared candidate-evaluation helpers: trial execution, report trust,
 holdout scoring, and score-comparison semantics — extracted from
-`GreedySearcher` so every search engine (greedy, GEPA, future runners)
+the searcher so every search engine (greedy, GEPA, future runners)
 interprets verifier results identically.
 
 Concurrency contract

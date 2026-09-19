@@ -14,7 +14,7 @@ from hillclimb.backends.fake import FakeBackend
 from hillclimb.budget import BudgetManager
 from hillclimb.candidate import Candidate
 from hillclimb.journal import Journal
-from hillclimb.search import GreedySearcher
+from tests.harness_factory import SearchRig
 from hillclimb.dirs import create_search_dir
 from tests.conftest import executor_for, ok_script
 
@@ -87,7 +87,7 @@ def test_noise_floor_from_repeated_trials(tmp_path):
 def make_searcher(task, config, backend=None, **kwargs):
     search_dir = create_search_dir(config.paths.runs_dir, "noise-run")
     journal = Journal(search_dir / "journal.jsonl")
-    searcher = GreedySearcher(
+    searcher = SearchRig(
         problem=task, config=config, journal=journal,
         backend=backend or FakeBackend(), executor=executor_for(task),
         budget=BudgetManager(3600, stop_margin_s=1),

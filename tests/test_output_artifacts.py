@@ -18,7 +18,7 @@ from hillclimb.journal import Journal
 from hillclimb.integrations.gepa.searcher import GEPASearcher
 from hillclimb.problem import ProblemSpec
 from hillclimb.runtime import RUN_SOLUTION
-from hillclimb.search import GreedySearcher
+from tests.harness_factory import SearchRig
 from tests.gepa_fakes import FakeGEPADriver
 
 
@@ -118,7 +118,7 @@ def test_greedy_runner_preserves_json_artifact(tmp_path, task, config):
     backend = FakeBackend()
     backend.queue(script=json_solution(0.8), notes="json draft\n")
     search_dir = create_search_dir(tmp_path / "runs" / "greedy", "s")
-    searcher = GreedySearcher(
+    searcher = SearchRig(
         problem=problem,
         config=config,
         journal=Journal(search_dir / "journal.jsonl"),

@@ -11,7 +11,8 @@ from hillclimb.backends.fake import FakeBackend
 from hillclimb.budget import BudgetManager
 from tests.conftest import local_executor
 from hillclimb.journal import Journal
-from hillclimb.search import GreedySearcher, ParkedSearch
+from tests.harness_factory import SearchRig
+from hillclimb.search import ParkedSearch
 from hillclimb.status import (
     SearchStatus,
     StatusWriter,
@@ -112,7 +113,7 @@ def make_searcher_with_status(task, config, backend, budget_s=3600):
     status = StatusWriter(
         search_dir, SearchStatus(search_id="test-search", state="running", pid=os.getpid()), budget=budget
     )
-    searcher = GreedySearcher(
+    searcher = SearchRig(
         problem=task,
         config=config,
         journal=Journal(search_dir / "journal.jsonl"),

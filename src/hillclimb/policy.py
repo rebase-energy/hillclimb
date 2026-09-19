@@ -2,7 +2,7 @@
 else is the harness.
 
 A `SearchPolicy` proposes `Action`s over a read-only `PolicyInput`; the
-harness (`GreedySearcher`) materializes each action into a candidate dir, prompt,
+harness (`hillclimb.harness.Harness`) materializes each action into a candidate dir, prompt,
 and agent call, executes it, and journals the outcome.
 
 Contracts every policy must honor:

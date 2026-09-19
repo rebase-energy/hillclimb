@@ -19,7 +19,7 @@ from hillclimb.dirs import create_search_dir
 from hillclimb.journal import Journal
 from hillclimb.policies import get_policy
 from hillclimb.policies.openevolve import OpenEvolvePolicy
-from hillclimb.search import GreedySearcher
+from tests.harness_factory import SearchRig
 from tests.conftest import local_executor, ok_script
 from tests.test_policy import make_view
 
@@ -150,7 +150,7 @@ def test_openevolve_policy_drives_search_end_to_end(task, config):
     backend.queue(script=ok_script(0.8), notes="three\n")
     search_dir = create_search_dir(config.paths.runs_dir, "test-run")
     policy = get_policy("openevolve", PARAMS)
-    searcher = GreedySearcher(
+    searcher = SearchRig(
         problem=task, config=config, journal=Journal(search_dir / "journal.jsonl"),
         backend=backend, executor=local_executor(), budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir, max_candidates=4, log=lambda *_: None, policy=policy,

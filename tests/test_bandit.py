@@ -16,7 +16,7 @@ from hillclimb.config import Config, RouteConfig
 from tests.conftest import local_executor
 from hillclimb.journal import Journal
 from hillclimb.routing import Router
-from hillclimb.search import GreedySearcher
+from tests.harness_factory import SearchRig
 from hillclimb.dirs import create_search_dir
 from tests.conftest import ok_script
 
@@ -125,7 +125,7 @@ def test_router_observe_credits_pool_arm_only():
 def make_searcher(task, config, backend, search_dir=None, router=None):
     search_dir = search_dir or create_search_dir(config.paths.runs_dir, "test-run")
     journal = Journal(search_dir / "journal.jsonl")
-    searcher = GreedySearcher(
+    searcher = SearchRig(
         problem=task,
         config=config,
         journal=journal,

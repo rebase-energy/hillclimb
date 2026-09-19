@@ -54,7 +54,8 @@ from hillclimb.run import (
     RunMeta,
     search_ref,
 )
-from hillclimb.search import GreedySearcher
+from hillclimb.harness import Harness
+from hillclimb.policy import Action
 from hillclimb.status import read_status
 from hillclimb.store import (
     DataStore,
@@ -3450,7 +3451,7 @@ def smoke(
     backends.seed(config.backend, config.backend_auth, backend_instance)
     journal = Journal(open_store(config).journal(key_for(search_dir)))
     evaluator = build_evaluator(config, problem, search_dir, journal, log=typer.echo)
-    searcher = GreedySearcher(
+    harness = Harness(
         problem=problem,
         config=config,
         journal=journal,
@@ -3468,7 +3469,13 @@ def smoke(
         "this can take several minutes."
     )
     typer.echo("To follow it live, open another terminal and run: hillclimb watch")
-    candidate = searcher.run_operator("draft", None)
+    outcome = harness.run(Action(operator="draft"))
+    if outcome.candidate is None:
+        typer.echo(f"the harness refused the draft: {outcome.ticket.rejected}")
+        raise typer.Exit(1)
+    # the journal's own record: the smoke report shows holdout, which a
+    # loop-facing Outcome never carries
+    candidate = journal.get(outcome.candidate.candidate_id)
     trial = candidate.last_trial
     typer.echo(f"\ncandidate:   {candidate.candidate_id} status={candidate.status}")
     typer.echo(f"val_score:   {candidate.val_score}")

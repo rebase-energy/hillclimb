@@ -209,9 +209,12 @@ shim).
   hard deadline is re-checked on every poll. `PolicyLoop` is the built-in
   loop (fill free slots with `policy.propose`, `observe` every outcome,
   `catch_up` replays the journal once per candidate — the resume contract).
-  `search.GreedySearcher(Harness)` is a temporary shim (old ctor, `run()`,
-  `run_operator`, `decide`, the `_ensemble_*` delegates) until tests move to
-  `tests/harness_factory.make_harness` + `harness.run(Action(...))`
+  A policy-driven search in production is `search.PolicySearch(harness,
+  loop)` (what `build_search_strategy` returns; `.harness`, `.loop.policy`);
+  `GreedySearcher` no longer exists. Tests that poke at harness and policy
+  together use `tests/harness_factory.SearchRig` (a `Harness` subclass with a
+  policy attached: serial `run_operator`, `decide`, the greedy `_ensemble_*`
+  helpers) or, for harness-only tests, `make_harness` + `harness.run(Action(...))`
 - Budget dimensions: the budget is the USER's in every dimension — the clock
   (`budget.total_s`), `budget.max_evaluations`, `budget.max_tokens`,
   `budget.max_cost_usd` (0 = no limit). An *evaluation* is a verifier trial

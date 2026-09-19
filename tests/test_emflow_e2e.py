@@ -16,7 +16,7 @@ from hillclimb.budget import BudgetManager  # noqa: E402
 from hillclimb.executor import CommandExecutor, CommandHoldoutScorer  # noqa: E402
 from hillclimb.journal import Journal  # noqa: E402
 from hillclimb.problem import load_problem  # noqa: E402
-from hillclimb.search import GreedySearcher  # noqa: E402
+from tests.harness_factory import SearchRig  # noqa: E402
 
 PROBLEM = "swedish-temperatures:ar"
 
@@ -74,7 +74,7 @@ def test_full_emflow_search(config, tmp_path):
         ),
         journal=journal,
     )
-    searcher = GreedySearcher(
+    searcher = SearchRig(
         problem=spec,
         config=config,
         journal=journal,

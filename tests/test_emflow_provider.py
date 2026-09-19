@@ -96,12 +96,12 @@ def test_emflow_contract_prompt(econfig):
     from hillclimb.budget import BudgetManager
     from tests.conftest import local_executor
     from hillclimb.journal import Journal
-    from hillclimb.search import GreedySearcher
+    from tests.harness_factory import SearchRig
 
     spec = load_problem("emflow://swedish-temperatures:ar", econfig)
     search_dir = econfig.paths.runs_dir / "prompt-test"
     (search_dir / "candidates").mkdir(parents=True)
-    searcher = GreedySearcher(
+    searcher = SearchRig(
         problem=spec, config=econfig, journal=Journal(search_dir / "journal.jsonl"),
         backend=FakeBackend(), executor=local_executor(),
         budget=BudgetManager(600, stop_margin_s=1), search_dir=search_dir,
@@ -120,9 +120,9 @@ def test_emflow_contract_prompt(econfig):
 
 def test_quantile_note_literal():
     from hillclimb.problem import ProblemSpec
-    from hillclimb.search import GreedySearcher
+    from tests.harness_factory import SearchRig
 
-    note = GreedySearcher._quantile_note
+    note = SearchRig._quantile_note
     spec = ProblemSpec(
         problem_id="q", problem_dir=Path("."), data_dir=Path("."),
         description="", metric_name="pinball", higher_is_better=False,

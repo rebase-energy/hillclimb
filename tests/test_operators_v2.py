@@ -10,7 +10,7 @@ from hillclimb.backends.fake import FakeBackend
 from hillclimb.budget import BudgetManager
 from tests.conftest import local_executor
 from hillclimb.journal import Journal
-from hillclimb.search import GreedySearcher
+from tests.harness_factory import SearchRig
 from hillclimb.dirs import create_search_dir
 from tests.conftest import ok_script
 
@@ -18,7 +18,7 @@ from tests.conftest import ok_script
 def make_searcher(task, config, backend, max_candidates=10):
     search_dir = create_search_dir(config.paths.runs_dir, "test-run")
     journal = Journal(search_dir / "journal.jsonl")
-    searcher = GreedySearcher(
+    searcher = SearchRig(
         problem=task,
         config=config,
         journal=journal,

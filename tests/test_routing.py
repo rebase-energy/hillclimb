@@ -14,7 +14,7 @@ from tests.conftest import local_executor
 from hillclimb.journal import Journal
 from hillclimb.policy import Route
 from hillclimb.routing import BackendPool, ResolvedRoute, Router
-from hillclimb.search import GreedySearcher
+from tests.harness_factory import SearchRig
 from hillclimb.dirs import create_search_dir
 from tests.conftest import ok_script
 
@@ -92,7 +92,7 @@ def test_search_routes_operators_to_distinct_backends(task, config):
 
     search_dir = create_search_dir(config.paths.runs_dir, "test-run")
     journal = Journal(search_dir / "journal.jsonl")
-    searcher = GreedySearcher(
+    searcher = SearchRig(
         problem=task,
         config=config,
         journal=journal,
@@ -127,7 +127,7 @@ def test_no_routing_matches_default_backend_and_model(task, config):
     pool = BackendPool()
     pool.seed("fake", config.backend_auth, backend)
     search_dir = create_search_dir(config.paths.runs_dir, "test-run")
-    searcher = GreedySearcher(
+    searcher = SearchRig(
         problem=task,
         config=config,
         journal=Journal(search_dir / "journal.jsonl"),
@@ -160,7 +160,7 @@ def test_search_threads_sampling_and_resumes_pi_debug_session(task, config):
     pool = BackendPool()
     pool.seed("pi", config.backend_auth, backend)
     search_dir = create_search_dir(config.paths.runs_dir, "test-run")
-    searcher = GreedySearcher(
+    searcher = SearchRig(
         problem=task,
         config=config,
         journal=Journal(search_dir / "journal.jsonl"),

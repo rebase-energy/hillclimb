@@ -18,7 +18,7 @@ from hillclimb.journal import Journal
 from hillclimb.policies import get_policy
 from hillclimb.policies.greedy import GreedyPolicy
 from hillclimb.policy import Action, BudgetView, InflightRef, PolicyInput
-from hillclimb.search import GreedySearcher
+from tests.harness_factory import SearchRig
 from hillclimb.dirs import create_search_dir
 from tests.conftest import ok_script
 
@@ -191,7 +191,7 @@ def test_custom_policy_drives_search(task, config):
     backend.queue(script=ok_script(0.7), notes="two\n")
     search_dir = create_search_dir(config.paths.runs_dir, "test-run")
     policy = ScriptedPolicy()
-    searcher = GreedySearcher(
+    searcher = SearchRig(
         problem=task,
         config=config,
         journal=Journal(search_dir / "journal.jsonl"),
@@ -222,7 +222,7 @@ def test_policy_replay_on_resume(task, config, tmp_path):
     add_candidate(journal, "c000", "baseline", val_score=0.1)
     add_candidate(journal, "c001", "draft", val_score=0.5)
     policy = ScriptedPolicy()
-    GreedySearcher(
+    SearchRig(
         problem=task,
         config=config,
         journal=Journal(tmp_path / "j.jsonl"),  # fresh replay of the same file
@@ -407,13 +407,13 @@ def test_file_policy_drives_a_search_and_is_recorded(task, config, tmp_path):
     backend.queue(script=ok_script(0.6), notes="one\n")
     backend.queue(script=ok_script(0.7), notes="two\n")
     search_dir = create_search_dir(config.paths.runs_dir, "test-run")
+    config.budget.max_evaluations = 2
     searcher = build_search_strategy(
         config=config, problem=task, journal=Journal(search_dir / "journal.jsonl"),
         backend=backend, executor=local_executor(), budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir, log=lambda *_: None,
     )
-    searcher.max_candidates = 3
-    assert searcher.policy.name == "drafts-only"
+    assert searcher.loop.policy.name == "drafts-only"
     searcher.run()
     assert [r.operator for r in backend.requests] == ["draft", "draft"]  # never improve
 
@@ -506,7 +506,7 @@ def test_searcher_hands_observe_a_holdout_blind_candidate(task, config, tmp_path
     _add_with_holdout(journal, tmp_path, "c001", val=0.5, holdout=0.42, selected=True)
     backend = FakeBackend()
     backend.queue(script=ok_script(0.6), notes="improved\n")
-    searcher = GreedySearcher(
+    searcher = SearchRig(
         problem=task, config=config, journal=journal, backend=backend,
         executor=local_executor(), budget=BudgetManager(60, stop_margin_s=1),
         search_dir=search_dir, log=lambda *_: None, policy=Spy(),

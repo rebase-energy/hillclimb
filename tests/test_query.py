@@ -66,10 +66,10 @@ class TestToolsClause:
         from hillclimb.backends.fake import FakeBackend
         from hillclimb.budget import BudgetManager
         from hillclimb.journal import Journal
-        from hillclimb.search import GreedySearcher
+        from tests.harness_factory import SearchRig
 
         config.paths.runtime_python = Path(sys.executable)
-        return GreedySearcher(
+        return SearchRig(
             problem=task,
             config=config,
             journal=Journal(tmp_path / "journal.jsonl"),

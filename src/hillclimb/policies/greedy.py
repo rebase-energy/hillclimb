@@ -1,4 +1,4 @@
-"""The default greedy policy, extracted verbatim from GreedySearcher.
+"""The default greedy policy, extracted verbatim from the old searcher.
 
 Priority: DEBUG the newest buggy tip while its chain is shallow > ENSEMBLE
 solo in the final budget window > DRAFT until `num_drafts` branches hold a
@@ -207,7 +207,7 @@ class GreedyPolicy:
             inspiration_ids=tuple(c.candidate_id for c in picks),
         )
 
-    # --- decision helpers (moved verbatim from GreedySearcher) ---
+    # --- decision helpers (moved verbatim from the old searcher) ---
 
     def debuggable_tip(self, view: PolicyInput) -> Candidate | None:
         """Newest failing/buggy candidate with no active child and chain depth under

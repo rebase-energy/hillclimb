@@ -2,8 +2,8 @@
 
 Two integration tiers exist (docs/optimizer-host-plan.md):
 
-- `SearchPolicy` (policy.py) — a read-only brain inside GreedySearcher's
-  loop, for libraries that are archives/selectors.
+- `SearchPolicy` (policy.py) — a read-only brain inside the built-in
+  `PolicyLoop`, for libraries that are archives/selectors.
 - `SearchStrategy` (this module) — a full engine dispatched by name before
   `get_policy()` is ever called, for optimizers that own proposal,
   selection, and iteration themselves (GEPA, future engines).
@@ -117,7 +117,7 @@ def build_search_strategy(
     """Construct the strategy `config.search.policy` names. Engine names get
     the full dependency set and never touch the policy registry; every other
     name goes through `get_policy()` (whose ValueError names the unknowns)
-    into a GreedySearcher."""
+    into a `PolicySearch` (a Harness driven by a PolicyLoop)."""
     deps = dict(
         problem=problem,
         config=config,
@@ -148,16 +148,17 @@ def build_search_strategy(
     from hillclimb.policies import get_policy, policy_base_dir
 
     # function-local on purpose: breaks the module cycle (search.py imports
-    # the exceptions above at top level) and re-resolves the class per call
-    # so tests can monkeypatch hillclimb.search.GreedySearcher
-    from hillclimb.search import GreedySearcher
+    # the exceptions above at top level)
+    from hillclimb.search import PolicySearch
     from hillclimb.tuners import get_tuner
 
-    return GreedySearcher(
-        policy=get_policy(
+    # the learned complexity offset shapes the policy; the harness knows no policy
+    harness_deps = {key: value for key, value in deps.items() if key != "complexity_start"}
+    return PolicySearch.with_policy(
+        get_policy(
             name, config.search.policy_params,
             complexity_start=complexity_start, base_dir=policy_base_dir(config),
         ),
         tuner=get_tuner(config.search.tuner, config.search.tuner_params),
-        **deps,
+        **harness_deps,
     )

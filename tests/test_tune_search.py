@@ -17,7 +17,8 @@ from hillclimb.dirs import create_search_dir
 from hillclimb.journal import Journal
 from hillclimb.policies.greedy import GreedyPolicy
 from hillclimb.policy import TUNE_ACTION, Action, BudgetView, InflightRef, PolicyInput
-from hillclimb.search import GreedySearcher, OutcomeMsg
+from tests.harness_factory import SearchRig
+from hillclimb.search import OutcomeMsg
 from tests.conftest import executor_for, ok_script
 from tests.factories import candidate as make_candidate, trial
 from tests.test_search import FileHoldoutScorer
@@ -58,7 +59,7 @@ def make_searcher(task, config, backend, max_candidates=3, holdout=False, **poli
             executor=executor_for(task), problem=task, config=config,
             holdout_scorer=FileHoldoutScorer(), journal=journal,
         )
-    searcher = GreedySearcher(
+    searcher = SearchRig(
         problem=task, config=config, journal=journal, backend=backend,
         executor=executor_for(task), budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir, max_candidates=max_candidates, log=lambda *_: None,

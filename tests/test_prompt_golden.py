@@ -91,7 +91,7 @@ def test_openevolve_prompts_match_golden(task, config, tmp_path):
     from hillclimb.dirs import create_search_dir
     from hillclimb.journal import Journal
     from hillclimb.policies import get_policy
-    from hillclimb.search import GreedySearcher
+    from tests.harness_factory import SearchRig
     from tests.conftest import local_executor, ok_script
     from tests.test_openevolve_policy import PARAMS
 
@@ -102,7 +102,7 @@ def test_openevolve_prompts_match_golden(task, config, tmp_path):
     for score, note in ((0.6, "one\n"), (0.7, "two\n"), (0.8, "three\n")):
         backend.queue(script=ok_script(score), notes=note)
     search_dir = create_search_dir(config.paths.runs_dir, "test-search")
-    GreedySearcher(
+    SearchRig(
         problem=task, config=config, journal=Journal(search_dir / "journal.jsonl"),
         backend=backend, executor=local_executor(), budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir, max_candidates=4, log=lambda *_: None,
