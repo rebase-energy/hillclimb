@@ -504,14 +504,17 @@ def test_searcher_hands_observe_a_holdout_blind_candidate(task, config, tmp_path
     search_dir = create_search_dir(config.paths.runs_dir, "test-run")
     journal = Journal(search_dir / "journal.jsonl")
     _add_with_holdout(journal, tmp_path, "c001", val=0.5, holdout=0.42, selected=True)
+    backend = FakeBackend()
+    backend.queue(script=ok_script(0.6), notes="improved\n")
     searcher = GreedySearcher(
-        problem=task, config=config, journal=journal, backend=FakeBackend([]),
+        problem=task, config=config, journal=journal, backend=backend,
         executor=local_executor(), budget=BudgetManager(60, stop_margin_s=1),
         search_dir=search_dir, log=lambda *_: None, policy=Spy(),
     )
-    live = journal.get("c001").model_copy(deep=True)
-    searcher._record_result(live)
+    assert seen, "the policy replays the journal on construction"
+    replayed = len(seen)
+    searcher.run_operator("improve", journal.get("c001"))
 
-    assert len(seen) >= 4  # construction replay + the runtime observe
+    assert len(seen) > replayed  # ... and sees every result as it lands
     assert all(c.holdout_score is None and not c.is_selected for c in seen)
     assert journal.get("c001").holdout_score == 0.42

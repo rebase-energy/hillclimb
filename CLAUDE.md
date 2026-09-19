@@ -184,6 +184,34 @@ shim).
   each naming the phase that removes it. `tests/test_prompt_golden.py` pins
   every prompt byte (greedy scenarios, openevolve, GEPA proposer;
   `HILLCLIMB_UPDATE_GOLDENS=1` regenerates — review the diff)
+- Harness + loop (`harness/core.py`, `loop.py`): `Harness` is the fixed core
+  (candidate dirs, agent calls, trials, the journal's single writer, `best/`,
+  accept band, budgets, control queue, crash recovery, holdout) and knows no
+  policy. A `SearchLoop.run(harness)` reaches it only through
+  `view()`/`capacity`/`inflight`/`open`/`closed_reason` (pure reads) and
+  `submit(action) -> Ticket` / `wait(timeout) -> [Outcome]` / `run(action) ->
+  Outcome` / `source(cid)`; `Harness.execute(loop)` writes baseline + seed,
+  runs the loop, commits whatever it left in flight and raises
+  ParkedSearch/StopRequested for `api.execute_search` to map. Results are
+  COMMITTED INSIDE `wait()`/`run()` on the loop's thread (same atomicity as
+  the old scheduler); the cycle is tick → fill → consume exactly as before
+  (`wait` ticks AFTER its commit, `execute` ticks once up front — the golden
+  event sequences pin this). Stop/park NEVER raise into loop code: `_tick`
+  latches them (`_close`), `open`/`capacity` go False/0, in-flight work still
+  commits, and later `submit`/`run` raise `HarnessClosed` — so a loop (or a
+  library like gepa) that swallows exceptions cannot spend more. The one
+  exception is the CLOCK, the only state that moves off the loop's thread:
+  out-of-budget at `submit`/`run` is a quiet `rejected` Ticket, not an error
+  and not a strike. An invalid action is refused before anything exists
+  (`Ticket.rejected` + an `action_rejected` audit line); 3 refusals in a row
+  with nothing in flight raise `ClimberError`. `wait()` with nothing in
+  flight is a 1 s tick, so a holding policy does not end a search, and the
+  hard deadline is re-checked on every poll. `PolicyLoop` is the built-in
+  loop (fill free slots with `policy.propose`, `observe` every outcome,
+  `catch_up` replays the journal once per candidate — the resume contract).
+  `search.GreedySearcher(Harness)` is a temporary shim (old ctor, `run()`,
+  `run_operator`, `decide`, the `_ensemble_*` delegates) until tests move to
+  `tests/harness_factory.make_harness` + `harness.run(Action(...))`
 - Operators (`operators/`): HOW one attempt is made. An `Operator` subclass
   sets `name` + `role` (`create | repair | refine | combine`) and implements
   `prepare(ctx) -> Preparation(prompt, copy_parent, inherit_params,

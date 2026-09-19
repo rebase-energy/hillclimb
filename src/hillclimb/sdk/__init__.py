@@ -25,6 +25,15 @@ _LAZY = {
     "PolicyInput": ("hillclimb.policy", "PolicyInput"),
     "SearchPolicy": ("hillclimb.policy", "SearchPolicy"),
     "TUNE_ACTION": ("hillclimb.policy", "TUNE_ACTION"),
+    # control flow over the harness (most climbers only need a SearchPolicy)
+    "SearchLoop": ("hillclimb.loop", "SearchLoop"),
+    "PolicyLoop": ("hillclimb.loop", "PolicyLoop"),
+    "Harness": ("hillclimb.loop", "Harness"),
+    "SearchInfo": ("hillclimb.loop", "SearchInfo"),
+    "Ticket": ("hillclimb.loop", "Ticket"),
+    "Outcome": ("hillclimb.loop", "Outcome"),
+    "HarnessClosed": ("hillclimb.loop", "HarnessClosed"),
+    "ClimberError": ("hillclimb.loop", "ClimberError"),
     # the records a climber reads (always holdout-blind copies)
     "Candidate": ("hillclimb.candidate", "Candidate"),
     "Trial": ("hillclimb.candidate", "Trial"),
@@ -75,6 +84,16 @@ if TYPE_CHECKING:  # eager for type checkers and editors only
     from hillclimb.candidate import Candidate, Replicate, Trial
     from hillclimb.evaluation import accept_band, improves
     from hillclimb.journal import PolicyJournal
+    from hillclimb.loop import (
+        ClimberError,
+        Harness,
+        HarnessClosed,
+        Outcome,
+        PolicyLoop,
+        SearchInfo,
+        SearchLoop,
+        Ticket,
+    )
     from hillclimb.operators.base import (
         ROLES,
         MemoryContext,
