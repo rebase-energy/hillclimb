@@ -29,6 +29,11 @@ class BudgetStatus(BaseModel):
     total_s: float = 0.0
     spent_s: float = 0.0
     remaining_s: float = 0.0
+    # the other budget dimensions: spent so far / the user's limit (0 = none)
+    evaluations: int = 0
+    max_evaluations: int = 0
+    tokens: int = 0
+    max_tokens: int = 0
 
 
 class CandidateCounts(BaseModel):
@@ -224,10 +229,12 @@ class StatusWriter:
     def _write(self) -> None:
         self.status.updated_at = utcnow()
         if self.budget is not None:
-            self.status.budget = BudgetStatus(
-                total_s=self.budget.total_s,
-                spent_s=round(self.budget.elapsed(), 1),
-                remaining_s=round(self.budget.remaining(), 1),
+            self.status.budget = self.status.budget.model_copy(
+                update=dict(
+                    total_s=self.budget.total_s,
+                    spent_s=round(self.budget.elapsed(), 1),
+                    remaining_s=round(self.budget.remaining(), 1),
+                )
             )
         self.sink(self.status)
 

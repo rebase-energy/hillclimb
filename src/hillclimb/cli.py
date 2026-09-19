@@ -2192,6 +2192,11 @@ def status(search: str = typer.Argument("latest")):
     if search_status is not None:
         remaining = int(search_status.budget.remaining_s)
         line = f"state={state}  budget: {int(search_status.budget.spent_s)}s spent / {remaining}s left"
+        budget = search_status.budget
+        if budget.max_evaluations:
+            line += f"  evaluations {budget.evaluations}/{budget.max_evaluations}"
+        if budget.max_tokens:
+            line += f"  tokens {budget.tokens:,}/{budget.max_tokens:,}"
         if search_status.current:
             active = " · ".join(
                 f"{c.candidate_id}({c.operator}/{c.phase})" for c in search_status.current[:3]

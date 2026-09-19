@@ -30,6 +30,15 @@ class BudgetConfig(BaseModel):
     # hard agent-spend ceiling; the search parks (resumable) when cumulative
     # backend cost reaches it. 0 = no ceiling.
     max_cost_usd: float = 0.0
+    # The budget is the USER's, in every dimension — a climber sees what is
+    # left (BudgetView) and never sets it. Both end the search like the clock
+    # does (no new work; what is in flight still lands). 0 = no limit.
+    #   max_evaluations  verifier trials the climber caused: one per scored
+    #                    attempt plus one per tune trial; the baseline and the
+    #                    seed are the harness's own floor and do not count
+    #   max_tokens       tokens its agent calls consumed, all kinds summed
+    max_evaluations: int = 0
+    max_tokens: int = 0
 
 
 def default_machine_max_operators() -> int:

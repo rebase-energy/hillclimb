@@ -183,7 +183,6 @@ class TestLiveSharing:
     ):
         from hillclimb.api import create_search, execute_search
         from hillclimb.budget import BudgetManager
-        from hillclimb.search import GreedySearcher
         from hillclimb.dirs import create_run_dir
         import sys
 
@@ -194,10 +193,7 @@ class TestLiveSharing:
         config.search.num_drafts = 1
         backend = FakeBackend()
         monkeypatch.setattr("hillclimb.api.get_backend", lambda *a, **k: backend)
-        monkeypatch.setattr(  # baseline + draft + improve, then stop
-            "hillclimb.search.GreedySearcher",
-            lambda **kw: GreedySearcher(**{**kw, "max_candidates": 3}),
-        )
+        config.budget.max_evaluations = 2  # draft + improve, then stop
         run_dir = create_run_dir(config.paths.runs_dir, "suite-run")
 
         def run_search(problem, notes):
@@ -238,17 +234,13 @@ class TestEndToEnd:
         from hillclimb.dirs import create_run_dir
         import sys
 
-        from hillclimb.search import GreedySearcher
 
         config.learning.dir = tmp_path / "knowledge"
         config.paths.runtime_python = Path(sys.executable)
         config.budget.stop_margin_s = 1
         config.holdout.enabled = False
         monkeypatch.setattr("hillclimb.api.get_backend", lambda *a, **k: backend)
-        monkeypatch.setattr(  # stop after baseline + one draft
-            "hillclimb.search.GreedySearcher",
-            lambda **kw: GreedySearcher(**{**kw, "max_candidates": 2}),
-        )
+        config.budget.max_evaluations = 1  # stop after one draft
 
         def run_once(name, val, note):
             backend.queue(script=ok_script(val), notes=note + "\n")

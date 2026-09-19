@@ -139,7 +139,6 @@ class TestInjection:
         from hillclimb.api import create_search, execute_search
         from hillclimb.backends.fake import FakeBackend
         from hillclimb.budget import BudgetManager
-        from hillclimb.search import GreedySearcher
         from hillclimb.dirs import create_run_dir
         from tests.conftest import ok_script
 
@@ -150,10 +149,7 @@ class TestInjection:
         config.search.num_drafts = 2
         backend = FakeBackend()
         monkeypatch.setattr("hillclimb.api.get_backend", lambda *a, **k: backend)
-        monkeypatch.setattr(
-            "hillclimb.search.GreedySearcher",
-            lambda **kw: GreedySearcher(**{**kw, "max_candidates": 3}),
-        )
+        config.budget.max_evaluations = 2  # two drafts, then stop
 
         def run_once(name, vals):
             for val in vals:

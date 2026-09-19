@@ -90,6 +90,10 @@ class BudgetView:
     remaining_s: float
     total_s: int
     stop_margin_s: int
+    # what is left of the other budget dimensions; None = the user set no limit
+    evaluations_remaining: int | None = None
+    tokens_remaining: int | None = None
+    cost_remaining_usd: float | None = None
 
 
 @dataclass(frozen=True)

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from hillclimb.backends.base import OperatorBackend, OperatorRequest, OperatorResult
 from hillclimb.baseline import write_baseline
-from hillclimb.budget import BudgetManager
+from hillclimb.budget import BudgetManager, Spend, journal_spend
 from hillclimb.candidate import BackendInfo, Candidate, utcnow
 from hillclimb.config import Config
 from hillclimb.control import ControlCommand, apply_prune, drain_commands_dir, resync_best
@@ -124,7 +124,7 @@ class Harness:
         executor: Executor,
         budget: BudgetManager,
         search_dir: Path,
-        max_candidates: int = 50,
+        max_candidates: int | None = None,
         log=print,
         evaluator: CandidateEvaluator | None = None,
         status: StatusWriter | None = None,
@@ -149,6 +149,8 @@ class Harness:
         self.executor = executor
         self.budget = budget
         self.search_dir = search_dir
+        # journal-size cap (baseline and seed included): a test knob — the
+        # user-facing limits are budget.max_evaluations / max_tokens
         self.max_candidates = max_candidates
         self.log = log
         # the host's evaluate service: verifier trials, and holdout — the
@@ -215,13 +217,27 @@ class Harness:
         return PolicyInput(
             journal=self.journal,
             inflight=self.inflight,
-            budget=BudgetView(
-                remaining_s=self.budget.remaining(),
-                total_s=self.budget.total_s,
-                stop_margin_s=self.budget.stop_margin_s,
-            ),
+            budget=self._budget_view(),
             config=self.config,
             higher_is_better=self.problem.higher_is_better,
+        )
+
+    def _budget_view(self) -> BudgetView:
+        """The clock plus what is left of every other dimension the user
+        limited. Reserved in-flight evaluations are already taken off."""
+        limits, spend = self.config.budget, self.spend()
+        return BudgetView(
+            remaining_s=self.budget.remaining(),
+            total_s=self.budget.total_s,
+            stop_margin_s=self.budget.stop_margin_s,
+            evaluations_remaining=(
+                max(0, limits.max_evaluations - spend.evaluations - len(self._inflight))
+                if limits.max_evaluations else None
+            ),
+            tokens_remaining=max(0, limits.max_tokens - spend.tokens) if limits.max_tokens else None,
+            cost_remaining_usd=(
+                max(0.0, limits.max_cost_usd - spend.cost_usd) if limits.max_cost_usd else None
+            ),
         )
 
     # --- the interface a SearchLoop sees (hillclimb.loop.Harness) ---
@@ -261,17 +277,36 @@ class Harness:
             for job in self._inflight.values()
         )
 
-    @property
-    def closed_reason(self) -> str | None:
+    def spend(self) -> Spend:
+        """Evaluations, tokens and cost so far (the clock is `budget`)."""
+        return journal_spend(self.journal)
+
+    def _closed_on_this_thread(self) -> str | None:
+        """Every reason to start no new work that can only change on the
+        loop's thread (a commit, a tick) — so a loop that just read
+        `capacity` cannot lose a race to it."""
         if self._latch is not None:
             return str(self._latch)
         if self._finished is not None:
             return self._finished
-        if self.budget.should_stop():
-            return "out of budget"
-        if len(self.journal.candidates) >= self.max_candidates:
+        if self.max_candidates is not None and len(self.journal.candidates) >= self.max_candidates:
             return "evaluation cap reached"
+        limits = self.config.budget
+        if limits.max_evaluations or limits.max_tokens:
+            spend = self.spend()
+            # work in flight has its evaluation reserved: the cap is never overshot
+            if limits.max_evaluations and spend.evaluations + len(self._inflight) >= limits.max_evaluations:
+                return "evaluation budget spent"
+            if limits.max_tokens and spend.tokens >= limits.max_tokens:
+                return "token budget spent"
         return None
+
+    @property
+    def closed_reason(self) -> str | None:
+        reason = self._closed_on_this_thread()
+        if reason is None and self.budget.should_stop():
+            reason = "out of budget"
+        return reason
 
     @property
     def open(self) -> bool:
@@ -396,9 +431,10 @@ class Harness:
         The budget is the one thing that moves off the loop's thread, so a
         loop that just saw `capacity` may lose that race through no fault of
         its own: that is a quiet refusal, not an error (and not a strike)."""
-        if self._latch is None and self._finished is None and len(self.journal.candidates) < self.max_candidates:
-            return "out of budget" if self.budget.should_stop() else None
-        raise HarnessClosed(self.closed_reason)
+        reason = self._closed_on_this_thread()
+        if reason is not None:
+            raise HarnessClosed(reason)
+        return "out of budget" if self.budget.should_stop() else None
 
     def _assert_owner(self) -> None:
         if self._owner is not None and threading.get_ident() != self._owner:
@@ -625,6 +661,18 @@ class Harness:
             return
         candidates = self.journal.candidates.values()
         fields.setdefault("cost_usd", round(self.total_cost_usd(), 6))
+        spend, limits = self.spend(), self.config.budget
+        fields.setdefault(
+            "budget",
+            self.status.status.budget.model_copy(
+                update=dict(
+                    evaluations=spend.evaluations,
+                    max_evaluations=limits.max_evaluations,
+                    tokens=spend.tokens,
+                    max_tokens=limits.max_tokens,
+                )
+            ),
+        )
         fields.setdefault(
             "candidates",
             CandidateCounts(

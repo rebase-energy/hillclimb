@@ -1,6 +1,35 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from hillclimb.journal import Journal
+
+# the harness's own floor measurements: their first trial is not the climber's spend
+FLOOR_OPERATORS = ("baseline", "seed")
+
+
+@dataclass(frozen=True)
+class Spend:
+    """What a search has used so far besides the clock — derived from the
+    journal on every read, so a resumed search needs no counter of its own."""
+
+    evaluations: int = 0
+    tokens: int = 0
+    cost_usd: float = 0.0
+
+
+def journal_spend(journal: Journal) -> Spend:
+    evaluations = tokens = 0
+    cost = 0.0
+    for candidate in journal.candidates.values():
+        trials = len(candidate.trials)
+        evaluations += max(0, trials - 1) if candidate.operator in FLOOR_OPERATORS else trials
+        tokens += candidate.backend.total_tokens or 0
+        cost += candidate.backend.cost_usd or 0.0
+    return Spend(evaluations=evaluations, tokens=tokens, cost_usd=cost)
 
 
 class BudgetManager:

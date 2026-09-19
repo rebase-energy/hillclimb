@@ -212,6 +212,21 @@ shim).
   `search.GreedySearcher(Harness)` is a temporary shim (old ctor, `run()`,
   `run_operator`, `decide`, the `_ensemble_*` delegates) until tests move to
   `tests/harness_factory.make_harness` + `harness.run(Action(...))`
+- Budget dimensions: the budget is the USER's in every dimension — the clock
+  (`budget.total_s`), `budget.max_evaluations`, `budget.max_tokens`,
+  `budget.max_cost_usd` (0 = no limit). An *evaluation* is a verifier trial
+  the climber caused: one per scored attempt plus one per tune trial; the
+  baseline's and the seed's first trial are the harness's floor and free.
+  `budget.journal_spend(journal) -> Spend` derives evaluations/tokens/cost
+  from the journal on every read, so resume needs no counter. Evaluations
+  and tokens END the search like the clock (no new work, in-flight lands,
+  state `done`); cost still PARKS (hosted-credit semantics). Work in flight
+  has its evaluation reserved, so the cap is never overshot. A climber only
+  ever reads what is left: `BudgetView.evaluations_remaining /
+  tokens_remaining / cost_remaining_usd` (None = no limit); `BudgetStatus`
+  carries spent/limit for `hillclimb status`. There is NO hidden candidate
+  cap any more (the old `max_candidates=50` default was unreachable from
+  config); `Harness(max_candidates=…)` survives only as a test knob
 - Operators (`operators/`): HOW one attempt is made. An `Operator` subclass
   sets `name` + `role` (`create | repair | refine | combine`) and implements
   `prepare(ctx) -> Preparation(prompt, copy_parent, inherit_params,
