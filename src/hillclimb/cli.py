@@ -1926,24 +1926,33 @@ def resume(
     config.holdout.enabled = meta.holdout_enabled
     # the search resumes under the policy/routing it started with, not
     # whatever the live config currently says
-    config.search.policy = meta.policy
-    config.search.policy_params = meta.policy_params
-    if meta.policy_sha256 is not None:
-        from hillclimb.policies import policy_base_dir, policy_sha256
+    config.search.policy = meta.climber
+    config.search.policy_params = meta.climber_params
+    if meta.climber_sha256 is not None:
+        from hillclimb.climber import ClimberLoadError, load_climber, load_snapshot
+        from hillclimb.policies import policy_base_dir
 
-        # the replay contract assumes the same decision code: an edited
-        # policy file resumes, but say so — its proposals may diverge
+        # the search resumes from the snapshot in its own folder, so an
+        # edited (or deleted) live climber changes nothing — but say so
+        snapshot = load_snapshot(search_dir)
         try:
-            now = policy_sha256(meta.policy, policy_base_dir(config))
-        except OSError as exc:
-            raise typer.BadParameter(f"policy file {meta.policy} is gone: {exc}") from exc
-        if now != meta.policy_sha256:
+            now = load_climber(meta.climber, policy_base_dir(config)).sha256
+        except ClimberLoadError as exc:
+            if snapshot is None:  # nothing left to resume WITH
+                raise typer.BadParameter(
+                    f"climber {meta.climber} is gone and this search has no snapshot of it: {exc}"
+                ) from exc
+            now = None
+        if snapshot is None:
+            typer.echo("note: this search predates climber snapshots; resuming from the live climber", err=True)
+        if now is not None and now != meta.climber_sha256:
             typer.echo(
-                f"warning: policy file {meta.policy} changed since the search started "
-                f"({meta.policy_sha256[:12]} -> {now[:12]}); replay may diverge",
+                f"note: climber {meta.climber} changed since the search started "
+                f"({meta.climber_sha256[:12]} -> {now[:12]}); resuming the version it started with",
                 err=True,
             )
-    config.search.tuner = meta.tuner
+    if meta.tuner is not None:
+        config.search.tuner = meta.tuner
     config.search.tuner_params = meta.tuner_params
     config.routing = {op: RouteConfig(**route) for op, route in meta.routing.items()}
     problem = load_problem(meta.problem, config)

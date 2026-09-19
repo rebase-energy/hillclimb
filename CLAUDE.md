@@ -212,6 +212,21 @@ shim).
   ref: `search_strategy.search_climber/build_loop/build_operators/
   holdout_timing` are the glue (`_user_params` lays only what the user
   actually set over the manifest's params)
+- Run folders record the climber (`run.py`, `SCHEMA_VERSION = 3`):
+  `SearchMeta.climber` (the ref as written), `climber_sha256`,
+  `climber_manifest` (as loaded), `climber_params` (the USER's overlay),
+  `hillclimb_version`, `tuner`/`tuner_params` (the user's override; None =
+  the manifest's). `create_search` loads the climber BEFORE allocating a dir
+  (an unloadable one costs nothing) and `climber.snapshot_climber` copies its
+  files into `<search_dir>/climber/`; the engine — and a resume — load THAT
+  (`search_strategy.search_climber(config, search_dir)` → `load_snapshot`),
+  so editing the live dir never changes a started search. `resume` notes a
+  changed live hash, and refuses only when the climber is gone AND there is
+  no snapshot. v2 records stay readable in every store backend:
+  `SearchMeta._from_v2` (a before-validator) maps `policy*` → `climber*` and
+  drops `templates_*`; `_load_meta` accepts `READABLE_SCHEMA_VERSIONS = (2, 3)`
+  and hides anything else. `search_strategy.build_tuner` wires the
+  manifest's tuner (user's `search.tuner` wins) into the Harness
 - Harness + loop (`harness/core.py`, `loop.py`): `Harness` is the fixed core
   (candidate dirs, agent calls, trials, the journal's single writer, `best/`,
   accept band, budgets, control queue, crash recovery, holdout) and knows no

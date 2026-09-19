@@ -261,6 +261,44 @@ def bundled_climbers() -> list[str]:
     return sorted(p.parent.name for p in BUNDLED_DIR.glob(f"*/{MANIFEST}"))
 
 
+SNAPSHOT_DIRNAME = "climber"
+
+
+def snapshot_climber(climber: Climber, search_dir: Path) -> Path:
+    """Copy the climber's files into `<search_dir>/climber/`. A search runs —
+    and resumes — from this copy, so editing the live directory (a person
+    iterating, or a search that improves climbers) never changes a search
+    that has already started. Idempotent: an existing snapshot is kept."""
+    import shutil
+
+    target = search_dir / SNAPSHOT_DIRNAME
+    if target.exists():
+        return target
+    if climber.root is None:
+        target.mkdir(parents=True)
+        shutil.copy2(climber.source, target / climber.source.name)
+    else:
+        shutil.copytree(
+            climber.root, target,
+            ignore=lambda _dir, names: [n for n in names if n == "__pycache__" or n.startswith(".")],
+        )
+    return target
+
+
+def load_snapshot(search_dir: Path, name: str | None = None) -> Climber | None:
+    """The climber a search was started with, from its snapshot (None when
+    the search predates snapshots)."""
+    root = search_dir / SNAPSHOT_DIRNAME
+    if not root.is_dir():
+        return None
+    if (root / MANIFEST).is_file():
+        return _load_dir(str(root), root, name=name)
+    files = sorted(root.glob("*.py"))
+    if len(files) != 1:
+        raise ClimberLoadError(f"{root} is neither a climber directory nor a one-file climber")
+    return _load_file(str(files[0]), files[0])
+
+
 def load_climber(ref: str, base_dir: Path | None = None) -> Climber:
     """Resolve a climber reference (see the module docstring). Every failure
     is a `ClimberLoadError` naming the file and the fix — never a traceback from
@@ -280,13 +318,13 @@ def load_climber(ref: str, base_dir: Path | None = None) -> Climber:
     )
 
 
-def _load_dir(ref: str, root: Path) -> Climber:
+def _load_dir(ref: str, root: Path, name: str | None = None) -> Climber:
     manifest_path = root / MANIFEST
     if not manifest_path.is_file():
         raise ClimberLoadError(f"{root} holds no {MANIFEST}")
     try:
         data = yaml.safe_load(manifest_path.read_text()) or {}
-        data.setdefault("name", root.name)
+        data.setdefault("name", name or root.name)  # a snapshot dir is always called `climber`
         manifest = ClimberManifest.model_validate(data)
     except Exception as exc:  # noqa: BLE001
         raise ClimberLoadError(f"{manifest_path}: {exc}") from exc

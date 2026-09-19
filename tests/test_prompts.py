@@ -165,28 +165,40 @@ def test_override_lint_rejects_unknown_tokens_and_empty_files(tmp_path):
     assert "improve.md: unknown token(s) {{another}}, {{made_up}}" in problems[1]
 
 
-def test_search_meta_records_the_templates_digest(config, tmp_path):
+def test_search_record_pins_the_climber_and_snapshots_it(config, tmp_path):
+    """The prompts are part of the exploration process: they live in the
+    climber, whose tree hash is the search's identity and whose files are
+    snapshotted into the search dir — what the engine and a resume load."""
     from hillclimb.api import create_run, create_search
+    from hillclimb.climber import load_climber, load_snapshot
     from hillclimb.problem import load_problem
-    from hillclimb.prompts import render as r
     from hillclimb.run import RunMeta, load_search_meta
     from tests.test_cli import write_problem
 
     root = tmp_path / "problems"
     write_problem(root, "p")
     config.paths.problems_dir = root
-    config.paths.prompts_dir = tmp_path / "prompts"
     run_dir = create_run(config, RunMeta(run_id="r1", name="r1", kind="problem", target="p", problem_ids=["p"]))
-    meta = load_search_meta(create_search(config, load_problem("p", config), run_dir, "r1", 60))
-    assert meta.templates_sha256 == r.templates_digest(None).sha256
-    assert meta.templates_overridden == []
 
-    config.paths.prompts_dir.mkdir()
-    (config.paths.prompts_dir / "improve.md").write_text("tighter improve prompt: {{best_score}}\n")
-    meta = load_search_meta(create_search(config, load_problem("p", config), run_dir, "r1", 60))
-    assert meta.templates_sha256 == r.templates_digest(config.paths.prompts_dir).sha256
-    assert meta.templates_sha256 != r.templates_digest(None).sha256
-    assert meta.templates_overridden == ["improve"]
+    climber_dir = tmp_path / "mine"
+    (climber_dir / "prompts").mkdir(parents=True)
+    (climber_dir / "prompts" / "improve.md").write_text("tighter improve prompt: {{best_score}}\n\n{{contract}}\n")
+    (climber_dir / "climber.yaml").write_text(
+        "policy: hillclimb.policies.greedy:GreedyPolicy\nparams: {num_drafts: 1}\nprompts: prompts\n"
+    )
+    config.search.policy = str(climber_dir)
+    search_dir = create_search(config, load_problem("p", config), run_dir, "r1", 60)
+    meta = load_search_meta(search_dir)
+    before = load_climber(str(climber_dir)).sha256
+    assert (meta.climber, meta.climber_sha256) == (str(climber_dir), before)
+    assert meta.climber_manifest["params"] == {"num_drafts": 1} and meta.hillclimb_version
+
+    # the author keeps iterating on the live dir; the search keeps what it started with
+    (climber_dir / "prompts" / "improve.md").write_text("a different prompt: {{best_score}}\n\n{{contract}}\n")
+    assert load_climber(str(climber_dir)).sha256 != before
+    snapshot = load_snapshot(search_dir, name="mine")
+    assert snapshot.sha256 == before and snapshot.name == "mine"
+    assert (snapshot.prompts_dir / "improve.md").read_text().startswith("tighter improve prompt")
 
 
 def test_engine_refuses_to_start_on_a_broken_override(config, tmp_path):

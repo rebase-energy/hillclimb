@@ -388,12 +388,12 @@ def test_scan_searches_shows_the_policy_and_the_arm_when_it_differs(tmp_path: Pa
     runs_dir = tmp_path / "runs"
     search_dir = make_run_with_search(runs_dir, "exp-run")
     meta = load_search_meta(search_dir)
-    meta.policy, meta.experiment, meta.arm = "gepa", "optimizers", "gepa"
+    meta.climber, meta.experiment, meta.arm = "gepa", "optimizers", "gepa"
     write_search_meta(search_dir, meta)
     row = scan_searches(runs_dir, "exp-run")[0]
     assert (row.problem, row.policy) == ("circle-packing", "gepa")
 
-    meta.policy, meta.arm = "greedy", "opus"
+    meta.climber, meta.arm = "greedy", "opus"
     write_search_meta(search_dir, meta)
     row = scan_searches(runs_dir, "exp-run")[0]
     assert (row.problem, row.policy) == ("circle-packing [opus]", "greedy")

@@ -55,13 +55,13 @@ def test_run_problem_creates_run_and_search_metadata(config, tmp_path, monkeypat
     run_dirs = iter_run_dirs(config.paths.runs_dir)
     assert len(run_dirs) == 1
     run_meta = load_run_meta(run_dirs[0])
-    assert run_meta.schema_version == 2
+    assert run_meta.schema_version == 3
     assert run_meta.name == "My Run"
     assert run_meta.problem_ids == ["a"]
     search_dir = executed[0][1]
     assert search_dir == run_dirs[0] / "searches" / "a"
     search_meta = load_search_meta(search_dir)
-    assert search_meta.schema_version == 2
+    assert search_meta.schema_version == 3
     assert search_meta.run_id == run_meta.run_id
     assert search_meta.problem_id == "a"
     assert search_meta.budget_s == 600
@@ -197,8 +197,8 @@ def test_search_meta_defaults_for_pre_policy_files(tmp_path):
         )
     )
     meta = load_search_meta(search_dir)
-    assert meta.policy == "greedy"
-    assert meta.policy_params == {}
+    assert meta.climber == "greedy"
+    assert meta.climber_params == {}
     assert meta.routing == {}
 
 
@@ -211,8 +211,8 @@ def test_create_search_persists_policy_and_routing(task, config, tmp_path):
     config.routing = {"draft": RouteConfig(model="opus-4.8")}
     search_dir = create_search(config, task, tmp_path / "runs" / "r1", "r1", total_s=600)
     meta = load_search_meta(search_dir)
-    assert meta.policy == "greedy"
-    assert meta.policy_params == {"beam": 3}
+    assert meta.climber == "greedy"
+    assert meta.climber_params == {"beam": 3}
     assert meta.routing == {"draft": {"model": "opus-4.8"}}
 
 

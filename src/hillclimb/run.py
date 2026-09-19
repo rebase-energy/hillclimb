@@ -10,7 +10,11 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from hillclimb.candidate import utcnow
 from hillclimb.direction import legacy_direction_key
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+# what `_load_meta` still reads: v2 search records name a `policy`; they are
+# mapped onto `climber` on load (SearchMeta._from_v2), so runs made before
+# the climber vocabulary stay visible to every view
+READABLE_SCHEMA_VERSIONS = (2, 3)
 SEARCHES_DIRNAME = "searches"
 RUN_META_FILE = "run.yaml"
 SEARCH_META_FILE = "search.yaml"
@@ -51,14 +55,22 @@ class SearchMeta(BaseModel):
     search_uid: str = ""
     backend: str
     model: str
-    # additive with defaults on purpose: bumping SCHEMA_VERSION would hide
-    # every existing run dir from the scanners (exact-match gate below)
-    policy: str = "greedy"  # registry name, or the path of a policy file as written
-    policy_params: dict = Field(default_factory=dict)
-    # sha256 of a file policy's bytes at search start (None for a registry
-    # name): the identity of an edited exploration process, like seed_sha256
-    policy_sha256: str | None = None
-    tuner: str = "random"
+    # additive with defaults on purpose: a field without one would hide every
+    # existing run dir from the scanners
+    #
+    # The climber this search ran: the reference as written (a bundled name,
+    # a directory, one file), the hash of its files at search start (the
+    # identity of an edited exploration process, like seed_sha256), the
+    # manifest as loaded, and what the USER laid over its params. The files
+    # themselves are snapshotted into `<search_dir>/climber/`, which is what
+    # the engine — and a resume — loads.
+    climber: str = "greedy"
+    climber_sha256: str | None = None
+    climber_manifest: dict = Field(default_factory=dict)
+    climber_params: dict = Field(default_factory=dict)
+    hillclimb_version: str | None = None
+    # the user's tuner override (None = the manifest's)
+    tuner: str | None = None
     tuner_params: dict = Field(default_factory=dict)
     routing: dict = Field(default_factory=dict)  # RouteConfig dumps by operator
     metric: str
@@ -93,18 +105,30 @@ class SearchMeta(BaseModel):
     @classmethod
     def _legacy_direction_key(cls, data):
         return legacy_direction_key(data)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from_v2(cls, data):
+        """A record written before the climber vocabulary (schema v2) named a
+        `policy`. Same thing, older word: map it, so every view keeps
+        showing runs made before the rename. In every store backend — this
+        runs wherever a SearchMeta is validated."""
+        if not isinstance(data, dict) or "policy" not in data:
+            return data
+        data = dict(data)
+        data.setdefault("climber", data.pop("policy"))
+        data.setdefault("climber_params", data.pop("policy_params", None) or {})
+        data.setdefault("climber_sha256", data.pop("policy_sha256", None))
+        for gone in ("policy", "policy_params", "policy_sha256", "templates_sha256", "templates_overridden"):
+            data.pop(gone, None)
+        data["schema_version"] = SCHEMA_VERSION
+        return data
     budget_s: int = 0
     holdout_enabled: bool = False
     seed_from: str | None = None  # incumbent solution the search was seeded with
     # sha256 of that seed file's bytes at search start: the identity views
     # compare when several searches claim to share one seed
     seed_sha256: str | None = None
-    # sha256 of the effective operator prompt templates at search start
-    # (prompts/render.py `templates_digest`) and the names the hillclimb
-    # dir's prompts/ overrode — the prompts are part of the exploration
-    # process, so two searches are comparable only when these agree
-    templates_sha256: str | None = None
-    templates_overridden: list[str] = Field(default_factory=list)
     # whether cross-search memory was active
     learning_enabled: bool = True
     # Experiment tags (experiment.py): which experiment and arm this search
@@ -149,7 +173,7 @@ def _load_meta(path: Path, model: type[BaseModel]):
         return None
     try:
         data = yaml.safe_load(path.read_text()) or {}
-        if data.get("schema_version") != SCHEMA_VERSION:
+        if data.get("schema_version") not in READABLE_SCHEMA_VERSIONS:
             return None
         return model.model_validate(data)
     except Exception:

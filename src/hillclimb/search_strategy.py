@@ -27,12 +27,17 @@ class StopRequested(Exception):
     be resumed."""
 
 
-def search_climber(config: Config) -> Climber:
+def search_climber(config: Config, search_dir=None) -> Climber:
     """The climber this config names (relative paths resolve from the folder
-    holding the hillclimb dir). A `ClimberLoadError` names the unknowns."""
-    from hillclimb.climber import load_climber
-    from hillclimb.policies import policy_base_dir
+    holding the hillclimb dir) — or, for a search that already exists, the
+    snapshot it was started with. A `ClimberLoadError` names the unknowns."""
+    from hillclimb.climber import load_climber, load_snapshot
+    from hillclimb.policies import policy_base_dir, policy_label
 
+    if search_dir is not None:
+        snapshot = load_snapshot(search_dir, name=policy_label(config.search.policy))
+        if snapshot is not None:
+            return snapshot
     return load_climber(config.search.policy, policy_base_dir(config))
 
 
@@ -43,11 +48,21 @@ def is_loop_climber(name: str, config: Config | None = None) -> bool:
     return load_climber(name, policy_base_dir(config) if config is not None else None).is_loop
 
 
-def holdout_timing(config: Config) -> str:
+def holdout_timing(config: Config, search_dir=None) -> str:
     """When the harness scores the hidden split: the user's `holdout.timing`,
     tightened to `after` for a climber that asks for it."""
-    asked = search_climber(config).manifest.holdout_timing
+    asked = search_climber(config, search_dir).manifest.holdout_timing
     return asked or config.holdout.timing
+
+
+def build_tuner(config: Config, search_dir=None):
+    """The climber's tuner, unless the user named one (`search.tuner`)."""
+    from hillclimb.tuners import get_tuner
+
+    manifest = search_climber(config, search_dir).manifest
+    if "tuner" in config.search.model_fields_set:
+        return get_tuner(config.search.tuner, config.search.tuner_params)
+    return get_tuner(manifest.tuner, {**manifest.tuner_params, **config.search.tuner_params})
 
 
 def _user_params(config: Config) -> dict:
@@ -64,8 +79,8 @@ def _user_params(config: Config) -> dict:
     return {**touched, **config.search.policy_params}
 
 
-def build_loop(config: Config, *, complexity_start: int = 0, log=print) -> SearchLoop:
-    return search_climber(config).build_loop(
+def build_loop(config: Config, *, complexity_start: int = 0, log=print, search_dir=None) -> SearchLoop:
+    return search_climber(config, search_dir).build_loop(
         params=_user_params(config),
         complexity_start=complexity_start,
         parallelism=max(1, config.search.parallel_operators),
@@ -73,12 +88,12 @@ def build_loop(config: Config, *, complexity_start: int = 0, log=print) -> Searc
     )
 
 
-def build_operators(config: Config) -> OperatorSet:
+def build_operators(config: Config, search_dir=None) -> OperatorSet:
     """The climber's operators, with the pre-manifest `operators:` config
     switches laid over them where the user turned one off."""
     from hillclimb.climber import OperatorSet
 
-    operators = search_climber(config).operator_set()
+    operators = search_climber(config, search_dir).operator_set()
     switches = {"draft": ("retrieval", config.operators.draft_retrieval),
                 "improve": ("ablation", config.operators.improve_ablation)}
     entries = dict(operators._entries)

@@ -35,6 +35,7 @@ from hillclimb.search_strategy import (
     StopRequested,
     build_loop,
     build_operators,
+    build_tuner,
     holdout_timing,
     search_climber,
 )
@@ -257,7 +258,7 @@ def build_evaluator(
         problem=problem,
         config=config,
         holdout_scorer=build_holdout_scorer(config, problem, search_dir, log),
-        holdout_timing=holdout_timing(config),
+        holdout_timing=holdout_timing(config, search_dir),
         journal=journal,
         status=status,
         log=log,
@@ -318,15 +319,15 @@ def create_search(
     repeat: int = 0,
     arm_overrides: dict | None = None,
 ) -> Path:
-    from hillclimb.policies import policy_base_dir, policy_sha256
-    from hillclimb.prompts.render import templates_digest
+    from hillclimb import __version__
+    from hillclimb.climber import snapshot_climber
     from hillclimb.unit_tests import bundle_relative, freeze_for_run
 
-    # a file policy that cannot be read fails here, before a search dir exists
-    policy_digest = policy_sha256(config.search.policy, policy_base_dir(config))
+    # a climber that cannot be loaded fails here, before a search dir exists
+    climber = search_climber(config)
     problem.unit_tests = freeze_for_run(problem, run_dir)
     search_dir = allocate_search_dir(run_dir, problem.problem_id)
-    templates = templates_digest(config.paths.prompts_dir)
+    snapshot_climber(climber, search_dir)  # what the engine — and a resume — loads
     meta = SearchMeta(
         search_id=search_dir.name,
         run_id=run_id,
@@ -336,10 +337,12 @@ def create_search(
         problem_key=problem.problem_key,
         backend=config.backend,
         model=config.model,
-        policy=config.search.policy,
-        policy_params=config.search.policy_params,
-        policy_sha256=policy_digest,
-        tuner=config.search.tuner,
+        climber=config.search.policy,
+        climber_sha256=climber.sha256,
+        climber_manifest=climber.manifest.model_dump(exclude_defaults=False),
+        climber_params=config.search.policy_params,
+        hillclimb_version=__version__,
+        tuner=config.search.tuner if "tuner" in config.search.model_fields_set else None,
         tuner_params=config.search.tuner_params,
         routing={
             op: route.model_dump(exclude_none=True)
@@ -359,8 +362,6 @@ def create_search(
         holdout_enabled=config.holdout.enabled and problem.holdout_cmd is not None,
         seed_from=str(seed_from) if seed_from else None,
         seed_sha256=_sha256(seed_from) if seed_from else None,
-        templates_sha256=templates.sha256,
-        templates_overridden=templates.overridden,
         learning_enabled=config.learning.enabled,
         experiment=experiment,
         arm=arm,
@@ -596,7 +597,7 @@ def _preflight_pi_routes(config: Config, search_dir: Path, router, backends, log
 
     # every operator this search's climber may call is routed by its own
     # name (`routing.draft`, `routing.gepa-reflect`, a climber's `crossover`)
-    operators = set(build_operators(config).names())
+    operators = set(build_operators(config, search_dir).names())
     if config.learning.enabled and config.learning.claims:
         operators.add("distill")
     operators.update(
@@ -766,11 +767,11 @@ def execute_search(
     from hillclimb.harness import Harness
 
     # validated before anything is scored: a bad climber costs nothing
-    climber = search_climber(config)
+    climber = search_climber(config, search_dir)
     problems = climber.lint_prompts()
     if problems:
         raise ValueError(f"climber {climber.name}: prompts do not lint clean: " + "; ".join(problems))
-    loop = build_loop(config, complexity_start=_offset, log=log)
+    loop = build_loop(config, complexity_start=_offset, log=log, search_dir=search_dir)
     harness = Harness(
         problem=problem,
         config=config,
@@ -791,8 +792,9 @@ def execute_search(
         router=router,
         backends=backends,
         drain_commands=lambda: store.drain_commands(key),
-        operators=build_operators(config),
+        operators=build_operators(config, search_dir),
         prompts_dir=climber.prompts_dir,
+        tuner=build_tuner(config, search_dir),
     )
 
     def _stop_on_signal(signum, frame):

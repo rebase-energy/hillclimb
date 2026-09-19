@@ -196,3 +196,95 @@ def test_an_import_error_in_the_authors_file_is_reported_with_its_path(tmp_path)
     (root / "policy.py").write_text("import not_a_real_module\n")
     with pytest.raises(ClimberLoadError, match="policy.py failed to import: ModuleNotFoundError"):
         load_climber(str(root)).build_loop()
+
+
+# --- run folders: what is recorded, and what older folders still load as ---
+
+
+def test_a_run_folder_written_before_climbers_still_loads(tmp_path):
+    """Schema v2 named a `policy`. Same thing, older word: every view keeps
+    showing those runs (file store and sqlite alike — the mapping lives on
+    the model)."""
+    import yaml
+
+    from hillclimb.run import SearchMeta, load_search_meta
+
+    search_dir = tmp_path / "runs" / "r" / "searches" / "gefcom-solar"
+    search_dir.mkdir(parents=True)
+    (search_dir / "search.yaml").write_text(yaml.safe_dump({
+        "schema_version": 2, "search_id": "gefcom-solar", "run_id": "r", "problem": "p",
+        "problem_id": "gefcom-solar", "backend": "claude-code", "model": "sonnet",
+        "policy": "hillclimb/policies/drafts_only.py", "policy_params": {"num_drafts": 1},
+        "policy_sha256": "ab" * 32, "tuner": "optuna", "tuner_params": {"seed": 3},
+        "metric": "pinball", "higher_is_better": False,
+        "templates_sha256": "cd" * 32, "templates_overridden": ["improve"],
+    }))
+    meta = load_search_meta(search_dir)
+    assert meta is not None and meta.schema_version == 3
+    assert meta.climber == "hillclimb/policies/drafts_only.py"
+    assert meta.climber_params == {"num_drafts": 1} and meta.climber_sha256 == "ab" * 32
+    assert (meta.tuner, meta.tuner_params) == ("optuna", {"seed": 3})
+    assert meta.climber_manifest == {} and meta.hillclimb_version is None  # unknown for an old run
+    # and the same record as the sqlite store holds it
+    assert SearchMeta.model_validate_json(meta.model_dump_json()).climber == meta.climber
+    # a version this build has never heard of stays invisible rather than half-read
+    (search_dir / "search.yaml").write_text(yaml.safe_dump({"schema_version": 9, "search_id": "x"}))
+    assert load_search_meta(search_dir) is None
+
+
+def test_the_engine_uses_the_tuner_the_user_or_the_manifest_names(config, tmp_path):
+    """`search.tuner` reaches the harness (it silently did not for a while:
+    the rig-based tune tests never went through api's wiring)."""
+    from hillclimb.search_strategy import build_tuner
+    from hillclimb.tuners.random_search import RandomTuner
+
+    assert isinstance(build_tuner(config), RandomTuner)  # greedy's manifest says random
+    root = tmp_path / "with-tuner"
+    root.mkdir()
+    (root / "climber.yaml").write_text(
+        "policy: hillclimb.policies.greedy:GreedyPolicy\ntuner: random\ntuner_params: {seed: 7}\n"
+    )
+    config.search.policy = str(root)
+    assert build_tuner(config).params == {"seed": 7}  # the manifest's params
+    config.search.tuner_params = {"seed": 9}
+    assert build_tuner(config).params == {"seed": 9}  # the user's lay over them
+    pytest.importorskip("optuna")
+    from hillclimb.config import Config
+
+    explicit = Config.model_validate({"search": {"policy": str(root), "tuner": "optuna"}})
+    assert type(build_tuner(explicit)).__name__ == "OptunaTuner"  # the user named one: it wins
+
+
+def test_execute_search_hands_the_harness_the_climbers_tuner(task, config, tmp_path, monkeypatch):
+    """End to end through api: the Harness is constructed with the tuner,
+    the operators and the prompts of the search's climber snapshot."""
+    import hillclimb.harness as harness_module
+    from hillclimb import api
+    from hillclimb.budget import BudgetManager
+    from hillclimb.run import RunMeta
+
+    seen = {}
+    original = harness_module.Harness
+
+    class Spy(original):
+        def __init__(self, **kwargs):
+            seen.update(kwargs)
+            super().__init__(**kwargs)
+
+    monkeypatch.setattr(harness_module, "Harness", Spy)
+    backend = FakeBackend()
+    backend.queue(script=ok_script(0.6), notes="d\n")
+    monkeypatch.setattr("hillclimb.api.get_backend", lambda *a, **k: backend)
+    config.learning.enabled = False
+    config.holdout.enabled = False
+    config.budget.max_evaluations = 1
+    config.search.tuner_params = {"seed": 11}
+    run_dir = api.create_run(config, RunMeta(run_id="r1", name="r1", kind="problem", target="t", problem_ids=[task.problem_id]))
+    search_dir = api.create_search(config, task, run_dir, "r1", 600)
+
+    outcome = api.execute_search(config, task, search_dir, BudgetManager(600, stop_margin_s=1), log=lambda *_: None)
+
+    assert outcome.state == "done"
+    assert seen["tuner"].params == {"seed": 11}
+    assert seen["operators"].names() == ("draft", "debug", "improve", "ensemble")
+    assert (search_dir / "climber" / "climber.yaml").is_file()  # the snapshot the engine loaded

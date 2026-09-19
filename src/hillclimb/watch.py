@@ -412,10 +412,10 @@ def _search_row(store: DataStore, record: SearchRecord) -> SearchRow:
         # column already shows
         problem=(
             f"{meta.problem_id} [{meta.arm}]"
-            if meta.arm and meta.arm != policy_label(meta.policy)
+            if meta.arm and meta.arm != policy_label(meta.climber)
             else meta.problem_id
         ),
-        policy=policy_label(meta.policy),
+        policy=policy_label(meta.climber),
         backend=_display_backend(meta.backend, journal),
         model=_display_model(meta.model, _resolved_model_id(journal, status, search_dir)),
         tokens=_fmt_tokens(tokens),

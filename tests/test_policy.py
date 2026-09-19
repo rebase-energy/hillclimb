@@ -427,12 +427,13 @@ def test_file_policy_drives_a_search_and_is_recorded(task, config, tmp_path):
     config.paths.problems_dir = root
     run_dir = create_run(config, RunMeta(run_id="r1", name="r1", kind="problem", target="p", problem_ids=["p"]))
     meta = load_search_meta(create_search(config, load_problem("p", config), run_dir, "r1", 60))
-    assert meta.policy == str(path)
+    assert meta.climber == str(path)
     import hashlib
-    assert meta.policy_sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert meta.climber_sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
     config.search.policy = "greedy"
     meta = load_search_meta(create_search(config, load_problem("p", config), run_dir, "r1", 60))
-    assert meta.policy_sha256 is None
+    from hillclimb.climber import load_climber
+    assert meta.climber_sha256 == load_climber("greedy").sha256  # a bundled climber has an identity too
 
 
 def test_mixed_fleet_names_file_policy_arms_by_stem():
