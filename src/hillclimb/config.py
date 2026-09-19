@@ -169,6 +169,10 @@ class HoldoutConfig(BaseModel):
     # holdout evaluation (0 = score every passing candidate). Non-top-k candidates
     # climb on val but cannot win rank-blend selection.
     top_k: int = 5
+    # when the hidden split is scored: `inline` as each candidate lands
+    # (`watch` shows it live), `after` once the search has finished. A
+    # climber can only ever see val, either way.
+    timing: Literal["inline", "after"] = "inline"
 
 
 class EnsembleConfig(BaseModel):

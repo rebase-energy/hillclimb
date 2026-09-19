@@ -255,11 +255,11 @@ def test_cli_replays_the_stores_journals(tmp_path, monkeypatch, capsys):
     replay = next(f for f in payload["findings"] if f["check"] == "replay" and f["journal"] == "r1/p")
     assert "improve -> c001" in replay["detail"]  # one draft satisfied num_drafts=1
 
-    # an engine that owns its loop is out of scope, and says so
+    # a climber that brings its own SearchLoop is out of scope, and says so
     with pytest.raises(SystemExit) as exc:
         cli_main(["policy", "check", "--policy", "gepa"])
     assert exc.value.code == 2
-    assert "owns its own loop" in capsys.readouterr().err
+    assert "brings its own SearchLoop" in capsys.readouterr().err
 
 
 def test_cli_checks_a_file_policy_relative_to_the_hillclimb_dir(tmp_path, monkeypatch, capsys):

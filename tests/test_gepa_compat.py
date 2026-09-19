@@ -11,12 +11,10 @@ import pytest
 gepa = pytest.importorskip("gepa")
 
 from hillclimb.backends.fake import FakeBackend  # noqa: E402
-from hillclimb.budget import BudgetManager  # noqa: E402
-from hillclimb.dirs import create_search_dir  # noqa: E402
 from hillclimb.integrations.gepa.driver import CoreOptimizeDriver  # noqa: E402
-from hillclimb.integrations.gepa.searcher import GEPASearcher  # noqa: E402
-from hillclimb.journal import Journal  # noqa: E402
-from tests.conftest import executor_for, ok_script  # noqa: E402
+from hillclimb.integrations.gepa.operator import OPERATOR_NAME  # noqa: E402
+from tests.conftest import ok_script  # noqa: E402
+from tests.gepa_fakes import make_gepa  # noqa: E402
 
 
 def test_optimize_signature_carries_every_relied_upon_kwarg():
@@ -56,7 +54,7 @@ def test_adapter_contract_shape():
 
 @pytest.mark.slow
 def test_full_stack_with_real_gepa_loop(task, config, tmp_path):
-    """GEPASearcher -> CoreOptimizeDriver -> real gepa.optimize, with the
+    """GepaLoop -> CoreOptimizeDriver -> real gepa.optimize, with the
     fake backend as the mutation agent and the real executor as the
     verifier. Deterministic, no network."""
     config.search.policy = "gepa"
@@ -65,29 +63,18 @@ def test_full_stack_with_real_gepa_loop(task, config, tmp_path):
     backend.queue(script=ok_script(0.6))
     backend.queue(script=ok_script(0.7))
     backend.queue(script=ok_script(0.8))
-    search_dir = create_search_dir(tmp_path / "runs" / "r", "s")
-    seed = tmp_path / "seed_solution.py"
-    seed.write_text(ok_script(0.5))
-    searcher = GEPASearcher(
-        problem=task,
-        config=config,
-        journal=Journal(search_dir / "journal.jsonl"),
-        backend=backend,
-        executor=executor_for(task),
-        budget=BudgetManager(3600),
-        search_dir=search_dir,
-        log=lambda *_: None,
-        seed_solution=seed,
-        driver=CoreOptimizeDriver(),
-    )
-    selected = searcher.run()
+    search = make_gepa(task, config, tmp_path, backend=backend, driver=CoreOptimizeDriver())
+    selected = search.run()
 
     assert selected is not None
     assert selected.val_score is not None and selected.val_score > 0.5
-    improves = [c for c in searcher.journal.candidates.values() if c.operator == "improve"]
+    improves = [c for c in search.journal.candidates.values() if c.operator == OPERATOR_NAME]
     assert improves, "real gepa never called the proposer"
     for candidate in improves:
         assert candidate.policy_meta["optimizer"] == "gepa"
         assert candidate.parent_id is not None
-    # gepa checkpointed into the canonical state dir
-    assert (search_dir / "gepa" / "state" / "gepa_state.bin").exists()
+    # every text real gepa evaluated resolved to a journaled candidate: nothing was scored twice
+    hashes = [c.solution_sha256 for c in search.journal.candidates.values() if c.solution_sha256]
+    assert len(hashes) == len(set(hashes))
+    # gepa checkpointed into the loop's own state dir
+    assert (search.search_dir / "loop" / "state" / "gepa_state.bin").exists()

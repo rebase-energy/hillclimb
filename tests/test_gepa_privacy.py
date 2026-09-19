@@ -12,14 +12,12 @@ from pathlib import Path
 
 from hillclimb.api import _finish_holdout
 from hillclimb.backends.fake import FakeBackend
-from hillclimb.budget import BudgetManager
 from hillclimb.dirs import create_search_dir
 from hillclimb.evaluation import CandidateEvaluator
-from hillclimb.integrations.gepa.searcher import GEPASearcher
 from hillclimb.journal import Journal
 from hillclimb.search_strategy import holdout_timing
 from tests.conftest import executor_for, ok_script
-from tests.gepa_fakes import FakeGEPADriver
+from tests.gepa_fakes import FakeGEPADriver, make_gepa
 
 SENTINEL_SCORE = 77.777
 SENTINEL_TEXT = "HOLDOUT-SENTINEL-9f3a"
@@ -60,30 +58,19 @@ def run_search(task, config, tmp_path):
     backend.queue(script=ok_script(0.6))
     backend.queue(script=ok_script(0.7))
     search_dir = create_search_dir(tmp_path / "runs" / "r", "s")
-    seed = tmp_path / "seed_solution.py"
-    seed.write_text(ok_script(0.5))
     journal = Journal(search_dir / "journal.jsonl")
-    # exactly what execute_search builds for gepa: the registry says `after`
-    assert holdout_timing("gepa") == "after"
+    # exactly what execute_search builds for gepa: the climber asks for `after`
+    assert holdout_timing(config) == "after"
     evaluator = CandidateEvaluator(
         executor=executor_for(task), problem=task, config=config,
         holdout_scorer=holdout, holdout_timing="after", journal=journal,
     )
-    searcher = GEPASearcher(
-        problem=task,
-        config=config,
-        journal=journal,
-        backend=backend,
-        executor=evaluator.executor,
-        budget=BudgetManager(3600),
-        search_dir=search_dir,
-        log=lambda *_: None,
-        evaluator=evaluator,
-        seed_solution=seed,
-        driver=driver,
+    searcher = make_gepa(
+        task, config, tmp_path, backend=backend, driver=driver,
+        search_dir=search_dir, journal=journal, evaluator=evaluator,
     )
     selected = searcher.run()
-    assert not holdout.calls  # the strategy returned without a single holdout call
+    assert not holdout.calls  # the loop returned without a single holdout call
     selected = _finish_holdout(
         config, task, search_dir, journal, evaluator, selected, lambda *_: None
     )
@@ -104,11 +91,13 @@ def test_holdout_runs_after_optimization_and_scores_top_k(task, config, tmp_path
 
 def test_nothing_gepa_visible_carries_the_sentinel(task, config, tmp_path):
     _, search_dir, _, driver, _ = run_search(task, config, tmp_path)
-    # every file gepa or its agents can see: proposal dirs, state, identity
-    gepa_root = search_dir / "gepa"
+    # every file gepa or its agents can see: the loop's state + identity, and
+    # the candidate dirs its agents worked in (prompt, feedback, solution)
     offenders = []
-    for path in gepa_root.rglob("*"):
-        if not path.is_file():
+    visible = [*(search_dir / "loop").rglob("*"), *(search_dir / "candidates").glob("*/*")]
+    assert any(p.name == "feedback.json" for p in visible) and any(p.name == "prompt.md" for p in visible)
+    for path in visible:
+        if not path.is_file() or path.is_symlink():
             continue
         text = path.read_text(errors="replace")
         if SENTINEL_TEXT in text or str(SENTINEL_SCORE) in text or "holdout_score" in text:
@@ -123,5 +112,5 @@ def test_nothing_gepa_visible_carries_the_sentinel(task, config, tmp_path):
 
 def test_gepa_state_is_frozen_after_holdout(task, config, tmp_path):
     _, search_dir, _, _, _ = run_search(task, config, tmp_path)
-    state = search_dir / "gepa" / "state" / "gepa_state.bin"
+    state = search_dir / "loop" / "state" / "gepa_state.bin"
     assert state.read_bytes() == b"fake-checkpoint"  # untouched by finalization

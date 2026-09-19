@@ -21,8 +21,8 @@ from pathlib import Path
 from typing import Callable
 
 from hillclimb.integrations.gepa.config import GEPAParams
-from hillclimb.integrations.gepa.evaluator import GEPAEvaluatorBridge
-from hillclimb.integrations.gepa.proposer import COMPONENT, GEPAProposer
+from hillclimb.integrations.gepa.evaluator import GepaScoring
+from hillclimb.integrations.gepa.proposer import COMPONENT
 
 MISSING_EXTRA = "the GEPA optimizer needs the `gepa` package: pip install 'hillclimb[gepa]'"
 
@@ -45,8 +45,8 @@ class CoreOptimizeDriver:
         self,
         *,
         seed_source: str,
-        bridge: GEPAEvaluatorBridge,
-        proposer: GEPAProposer,
+        bridge: GepaScoring,
+        proposer: Callable[..., dict[str, str]],
         params: GEPAParams,
         run_dir: Path,
         instance_keys: list[str],

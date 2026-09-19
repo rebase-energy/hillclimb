@@ -32,6 +32,7 @@ of these: which candidate gets expanded next is already fully policy-owned.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
@@ -42,6 +43,10 @@ if TYPE_CHECKING:
 
 
 TUNE_ACTION = "tune"
+# harness-native, agent-free: score `action.args["source"]` as a candidate
+# (child of `target_id` when given). How a loop evaluates a text it produced
+# itself — an optimizer's merge, a seed — without an agent call.
+INJECT_ACTION = "inject"
 
 
 @dataclass(frozen=True)
@@ -68,6 +73,9 @@ class Action:
     complexity: str | None = None  # draft complexity cue (minimal | moderate | advanced)
     route: Route | None = None  # rare per-action override; routing config is the norm
     extra_prompt_context: str = ""  # rendered as an appended prompt section
+    # operator-specific payload (JSON-able): what `gepa-reflect` is told, the
+    # source an `inject` scores. Never journaled verbatim by the harness.
+    args: Mapping = field(default_factory=dict)
     policy_meta: dict = field(default_factory=dict)  # journaled on the candidate
 
 
@@ -94,6 +102,12 @@ class BudgetView:
     evaluations_remaining: int | None = None
     tokens_remaining: int | None = None
     cost_remaining_usd: float | None = None
+
+    def remaining_str(self) -> str:
+        """The clock as prompts and logs print it (`1h 05m` | `59 minutes`)."""
+        from hillclimb.budget import format_remaining
+
+        return format_remaining(self.remaining_s)
 
 
 @dataclass(frozen=True)

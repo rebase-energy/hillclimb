@@ -112,19 +112,14 @@ def test_openevolve_prompts_match_golden(task, config, tmp_path):
 
 
 def test_gepa_proposer_prompts_match_golden(task, config, tmp_path):
-    """The GEPA proposer's prompt is an f-string today and becomes a real
-    operator template later; pin what the agent is told."""
+    """What a `gepa-reflect` agent is told: the reflective body (a template
+    like any other) with the problem's contract appended by the harness."""
     from tests.conftest import ok_script
-    from tests.gepa_fakes import FakeGEPADriver
-    from tests.test_gepa_searcher import make_searcher as make_gepa
+    from tests.gepa_fakes import FakeGEPADriver, make_gepa
 
     backend = FakeBackend()
     backend.queue(script=ok_script(0.6))
     backend.queue(script=ok_script(0.7))
-    searcher, search_dir = make_gepa(task, config, tmp_path, backend=backend, driver=FakeGEPADriver(steps=2))
-    searcher.run()
-    prompts = {
-        path.parent.name: normalize(path.read_text(), tmp_path)
-        for path in sorted((search_dir / "gepa" / "proposals").glob("*/prompt.md"))
-    }
-    _check("gepa", prompts)
+    search = make_gepa(task, config, tmp_path, backend=backend, driver=FakeGEPADriver(steps=2))
+    search.run()
+    _check("gepa", collect_prompts(search.search_dir, tmp_path))

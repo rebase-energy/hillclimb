@@ -1342,14 +1342,14 @@ def policy_check(
     from hillclimb.api import run_search
     from hillclimb.policies import get_policy, policy_base_dir, policy_path
     from hillclimb.policy_check import JournalCase, check_policy
-    from hillclimb.search_strategy import _ENGINES
+    from hillclimb.search_strategy import is_loop_climber
 
     config = load_config()
     config.apply_overrides(_parse_set(set_ or []))
     name = policy or config.search.policy
-    if name in _ENGINES:
+    if is_loop_climber(name):
         typer.echo(
-            f"{name} is a search engine that owns its own loop (search_strategy.py); "
+            f"{name} brings its own SearchLoop; "
             "the conformance check covers SearchPolicy implementations",
             err=True,
         )

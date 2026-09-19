@@ -41,7 +41,7 @@ class SearchRig(Harness):
     serial `run_operator(op, target)` (what the policy WOULD attach to that
     operator, run on the calling thread), `decide()`, and the greedy
     introspection helpers. Production code never sees this class — a real
-    search is `PolicySearch(Harness, PolicyLoop(policy))`.
+    search is `Harness.execute(PolicyLoop(policy))`.
 
     `run()` with no action runs the whole search; with one it is
     `Harness.run(action)`."""

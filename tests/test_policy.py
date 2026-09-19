@@ -391,12 +391,13 @@ def test_file_policy_errors_name_the_file(tmp_path):
 
 
 def test_file_policy_drives_a_search_and_is_recorded(task, config, tmp_path):
-    """`search.policy: <file>` flows through build_search_strategy, and the
-    search record pins the file's hash."""
+    """`search.policy: <file>` flows through build_loop, and the search
+    record pins the file's hash."""
     from hillclimb.api import create_run, create_search
     from hillclimb.problem import load_problem
     from hillclimb.run import RunMeta, load_search_meta
-    from hillclimb.search_strategy import build_search_strategy
+    from hillclimb.search_strategy import build_loop
+    from tests.harness_factory import make_harness
     from tests.test_cli import write_problem
 
     path = tmp_path / "drafts_only.py"
@@ -406,15 +407,11 @@ def test_file_policy_drives_a_search_and_is_recorded(task, config, tmp_path):
     backend = FakeBackend()
     backend.queue(script=ok_script(0.6), notes="one\n")
     backend.queue(script=ok_script(0.7), notes="two\n")
-    search_dir = create_search_dir(config.paths.runs_dir, "test-run")
     config.budget.max_evaluations = 2
-    searcher = build_search_strategy(
-        config=config, problem=task, journal=Journal(search_dir / "journal.jsonl"),
-        backend=backend, executor=local_executor(), budget=BudgetManager(3600, stop_margin_s=1),
-        search_dir=search_dir, log=lambda *_: None,
-    )
-    assert searcher.loop.policy.name == "drafts-only"
-    searcher.run()
+    loop = build_loop(config)
+    assert loop.policy.name == "drafts-only"
+    harness, _journal, _search_dir = make_harness(task, config, backend, name="test-run")
+    harness.execute(loop)
     assert [r.operator for r in backend.requests] == ["draft", "draft"]  # never improve
 
     root = tmp_path / "problems"

@@ -32,6 +32,14 @@ def journal_spend(journal: Journal) -> Spend:
     return Spend(evaluations=evaluations, tokens=tokens, cost_usd=cost)
 
 
+def format_remaining(seconds: float) -> str:
+    """How the clock reads in prompts and logs: `1h 05m` or `59 minutes`."""
+    whole = int(round(seconds))
+    hours, rest = divmod(whole, 3600)
+    minutes = rest // 60
+    return f"{hours}h {minutes:02d}m" if hours else f"{minutes} minutes"
+
+
 class BudgetManager:
     """Wall-clock budget for a run. `spent_s` seeds time already used
     (from the journal) when resuming."""
@@ -54,7 +62,4 @@ class BudgetManager:
         return self.remaining() < self.stop_margin_s
 
     def remaining_str(self) -> str:
-        seconds = int(round(self.remaining()))
-        hours, rest = divmod(seconds, 3600)
-        minutes = rest // 60
-        return f"{hours}h {minutes:02d}m" if hours else f"{minutes} minutes"
+        return format_remaining(self.remaining())

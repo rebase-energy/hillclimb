@@ -209,11 +209,24 @@ shim).
   hard deadline is re-checked on every poll. `PolicyLoop` is the built-in
   loop (fill free slots with `policy.propose`, `observe` every outcome,
   `catch_up` replays the journal once per candidate — the resume contract).
-  A policy-driven search in production is `search.PolicySearch(harness,
-  loop)` (what `build_search_strategy` returns; `.harness`, `.loop.policy`);
-  `GreedySearcher` no longer exists. Tests that poke at harness and policy
-  together use `tests/harness_factory.SearchRig` (a `Harness` subclass with a
-  policy attached: serial `run_operator`, `decide`, the greedy `_ensemble_*`
+  EVERY climber runs as `Harness.execute(loop)` (`api.execute_search`):
+  `search_strategy.build_loop(config)` returns `PolicyLoop(policy)` or, for
+  `gepa`, its own `GepaLoop` — there is no engine tier, no `_ENGINES`, no
+  `SearchStrategy`. `holdout_timing(config)` is the user's `holdout.timing`
+  (`inline | after`), tightened to `after` for gepa. Harness-native,
+  agent-free actions: `tune` and `inject` (`Action(INJECT_ACTION,
+  args={"source": text}, target_id=parent)` scores a text the loop already
+  has; `--seed-from` runs through the same path as operator `seed`; the text
+  is never journaled, its `Candidate.solution_sha256` — `candidate.source_hash`,
+  newline-normalized — is, on every scored candidate). `Preparation.texts`
+  writes extra files from text; `Preparation.require_change` turns an agent
+  that hands the parent back into Outcome `unchanged` (abandoned, never
+  scored, no evaluation spent). `Outcome.result` is an `EvalResult` projected
+  from the holdout-blind copy. `Harness.request_stop(reason)` closes it from a
+  signal handler BEFORE the handler raises, so a swallowed StopRequested
+  cannot keep spending. Tests that poke at harness and policy together use
+  `tests/harness_factory.SearchRig` (a `Harness` subclass with a policy
+  attached: serial `run_operator`, `decide`, the greedy `_ensemble_*`
   helpers) or, for harness-only tests, `make_harness` + `harness.run(Action(...))`
 - Budget dimensions: the budget is the USER's in every dimension — the clock
   (`budget.total_s`), `budget.max_evaluations`, `budget.max_tokens`,
@@ -287,27 +300,40 @@ shim).
   never add unknown ones); `templates_digest` hashes the effective set into
   `SearchMeta.templates_sha256` + `templates_overridden` at `create_search`.
   Tests that activate an override dir must restore the previous setting
-- Search engines (`search_strategy.py`, architecture in
-  `docs/optimizer-host-plan.md`): optimizers that own their whole loop
-  dispatch as a `SearchStrategy` via `_ENGINES` before `get_policy()` is ever
-  called — `gepa` (`integrations/gepa/`, extra `hillclimb[gepa]`) is the
-  first: a routed hillclimb agent is its mutation proposer
-  (`SEARCH_DIR/gepa/proposals/`), every evaluation is a canonical journaled
-  candidate (`policy_meta.optimizer: gepa`), checkpoints in
-  `SEARCH_DIR/gepa/state`, holdout only after the optimizer finishes and
-  never visible to it (the host scores it — `holdout_timing="after"` on the
-  registry entry; the searcher never holds a scorer). `driver.py` is the only module importing gepa
+- GEPA (`integrations/gepa/`, extra `hillclimb[gepa]`): a climber that
+  brings its own `SearchLoop`. gepa drives proposal order, Pareto selection
+  and its checkpoint; everything that costs or counts is `harness.run(...)`:
+  a reflective mutation is one `gepa-reflect` attempt (`operator.py`, a real
+  operator with template `prompts/gepa_reflect.md`, `require_change`, the
+  feedback written beside the parent's solution as `feedback.json`; routed
+  as `routing.gepa-reflect`), any other text gepa evaluates (a merge) is an
+  `inject`, and results are cached by `source_hash` so gepa's later
+  `evaluate(text)` of its own proposal is a lookup. The seed is whatever the
+  harness already scored (`--seed-from` → operator `seed`, else the problem's
+  baseline candidate — never evaluated twice). `GepaScoring` (`evaluator.py`)
+  holds the cache, the maximizing fitness, the instance-key rule (checked on
+  gepa's EVALUATE path, where exceptions propagate out of `optimize()` — the
+  proposer's are swallowed) and the allow-list ASI. Failed rounds are
+  ordinary abandoned candidates with their cost journaled; three in a row
+  (`agent_failed | no_solution | unchanged | crashed`) end the search as
+  `ParkedSearch`. Budgets in every dimension, the cost ceiling and stop/park
+  bind gepa through the harness (`should_stop = not harness.open`). State:
+  `SEARCH_DIR/loop/state/` + `loop/identity.json` (`harness.state_dir`);
+  resume rebuilds the cache from `view().journal` + `harness.source()` and
+  refuses a candidate dir whose text no longer matches its
+  `solution_sha256`. `driver.py` is the only module importing gepa
   (`skip_perfect_score=False` is mandatory there — the upstream default
   silently disables mutation for unbounded scores); the default suite drives
-  `GEPASearcher` through `tests/gepa_fakes.py`. Shared trial execution lives
-  in `evaluation.py` (`CandidateEvaluator` is journal-free by construction;
-  `EvalResult` is the projection engines consume). A verifier may write a
-  reserved `instances` key next to `score` (per-instance breakdown, stable
-  keys → `Replicate.instance_scores`, median-aggregated) — GEPA's Pareto
-  frontier and future QD engines consume it; circle-packing is the
+  `GepaLoop` through `tests/gepa_fakes.py` (`make_gepa`), and
+  `tests/test_gepa_compat.py` runs the real library. Shared trial execution
+  lives in `evaluation.py` (`CandidateEvaluator` is journal-free by
+  construction; `EvalResult` is the projection loops consume). A verifier may
+  write a reserved `instances` key next to `score` (per-instance breakdown,
+  stable keys → `Replicate.instance_scores`, median-aggregated) — GEPA's
+  Pareto frontier and future QD loops consume it; circle-packing is the
   reference producer, and the emflow eval runner emits one instance per
-  scored origin (`<asof>/<zone>`, GEFCom2014's task x zone); a candidate
-  may miss keys (failed instances), never introduce new ones
+  scored origin (`<asof>/<zone>`, GEFCom2014's task x zone); a candidate may
+  miss keys (failed instances), never introduce new ones
 - Experiments (`experiment.py`): a spec (`hillclimb/experiments/<name>.yaml`)
   is problems × named arms (dotted config overrides, `Config.apply_overrides`)
   × repeats; searches are tagged in `SearchMeta` (`experiment`, `arm`,

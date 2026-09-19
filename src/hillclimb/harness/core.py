@@ -10,7 +10,7 @@ from pathlib import Path
 from hillclimb.backends.base import OperatorBackend, OperatorRequest, OperatorResult
 from hillclimb.baseline import write_baseline
 from hillclimb.budget import BudgetManager, Spend, journal_spend
-from hillclimb.candidate import BackendInfo, Candidate, utcnow
+from hillclimb.candidate import BackendInfo, Candidate, source_hash, utcnow
 from hillclimb.config import Config
 from hillclimb.control import ControlCommand, apply_prune, drain_commands_dir, resync_best
 from hillclimb import evaluation
@@ -19,7 +19,7 @@ from hillclimb.executor import Executor
 from hillclimb.journal import Journal, PolicyJournal
 from hillclimb.params import ParamsFile, read_candidate_space, write_inherited_params
 from hillclimb.loop import ClimberError, HarnessClosed, Outcome, SearchInfo, SearchLoop, Ticket
-from hillclimb.policy import TUNE_ACTION, Action, BudgetView, InflightRef, PolicyInput
+from hillclimb.policy import INJECT_ACTION, TUNE_ACTION, Action, BudgetView, InflightRef, PolicyInput
 from hillclimb.operators import (
     CONTRACT_TOKEN,
     MemoryContext,
@@ -57,6 +57,9 @@ class Job:
     # deep copy the worker may mutate, the live object is only touched in
     # _commit_tune under the state lock
     kind: str = "operator"  # operator | tune
+    # `Preparation.require_change`: the parent's source hash — an agent that
+    # hands back the same text made no attempt
+    unchanged_hash: str | None = None
     trial_index: int | None = None
     params: dict | None = None
     declaration: ParamsFile | None = None
@@ -75,7 +78,7 @@ class OutcomeMsg:
     """Terminal report from a worker; consumed by _commit on the scheduler."""
 
     job: Job
-    kind: str  # parked | aborted | agent_failed | no_solution | executed | tuned
+    kind: str  # parked | aborted | agent_failed | no_solution | unchanged | executed | tuned
     result: OperatorResult | None = None
     all_ok: bool = False  # every replicate passed AND (when scored) the hidden split did too
     # the verifier ran under a timeout clamped by the search's remaining
@@ -250,6 +253,7 @@ class Harness:
             metric_name=self.problem.metric_name,
             higher_is_better=self.problem.higher_is_better,
             parallelism=self.parallelism,
+            baseline_source=self.problem.baseline_text or None,
         )
 
     @property
@@ -436,6 +440,16 @@ class Harness:
             raise HarnessClosed(reason)
         return "out of budget" if self.budget.should_stop() else None
 
+    def request_stop(self, reason: str) -> None:
+        """Close the harness from OUTSIDE the loop's call stack (a signal
+        handler): latch a stop and abort what is running. Setting two
+        attributes is safe at any point; the latch is what guarantees that a
+        loop — or a library under it — which swallows the StopRequested the
+        handler raises next still cannot start anything."""
+        if self._latch is None:
+            self._latch = StopRequested(reason)
+        self.abort.set()
+
     def _assert_owner(self) -> None:
         if self._owner is not None and threading.get_ident() != self._owner:
             raise RuntimeError("the harness commits on the loop's thread: call it from there")
@@ -465,9 +479,13 @@ class Harness:
                 if action.operator == TUNE_ACTION:
                     job = self._prepare_tune(action)
                     reason = None if job is not None else "tune refused (see log)"
+                elif action.operator == INJECT_ACTION:
+                    job, reason = self._prepare_inject(action), None
                 else:
                     job, reason = self._prepare(action), None
-            except (ValueError, KeyError) as exc:
+            except KeyError as exc:  # a target or inspiration id the journal does not hold
+                job, reason = None, f"references {exc.args[0]} which is not in the journal"
+            except ValueError as exc:
                 job, reason = None, str(exc)
         if job is None:
             return self._reject(action, reason)
@@ -515,10 +533,14 @@ class Harness:
         elif kind == "evaluated" and committed.status == "abandoned":
             kind = "cut_off"
         live = self.journal.candidates.get(job.candidate.candidate_id)
+        blind = live.holdout_blind() if live is not None else None
         return Outcome(
             ticket=self._ticket(action, job),
             kind=kind,
-            candidate=live.holdout_blind() if live is not None else None,
+            candidate=blind,
+            # projected from the holdout-blind copy: a loop's scoring view can
+            # never carry what the mask removed
+            result=evaluation.eval_result_for(blind) if blind is not None and blind.trials else None,
         )
 
     def _submit(self, pool: ThreadPoolExecutor, job: Job) -> None:
@@ -738,40 +760,55 @@ class Harness:
         seed = self.seed_solution.absolute()
         if not seed.exists():
             raise FileNotFoundError(f"seed solution not found: {seed}")
+        self.log(f"seeding incumbent {seed.name}")
+        job = self._prepare_inject(
+            Action(operator=INJECT_ACTION, args={"source": seed.read_text()}),
+            operator="seed",
+            summary=f"incumbent model seeded from {seed.name}",
+        )
+        self._inflight[job.key] = job
+        committed = self._commit(self._execute_job(job))
+        score = f"val={committed.val_score}" if committed.status == "passing" else committed.status
+        self.log(f"  seed scored: {score}")
+        return committed
+
+    def _prepare_inject(self, action: Action, *, operator: str = INJECT_ACTION, summary: str = "") -> Job:
+        """An agent-free candidate from a source text the loop (or the user's
+        --seed-from) already has: write it, journal `created`, score it like
+        any other attempt. The text itself is never journaled — its
+        `solution_sha256` is."""
+        source = action.args.get("source")
+        if not isinstance(source, str) or not source.strip():
+            raise ValueError(f"{operator} needs a non-empty args['source']")
+        target = self.journal.candidates.get(action.target_id) if action.target_id else None
+        if action.target_id and target is None:
+            raise KeyError(action.target_id)
         candidate_id = self.journal.next_candidate_id()
         candidate_dir = create_candidate_dir(
             self.search_dir,
             candidate_id,
             self.data_dir,
             self.problem.problem_dir,
-            parent_solution=seed,
             unit_tests_dir=(self.problem.unit_tests.root if self.problem.unit_tests else None),
         )
+        (candidate_dir / "solution.py").write_text(source)
         candidate = Candidate(
             candidate_id=candidate_id,
-            operator="seed",
+            parent_id=target.candidate_id if target else None,
+            operator=operator,
             candidate_dir=str(candidate_dir),
-            summary=f"incumbent model seeded from {seed.name}",
+            summary=summary,
+            policy_meta=dict(action.policy_meta),
         )
         self.journal.candidate_created(candidate)
-        self.log(f"seeding incumbent {seed.name} as {candidate_id}")
-        exec_timeout = self.config.budget.exec_timeout_s
-        _, all_ok = self.evaluator.run_trial(
-            candidate, candidate_dir / "solution.py", candidate_dir, exec_timeout
-        )
-        msg = OutcomeMsg(
-            job=Job(candidate=candidate, request=None, candidate_dir=candidate_dir),
-            kind="executed",
-            all_ok=all_ok,
-        )
-        committed = self._commit(msg)
-        score = (
-            f"val={committed.val_score}"
-            if committed.status == "passing"
-            else committed.status
-        )
-        self.log(f"  seed scored: {score}")
-        return committed
+        if self.status is not None:
+            self.status.add_current(
+                CurrentCandidate(
+                    candidate_id=candidate_id, operator=operator, phase="exec",
+                    candidate_dir=str(candidate_dir),
+                )
+            )
+        return Job(candidate=candidate, request=None, candidate_dir=candidate_dir)
 
     # --- candidate lifecycle: _prepare (scheduler) → _execute_job (worker)
     # --- → _commit (scheduler); run_operator is the synchronous composition
@@ -806,6 +843,10 @@ class Harness:
             if Path(name).name != name:
                 raise ValueError(f"operator {operator!r}: extra file {name!r} must be a bare file name")
             shutil.copy(source, candidate_dir / name)
+        for name, text in prep.texts.items():
+            if Path(name).name != name:
+                raise ValueError(f"operator {operator!r}: extra file {name!r} must be a bare file name")
+            (candidate_dir / name).write_text(text)
         inherited = (
             self._inherit_params(target, candidate_dir)
             if parent_solution and prep.inherit_params
@@ -889,6 +930,11 @@ class Harness:
             request=request,
             candidate_dir=candidate_dir,
             ensemble_inputs=ensemble_inputs,
+            unchanged_hash=(
+                source_hash(parent_solution.read_text())
+                if prep.require_change and parent_solution is not None and parent_solution.exists()
+                else None
+            ),
             backend=(
                 self.backends.get(route.backend, route.backend_auth)
                 if self.backends is not None
@@ -968,6 +1014,8 @@ class Harness:
         if job.kind == "tune":
             return self._execute_tune(job)
         candidate = job.candidate
+        if job.request is None:  # inject / seed: there is no agent to call
+            return self._evaluate_job(job, None)
         backend = job.backend if job.backend is not None else self.backend
 
         slot = None
@@ -1017,9 +1065,17 @@ class Harness:
             lines = notes.read_text().strip().splitlines()
             candidate.summary = lines[0] if lines else ""
 
+        return self._evaluate_job(job, result)
+
+    def _evaluate_job(self, job: Job, result: OperatorResult | None) -> OutcomeMsg:
+        """Worker-side: score whatever solution the attempt left behind."""
+        candidate = job.candidate
         solution = job.candidate_dir / "solution.py"
         if not solution.exists():
             return OutcomeMsg(job=job, kind="no_solution", result=result)
+        candidate.solution_sha256 = source_hash(solution.read_text(errors="replace"))
+        if job.unchanged_hash is not None and candidate.solution_sha256 == job.unchanged_hash:
+            return OutcomeMsg(job=job, kind="unchanged", result=result)
 
         exec_timeout = min(
             self.config.budget.exec_timeout_s, max(60, int(self.budget.remaining() - 30))
@@ -1093,10 +1149,18 @@ class Harness:
                     return candidate
                 self._consecutive_failures = 0
 
+                if msg.kind == "unchanged":
+                    candidate.status = "abandoned"
+                    candidate.summary = "agent returned the parent source unchanged"
+                    candidate.finished_at = utcnow()
+                    self._record_result(candidate)
+                    return candidate
+
                 if msg.kind == "no_solution":
                     candidate.status = "abandoned"
                     candidate.summary = (
-                        candidate.summary or f"agent produced no solution.py ({result.error_kind})"
+                        candidate.summary
+                        or f"no solution.py to score ({result.error_kind if result else 'inject'})"
                     )
                     candidate.finished_at = utcnow()
                     self._record_result(candidate)

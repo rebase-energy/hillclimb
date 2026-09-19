@@ -15,11 +15,10 @@ from hillclimb.dirs import create_candidate_dir, create_search_dir
 from hillclimb.evaluation import CandidateEvaluator
 from hillclimb.executor import CommandExecutor
 from hillclimb.journal import Journal
-from hillclimb.integrations.gepa.searcher import GEPASearcher
 from hillclimb.problem import ProblemSpec
 from hillclimb.runtime import RUN_SOLUTION
 from tests.harness_factory import SearchRig
-from tests.gepa_fakes import FakeGEPADriver
+from tests.gepa_fakes import FakeGEPADriver, make_gepa
 
 
 def json_problem(tmp_path, task):
@@ -144,16 +143,9 @@ def test_gepa_runner_preserves_json_artifact(tmp_path, task, config):
     backend = FakeBackend()
     backend.queue(script=json_solution(0.8), notes="json improvement\n")
     search_dir = create_search_dir(tmp_path / "runs" / "gepa", "s")
-    searcher = GEPASearcher(
-        problem=problem,
-        config=config,
-        journal=Journal(search_dir / "journal.jsonl"),
-        backend=backend,
-        executor=CommandExecutor(Path(sys.executable), problem.verifier_cmd),
-        budget=BudgetManager(3600),
-        search_dir=search_dir,
-        driver=FakeGEPADriver(steps=1),
-        log=lambda *_: None,
+    searcher = make_gepa(
+        problem, config, tmp_path, backend=backend, driver=FakeGEPADriver(steps=1),
+        seed_score=None, search_dir=search_dir,  # seeded by the problem's own baseline solution
     )
 
     selected = searcher.run()

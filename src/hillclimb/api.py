@@ -30,13 +30,7 @@ from hillclimb.config import Config
 from hillclimb.journal import Journal
 from hillclimb.problem import ProblemSpec, load_problem
 from hillclimb.run import RunMeta, SearchMeta, new_search_uid
-from hillclimb.search_strategy import (
-    ParkedSearch,
-    SearchStrategy,
-    StopRequested,
-    build_search_strategy,
-    holdout_timing,
-)
+from hillclimb.search_strategy import ParkedSearch, StopRequested, build_loop, holdout_timing
 from hillclimb.status import SearchStatus, StatusWriter
 from hillclimb.store import key_for, open_store
 from hillclimb.dirs import allocate_search_dir, create_run_dir
@@ -256,7 +250,7 @@ def build_evaluator(
         problem=problem,
         config=config,
         holdout_scorer=build_holdout_scorer(config, problem, search_dir, log),
-        holdout_timing=holdout_timing(config.search.policy),
+        holdout_timing=holdout_timing(config),
         journal=journal,
         status=status,
         log=log,
@@ -597,7 +591,9 @@ def _preflight_pi_routes(config: Config, search_dir: Path, router, backends, log
 
     operators = set(operator_names())
     if config.search.policy == "gepa":
-        operators.add("gepa")
+        from hillclimb.integrations.gepa.operator import OPERATOR_NAME
+
+        operators.add(OPERATOR_NAME)  # routed like any operator: `routing.gepa-reflect`
     if config.learning.enabled and config.learning.claims:
         operators.add("distill")
     operators.update(
@@ -691,6 +687,8 @@ def execute_search(
         budget=budget,
     )
     status.start_heartbeat()
+    # SIGTERM before the harness exists just raises; once it does, the
+    # handler latches it closed first (installed below)
     try:  # signal handlers are main-thread-only; embedded callers skip them
         signal.signal(signal.SIGTERM, _raise_stop_requested)
     except ValueError:
@@ -762,7 +760,11 @@ def execute_search(
     machine_max = config.search.effective_machine_max_operators()
     slots = MachineSlots(machine_cache_dir() / "agent-slots", machine_max) if machine_max > 0 else None
     evaluator = build_evaluator(config, problem, search_dir, journal, status=status, log=log)
-    searcher: SearchStrategy = build_search_strategy(
+    from hillclimb.harness import Harness
+
+    # validated before anything is scored: a bad climber config costs nothing
+    loop = build_loop(config, complexity_start=_offset, log=log)
+    harness = Harness(
         problem=problem,
         config=config,
         journal=journal,
@@ -779,18 +781,27 @@ def execute_search(
         knowledge_context=knowledge_context if knowledge_context is not None else _kc,
         reference_solution=reference_solution,
         reference_note=reference_note,
-        complexity_start=_offset,
         router=router,
         backends=backends,
         drain_commands=lambda: store.drain_commands(key),
     )
+
+    def _stop_on_signal(signum, frame):
+        reason = f"signal {signal.Signals(signum).name}"
+        harness.request_stop(reason)
+        raise StopRequested(reason)
+
+    try:
+        signal.signal(signal.SIGTERM, _stop_on_signal)
+    except ValueError:
+        pass
 
     def finalize(state: str, last_error: str | None = None) -> None:
         status.finalize(state, last_error=last_error)
         store.close()
 
     try:
-        selected = searcher.run()
+        selected = harness.execute(loop)
         selected = _finish_holdout(config, problem, search_dir, journal, evaluator, selected, log)
     except ParkedSearch as exc:
         finalize("parked", last_error=str(exc)[:500])
@@ -809,7 +820,7 @@ def execute_search(
     _distill_knowledge(
         config, problem, search_dir, journal,
         target=target, budget_s=budget.total_s,
-        cost_usd=searcher.total_cost_usd(), log=log,
+        cost_usd=harness.total_cost_usd(), log=log,
     )
     return SearchOutcome(run_dir, search_dir, selected, "done")
 

@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from hillclimb.candidate import Candidate
+    from hillclimb.evaluation import EvalResult
     from hillclimb.policy import Action, InflightRef, PolicyInput, SearchPolicy
 
 
@@ -48,6 +49,7 @@ class SearchInfo:
     metric_name: str
     higher_is_better: bool
     parallelism: int  # how many attempts the harness runs at once
+    baseline_source: str | None = None  # the problem's own baseline solution, when it ships one
 
 
 @dataclass(frozen=True)
@@ -74,9 +76,13 @@ class Outcome:
     # cut_off      killed at the budget wall — not shown to be wrong
     # agent_failed the agent call failed · no_solution it wrote no solution
     # aborted      stopped mid-attempt · parked the backend hit a limit
+    # unchanged    the agent left the parent's solution as it was (`require_change`)
     # crashed      the harness's own worker failed · rejected nothing was started
     kind: str
     candidate: Candidate | None
+    # the scored view of `candidate` (score, per-instance scores, features,
+    # trial summaries) — None when nothing was evaluated
+    result: EvalResult | None = None
 
 
 class Harness(Protocol):

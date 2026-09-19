@@ -35,7 +35,7 @@ ROLES = ("create", "repair", "refine", "combine")
 
 # operators the harness runs itself (no agent, no prompt): their candidates
 # carry the operator's own name as role
-RESERVED_ROLES = {"baseline": "baseline", "seed": "seed"}
+RESERVED_ROLES = {"baseline": "baseline", "seed": "seed", "inject": "inject"}
 
 # the token a template marks the contract's place with; the harness fills it
 CONTRACT_TOKEN = "{{contract}}"
@@ -182,6 +182,10 @@ class Preparation:
     copy_inspirations: bool = True  # copy the action's inspirations in (`inspiration_filename`)
     fork_session: bool = False  # ask to continue the target's agent session (granted only where a backend can)
     files: Mapping[str, Path] = field(default_factory=dict)  # extra files: name in the dir -> source
+    texts: Mapping[str, str] = field(default_factory=dict)  # extra files written from text: name -> content
+    # the attempt only counts if the agent CHANGED the copied parent solution;
+    # an untouched one comes back as Outcome `unchanged` and is never scored
+    require_change: bool = False
 
 
 class Operator(ABC):

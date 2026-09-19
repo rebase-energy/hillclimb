@@ -25,6 +25,7 @@ _LAZY = {
     "PolicyInput": ("hillclimb.policy", "PolicyInput"),
     "SearchPolicy": ("hillclimb.policy", "SearchPolicy"),
     "TUNE_ACTION": ("hillclimb.policy", "TUNE_ACTION"),
+    "INJECT_ACTION": ("hillclimb.policy", "INJECT_ACTION"),
     # control flow over the harness (most climbers only need a SearchPolicy)
     "SearchLoop": ("hillclimb.loop", "SearchLoop"),
     "PolicyLoop": ("hillclimb.loop", "PolicyLoop"),
@@ -39,6 +40,11 @@ _LAZY = {
     "Trial": ("hillclimb.candidate", "Trial"),
     "Replicate": ("hillclimb.candidate", "Replicate"),
     "PolicyJournal": ("hillclimb.journal", "PolicyJournal"),
+    "source_hash": ("hillclimb.candidate", "source_hash"),
+    "EvalResult": ("hillclimb.evaluation", "EvalResult"),
+    "eval_result_for": ("hillclimb.evaluation", "eval_result_for"),
+    # a loop may end its search as resumable ("parked") instead of failed
+    "ParkedSearch": ("hillclimb.search_strategy", "ParkedSearch"),
     # the accept rule, so a policy agrees with the harness on what "better" means
     "improves": ("hillclimb.evaluation", "improves"),
     "accept_band": ("hillclimb.evaluation", "accept_band"),
@@ -81,8 +87,8 @@ def __dir__() -> list[str]:
 
 
 if TYPE_CHECKING:  # eager for type checkers and editors only
-    from hillclimb.candidate import Candidate, Replicate, Trial
-    from hillclimb.evaluation import accept_band, improves
+    from hillclimb.candidate import Candidate, Replicate, Trial, source_hash
+    from hillclimb.evaluation import EvalResult, accept_band, eval_result_for, improves
     from hillclimb.journal import PolicyJournal
     from hillclimb.loop import (
         ClimberError,
@@ -105,6 +111,7 @@ if TYPE_CHECKING:  # eager for type checkers and editors only
     )
     from hillclimb.params import ParamSpace, ParamSpec, coerce
     from hillclimb.policy import (
+        INJECT_ACTION,
         TUNE_ACTION,
         Action,
         BudgetView,
@@ -114,4 +121,5 @@ if TYPE_CHECKING:  # eager for type checkers and editors only
         SearchPolicy,
     )
     from hillclimb.similarity_scores.base import SimilarityScore, SimilarityUnavailable, Solution
+    from hillclimb.search_strategy import ParkedSearch
     from hillclimb.tuner import Observation, Tuner

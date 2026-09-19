@@ -7,6 +7,17 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 STATUSES = ("pending", "passing", "failing", "buggy", "parked", "abandoned")
+
+
+def source_hash(source: str) -> str:
+    """Stable identity of a solution's text: sha256 over newline-normalized
+    source, so a CRLF checkout or a trailing blank line is the same solution."""
+    import hashlib
+
+    normalized = "\n".join(source.splitlines()).strip() + "\n"
+    return hashlib.sha256(normalized.encode()).hexdigest()
+
+
 # Trial fields the hidden split produces (Candidate.holdout_blind strips them)
 HOLDOUT_FIELDS = ("holdout_score", "holdout_error", "holdout_cpu_s")
 
@@ -190,6 +201,9 @@ class Candidate(BaseModel):
     # so a climber's own operators need no change anywhere else. Stamped by
     # the harness; records that predate it get their operator's role on load.
     role: str | None = None
+    # `source_hash` of the solution that was scored, stamped by the harness:
+    # how a loop recognises a text it has already paid to evaluate
+    solution_sha256: str | None = None
     status: str = "pending"  # one of STATUSES
     complexity: str | None = None  # minimal | moderate | advanced (drafts only)
     debug_depth: int = 0

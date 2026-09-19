@@ -117,18 +117,18 @@ def test_instances_flow_from_verifier_to_eval_result(tmp_path, task, config):
 
 
 def _bridge(*, higher_is_better=True):
-    """The evaluator bridge's instance-key state alone: the two methods under
-    test read only these attributes."""
-    from types import SimpleNamespace
+    """GEPA's scoring view on its own: no harness needed to exercise the
+    instance-key rule and the fitness transforms."""
+    from hillclimb.integrations.gepa.config import GEPAParams
+    from hillclimb.integrations.gepa.evaluator import GepaScoring
 
-    from hillclimb.integrations.gepa.evaluator import GEPAEvaluatorBridge
-
-    bridge = GEPAEvaluatorBridge.__new__(GEPAEvaluatorBridge)
-    bridge.instance_keys = None
-    bridge._min_valid_fitness = None
-    bridge.problem = SimpleNamespace(higher_is_better=higher_is_better)
-    bridge.params = SimpleNamespace(failure_fitness=-1e100)
-    return bridge
+    return GepaScoring(
+        params=GEPAParams(failure_fitness=-1e100),
+        metric_name="score",
+        higher_is_better=higher_is_better,
+        evaluate=lambda source: None,
+        candidate_of=lambda candidate_id: None,
+    )
 
 
 def _result(instances, score=1.0, valid=True):
@@ -143,17 +143,17 @@ def test_gepa_tolerates_missing_instances_but_not_new_ones():
     from hillclimb.integrations.gepa.evaluator import InstanceKeyMismatch
 
     bridge = _bridge()
-    bridge._check_instance_keys(_result({"t1/z1": 0.5, "t1/z2": 0.7}))
+    bridge.check_instance_keys(_result({"t1/z1": 0.5, "t1/z2": 0.7}))
     assert bridge.instance_keys == ("t1/z1", "t1/z2")
-    bridge._check_instance_keys(_result({"t1/z1": 0.6}))  # left t1/z2 unscored: fine
-    bridge._check_instance_keys(_result({}))  # buggy candidate: fine
+    bridge.check_instance_keys(_result({"t1/z1": 0.6}))  # left t1/z2 unscored: fine
+    bridge.check_instance_keys(_result({}))  # buggy candidate: fine
     with pytest.raises(InstanceKeyMismatch, match="t9/z9"):
-        bridge._check_instance_keys(_result({"t1/z1": 0.6, "t9/z9": 0.1}))
+        bridge.check_instance_keys(_result({"t1/z1": 0.6, "t9/z9": 0.1}))
 
 
 def test_gepa_scores_a_missing_instance_as_a_failure():
     bridge = _bridge(higher_is_better=False)
-    bridge._observe(_result({"t1/z1": 0.5}, score=0.5))
+    bridge.remember("h", _result({"t1/z1": 0.5}, score=0.5))
     partial = _result({"t1/z1": 0.4}, score=0.4)
     assert bridge.instance_fitness(partial, "t1/z1") == -0.4  # lower is better: negated once
     assert bridge.instance_fitness(partial, "t1/z2") == bridge._failure_fitness() < -0.5
