@@ -30,7 +30,14 @@ from hillclimb.config import Config
 from hillclimb.journal import Journal
 from hillclimb.problem import ProblemSpec, load_problem
 from hillclimb.run import RunMeta, SearchMeta, new_search_uid
-from hillclimb.search_strategy import ParkedSearch, StopRequested, build_loop, holdout_timing
+from hillclimb.search_strategy import (
+    ParkedSearch,
+    StopRequested,
+    build_loop,
+    build_operators,
+    holdout_timing,
+    search_climber,
+)
 from hillclimb.status import SearchStatus, StatusWriter
 from hillclimb.store import key_for, open_store
 from hillclimb.dirs import allocate_search_dir, create_run_dir
@@ -587,13 +594,9 @@ def _preflight_pi_routes(config: Config, search_dir: Path, router, backends, log
     import hashlib
     import json
 
-    from hillclimb.operators import operator_names
-
-    operators = set(operator_names())
-    if config.search.policy == "gepa":
-        from hillclimb.integrations.gepa.operator import OPERATOR_NAME
-
-        operators.add(OPERATOR_NAME)  # routed like any operator: `routing.gepa-reflect`
+    # every operator this search's climber may call is routed by its own
+    # name (`routing.draft`, `routing.gepa-reflect`, a climber's `crossover`)
+    operators = set(build_operators(config).names())
     if config.learning.enabled and config.learning.claims:
         operators.add("distill")
     operators.update(
@@ -762,7 +765,11 @@ def execute_search(
     evaluator = build_evaluator(config, problem, search_dir, journal, status=status, log=log)
     from hillclimb.harness import Harness
 
-    # validated before anything is scored: a bad climber config costs nothing
+    # validated before anything is scored: a bad climber costs nothing
+    climber = search_climber(config)
+    problems = climber.lint_prompts()
+    if problems:
+        raise ValueError(f"climber {climber.name}: prompts do not lint clean: " + "; ".join(problems))
     loop = build_loop(config, complexity_start=_offset, log=log)
     harness = Harness(
         problem=problem,
@@ -784,6 +791,8 @@ def execute_search(
         router=router,
         backends=backends,
         drain_commands=lambda: store.drain_commands(key),
+        operators=build_operators(config),
+        prompts_dir=climber.prompts_dir,
     )
 
     def _stop_on_signal(signum, frame):

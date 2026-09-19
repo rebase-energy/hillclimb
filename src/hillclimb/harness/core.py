@@ -20,6 +20,7 @@ from hillclimb.journal import Journal, PolicyJournal
 from hillclimb.params import ParamsFile, read_candidate_space, write_inherited_params
 from hillclimb.loop import ClimberError, HarnessClosed, Outcome, SearchInfo, SearchLoop, Ticket
 from hillclimb.policy import INJECT_ACTION, TUNE_ACTION, Action, BudgetView, InflightRef, PolicyInput
+from hillclimb.climber import OperatorSet
 from hillclimb.operators import (
     CONTRACT_TOKEN,
     MemoryContext,
@@ -97,7 +98,9 @@ class _OperatorServices:
         self._searcher = searcher
 
     def render(self, template: str, **tokens) -> str:
-        return render(template, **tokens)
+        # the climber's own prompts shadow the built-in operator templates;
+        # the contract is rendered by the harness and never goes through here
+        return render(template, _override=self._searcher.prompts_dir, **tokens)
 
     def live_experience(self) -> str:
         return self._searcher._live_experience()
@@ -141,7 +144,14 @@ class Harness:
         backends: BackendPool | None = None,
         drain_commands: Callable[[], list[ControlCommand]] | None = None,
         tuner: Tuner | None = None,
+        operators: OperatorSet | None = None,
+        prompts_dir: Path | None = None,
     ):
+        # what this search's climber brought: the operators it may use and the
+        # prompts dir that shadows built-in operator templates by name. None =
+        # the four built-ins configured from the config's `operators:` block.
+        self.operators = operators
+        self.prompts_dir = prompts_dir
         # where queued stop/prune commands come from: the store's queue for
         # this search (the engine binds it), else the search dir's control/
         self.drain_commands = drain_commands or (lambda: drain_commands_dir(search_dir))
@@ -945,6 +955,8 @@ class Harness:
     def _operator(self, name: str) -> Operator:
         """The operator `name` names, configured from this search's config
         (resolved per call: the config block is the live source of truth)."""
+        if self.operators is not None:
+            return self.operators.get(name)
         params = {
             "draft": {"retrieval": self.config.operators.draft_retrieval},
             "improve": {"ablation": self.config.operators.improve_ablation},

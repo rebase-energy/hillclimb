@@ -9,6 +9,7 @@ from pathlib import Path
 
 from hillclimb.backends.fake import FakeBackend
 from hillclimb.budget import BudgetManager
+from hillclimb.climber import load_climber
 from hillclimb.dirs import create_search_dir
 from hillclimb.harness import Harness
 from hillclimb.integrations.gepa import build_gepa_loop
@@ -80,6 +81,7 @@ def make_gepa(task, config, tmp_path, *, backend=None, driver=None, seed_score: 
         search_dir=search_dir,
         log=lambda *_: None,
         seed_solution=seed,
+        operators=load_climber("gepa").operator_set(),
         **harness_kwargs,
     )
     loop = build_gepa_loop(config, driver=driver or FakeGEPADriver(steps=0), log=lambda *_: None)

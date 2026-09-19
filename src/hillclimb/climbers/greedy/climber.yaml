@@ -1,0 +1,27 @@
+# The default climber: a greedy rule over four operators.
+#   debug the newest failing tip while its chain is shallow
+#   > ensemble solo in the final budget window
+#   > draft until `num_drafts` branches hold a scored solution
+#   > tune a promising candidate that declared params.json
+#   > improve the best
+name: greedy
+description: Debug failing tips, draft a few branches, then improve the best; ensemble at the end.
+policy: hillclimb.policies.greedy:GreedyPolicy
+params:
+  num_drafts: 3                   # draft branches before improving
+  max_debug_depth: 3              # failed fixes per failing chain
+  ensemble: true                  # ensemble solo in the final window
+  ensemble_reserve_fraction: 0.2  # final slice of the budget reserved for it
+  ensemble_top_k: 3               # candidates blended
+  ensemble_max_attempts: 2
+  tune_budget: 8                  # extra trials per tunable candidate; 0 = off
+  tune_gate: band                 # band | best | always
+  tune_parallel: 1
+  tune_burst: 2
+operators:
+  - draft: {retrieval: true}      # research cue in the draft prompt
+  - debug
+  - improve: {ablation: true}     # ask for, and pass on, ablation findings
+  - ensemble
+memory: knowledge-graph
+tuner: random

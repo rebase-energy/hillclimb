@@ -1,0 +1,17 @@
+# OpenEvolve's MAP-Elites database decides what to expand: a population kept
+# diverse over feature dimensions, split across islands with migration.
+# hillclimb's operators do the mutating, the verifier the scoring.
+# Needs the optional extra: pip install 'hillclimb[openevolve]'
+name: openevolve
+description: Quality-diversity search (MAP-Elites + islands) over hillclimb's operators.
+policy: hillclimb.policies.openevolve:OpenEvolvePolicy
+params:
+  num_drafts: 3          # seed population before evolving
+  num_inspirations: 2    # extra solutions shown to each mutation
+operators:
+  - draft: {retrieval: true}
+  - debug
+  - improve: {ablation: true}
+  - ensemble
+memory: knowledge-graph
+tuner: random

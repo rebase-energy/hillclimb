@@ -1347,13 +1347,6 @@ def policy_check(
     config = load_config()
     config.apply_overrides(_parse_set(set_ or []))
     name = policy or config.search.policy
-    if is_loop_climber(name):
-        typer.echo(
-            f"{name} brings its own SearchLoop; "
-            "the conformance check covers SearchPolicy implementations",
-            err=True,
-        )
-        raise typer.Exit(2)
     from hillclimb.policies import ConfigBackedParams
 
     params = dict(ConfigBackedParams(config))  # what the search itself would hand the policy
@@ -1361,6 +1354,14 @@ def policy_check(
     source = policy_path(name, base_dir)
     if source is not None and not source.is_file():
         raise typer.BadParameter(f"policy file not found: {source}")
+
+    if is_loop_climber(name, config):
+        typer.echo(
+            f"{name} brings its own SearchLoop; "
+            "the conformance check covers SearchPolicy implementations",
+            err=True,
+        )
+        raise typer.Exit(2)
 
     def make_policy():
         return get_policy(name, params, base_dir=base_dir)

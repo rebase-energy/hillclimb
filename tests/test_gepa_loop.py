@@ -222,23 +222,18 @@ def test_resume_identity_mismatch_is_a_hard_error(task, config, tmp_path):
         resumed.run()
 
 
-def test_gepa_is_a_loop_every_other_climber_a_policy(config, monkeypatch):
+def test_gepa_is_a_loop_every_other_climber_a_policy(config):
     config.search.policy = "gepa"
 
-    def explode(*a, **k):
-        raise AssertionError("gepa must not touch the policy registry")
-
-    monkeypatch.setattr("hillclimb.policies.get_policy", explode)
     assert isinstance(build_loop(config, log=lambda *_: None), GepaLoop)
-    assert holdout_timing(config) == "after"  # whatever the user's holdout.timing says
-    monkeypatch.undo()
+    assert holdout_timing(config) == "after"  # the manifest asks; the user's holdout.timing cannot loosen it
     config.search.policy = "greedy"
     assert isinstance(build_loop(config, complexity_start=2), PolicyLoop)
     assert holdout_timing(config) == "inline"
     config.holdout.timing = "after"
     assert holdout_timing(config) == "after"
     config.search.policy = "nope"
-    with pytest.raises(ValueError, match="Unknown policy: nope"):
+    with pytest.raises(ValueError, match="Unknown climber: nope .bundled: gepa, greedy, openevolve"):
         build_loop(config)
 
 

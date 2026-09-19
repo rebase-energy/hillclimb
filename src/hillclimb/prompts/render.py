@@ -69,10 +69,12 @@ def template_path(template_name: str, override: Path | None = None) -> Path:
     return TEMPLATE_DIR / f"{template_name}{TEMPLATE_SUFFIX}"
 
 
-def render(template_name: str, **context) -> str:
+def render(template_name: str, _override: Path | None = None, **context) -> str:
     """Replace {{key}} tokens. Deliberately not str.format: competition
-    descriptions routinely contain literal braces."""
-    text = template_path(template_name).read_text()
+    descriptions routinely contain literal braces. `_override` is a prompts
+    dir bound to ONE search (its climber's); without one the process-wide
+    override dir applies."""
+    text = template_path(template_name, _override).read_text()
     for key, value in context.items():
         text = text.replace("{{" + key + "}}", str(value))
     return text

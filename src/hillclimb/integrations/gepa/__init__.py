@@ -12,12 +12,8 @@ from hillclimb.integrations.gepa.loop import GepaLoop
 
 
 def build_gepa_loop(config, *, driver=None, log=print) -> GepaLoop:
-    """Validate the config before any spend, make `gepa-reflect` runnable,
-    and hand back the loop."""
+    """Validate the config before any spend and hand back the loop (tests
+    inject a fake driver; a real search builds the loop from the manifest)."""
     from hillclimb.integrations.gepa.config import validate_gepa_search_config
-    from hillclimb.integrations.gepa.operator import GepaReflectOperator
-    from hillclimb.operators import register_operator
 
-    params = validate_gepa_search_config(config)
-    register_operator(GepaReflectOperator)
-    return GepaLoop(params, driver=driver, log=log)
+    return GepaLoop(validate_gepa_search_config(config), driver=driver, log=log)

@@ -20,6 +20,7 @@ cannot spend anything. Holdout is scored after the loop returns
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Callable, Protocol
 
@@ -73,7 +74,12 @@ class _Halt(Exception):
 class GepaLoop(SearchLoop):
     name = "gepa"
 
-    def __init__(self, params: GEPAParams, driver: GEPADriver | None = None, log=print):
+    def __init__(self, params: GEPAParams | Mapping | None = None, driver: GEPADriver | None = None,
+                 log=print, parallelism: int = 1):
+        if parallelism > 1:
+            raise ValueError("the GEPA climber is serial: set search.parallel_operators=1")
+        if not isinstance(params, GEPAParams):
+            params = GEPAParams.model_validate(dict(params or {}))  # a typo fails before any spend
         self.params = params
         self.driver = driver
         self.log = log

@@ -184,6 +184,34 @@ shim).
   each naming the phase that removes it. `tests/test_prompt_golden.py` pins
   every prompt byte (greedy scenarios, openevolve, GEPA proposer;
   `HILLCLIMB_UPDATE_GOLDENS=1` regenerates — review the diff)
+- Climbers (`climber.py`, bundled manifests in `src/hillclimb/climbers/<name>/climber.yaml`):
+  the shareable unit. `load_climber(ref, base_dir)` resolves a bundled name
+  (`greedy | openevolve | gepa`), a directory holding `climber.yaml`, or ONE
+  `.py` file (a one-file climber: the single SearchPolicy — duck-typed
+  `propose`+`observe`, or `POLICY = …` — or SearchLoop subclass it defines,
+  plus any `Operator` subclasses in it); every failure is a
+  `ClimberLoadError` naming the file and the fix. `ClimberManifest`
+  (`extra="forbid"`): `name`, exactly one of `policy` | `loop`, `params`,
+  `operators` (built-in names or `file.py:Class` / `module:Class`, each
+  optionally `- draft: {retrieval: true}`), `memory: knowledge-graph | none`,
+  `tuner`/`tuner_params`, `similarity`, `prompts` (a dir that shadows built-in
+  OPERATOR templates by name), `holdout_timing: after`; `routing` is RESERVED
+  and refused (the model is the user's choice). Module refs inside a manifest
+  are `file.py[:Class]` relative to the climber dir (imported as one
+  digest-named package, so files may import each other and versions coexist)
+  or `package.module:Class`. `Climber.build_loop(params=<user overlay>,
+  complexity_start, parallelism, log)` constructs the policy/loop with
+  whichever of those kwargs its signature accepts; `operator_set()` returns a
+  per-search `OperatorSet` (the harness's `operators=` — an operator the
+  climber did not list is refused; the global `operators._OPERATORS` is only
+  the built-in catalogue); `prompts_dir` is bound to the search
+  (`render(..., _override=dir)`), and `lint_prompts()` refuses harness-owned
+  templates (`contract_*`, the clauses, the knowledge passes) and unknown
+  tokens. `sha256` = `tree_sha256(root)` (no `__pycache__`/dotfiles) or the
+  one file's hash. Until the config split, `search.policy` IS the climber
+  ref: `search_strategy.search_climber/build_loop/build_operators/
+  holdout_timing` are the glue (`_user_params` lays only what the user
+  actually set over the manifest's params)
 - Harness + loop (`harness/core.py`, `loop.py`): `Harness` is the fixed core
   (candidate dirs, agent calls, trials, the journal's single writer, `best/`,
   accept band, budgets, control queue, crash recovery, holdout) and knows no
