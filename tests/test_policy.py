@@ -15,7 +15,8 @@ from hillclimb.budget import BudgetManager
 from hillclimb.candidate import Candidate
 from tests.conftest import local_executor
 from hillclimb.journal import Journal
-from hillclimb.policies import get_policy
+from hillclimb.evaluation import accept_band
+from hillclimb.policies import ConfigBackedParams, get_policy
 from hillclimb.policies.greedy import GreedyPolicy
 from hillclimb.policy import Action, BudgetView, InflightRef, PolicyInput
 from tests.harness_factory import SearchRig
@@ -38,8 +39,8 @@ def make_view(
         budget=BudgetView(
             remaining_s=remaining_s, total_s=total_s, stop_margin_s=stop_margin_s
         ),
-        config=config,
         higher_is_better=higher_is_better,
+        accept_band=accept_band(config, journal),
     )
 
 
@@ -239,18 +240,25 @@ def test_policy_replay_on_resume(task, config, tmp_path):
 # --- one dict: strategy knobs in policy_params, config as the fallback ---
 
 
-def test_strategy_knobs_fall_back_to_config_blocks(config):
-    policy = GreedyPolicy()
+def test_every_knob_is_one_dict_with_defaults(config):
+    """A policy never sees the harness's config: knobs come from the
+    climber's params, else DEFAULTS. Until a manifest carries them, the old
+    config blocks reach the policy through ConfigBackedParams."""
+    assert GreedyPolicy().resolved_params()["num_drafts"] == 3
     config.search.num_drafts = 5
     config.search.max_debug_depth = 1
     config.ensemble.top_k = 4
-    resolved = policy.resolved_params(config)
+    resolved = GreedyPolicy(params=ConfigBackedParams(config)).resolved_params()
     assert resolved["num_drafts"] == 5 and resolved["max_debug_depth"] == 1
     assert resolved["ensemble_top_k"] == 4 and resolved["ensemble"] is True
     assert resolved["tune_budget"] == 8
+    # read live: a config edited after construction still applies
+    live = GreedyPolicy(params=ConfigBackedParams(config))
+    config.search.num_drafts = 7
+    assert live.param("num_drafts") == 7
     # policy_params win over the config block
-    policy = GreedyPolicy(params={"num_drafts": 1, "ensemble": False, "tune_budget": 0})
-    resolved = policy.resolved_params(config)
+    config.search.policy_params = {"num_drafts": 1, "ensemble": False, "tune_budget": 0}
+    resolved = GreedyPolicy(params=ConfigBackedParams(config)).resolved_params()
     assert resolved["num_drafts"] == 1 and resolved["ensemble"] is False and resolved["tune_budget"] == 0
     assert set(resolved) == {
         "num_drafts", "max_debug_depth", "ensemble", "ensemble_reserve_fraction",
@@ -482,8 +490,7 @@ def test_greedy_ensemble_inputs_ignore_holdout(journal, config, tmp_path):
     for cid, val, hold in (("c001", 0.9, 0.1), ("c002", 0.8, 0.5), ("c003", 0.7, 0.9)):
         _add_with_holdout(journal, tmp_path, cid, val, hold)
     config.holdout.selection = "holdout"
-    config.ensemble.top_k = 2
-    action = GreedyPolicy().propose(
+    action = GreedyPolicy(params={"ensemble_top_k": 2}).propose(
         make_view(journal, config, remaining_s=100.0, total_s=3600, stop_margin_s=300)
     )
     assert action.operator == "ensemble"

@@ -5,23 +5,20 @@ solo in the final budget window > DRAFT until `num_drafts` branches hold a
 scored solution (complexity cue escalates per draft) > TUNE a promising
 candidate that declared params.json > IMPROVE the best.
 
-The whole exploration process is ONE dict: `search.policy_params`. Every
-knob below is read from it first; the strategy knobs fall back to the
-config blocks they historically lived in (`search.num_drafts`,
-`search.max_debug_depth`, `ensemble.*`), so an existing config is
-byte-identical in behaviour and an agent editing the loop is handed a
-single dict (`GreedyPolicy.resolved_params(config)` is that dict, fully
-resolved). All replay-deterministic — every count is derived from the
-journal and the in-flight refs, never kept.
+The whole exploration process is ONE dict: the climber's `params`. Every
+knob below is read from it, else from `DEFAULTS` — a policy never sees the
+harness's config, and an agent editing the process is handed a single dict
+(`GreedyPolicy.resolved_params()` is that dict, fully resolved). All
+replay-deterministic — every count is derived from the journal and the
+in-flight refs, never kept.
 
-Strategy params (fallback in brackets):
-  num_drafts [search.num_drafts]              draft branches before improving
-  max_debug_depth [search.max_debug_depth]    failed fixes per buggy chain
-  ensemble [ensemble.enabled]                 ensemble solo in the final window
-  ensemble_reserve_fraction [ensemble.reserve_fraction]
-                                              final slice of budget reserved
-  ensemble_top_k [ensemble.top_k]             candidates blended
-  ensemble_max_attempts [ensemble.max_attempts]
+Strategy params (default in brackets):
+  num_drafts (3)                     draft branches before improving
+  max_debug_depth (3)                failed fixes per buggy chain
+  ensemble (True)                    ensemble solo in the final window
+  ensemble_reserve_fraction (0.2)    final slice of budget reserved
+  ensemble_top_k (3)                 candidates blended
+  ensemble_max_attempts (2)
 
 Tune params:
   tune_budget (8)     extra trials per candidate beyond its defaults trial; 0 = off
@@ -38,26 +35,23 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
 
-from hillclimb.sdk import TUNE_ACTION, Action, Candidate, PolicyInput, accept_band, improves
+from hillclimb.sdk import TUNE_ACTION, Action, Candidate, PolicyInput, improves
 
-if TYPE_CHECKING:
-    from hillclimb.config import Config
-
-TUNE_DEFAULTS = {"tune_budget": 8, "tune_gate": "band", "tune_parallel": 1, "tune_burst": 2}
-
-# strategy knobs: policy_params first, else the config block they came from
-CONFIG_FALLBACKS: dict[str, Callable[["Config"], object]] = {
-    "num_drafts": lambda c: c.search.num_drafts,
-    "max_debug_depth": lambda c: c.search.max_debug_depth,
-    "ensemble": lambda c: c.ensemble.enabled,
-    "ensemble_reserve_fraction": lambda c: c.ensemble.reserve_fraction,
-    "ensemble_top_k": lambda c: c.ensemble.top_k,
-    "ensemble_max_attempts": lambda c: c.ensemble.max_attempts,
+# the whole exploration process in one dict: every knob and its default
+DEFAULTS = {
+    "num_drafts": 3,
+    "max_debug_depth": 3,
+    "ensemble": True,
+    "ensemble_reserve_fraction": 0.2,
+    "ensemble_top_k": 3,
+    "ensemble_max_attempts": 2,
+    "tune_budget": 8,
+    "tune_gate": "band",
+    "tune_parallel": 1,
+    "tune_burst": 2,
 }
-
-PARAM_NAMES = (*CONFIG_FALLBACKS, *TUNE_DEFAULTS)
+PARAM_NAMES = tuple(DEFAULTS)
 
 
 class GreedyPolicy:
@@ -69,19 +63,14 @@ class GreedyPolicy:
 
     # --- the one dict ---
 
-    def param(self, name: str, config: "Config"):
-        """One knob: `policy_params[name]`, else its config-block fallback
-        (strategy knobs) or its built-in default (tune knobs)."""
-        if name in self.params:
-            return self.params[name]
-        if name in CONFIG_FALLBACKS:
-            return CONFIG_FALLBACKS[name](config)
-        return TUNE_DEFAULTS[name]
+    def param(self, name: str):
+        """One knob: the climber's `params[name]`, else its default."""
+        return self.params.get(name, DEFAULTS[name])
 
-    def resolved_params(self, config: "Config") -> dict:
-        """Every knob the policy reads, fully resolved against `config` —
-        the single dict that describes this exploration process."""
-        return {name: self.param(name, config) for name in PARAM_NAMES}
+    def resolved_params(self) -> dict:
+        """Every knob the policy reads, fully resolved — the single dict that
+        describes this exploration process."""
+        return {name: self.param(name) for name in PARAM_NAMES}
 
     # --- SearchPolicy protocol ---
 
@@ -99,7 +88,7 @@ class GreedyPolicy:
             if view.inflight:
                 return None  # drain: ensemble inputs snapshot at launch
             return self._ensemble_action(view)
-        if self.prospective_branches(view) < int(self.param("num_drafts", view.config)):
+        if self.prospective_branches(view) < int(self.param("num_drafts")):
             return self._draft_action(view)
         tune = self.tune_target(view)
         if tune is not None:
@@ -138,7 +127,7 @@ class GreedyPolicy:
         return Action(operator=operator, target_id=target_id)
 
     def tune_param(self, name: str):
-        return self.params.get(name, TUNE_DEFAULTS[name])
+        return self.param(name)
 
     def tune_target(self, view: PolicyInput) -> Candidate | None:
         """The candidate to spend the next tune trial on, or None. Derived
@@ -151,7 +140,7 @@ class GreedyPolicy:
         headroom = view.budget.remaining_s - view.budget.stop_margin_s
         journal = view.journal
         best = journal.best_candidate(view.higher_is_better)
-        band = accept_band(view.config, journal)
+        band = view.accept_band
         gate = str(self.tune_param("tune_gate"))
         parallel = int(self.tune_param("tune_parallel"))
         burst = int(self.tune_param("tune_burst"))
@@ -221,7 +210,7 @@ class GreedyPolicy:
                 continue
             chain = journal.debug_chain(candidate.candidate_id)
             depth = sum(1 for c in chain if c.operator == "debug")
-            if depth < int(self.param("max_debug_depth", view.config)):
+            if depth < int(self.param("max_debug_depth")):
                 return candidate
         return None
 
@@ -245,16 +234,16 @@ class GreedyPolicy:
         # 45m budget, reserve(540s) - margin(300s) left a 240s slot that one
         # improve cycle stepped over entirely
         budget = view.budget
-        reserve = budget.total_s * float(self.param("ensemble_reserve_fraction", view.config))
+        reserve = budget.total_s * float(self.param("ensemble_reserve_fraction"))
         return budget.remaining_s <= reserve + budget.stop_margin_s
 
     def should_ensemble(self, view: PolicyInput) -> bool:
-        if not bool(self.param("ensemble", view.config)) or not self.in_ensemble_window(view):
+        if not bool(self.param("ensemble")) or not self.in_ensemble_window(view):
             return False
         attempts = sum(
             1 for c in view.journal.candidates.values() if c.operator == "ensemble"
         )
-        max_attempts = int(self.param("ensemble_max_attempts", view.config))
+        max_attempts = int(self.param("ensemble_max_attempts"))
         if attempts >= max_attempts or self.ensemble_succeeded(view):
             return False
         return len(self.ensemble_candidates(view)) >= 2
@@ -273,7 +262,7 @@ class GreedyPolicy:
         script content so near-identical improves don't fill the slots.
         (`holdout.selection` decides what SHIPS; a policy never sees holdout.)"""
         ranked = view.journal.ranked_candidates(view.higher_is_better, "val")
-        top_k = int(self.param("ensemble_top_k", view.config))
+        top_k = int(self.param("ensemble_top_k"))
         picked, seen_hashes = [], set()
         for candidate in ranked:
             if candidate.operator == "ensemble":

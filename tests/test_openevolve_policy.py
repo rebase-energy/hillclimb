@@ -58,16 +58,15 @@ def test_registry_and_params_reach_openevolve(config):
 
 
 def test_drafts_until_population_seeded_then_evolves(config, tmp_path):
-    config.search.num_drafts = 2
     journal = Journal(tmp_path / "j.jsonl")
-    policy, view = replayed(journal, config)
+    policy, view = replayed(journal, config, {**PARAMS, "num_drafts": 2})
     first = policy.propose(view)
     assert first.operator == "draft" and "island" in first.policy_meta
 
     scored(journal, tmp_path, "c000", "baseline", 0.1, code="pass\n")
     scored(journal, tmp_path, "c001", "draft", 0.5, code="a = 1\n" * 10)
     scored(journal, tmp_path, "c002", "draft", 0.7, code="b = 2\n" * 30)
-    policy, view = replayed(journal, config)
+    policy, view = replayed(journal, config, {**PARAMS, "num_drafts": 1})
     assert set(policy.db.programs) == {"c000", "c001", "c002"}
 
     action = policy.propose(view)
@@ -85,7 +84,6 @@ def test_drafts_until_population_seeded_then_evolves(config, tmp_path):
 def test_proposals_are_replay_deterministic_and_rng_isolated(config, tmp_path):
     """Two fresh processes replaying the same journal must agree, and the
     policy must not disturb the harness's global RNG stream."""
-    config.search.num_drafts = 1
     journal = Journal(tmp_path / "j.jsonl")
     scored(journal, tmp_path, "c000", "baseline", 0.1)
     for i in range(1, 9):
@@ -135,21 +133,20 @@ def test_buggy_and_code_less_floor_are_not_programs(config, tmp_path):
                                        trials=[mk_trial(val_score=0.3, submission_ok=True)]))
     journal.candidate_result(Candidate(candidate_id="c001", operator="draft", status="buggy",
                                        candidate_dir=str(tmp_path)))
-    policy, view = replayed(journal, config)
+    policy, view = replayed(journal, config, {**PARAMS, "num_drafts": 1})
     assert policy.db.programs == {}
     assert policy.propose(view).operator == "debug"  # hillclimb's debug rule survives
 
 
 def test_openevolve_policy_drives_search_end_to_end(task, config):
-    config.search.num_drafts = 2
     config.search.policy = "openevolve"
-    config.search.policy_params = PARAMS
+    config.search.policy_params = {**PARAMS, "num_drafts": 2}
     backend = FakeBackend()
     backend.queue(script=ok_script(0.6), notes="one\n")
     backend.queue(script=ok_script(0.7), notes="two\n")
     backend.queue(script=ok_script(0.8), notes="three\n")
     search_dir = create_search_dir(config.paths.runs_dir, "test-run")
-    policy = get_policy("openevolve", PARAMS)
+    policy = get_policy("openevolve", config.search.policy_params)
     searcher = SearchRig(
         problem=task, config=config, journal=Journal(search_dir / "journal.jsonl"),
         backend=backend, executor=local_executor(), budget=BudgetManager(3600, stop_margin_s=1),

@@ -32,8 +32,6 @@ CLIMBER_MODULES = [
 
 # (module, imported name) -> why it is still allowed, and until when
 ALLOWED = {
-    ("policies/greedy.py", "hillclimb.config"):
-        "type-only Config for the config-block fallbacks; gone with the config split (7a)",
     ("policies/openevolve.py", "hillclimb.policies.greedy"):
         "reuses greedy's draft/debug decisions; becomes an sdk helper with the climber bundle (7a)",
     ("similarity_scores/solution_card.py", "hillclimb.openrouter"):

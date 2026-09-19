@@ -94,7 +94,7 @@ class OpenEvolvePolicy:
             tip = self._greedy.debuggable_tip(view)
             if tip is not None:
                 return Action(operator="debug", target_id=tip.candidate_id)
-        num_drafts = int(self.params.get("num_drafts", view.config.search.num_drafts))
+        num_drafts = int(self._greedy.param("num_drafts"))
         if self._greedy.prospective_branches(view) < num_drafts or not self._parent_pool(view):
             return self._draft_action(view)
         return self._evolve_action(view)

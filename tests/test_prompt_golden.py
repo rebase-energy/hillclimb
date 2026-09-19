@@ -95,9 +95,8 @@ def test_openevolve_prompts_match_golden(task, config, tmp_path):
     from tests.conftest import local_executor, ok_script
     from tests.test_openevolve_policy import PARAMS
 
-    config.search.num_drafts = 2
     config.search.policy = "openevolve"
-    config.search.policy_params = PARAMS
+    config.search.policy_params = {**PARAMS, "num_drafts": 2}
     backend = FakeBackend()
     for score, note in ((0.6, "one\n"), (0.7, "two\n"), (0.8, "three\n")):
         backend.queue(script=ok_script(score), notes=note)
@@ -106,7 +105,7 @@ def test_openevolve_prompts_match_golden(task, config, tmp_path):
         problem=task, config=config, journal=Journal(search_dir / "journal.jsonl"),
         backend=backend, executor=local_executor(), budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir, max_candidates=4, log=lambda *_: None,
-        policy=get_policy("openevolve", PARAMS),
+        policy=get_policy("openevolve", config.search.policy_params),
     ).run()
     _check("openevolve", collect_prompts(search_dir, tmp_path))
 

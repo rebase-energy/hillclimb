@@ -32,6 +32,7 @@ def make_harness(task, config, backend, *, name: str = "test-search", **kwargs):
 
 from hillclimb.candidate import Candidate  # noqa: E402
 from hillclimb.loop import PolicyLoop  # noqa: E402
+from hillclimb.policies import ConfigBackedParams  # noqa: E402
 from hillclimb.policies.greedy import GreedyPolicy  # noqa: E402
 from hillclimb.policy import TUNE_ACTION, Action, SearchPolicy  # noqa: E402
 
@@ -49,7 +50,9 @@ class SearchRig(Harness):
     def __init__(self, *args, complexity_start: int = 0, policy: SearchPolicy | None = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.complexity_start = complexity_start
-        self.policy = policy or GreedyPolicy(complexity_start=complexity_start)
+        self.policy = policy or GreedyPolicy(
+            complexity_start=complexity_start, params=ConfigBackedParams(self.config)
+        )
         self._loop = PolicyLoop(self.policy)
         self._loop.catch_up(self)  # the resume contract: the policy replays the journal
 

@@ -1354,7 +1354,9 @@ def policy_check(
             err=True,
         )
         raise typer.Exit(2)
-    params = dict(config.search.policy_params)
+    from hillclimb.policies import ConfigBackedParams
+
+    params = dict(ConfigBackedParams(config))  # what the search itself would hand the policy
     base_dir = policy_base_dir(config)
     source = policy_path(name, base_dir)
     if source is not None and not source.is_file():
@@ -1382,7 +1384,7 @@ def policy_check(
     report = check_policy(make_policy, cases, config, prompts_dir=config.paths.prompts_dir)
     if report.ok:
         resolved = getattr(make_policy(), "resolved_params", None)
-        resolved_params = resolved(config) if callable(resolved) else params
+        resolved_params = resolved() if callable(resolved) else params
     else:
         resolved_params = params  # the policy may not even construct
     if source is not None:

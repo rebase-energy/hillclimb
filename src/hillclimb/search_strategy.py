@@ -52,11 +52,11 @@ def build_loop(config: Config, *, complexity_start: int = 0, log=print) -> Searc
 
         return build_gepa_loop(config, log=log)
     from hillclimb.loop import PolicyLoop
-    from hillclimb.policies import get_policy, policy_base_dir
+    from hillclimb.policies import ConfigBackedParams, get_policy, policy_base_dir
 
     return PolicyLoop(
         get_policy(
-            name, config.search.policy_params,
+            name, ConfigBackedParams(config),
             complexity_start=complexity_start, base_dir=policy_base_dir(config),
         )
     )

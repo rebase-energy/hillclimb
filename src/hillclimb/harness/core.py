@@ -221,7 +221,7 @@ class Harness:
             journal=self.journal,
             inflight=self.inflight,
             budget=self._budget_view(),
-            config=self.config,
+            accept_band=self.accept_band(),
             higher_is_better=self.problem.higher_is_better,
         )
 

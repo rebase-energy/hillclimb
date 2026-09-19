@@ -272,12 +272,17 @@ shim).
   expands. It must stay replay-deterministic — the
   openevolve policy seeds/restores the global RNG around every OpenEvolve call
   because that library samples via the `random` module. The exploration
-  process is ONE dict: every greedy knob (`num_drafts`, `max_debug_depth`,
-  `ensemble`/`ensemble_reserve_fraction`/`ensemble_top_k`/
-  `ensemble_max_attempts`, `tune_*`) reads `policy_params` first and falls
-  back to its config block (`CONFIG_FALLBACKS` in `greedy.py`;
-  `GreedyPolicy.resolved_params(config)` is the resolved dict) — never read
-  `config.search.num_drafts`/`config.ensemble` directly in a policy.
+  process is ONE dict: a policy's knobs arrive through its constructor's
+  `params` and nothing else — `PolicyInput` carries NO config (it has
+  `journal`, `inflight`, `budget`, `higher_is_better`, `accept_band`; a
+  policy agrees with the harness on "better" via `view.accept_band`).
+  `GreedyPolicy.DEFAULTS` lists every greedy knob (`num_drafts`,
+  `max_debug_depth`, `ensemble*`, `tune_*`); `param(name)` =
+  `params.get(name, DEFAULTS[name])`, `resolved_params()` the resolved dict.
+  Until a climber manifest carries params, `policies.ConfigBackedParams(config)`
+  (harness-side glue, a live Mapping: `search.policy_params` over the old
+  `search.num_drafts` / `search.max_debug_depth` / `ensemble.*` blocks) is
+  what `build_loop`, `policy check` and `SearchRig` hand the policy.
   File policies: `search.policy` ending in `.py` is loaded from that path
   (`policies.load_policy_file`; relative to the folder holding the
   hillclimb dir via `policy_base_dir(config)`, the `runs_dir` anchor); the

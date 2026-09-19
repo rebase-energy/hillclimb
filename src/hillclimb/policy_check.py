@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Sequence
 
+from hillclimb.evaluation import accept_band
 from hillclimb.operators import get_operator, operator_names
 from hillclimb.config import Config
 from hillclimb.journal import Journal
@@ -115,8 +116,8 @@ def _view(case: JournalCase, config: Config, fraction: float) -> PolicyInput:
             total_s=case.total_s,
             stop_margin_s=config.budget.stop_margin_s,
         ),
-        config=config,
         higher_is_better=case.higher_is_better,
+        accept_band=accept_band(config, case.journal),
     )
 
 

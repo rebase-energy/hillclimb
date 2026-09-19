@@ -16,6 +16,7 @@ from hillclimb.candidate import Candidate
 from hillclimb.dirs import create_search_dir
 from hillclimb.journal import Journal
 from hillclimb.policies.greedy import GreedyPolicy
+from hillclimb.evaluation import accept_band
 from hillclimb.policy import TUNE_ACTION, Action, BudgetView, InflightRef, PolicyInput
 from tests.harness_factory import SearchRig
 from hillclimb.search import OutcomeMsg
@@ -45,8 +46,7 @@ print(f"val_score: {0.5 + 0.01 * P['k']:.4f}")
 
 
 def make_searcher(task, config, backend, max_candidates=3, holdout=False, **policy_params):
-    config.search.num_drafts = 1
-    config.search.policy_params = {"tune_budget": 2, **policy_params}
+    config.search.policy_params = {"num_drafts": 1, "tune_budget": 2, **policy_params}
     config.search.tuner_params = {"seed": 1}
     search_dir = create_search_dir(config.paths.runs_dir, "tune-run")
     journal = Journal(search_dir / "journal.jsonl")
@@ -222,7 +222,7 @@ def make_view(journal, config, inflight=(), remaining_s=3600.0) -> PolicyInput:
     return PolicyInput(
         journal=journal, inflight=tuple(inflight),
         budget=BudgetView(remaining_s=remaining_s, total_s=3600, stop_margin_s=1),
-        config=config, higher_is_better=True,
+        higher_is_better=True, accept_band=accept_band(config, journal),
     )
 
 
@@ -297,16 +297,15 @@ class TestGreedyTuneRule:
         assert policy.tune_target(make_view(quick, config, remaining_s=60.0)) is not None
 
     def test_propose_prefers_tune_over_improve_once_drafts_exist(self, tmp_path, config):
-        config.search.num_drafts = 1
         journal = seeded_journal(tmp_path, tunable("c001", 0.5))
-        action = GreedyPolicy(params={"tune_budget": 2}).propose(make_view(journal, config))
+        action = GreedyPolicy(params={"num_drafts": 1, "tune_budget": 2}).propose(make_view(journal, config))
         assert action == Action(operator=TUNE_ACTION, target_id="c001")
-        action = GreedyPolicy(params={"tune_budget": 0}).propose(make_view(journal, config))
+        action = GreedyPolicy(params={"num_drafts": 1, "tune_budget": 0}).propose(make_view(journal, config))
         assert action.operator == "improve"
 
     def test_same_journal_same_proposals(self, tmp_path, config):
-        config.search.num_drafts = 1
         journal = seeded_journal(tmp_path, tunable("c001", 0.5))
-        a = GreedyPolicy(params={"tune_budget": 2}).propose(make_view(journal, config))
-        b = GreedyPolicy(params={"tune_budget": 2}).propose(make_view(Journal(tmp_path / "journal.jsonl"), config))
+        params = {"num_drafts": 1, "tune_budget": 2}
+        a = GreedyPolicy(params=params).propose(make_view(journal, config))
+        b = GreedyPolicy(params=params).propose(make_view(Journal(tmp_path / "journal.jsonl"), config))
         assert a == b

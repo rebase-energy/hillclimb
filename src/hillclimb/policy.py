@@ -38,7 +38,6 @@ from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from hillclimb.candidate import Candidate
-    from hillclimb.config import Config
     from hillclimb.journal import Journal
 
 
@@ -120,8 +119,13 @@ class PolicyInput:
     journal: Journal
     inflight: tuple[InflightRef, ...]
     budget: BudgetView
-    config: Config
     higher_is_better: bool
+    # how much better than the best a score must be before the harness calls
+    # it an improvement (the user's noise_k / min_improvement over the
+    # measured replicate noise) — so a policy agrees with the harness on what
+    # "better" means. A policy never sees the harness's config: its own knobs
+    # arrive through its constructor's `params`.
+    accept_band: float = 0.0
 
     def __post_init__(self) -> None:
         from hillclimb.journal import PolicyJournal
