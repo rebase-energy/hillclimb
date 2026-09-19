@@ -6,7 +6,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-OPERATORS = ("baseline", "draft", "debug", "improve", "ensemble")
 STATUSES = ("pending", "passing", "failing", "buggy", "parked", "abandoned")
 # Trial fields the hidden split produces (Candidate.holdout_blind strips them)
 HOLDOUT_FIELDS = ("holdout_score", "holdout_error", "holdout_cpu_s")
@@ -185,7 +184,12 @@ class Candidate(BaseModel):
 
     candidate_id: str
     parent_id: str | None = None
-    operator: str  # one of OPERATORS
+    operator: str  # a registered operator's name, or a harness-native one (baseline | seed)
+    # what the operator's candidates ARE (create | repair | refine | combine |
+    # baseline | seed): views colour by it and the journal walks chains by it,
+    # so a climber's own operators need no change anywhere else. Stamped by
+    # the harness; records that predate it get their operator's role on load.
+    role: str | None = None
     status: str = "pending"  # one of STATUSES
     complexity: str | None = None  # minimal | moderate | advanced (drafts only)
     debug_depth: int = 0
@@ -206,6 +210,14 @@ class Candidate(BaseModel):
     summary: str = ""
     created_at: str = Field(default_factory=utcnow)
     finished_at: str | None = None
+
+    @model_validator(mode="after")
+    def _backfill_role(self) -> Candidate:
+        if self.role is None:
+            from hillclimb.operators import role_of
+
+            self.role = role_of(self.operator)
+        return self
 
     @model_validator(mode="before")
     @classmethod

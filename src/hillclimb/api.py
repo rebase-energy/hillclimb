@@ -593,7 +593,9 @@ def _preflight_pi_routes(config: Config, search_dir: Path, router, backends, log
     import hashlib
     import json
 
-    operators = {"draft", "debug", "improve", "ensemble"}
+    from hillclimb.operators import operator_names
+
+    operators = set(operator_names())
     if config.search.policy == "gepa":
         operators.add("gepa")
     if config.learning.enabled and config.learning.claims:

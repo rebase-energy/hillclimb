@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Sequence
 
-from hillclimb.candidate import OPERATORS
+from hillclimb.operators import get_operator, operator_names
 from hillclimb.config import Config
 from hillclimb.journal import Journal
 from hillclimb.policy import TUNE_ACTION, Action, BudgetView, PolicyInput, SearchPolicy
@@ -43,8 +43,11 @@ from hillclimb.policy import TUNE_ACTION, Action, BudgetView, PolicyInput, Searc
 # probed: fresh, mid-search, and inside the ensemble window.
 BUDGET_POINTS: tuple[float, ...] = (1.0, 0.5, 0.05)
 
-TARGET_OPERATORS = frozenset({"debug", "improve", "ensemble", TUNE_ACTION})
-KNOWN_OPERATORS = frozenset(OPERATORS) | {TUNE_ACTION}
+
+
+def known_operators() -> frozenset[str]:
+    """What the harness can run: every registered operator, plus `tune`."""
+    return frozenset(operator_names()) | {TUNE_ACTION}
 
 
 @dataclass(frozen=True)
@@ -161,21 +164,29 @@ def _describe(action: Action | None) -> str:
 
 def _reference_problems(action: Action, journal: Journal) -> list[str]:
     problems: list[str] = []
-    if action.operator not in KNOWN_OPERATORS:
-        problems.append(f"unknown operator {action.operator!r} (harness runs {sorted(KNOWN_OPERATORS)})")
-    if action.operator in TARGET_OPERATORS and not action.target_id:
-        problems.append(f"{action.operator} without a target_id")
+    known = known_operators()
+    if action.operator not in known:
+        problems.append(f"unknown operator {action.operator!r} (harness runs {sorted(known)})")
     for cid in (action.target_id, *action.inspiration_ids):
         if cid and cid not in journal.candidates:
             problems.append(f"references {cid} which is not in the journal")
     target = journal.candidates.get(action.target_id) if action.target_id else None
-    if target is not None:
-        if action.operator == "debug" and target.status not in ("failing", "buggy"):
-            problems.append(f"debug targets {target.candidate_id} whose status is {target.status}")
-        if action.operator in ("improve", TUNE_ACTION) and not target.is_scored:
-            problems.append(f"{action.operator} targets unscored {target.candidate_id}")
-        if action.operator == TUNE_ACTION and not target.tunable:
-            problems.append(f"tune targets {target.candidate_id} which declares no params.json")
+    if action.target_id and target is None:
+        return problems  # already reported as dangling
+    if action.operator == TUNE_ACTION:
+        if target is None:
+            problems.append("tune without a target_id")
+        else:
+            if not target.is_scored:
+                problems.append(f"tune targets unscored {target.candidate_id}")
+            if not target.tunable:
+                problems.append(f"tune targets {target.candidate_id} which declares no params.json")
+    elif action.operator in known:
+        # the operator's own rule — the same one the harness applies before
+        # it creates or spends anything
+        reason = get_operator(action.operator).valid_target(target)
+        if reason:
+            problems.append(reason)
     return problems
 
 

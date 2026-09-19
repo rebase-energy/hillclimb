@@ -7,7 +7,8 @@ from pydantic import BaseModel, Field, FiniteFloat
 
 
 class OperatorRequest(BaseModel):
-    operator: str  # draft | debug | improve
+    operator: str  # the operator's name (routing and logs key on it)
+    role: str | None = None  # create | repair | refine | combine — what kind of attempt this is
     prompt: str
     candidate_dir: Path
     timeout_s: int

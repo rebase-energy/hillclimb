@@ -119,16 +119,21 @@ class DummyBackend:
             (request.candidate_dir / "solution.py").write_text(script)
             (request.candidate_dir / "notes.md").write_text(note + "\n")
             return OperatorResult(ok=True, session_id=f"dummy-{self.calls}", duration_s=0.0)
-        if request.operator == "draft" and self.calls == 1:
+        # canned behaviour follows the KIND of attempt, so a climber's own
+        # operators get a sensible stand-in too
+        from hillclimb.operators import role_of
+
+        role = request.role or role_of(request.operator)
+        if role == "create" and self.calls == 1:
             script = SOLVER_TEMPLATE.format(max_iter=50, bug=BUGGY_LINE)
             note = "buggy first draft (HistGradientBoosting, 50 iters)"
-        elif request.operator == "debug":
+        elif role == "repair":
             script = SOLVER_TEMPLATE.format(max_iter=50, bug="")
             note = "fix: removed undefined variable"
-        elif request.operator == "improve":
+        elif role == "refine":
             script = SOLVER_TEMPLATE.format(max_iter=300, bug="")
             note = "improve: raise max_iter 100 -> 300"
-        elif request.operator == "ensemble":
+        elif role == "combine":
             script = SOLVER_TEMPLATE.format(max_iter=500, bug="")
             note = "ensemble: blend of top candidates (canned stand-in)"
         else:

@@ -33,6 +33,14 @@ _LAZY = {
     # the accept rule, so a policy agrees with the harness on what "better" means
     "improves": ("hillclimb.evaluation", "improves"),
     "accept_band": ("hillclimb.evaluation", "accept_band"),
+    # how one attempt is made
+    "Operator": ("hillclimb.operators.base", "Operator"),
+    "OperatorContext": ("hillclimb.operators.base", "OperatorContext"),
+    "Preparation": ("hillclimb.operators.base", "Preparation"),
+    "ProblemInfo": ("hillclimb.operators.base", "ProblemInfo"),
+    "MemoryContext": ("hillclimb.operators.base", "MemoryContext"),
+    "inspiration_filename": ("hillclimb.operators.base", "inspiration_filename"),
+    "ROLES": ("hillclimb.operators.base", "ROLES"),
     # which parameter values next
     "Tuner": ("hillclimb.tuner", "Tuner"),
     "Observation": ("hillclimb.tuner", "Observation"),
@@ -67,6 +75,15 @@ if TYPE_CHECKING:  # eager for type checkers and editors only
     from hillclimb.candidate import Candidate, Replicate, Trial
     from hillclimb.evaluation import accept_band, improves
     from hillclimb.journal import PolicyJournal
+    from hillclimb.operators.base import (
+        ROLES,
+        MemoryContext,
+        Operator,
+        OperatorContext,
+        Preparation,
+        ProblemInfo,
+        inspiration_filename,
+    )
     from hillclimb.params import ParamSpace, ParamSpec, coerce
     from hillclimb.policy import (
         TUNE_ACTION,

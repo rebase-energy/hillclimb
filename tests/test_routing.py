@@ -148,7 +148,7 @@ def test_search_threads_sampling_and_resumes_pi_debug_session(task, config):
     backend = FakeBackend()
     backend.name = "pi"
     backend.queue(
-        script=ok_script(0.5),
+        script='raise RuntimeError("boom")\n',  # a debug target must have failed
         result={"session_id": "pi-parent"},
     )
     backend.queue(script=ok_script(0.6), result={"session_id": "pi-child"})

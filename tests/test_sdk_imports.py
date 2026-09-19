@@ -15,6 +15,7 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "hillclimb"
 
 # modules that are (or become) part of a bundled climber
 CLIMBER_MODULES = [
+    "operators/builtin.py",
     "policies/greedy.py",
     "policies/openevolve.py",
     "tuners/random_search.py",

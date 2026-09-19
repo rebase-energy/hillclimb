@@ -1,5 +1,6 @@
 from tests.factories import trial as mk_trial
-from hillclimb.prompts.render import COMPLEXITY_CUES, render
+from hillclimb.operators.builtin import COMPLEXITY_CUES
+from hillclimb.prompts.render import render
 import pytest
 
 

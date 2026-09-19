@@ -16,11 +16,21 @@ from hillclimb.control import ControlCommand, apply_prune, drain_commands_dir, r
 from hillclimb import evaluation
 from hillclimb.evaluation import TAIL_CHARS, CandidateEvaluator, tail  # noqa: F401 — re-exported (cli imports tail from here)
 from hillclimb.executor import Executor
-from hillclimb.journal import Journal
+from hillclimb.journal import Journal, PolicyJournal
 from hillclimb.policies.greedy import GreedyPolicy
 from hillclimb.params import ParamsFile, read_candidate_space, write_inherited_params
 from hillclimb.policy import TUNE_ACTION, Action, BudgetView, InflightRef, SearchPolicy, PolicyInput
-from hillclimb.prompts.render import COMPLEXITY_CUES, render
+from hillclimb.operators import (
+    CONTRACT_TOKEN,
+    MemoryContext,
+    Operator,
+    OperatorContext,
+    Preparation,
+    ProblemInfo,
+    get_operator,
+    inspiration_filename,
+)
+from hillclimb.prompts.render import render
 from hillclimb.routing import BackendPool, ResolvedRoute, Router
 from hillclimb.run import SEARCHES_DIRNAME
 from hillclimb.search_strategy import ParkedSearch, StopRequested  # noqa: F401 — re-exported (their historic home)
@@ -73,6 +83,27 @@ class OutcomeMsg:
     # by that timeout was cut off by the clock, not shown to be buggy
     budget_clamped: bool = False
     error: BaseException | None = None
+
+
+class _OperatorServices:
+    """The harness side of an `OperatorContext`: what needs the engine's
+    templates, reports or unmasked records. Candidates are named by id so the
+    operator only ever holds holdout-blind copies."""
+
+    def __init__(self, searcher: "GreedySearcher"):
+        self._searcher = searcher
+
+    def render(self, template: str, **tokens) -> str:
+        return render(template, **tokens)
+
+    def live_experience(self) -> str:
+        return self._searcher._live_experience()
+
+    def failure_reason(self, candidate_id: str) -> str:
+        return self._searcher._failure_reason(self._searcher.journal.get(candidate_id))
+
+    def report_section(self, candidate_id: str) -> str:
+        return self._searcher._report_section(self._searcher.journal.get(candidate_id))
 
 
 class GreedySearcher:
@@ -596,13 +627,21 @@ class GreedySearcher:
         return Action(operator=operator, target_id=target_id)
 
     def _prepare(self, action: Action) -> Job:
-        """Scheduler-side setup: id, candidate_dir, prompt, journal `created`."""
+        """Scheduler-side setup: id, candidate_dir, prompt, journal `created`.
+        The operator says what the attempt needs (`Preparation`); everything
+        that touches disk, the journal or a backend happens here."""
         operator = action.operator
         target = self.journal.candidates.get(action.target_id) if action.target_id else None
+        ensemble_inputs = (
+            [self.journal.candidates[i] for i in action.inspiration_ids]
+            if action.inspiration_ids
+            else None
+        )
+        op, prep = self._prepare_attempt(action, target)  # pure: nothing exists yet if it raises
         candidate_id = self.journal.next_candidate_id()
         parent_solution = (
             Path(target.candidate_dir) / "solution.py"
-            if target is not None and operator in ("debug", "improve")
+            if target is not None and prep.copy_parent
             else None
         )
         candidate_dir = create_candidate_dir(
@@ -613,16 +652,20 @@ class GreedySearcher:
             parent_solution,
             unit_tests_dir=(self.problem.unit_tests.root if self.problem.unit_tests else None),
         )
-        if self._wants_reference(operator):
-            shutil.copy(self.reference_solution, candidate_dir / "reference_solution.py")
-        inherited = self._inherit_params(target, candidate_dir) if parent_solution else None
-        ensemble_inputs = None
-        if action.inspiration_ids:
-            ensemble_inputs = [self.journal.candidates[i] for i in action.inspiration_ids]
+        for name, source in prep.files.items():
+            if Path(name).name != name:
+                raise ValueError(f"operator {operator!r}: extra file {name!r} must be a bare file name")
+            shutil.copy(source, candidate_dir / name)
+        inherited = (
+            self._inherit_params(target, candidate_dir)
+            if parent_solution and prep.inherit_params
+            else None
+        )
+        if ensemble_inputs and prep.copy_inspirations:
             for i, cand in enumerate(ensemble_inputs, 1):
-                shutil.copy(Path(cand.candidate_dir) / "solution.py", candidate_dir / f"candidate_{i}.py")
+                shutil.copy(Path(cand.candidate_dir) / "solution.py", candidate_dir / inspiration_filename(i))
         complexity = action.complexity
-        prompt = self.build_prompt(operator, target, complexity, ensemble_inputs, inherited=inherited)
+        prompt = self._with_contract(prep.prompt, target, inherited)
         if action.extra_prompt_context:
             prompt += (
                 "\n\n# Additional context from the search strategy\n\n"
@@ -639,10 +682,11 @@ class GreedySearcher:
             candidate_id=candidate_id,
             parent_id=target.candidate_id if target else None,
             operator=operator,
+            role=op.role,
             complexity=complexity,
             debug_depth=(
-                sum(1 for c in self.journal.debug_chain(target.candidate_id) if c.operator == "debug") + 1
-                if operator == "debug" and target
+                sum(1 for c in self.journal.debug_chain(target.candidate_id) if c.role == "repair") + 1
+                if op.role == "repair" and target
                 else 0
             ),
             candidate_dir=str(candidate_dir),
@@ -670,9 +714,10 @@ class GreedySearcher:
             ),
             model=route.model,
             sampling=route.sampling,
+            role=op.role,
             resume_session_id=(
                 target.backend.session_id
-                if operator == "debug"
+                if prep.fork_session
                 and route.backend == "pi"
                 and target is not None
                 and target.backend.name == "pi"
@@ -701,16 +746,61 @@ class GreedySearcher:
             ),
         )
 
-    def _wants_reference(self, operator: str) -> bool:
-        """The skill-library reference goes to the FIRST draft only — later
-        drafts must diverge, so seeding them all would fight exploration.
-        (With parallel first drafts both may qualify; harmless.)"""
-        return (
-            operator == "draft"
-            and self.reference_solution is not None
-            and self.reference_solution.exists()
-            and not self.journal.drafts()
+    def _operator(self, name: str) -> Operator:
+        """The operator `name` names, configured from this search's config
+        (resolved per call: the config block is the live source of truth)."""
+        params = {
+            "draft": {"retrieval": self.config.operators.draft_retrieval},
+            "improve": {"ablation": self.config.operators.improve_ablation},
+        }.get(name)
+        return get_operator(name, params)
+
+    def _prepare_attempt(self, action: Action, target: Candidate | None) -> tuple[Operator, Preparation]:
+        """Ask the operator what this attempt needs. Everything it sees is
+        holdout-blind; nothing is created, journaled or spent here, so a
+        refusal leaves no trace."""
+        op = self._operator(action.operator)
+        blind = PolicyJournal(self.journal)
+
+        def masked(candidate: Candidate) -> Candidate:
+            return blind.candidates.get(candidate.candidate_id) or candidate.holdout_blind()
+
+        blind_target = masked(target) if target is not None else None
+        reason = op.valid_target(blind_target)
+        if reason:
+            raise ValueError(reason)
+        ctx = OperatorContext(
+            action=action,
+            target=blind_target,
+            inspirations=tuple(
+                masked(self.journal.candidates[i]) for i in action.inspiration_ids
+            ),
+            journal=blind,
+            problem=ProblemInfo(
+                problem_id=self.problem.problem_id,
+                description=self.problem.description,
+                metric_name=self.problem.metric_name,
+                higher_is_better=self.problem.higher_is_better,
+                allow_network=self.problem.allow_network,
+                data_listing=self._data_listing(),
+            ),
+            budget=self._view().budget,
+            memory=MemoryContext(
+                text=self.knowledge_context or "",
+                reference=self.reference_solution,
+                reference_note=self.reference_note,
+            ),
+            services=_OperatorServices(self),
         )
+        return op, op.prepare(ctx)
+
+    def _with_contract(self, body: str, target: Candidate | None, inherited: dict | None) -> str:
+        """Put the problem's contract where the prompt marks its place — or
+        at the end when it marks none: an operator cannot drop the contract."""
+        contract = self._contract(target, inherited)
+        if CONTRACT_TOKEN in body:
+            return body.replace(CONTRACT_TOKEN, contract)
+        return body.rstrip("\n") + "\n\n" + contract + "\n"
 
     def _resolve_route(self, action: Action) -> ResolvedRoute:
         if self.router is not None:
@@ -1162,6 +1252,21 @@ class GreedySearcher:
         ensemble_inputs: list[Candidate] | None = None,
         inherited: dict | None = None,
     ) -> str:
+        """The full prompt for one attempt: the operator's body with the
+        problem's contract filled in."""
+        action = Action(
+            operator=operator,
+            target_id=target.candidate_id if target else None,
+            inspiration_ids=tuple(c.candidate_id for c in ensemble_inputs or ()),
+            complexity=complexity,
+        )
+        _op, prep = self._prepare_attempt(action, target)
+        return self._with_contract(prep.prompt, target, inherited)
+
+    def _contract(self, target: Candidate | None, inherited: dict | None = None) -> str:
+        """The problem's contract as the agent reads it: how the solution is
+        run and scored, what it may assume, what it must write. Harness-owned
+        — the same for every operator."""
         holdout_clause = render(
             "holdout_clause", metric_name=self.problem.metric_name
         ).rstrip() if self.problem.holdout_cmd is not None else ""
@@ -1215,101 +1320,7 @@ class GreedySearcher:
                 "frozen suite used by evaluation. Run them with:\n\n"
                 f"    {shlex.join(visible)}\n"
             )
-        direction = "higher is better" if self.problem.higher_is_better else "lower is better"
-        if operator == "draft":
-            live = self._live_experience()
-            prior = self.knowledge_context or ""
-            prior = "\n\n".join(part for part in (prior, live) if part)
-            research_cue = (
-                render("research_cue", network_note=network_note).rstrip() + "\n"
-                if self.config.operators.draft_retrieval
-                else ""
-            )
-            starter_cue = ""
-            if self._wants_reference(operator):
-                note = f" ({self.reference_note})" if self.reference_note else ""
-                starter_cue = (
-                    "# Starter reference\n\n"
-                    f"A proven solution from a previous search is at "
-                    f"`./reference_solution.py`{note}. Use it as a scaffold: adapt "
-                    "and improve it for THIS problem — do not resubmit it unchanged.\n"
-                )
-            return render(
-                "draft",
-                description=self.problem.description,
-                metric_name=self.problem.metric_name,
-                direction=direction,
-                data_listing=self._data_listing(),
-                research_cue=research_cue,
-                starter_cue=starter_cue,
-                complexity_cue=COMPLEXITY_CUES[complexity or "minimal"],
-                prior_experience=prior or "(no prior searches recorded)",
-                prior_drafts=self._candidate_summaries(self.journal.drafts()) or "(none yet)",
-                contract=contract,
-            )
-        if operator == "debug":
-            assert target is not None
-            chain = self.journal.debug_chain(target.candidate_id)
-            root, attempts = chain[0], chain[1:]
-            last_replicate = target.last_replicate
-            test_result = target.last_trial.unit_tests if target.last_trial else None
-            return render(
-                "debug",
-                parent_summary=root.summary or "(no summary)",
-                failure_reason=self._failure_reason(target),
-                stderr_tail=(
-                    test_result.stderr_tail if test_result and test_result.stderr_tail
-                    else tail(Path(target.candidate_dir) / "exec_stderr.log")
-                ),
-                stdout_tail=(
-                    test_result.stdout_tail if test_result and test_result.stdout_tail
-                    else (last_replicate.stdout_tail if last_replicate else "")
-                ),
-                debug_history=self._candidate_summaries(attempts) or "(none — this is the first fix attempt)",
-                contract=contract,
-            )
-        if operator == "ensemble":
-            assert ensemble_inputs
-            table = "\n".join(
-                f"- `candidate_{i}.py` — validation {self.problem.metric_name}: "
-                f"**{c.val_score:.5g}** ({c.candidate_id}): {c.summary or '(no summary)'}"
-                for i, c in enumerate(ensemble_inputs, 1)
-            )
-            return render(
-                "ensemble",
-                description=self.problem.description,
-                metric_name=self.problem.metric_name,
-                direction=direction,
-                candidates_table=table,
-                contract=contract,
-            )
-        if operator == "improve":
-            assert target is not None
-            last_replicate = target.last_replicate
-            live = self._live_experience()
-            ablation_cue = (
-                render("ablation_cue").rstrip() + "\n"
-                if self.config.operators.improve_ablation
-                else ""
-            )
-            return render(
-                "improve",
-                description=self.problem.description,
-                metric_name=self.problem.metric_name,
-                direction=direction,
-                best_score=target.val_score,
-                stdout_tail=last_replicate.stdout_tail if last_replicate else "",
-                sibling_summaries=self._candidate_summaries(self.journal.children(target.candidate_id))
-                or "(nothing tried from this solution yet)",
-                evaluation_report=self._report_section(target),
-                live_experience=(
-                    f"# Discoveries from concurrent searches\n\n{live}\n" if live else ""
-                ),
-                prior_ablations=self._prior_ablations(target),
-                ablation_cue=ablation_cue,
-                contract=contract,
-            )
-        raise ValueError(f"Unknown operator: {operator}")
+        return contract
 
     def _failure_reason(self, candidate: Candidate) -> str:
         trial = candidate.last_trial
@@ -1444,43 +1455,6 @@ class GreedySearcher:
                 f"{delta}\n"
             )
         return section
-
-    def _prior_ablations(self, target: Candidate, max_chars: int = 3000) -> str:
-        """Improve-prompt section: the newest `ablation.md` an earlier improve
-        attempt wrote while analyzing this same solution, so successive
-        improves of one target don't re-measure the same components. Gated
-        with the cue — without the cue nothing writes ablation.md anyway."""
-        if not self.config.operators.improve_ablation:
-            return ""
-        for child in reversed(self.journal.children(target.candidate_id, include_pruned=True)):
-            path = Path(child.candidate_dir) / "ablation.md"
-            if not path.exists():
-                continue
-            try:
-                body = path.read_text(errors="replace").strip()[:max_chars]
-            except OSError:
-                continue
-            if not body:
-                continue
-            return (
-                f"# Prior ablation findings for this solution "
-                f"(measured by {child.candidate_id})\n\n{body}\n"
-            )
-        return ""
-
-    def _candidate_summaries(self, candidates: list[Candidate]) -> str:
-        lines = []
-        for candidate in candidates:
-            score = (
-                f"val_score={candidate.val_score}"
-                if candidate.val_score is not None
-                else candidate.status
-            )
-            lines.append(
-                f"- {candidate.candidate_id} ({candidate.operator}, {score}): "
-                f"{candidate.summary or '(no summary)'}"
-            )
-        return "\n".join(lines)
 
     def _data_listing(self, limit: int = 50) -> str:
         entries = []

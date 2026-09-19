@@ -105,9 +105,9 @@ def test_improve_prompt_reuses_sibling_ablation(task, config):
 def test_prior_ablations_empty_without_files_or_when_gated(task, config):
     backend = FakeBackend()
     searcher, _, target = scored_target(task, config, backend)
-    assert searcher._prior_ablations(target) == ""
+    assert "Prior ablation findings" not in searcher.build_prompt("improve", target, None)
     backend.queue(script=ok_script(0.7), notes="tweak\n")
     child = searcher.run_operator("improve", target)
     Path(child.candidate_dir, "ablation.md").write_text("- model: +0.02\n")
     config.operators.improve_ablation = False
-    assert searcher._prior_ablations(target) == ""
+    assert "Prior ablation findings" not in searcher.build_prompt("improve", target, None)

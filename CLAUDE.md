@@ -173,6 +173,35 @@ shim).
   directly (`openrouter.py`, `OPENROUTER_API_KEY`); its card noise is ~0.02.
   `similarity.scores` (config) lists the defaults for `hillclimb similarity
   scores [search] [-s name] [-c ids] [-f file…] [--explain] [--json]`
+- Harness + climber restructure (in progress on branch `harness-climber`;
+  vocabulary: **Harness** = the fixed core, **Climber** = the shareable
+  bundle of exchangeable modules, **SearchPolicy** = the pure what-next
+  decision, **SearchLoop** = control flow, plus **Operator**, **Memory**,
+  **Tuner**, **SimilarityScore**). `hillclimb.sdk` is the one import a
+  climber needs — a lazy facade, so modules it re-exports may import it back;
+  `tests/test_sdk_imports.py` AST-scans the bundled climber modules
+  (`CLIMBER_MODULES`) and carries a shrinking `ALLOWED` list of exceptions,
+  each naming the phase that removes it. `tests/test_prompt_golden.py` pins
+  every prompt byte (greedy scenarios, openevolve, GEPA proposer;
+  `HILLCLIMB_UPDATE_GOLDENS=1` regenerates — review the diff)
+- Operators (`operators/`): HOW one attempt is made. An `Operator` subclass
+  sets `name` + `role` (`create | repair | refine | combine`) and implements
+  `prepare(ctx) -> Preparation(prompt, copy_parent, inherit_params,
+  copy_inspirations, fork_session, files)`; it never touches disk, journal or
+  backend. The harness (`search._prepare` → `_prepare_attempt`, pure, so a
+  refusal leaves no dir/journal/spend) checks `valid_target`, executes the
+  preparation, and fills `{{contract}}` itself — appending the contract when
+  a prompt has no token, so an operator cannot drop it (`search._contract` is
+  harness-owned). `OperatorContext` is holdout-blind (masked target,
+  inspirations, journal); harness-side answers (`render`, `live_experience`,
+  `failure_reason`, `report_section`) take candidate ids. `Candidate.role` is
+  journaled (backfilled from the operator on load, None for an unknown
+  operator) and `journal.drafts()`/`debug_chain()`, `debug_depth` and the
+  dummy backend key on ROLE, never on the operator's name; the registry
+  (`operators.get_operator/operator_names/role_of/register_operator`) is the
+  vocabulary `policy check` and the pi route preflight derive from.
+  `baseline`/`seed`/`tune` stay harness-native (no prompt). Inspiration files
+  are named by `sdk.inspiration_filename(i)`, never a literal
 - Search policies (`policies/`): `greedy` (default) and `openevolve`
   (OpenEvolve's MAP-Elites database as the what-next brain; optional extra,
   `search.policy_params` pass through to its `DatabaseConfig`). A policy
