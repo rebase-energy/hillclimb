@@ -11,15 +11,15 @@ from pathlib import Path
 import pytest
 
 from hillclimb.backends.fake import FakeBackend
-from hillclimb.budget import BudgetManager
-from hillclimb.candidate import Candidate
-from hillclimb.dirs import create_search_dir
-from hillclimb.journal import Journal
-from hillclimb.policies.greedy import GreedyPolicy
-from hillclimb.evaluation import accept_band
-from hillclimb.policy import TUNE_ACTION, Action, BudgetView, InflightRef, PolicyInput
+from hillclimb.harness.budget import BudgetManager
+from hillclimb.harness.candidate import Candidate
+from hillclimb.harness.dirs import create_search_dir
+from hillclimb.harness.journal import Journal
+from hillclimb.modules.policies.greedy import GreedyPolicy
+from hillclimb.harness.evaluation import accept_band
+from hillclimb.modules.policies.base import TUNE_ACTION, Action, BudgetView, InflightRef, PolicyInput
 from tests.harness_factory import SearchRig
-from hillclimb.search import OutcomeMsg
+from hillclimb.harness.core import OutcomeMsg
 from tests.conftest import executor_for, ok_script
 from tests.factories import candidate as make_candidate, trial
 from tests.test_search import FileHoldoutScorer
@@ -52,7 +52,7 @@ def make_searcher(task, config, backend, max_candidates=3, holdout=False, **poli
     journal = Journal(search_dir / "journal.jsonl")
     kwargs = {}
     if holdout:
-        from hillclimb.evaluation import CandidateEvaluator
+        from hillclimb.harness.evaluation import CandidateEvaluator
 
         task = task.model_copy(update={"holdout_cmd": task.verifier_cmd + ["--holdout"]})
         kwargs["evaluator"] = CandidateEvaluator(

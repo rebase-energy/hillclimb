@@ -1,0 +1,23 @@
+                                                                                                                        
+ Usage: root similarity reference [OPTIONS] [SEARCH]                                                                    
+                                                                                                                        
+ Candidates at their distance from one reference candidate.                                                             
+                                                                                                                        
+ Every candidate sits at (behavioral, structural, lineage) distance from                                                
+ a reference candidate — the origin the search grew from (its seed, else                                                
+ its baseline) by default, `c` toggles to the current champion — coloured                                               
+ by score rank (cold to hot; the champion is gold, the reference white).                                                
+ A search that is an experiment arm opens the whole run instead: every                                                  
+ search of that problem in one cube, measured from the shared seed,                                                     
+ coloured by arm like `chart`, n/p stepping through the run's problems                                                  
+ (--single for the one-search view). v opens the map. Drag rotates,                                                     
+ scroll zooms, q quits.                                                                                                 
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│   [search]      TEXT  latest (default), <run-id>, or <run-id>/<search-id>                                            │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --single            One search only, even when it is an experiment arm                                               │
+│ --help    -h        Show this message and exit.                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

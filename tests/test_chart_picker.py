@@ -7,12 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb.candidate import Candidate
-from hillclimb.chart import ChartApp, ChartPickerScreen, ChartScreen, chart_index, chart_run_scope, climb_curves
-from hillclimb.journal import Journal
-from hillclimb.run import RunMeta, SearchMeta, load_search_meta, write_run_meta, write_search_meta
-from hillclimb.status import ScoreRef, SearchStatus, write_status
-from hillclimb.store import FileDataStore
+from hillclimb.harness.candidate import Candidate
+from hillclimb.tui.chart import ChartApp, ChartPickerScreen, ChartScreen, chart_index, chart_run_scope, climb_curves
+from hillclimb.harness.journal import Journal
+from hillclimb.harness.run import RunMeta, SearchMeta, load_search_meta, write_run_meta, write_search_meta
+from hillclimb.harness.status import ScoreRef, SearchStatus, write_status
+from hillclimb.harness.store import FileDataStore
 
 
 def _search(
@@ -162,7 +162,7 @@ async def test_explicit_search_skips_the_picker(config):
 
 @pytest.mark.asyncio
 async def test_watch_c_opens_the_chart_and_esc_returns(config):
-    from hillclimb.watch import RunsScreen, SearchesScreen, WatchApp
+    from hillclimb.tui.watch import RunsScreen, SearchesScreen, WatchApp
 
     runs = config.paths.runs_dir
     _search(runs, "r1", "alpha", "alpha", started="2026-09-01T10:00:00+00:00", best=0.5)

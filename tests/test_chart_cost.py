@@ -5,8 +5,8 @@ PlotSpy the way test_tree.py drives build_climb_plot.
 """
 
 from tests.factories import trial as mk_trial
-from hillclimb.candidate import BackendInfo, Candidate
-from hillclimb.chart import (
+from hillclimb.harness.candidate import BackendInfo, Candidate
+from hillclimb.tui.chart import (
     Climb,
     ClimbEvent,
     COST_CPU_LABEL,
@@ -132,7 +132,7 @@ def sample_cost():
 class TestCostOverlay:
     def test_overlay_draws_tokens_on_y2_and_cpu_on_y3(self, monkeypatch):
         plot = PlotSpy()
-        monkeypatch.setattr("hillclimb.chart.themed_plot", lambda: plot)
+        monkeypatch.setattr("hillclimb.tui.chart.themed_plot", lambda: plot)
         build_climb_plot(one_step_climb(), cost=sample_cost())
         by_axis = {kw.get("axis"): (xs, ys, kw) for xs, ys, kw in plot.lines if "axis" in kw}
         assert set(by_axis) == {"y2", "y3"}
@@ -143,13 +143,13 @@ class TestCostOverlay:
 
     def test_no_cost_means_no_overlay(self, monkeypatch):
         plot = PlotSpy()
-        monkeypatch.setattr("hillclimb.chart.themed_plot", lambda: plot)
+        monkeypatch.setattr("hillclimb.tui.chart.themed_plot", lambda: plot)
         build_climb_plot(one_step_climb())
         assert not any("axis" in kw for _xs, _ys, kw in plot.lines)
 
     def test_hidden_series_takes_its_axis_with_it(self, monkeypatch):
         plot = PlotSpy()
-        monkeypatch.setattr("hillclimb.chart.themed_plot", lambda: plot)
+        monkeypatch.setattr("hillclimb.tui.chart.themed_plot", lambda: plot)
         build_climb_plot(one_step_climb(), cost=sample_cost(), hidden={COST_TOKENS_LABEL})
         axes = [kw["axis"] for _xs, _ys, kw in plot.lines if "axis" in kw]
         assert axes == ["y3"]  # tokens hidden: no y2 line, so no y2 column

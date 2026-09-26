@@ -8,10 +8,10 @@ import json
 import pytest
 
 from hillclimb.backends.fake import FakeBackend
-from hillclimb.control import ControlCommand
-from hillclimb.loop import ClimberError, HarnessClosed, SearchLoop
-from hillclimb.policy import Action
-from hillclimb.search_strategy import StopRequested
+from hillclimb.harness.control import ControlCommand
+from hillclimb.harness.loop import ClimberError, HarnessClosed, SearchLoop
+from hillclimb.modules.policies.base import Action
+from hillclimb.harness.glue import StopRequested
 from tests.conftest import ok_script
 from tests.harness_factory import make_harness
 
@@ -189,7 +189,7 @@ def test_wait_with_nothing_in_flight_is_a_tick(task, config):
 def test_running_out_of_budget_is_a_quiet_refusal_not_an_error(task, config):
     """The clock moves off the loop's thread: a loop that saw capacity and
     then lost the race to the budget gets a refusal, never an exception."""
-    from hillclimb.budget import BudgetManager
+    from hillclimb.harness.budget import BudgetManager
 
     backend = FakeBackend()
     harness, journal, search_dir = make_harness(
@@ -206,9 +206,9 @@ def test_running_out_of_budget_is_a_quiet_refusal_not_an_error(task, config):
 
 # --- inject, require_change, Outcome.result (what a self-driving loop needs) ---
 
-from hillclimb import operators  # noqa: E402
-from hillclimb.candidate import source_hash  # noqa: E402
-from hillclimb.policy import INJECT_ACTION  # noqa: E402
+from hillclimb.modules import operators  # noqa: E402
+from hillclimb.harness.candidate import source_hash  # noqa: E402
+from hillclimb.modules.policies.base import INJECT_ACTION  # noqa: E402
 from hillclimb.sdk import Operator, Preparation  # noqa: E402
 
 

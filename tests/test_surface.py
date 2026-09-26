@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb.candidate import Candidate
+from hillclimb.harness.candidate import Candidate
 from hillclimb.problem import load_problem
-from hillclimb.surface import LIFT, LandscapeError, build_surface, load_landscape
-from hillclimb.tree import build_tree
+from hillclimb.tui.surface import LIFT, LandscapeError, build_surface, load_landscape
+from hillclimb.tui.tree import build_tree
 
 # A tiny analytic terrain: one bowl-shaped hill, summit at the origin with
 # height 4.0. grid(5) spans [-2, 2] so the argmax cell is exactly (0, 0).

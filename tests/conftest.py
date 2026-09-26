@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from hillclimb.config import Config
-from hillclimb.executor import CommandExecutor
+from hillclimb.harness.executor import CommandExecutor
 from hillclimb.problem import ProblemSpec
 from hillclimb.runtime import RUN_SOLUTION
 

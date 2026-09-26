@@ -13,12 +13,12 @@ import pytest
 pytest.importorskip("openevolve")
 
 from hillclimb.backends.fake import FakeBackend
-from hillclimb.budget import BudgetManager
-from hillclimb.candidate import Candidate
-from hillclimb.dirs import create_search_dir
-from hillclimb.journal import Journal
-from hillclimb.policies import get_policy
-from hillclimb.policies.openevolve import OpenEvolvePolicy
+from hillclimb.harness.budget import BudgetManager
+from hillclimb.harness.candidate import Candidate
+from hillclimb.harness.dirs import create_search_dir
+from hillclimb.harness.journal import Journal
+from hillclimb.modules.policies import get_policy
+from hillclimb.modules.policies.openevolve import OpenEvolvePolicy
 from tests.harness_factory import SearchRig
 from tests.conftest import local_executor, ok_script
 from tests.test_policy import make_view

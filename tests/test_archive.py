@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from hillclimb.archive import (
+from hillclimb.tui.archive import (
     CURSOR_RGB,
     LEGEND_COL,
     LEGEND_TOP_ROW,
@@ -28,9 +28,9 @@ from hillclimb.archive import (
     progress_points,
     staircase,
 )
-from hillclimb.chart import CYAN, MISS_RGB
-from hillclimb.tree import build_tree, candidates_until, tree_events
-from hillclimb.tree2 import LINEAGE_RGB, best_lineage
+from hillclimb.tui.chart import CYAN, MISS_RGB
+from hillclimb.tui.tree import build_tree, candidates_until, tree_events
+from hillclimb.tui.tree2 import LINEAGE_RGB, best_lineage
 from tests.test_tree import cand, forest, tree_workspace  # noqa: F401 (fixture)
 from tests.test_tree2 import colour_pixels, rgba_colours
 
@@ -167,8 +167,8 @@ def test_cli_lists_archive():
 
 @pytest.mark.asyncio
 async def test_archive_app_scrubs_both_panels_and_rings_the_selection(tree_workspace):
-    from hillclimb.archiveview import ArchiveApp, ArchiveKeys, ProgressPlotWidget
-    from hillclimb.tree2view import Tree2PlotWidget
+    from hillclimb.tui.archiveview import ArchiveApp, ArchiveKeys, ProgressPlotWidget
+    from hillclimb.tui.tree2view import Tree2PlotWidget
 
     def overlay_text(widget) -> str:
         return " ".join(text for spans in widget._overlay.values() for _col, text, _style in spans)

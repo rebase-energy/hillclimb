@@ -7,13 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb.candidate import Candidate
-from hillclimb.chart import climb_curve, climb_curves
+from hillclimb.harness.candidate import Candidate
+from hillclimb.tui.chart import climb_curve, climb_curves
 from hillclimb.cli import main as cli_main
 from hillclimb.demo import DEMO_PROBLEM_ID, install_demo_problem
-from hillclimb.journal import Journal
+from hillclimb.harness.journal import Journal
 from hillclimb.problem import load_problem
-from hillclimb.run import RunMeta, SearchMeta, write_run_meta, write_search_meta
+from hillclimb.harness.run import RunMeta, SearchMeta, write_run_meta, write_search_meta
 
 
 def test_install_demo_problem_copies_once(tmp_path):
@@ -113,7 +113,7 @@ def test_climb_curves_groups_by_problem_oldest_first(tmp_path):
 
 
 def test_demo_preflight_names_the_missing_tool(monkeypatch):
-    from hillclimb.cli import _demo_preflight
+    from hillclimb.cli.run import _demo_preflight
     import typer
 
     monkeypatch.setattr("shutil.which", lambda name: None if name == "claude" else "/usr/bin/x")
@@ -135,8 +135,7 @@ def test_demo_launches_parallel_detached_searches(tmp_path, monkeypatch):
         launched.append((cmd, kwargs))
         return FakeProc()
 
-    monkeypatch.setattr("hillclimb.cli._demo_preflight", lambda backend: None)
-    monkeypatch.setattr("hillclimb.cli.ensure_runtime_venv", lambda *a, **k: Path("/py"))
+    monkeypatch.setattr("hillclimb.cli.run._demo_preflight", lambda backend: None)
     monkeypatch.setattr("subprocess.Popen", fake_popen)
     with pytest.raises(SystemExit) as exc:
         cli_main([
@@ -147,7 +146,7 @@ def test_demo_launches_parallel_detached_searches(tmp_path, monkeypatch):
     assert (tmp_path / "hillclimb" / "config.yaml").exists()
     assert (tmp_path / "hillclimb" / "problems" / DEMO_PROBLEM_ID / "verifier.sh").exists()
     assert len(launched) == 2
-    from hillclimb.run import iter_run_dirs, load_run_meta
+    from hillclimb.harness.run import iter_run_dirs, load_run_meta
 
     (run_dir,) = iter_run_dirs(tmp_path / "hillclimb" / "runs")
     assert load_run_meta(run_dir).name == "demo"
@@ -215,7 +214,6 @@ def test_run_parallel_searches_spawns_detached_engines(tmp_path, monkeypatch):
     class FakeProc:
         pid = 4242
 
-    monkeypatch.setattr("hillclimb.cli.ensure_runtime_venv", lambda *a, **k: Path("/py"))
     monkeypatch.setattr("subprocess.Popen", lambda cmd, **kw: launched.append(cmd) or FakeProc())
     with pytest.raises(SystemExit) as exc:
         cli_main([
@@ -224,7 +222,7 @@ def test_run_parallel_searches_spawns_detached_engines(tmp_path, monkeypatch):
         ])
     assert exc.value.code == 0
     assert len(launched) == 3
-    from hillclimb.run import iter_run_dirs, load_run_meta
+    from hillclimb.harness.run import iter_run_dirs, load_run_meta
 
     (run_dir,) = iter_run_dirs(tmp_path / "hillclimb" / "runs")
     assert load_run_meta(run_dir).name == DEMO_PROBLEM_ID
@@ -235,15 +233,15 @@ def test_run_parallel_searches_spawns_detached_engines(tmp_path, monkeypatch):
 
 
 def test_stop_all_reaches_every_running_search(tmp_path, config, monkeypatch):
-    from hillclimb.control import read_commands
-    from hillclimb.status import SearchStatus, write_status
+    from hillclimb.harness.control import read_commands
+    from hillclimb.harness.status import SearchStatus, write_status
 
     runs = config.paths.runs_dir
     a = _search(runs, "r1", "demo-1", [])
     b = _search(runs, "r2", "demo-2", [])
     for s in (a, b):
         write_status(s, SearchStatus(search_id="p", state="running", pid=os.getpid()))
-    monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
+    monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config)
     with pytest.raises(SystemExit) as exc:
         cli_main(["stop", "--all"])
     assert exc.value.code == 0
@@ -253,7 +251,7 @@ def test_stop_all_reaches_every_running_search(tmp_path, config, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_watch_candidates_opens_on_the_search(tmp_path, config):
-    from hillclimb.watch import CandidateScreen, WatchApp
+    from hillclimb.tui.watch import CandidateScreen, WatchApp
 
     search_dir = _search(config.paths.runs_dir, "r1", "demo-1", [("2026-08-22T10:01:00+00:00", 1.0)])
     app = WatchApp(config, search_dir=search_dir)
@@ -270,7 +268,7 @@ async def test_watch_candidates_opens_on_the_search(tmp_path, config):
 
 
 def test_search_ids_suffix_within_a_run(tmp_path):
-    from hillclimb.dirs import allocate_search_dir
+    from hillclimb.harness.dirs import allocate_search_dir
 
     run_dir = tmp_path / "run"
     ids = [allocate_search_dir(run_dir, "circle-packing").name for _ in range(3)]
@@ -281,7 +279,7 @@ def test_search_ids_suffix_within_a_run(tmp_path):
 
 
 def test_search_meta_problem_key_backfills_like_hillclimb_go():
-    from hillclimb.run import SearchMeta
+    from hillclimb.harness.run import SearchMeta
 
     def meta(**kw):
         base = dict(search_id="s", run_id="r", backend="b", model="m", metric="score")
@@ -302,7 +300,7 @@ def test_search_meta_problem_key_backfills_like_hillclimb_go():
 
 def test_create_search_records_problem_key_and_unique_ids(tmp_path, config):
     from hillclimb.api import create_search
-    from hillclimb.run import load_search_meta
+    from hillclimb.harness.run import load_search_meta
 
     config.paths.problems_dir = tmp_path / "problems"
     install_demo_problem(config.paths.problems_dir)
@@ -323,8 +321,8 @@ def test_create_search_records_problem_key_and_unique_ids(tmp_path, config):
 
 
 def test_chart_baselines_reload_current_problem_config(tmp_path, config):
-    from hillclimb.chart import chart_baselines
-    from hillclimb.run import SearchMeta
+    from hillclimb.tui.chart import chart_baselines
+    from hillclimb.harness.run import SearchMeta
 
     config.paths.problems_dir = tmp_path / "problems"
     problem_dir, _ = install_demo_problem(config.paths.problems_dir)
@@ -380,14 +378,14 @@ def test_chart_groups_searches_by_problem_key_across_runs(tmp_path):
 
 
 def test_budget_margin_scales_with_short_budgets():
-    from hillclimb.budget import BudgetManager
+    from hillclimb.harness.budget import BudgetManager
 
     assert BudgetManager(600, stop_margin_s=300).stop_margin_s == 60
     assert BudgetManager(7200, stop_margin_s=300).stop_margin_s == 300
 
 
 def test_step_points_hold_each_score_until_the_next():
-    from hillclimb.chart import step_points
+    from hillclimb.tui.chart import step_points
 
     assert step_points([], []) == ([], [])
     assert step_points([1.0], [2.0]) == ([1.0], [2.0])
@@ -404,7 +402,7 @@ def test_climb_folds_every_search_into_one_staircase(tmp_path):
     """Three parallel searches are one climb: `best` is judged against what
     any of them had landed so far, x counts candidates across searches, and
     the misses are kept as dots."""
-    from hillclimb.chart import climb_for_problem
+    from hillclimb.tui.chart import climb_for_problem
 
     runs = tmp_path / "runs"
     _search(runs, "r1", "demo", [
@@ -428,7 +426,7 @@ def test_climb_folds_every_search_into_one_staircase(tmp_path):
 
 
 def test_climb_respects_lower_is_better(tmp_path):
-    from hillclimb.chart import climb_for_problem
+    from hillclimb.tui.chart import climb_for_problem
 
     runs = tmp_path / "runs"
     _search(runs, "r1", "demo", [
@@ -440,7 +438,7 @@ def test_climb_respects_lower_is_better(tmp_path):
 
 
 def test_build_climb_plot_renders_steps_and_dots(tmp_path):
-    from hillclimb.chart import build_climb_plot, climb_for_problem
+    from hillclimb.tui.chart import build_climb_plot, climb_for_problem
 
     runs = tmp_path / "runs"
     _search(runs, "r1", "demo", [
@@ -470,7 +468,7 @@ def test_problem_get_asks_before_creating_a_hillclimb_dir(tmp_path, monkeypatch)
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
     monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
-    monkeypatch.setattr(cli, "_stdin_is_tty", lambda: True)
+    monkeypatch.setattr("hillclimb.cli.problem._stdin_is_tty", lambda: True)
     result = CliRunner().invoke(cli.app, ["problem", "get", "golomb-20"], input="n\n")
     assert result.exit_code == 1 and "hillclimb init" in result.output
     assert not (tmp_path / "hillclimb").exists()

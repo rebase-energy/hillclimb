@@ -7,16 +7,16 @@ import pytest
 
 from hillclimb.api import create_search
 from hillclimb.backends.fake import FakeBackend
-from hillclimb.baseline import run_scored_baseline
-from hillclimb.budget import BudgetManager
-from hillclimb.candidate import Candidate
-from hillclimb.dirs import create_candidate_dir, create_run_dir, create_search_dir
-from hillclimb.evaluation import CandidateEvaluator, eval_result_for
-from hillclimb.journal import Journal
+from hillclimb.harness.baseline import run_scored_baseline
+from hillclimb.harness.budget import BudgetManager
+from hillclimb.harness.candidate import Candidate
+from hillclimb.harness.dirs import create_candidate_dir, create_run_dir, create_search_dir
+from hillclimb.harness.evaluation import CandidateEvaluator, eval_result_for
+from hillclimb.harness.journal import Journal
 from hillclimb.problem import UnitTestSpec
-from hillclimb.run import load_search_meta
+from hillclimb.harness.run import load_search_meta
 from tests.harness_factory import SearchRig
-from hillclimb.unit_tests import (
+from hillclimb.harness.unit_tests import (
     UnitTestInfrastructureError,
     UnitTestRunner,
     bundle_relative,

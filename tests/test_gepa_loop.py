@@ -9,14 +9,14 @@ import json
 import pytest
 
 from hillclimb.backends.fake import FakeBackend
-from hillclimb.candidate import source_hash
-from hillclimb.control import ControlCommand
+from hillclimb.harness.candidate import source_hash
+from hillclimb.harness.control import ControlCommand
 from hillclimb.integrations.gepa.loop import GepaLoop
 from hillclimb.integrations.gepa.operator import OPERATOR_NAME
 from hillclimb.integrations.gepa.proposer import COMPONENT, ProposerError
-from hillclimb.journal import Journal
-from hillclimb.loop import PolicyLoop
-from hillclimb.search_strategy import ParkedSearch, StopRequested, build_loop, holdout_timing
+from hillclimb.harness.journal import Journal
+from hillclimb.harness.loop import PolicyLoop
+from hillclimb.harness.glue import ParkedSearch, StopRequested, build_loop, holdout_timing
 from tests.conftest import ok_script
 from tests.gepa_fakes import FakeGEPADriver, make_gepa
 

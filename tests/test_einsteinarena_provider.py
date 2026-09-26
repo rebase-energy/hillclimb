@@ -9,12 +9,12 @@ from urllib.parse import urlparse
 
 import pytest
 
-from hillclimb.executor import CommandExecutor
+from hillclimb.harness.executor import CommandExecutor
 from hillclimb.integrations.einsteinarena.baselines import BASELINES
 from hillclimb.integrations.einsteinarena.eval_runner import __file__ as eval_runner_file
 from hillclimb.problem import load_problem, resolve_target
 from hillclimb.api import create_search
-from hillclimb.run import load_search_meta
+from hillclimb.harness.run import load_search_meta
 
 provider_module = importlib.import_module("hillclimb.integrations.einsteinarena.provider")
 

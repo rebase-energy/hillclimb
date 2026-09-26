@@ -13,7 +13,7 @@ import pytest
 
 pytest.importorskip("emflow")
 
-from hillclimb.executor import CommandExecutor, CommandHoldoutScorer  # noqa: E402
+from hillclimb.harness.executor import CommandExecutor, CommandHoldoutScorer  # noqa: E402
 from hillclimb.problem import load_problem  # noqa: E402
 
 PROBLEM = "swedish-temperatures:ar"

@@ -18,54 +18,54 @@ from typing import TYPE_CHECKING
 
 _LAZY = {
     # what to try next
-    "Action": ("hillclimb.policy", "Action"),
-    "Route": ("hillclimb.policy", "Route"),
-    "InflightRef": ("hillclimb.policy", "InflightRef"),
-    "BudgetView": ("hillclimb.policy", "BudgetView"),
-    "PolicyInput": ("hillclimb.policy", "PolicyInput"),
-    "SearchPolicy": ("hillclimb.policy", "SearchPolicy"),
-    "TUNE_ACTION": ("hillclimb.policy", "TUNE_ACTION"),
-    "INJECT_ACTION": ("hillclimb.policy", "INJECT_ACTION"),
+    "Action": ("hillclimb.modules.policies.base", "Action"),
+    "Route": ("hillclimb.modules.policies.base", "Route"),
+    "InflightRef": ("hillclimb.modules.policies.base", "InflightRef"),
+    "BudgetView": ("hillclimb.modules.policies.base", "BudgetView"),
+    "PolicyInput": ("hillclimb.modules.policies.base", "PolicyInput"),
+    "SearchPolicy": ("hillclimb.modules.policies.base", "SearchPolicy"),
+    "TUNE_ACTION": ("hillclimb.modules.policies.base", "TUNE_ACTION"),
+    "INJECT_ACTION": ("hillclimb.modules.policies.base", "INJECT_ACTION"),
     # control flow over the harness (most climbers only need a SearchPolicy)
-    "SearchLoop": ("hillclimb.loop", "SearchLoop"),
-    "PolicyLoop": ("hillclimb.loop", "PolicyLoop"),
-    "Harness": ("hillclimb.loop", "Harness"),
-    "SearchInfo": ("hillclimb.loop", "SearchInfo"),
-    "Ticket": ("hillclimb.loop", "Ticket"),
-    "Outcome": ("hillclimb.loop", "Outcome"),
-    "HarnessClosed": ("hillclimb.loop", "HarnessClosed"),
-    "ClimberError": ("hillclimb.loop", "ClimberError"),
+    "SearchLoop": ("hillclimb.harness.loop", "SearchLoop"),
+    "PolicyLoop": ("hillclimb.harness.loop", "PolicyLoop"),
+    "Harness": ("hillclimb.harness.loop", "Harness"),
+    "SearchInfo": ("hillclimb.harness.loop", "SearchInfo"),
+    "Ticket": ("hillclimb.harness.loop", "Ticket"),
+    "Outcome": ("hillclimb.harness.loop", "Outcome"),
+    "HarnessClosed": ("hillclimb.harness.loop", "HarnessClosed"),
+    "ClimberError": ("hillclimb.harness.loop", "ClimberError"),
     # the records a climber reads (always holdout-blind copies)
-    "Candidate": ("hillclimb.candidate", "Candidate"),
-    "Trial": ("hillclimb.candidate", "Trial"),
-    "Replicate": ("hillclimb.candidate", "Replicate"),
-    "PolicyJournal": ("hillclimb.journal", "PolicyJournal"),
-    "source_hash": ("hillclimb.candidate", "source_hash"),
-    "EvalResult": ("hillclimb.evaluation", "EvalResult"),
-    "eval_result_for": ("hillclimb.evaluation", "eval_result_for"),
+    "Candidate": ("hillclimb.harness.candidate", "Candidate"),
+    "Trial": ("hillclimb.harness.candidate", "Trial"),
+    "Replicate": ("hillclimb.harness.candidate", "Replicate"),
+    "PolicyJournal": ("hillclimb.harness.journal", "PolicyJournal"),
+    "source_hash": ("hillclimb.harness.candidate", "source_hash"),
+    "EvalResult": ("hillclimb.harness.evaluation", "EvalResult"),
+    "eval_result_for": ("hillclimb.harness.evaluation", "eval_result_for"),
     # a loop may end its search as resumable ("parked") instead of failed
-    "ParkedSearch": ("hillclimb.search_strategy", "ParkedSearch"),
+    "ParkedSearch": ("hillclimb.harness.glue", "ParkedSearch"),
     # the accept rule, so a policy agrees with the harness on what "better" means
-    "improves": ("hillclimb.evaluation", "improves"),
-    "accept_band": ("hillclimb.evaluation", "accept_band"),
+    "improves": ("hillclimb.harness.evaluation", "improves"),
+    "accept_band": ("hillclimb.harness.evaluation", "accept_band"),
     # how one attempt is made
-    "Operator": ("hillclimb.operators.base", "Operator"),
-    "OperatorContext": ("hillclimb.operators.base", "OperatorContext"),
-    "Preparation": ("hillclimb.operators.base", "Preparation"),
-    "ProblemInfo": ("hillclimb.operators.base", "ProblemInfo"),
-    "MemoryContext": ("hillclimb.operators.base", "MemoryContext"),
-    "inspiration_filename": ("hillclimb.operators.base", "inspiration_filename"),
-    "ROLES": ("hillclimb.operators.base", "ROLES"),
+    "Operator": ("hillclimb.modules.operators.base", "Operator"),
+    "OperatorContext": ("hillclimb.modules.operators.base", "OperatorContext"),
+    "Preparation": ("hillclimb.modules.operators.base", "Preparation"),
+    "ProblemInfo": ("hillclimb.modules.operators.base", "ProblemInfo"),
+    "MemoryContext": ("hillclimb.modules.operators.base", "MemoryContext"),
+    "inspiration_filename": ("hillclimb.modules.operators.base", "inspiration_filename"),
+    "ROLES": ("hillclimb.modules.operators.base", "ROLES"),
     # which parameter values next
-    "Tuner": ("hillclimb.tuner", "Tuner"),
-    "Observation": ("hillclimb.tuner", "Observation"),
-    "ParamSpace": ("hillclimb.params", "ParamSpace"),
-    "ParamSpec": ("hillclimb.params", "ParamSpec"),
-    "coerce": ("hillclimb.params", "coerce"),
+    "Tuner": ("hillclimb.modules.tuners.base", "Tuner"),
+    "Observation": ("hillclimb.modules.tuners.base", "Observation"),
+    "ParamSpace": ("hillclimb.harness.params", "ParamSpace"),
+    "ParamSpec": ("hillclimb.harness.params", "ParamSpec"),
+    "coerce": ("hillclimb.harness.params", "coerce"),
     # how alike two solutions are
-    "SimilarityScore": ("hillclimb.similarity_scores.base", "SimilarityScore"),
-    "SimilarityUnavailable": ("hillclimb.similarity_scores.base", "SimilarityUnavailable"),
-    "Solution": ("hillclimb.similarity_scores.base", "Solution"),
+    "SimilarityScore": ("hillclimb.modules.similarity.base", "SimilarityScore"),
+    "SimilarityUnavailable": ("hillclimb.modules.similarity.base", "SimilarityUnavailable"),
+    "Solution": ("hillclimb.modules.similarity.base", "Solution"),
 }
 
 __all__ = sorted(_LAZY)
@@ -87,10 +87,10 @@ def __dir__() -> list[str]:
 
 
 if TYPE_CHECKING:  # eager for type checkers and editors only
-    from hillclimb.candidate import Candidate, Replicate, Trial, source_hash
-    from hillclimb.evaluation import EvalResult, accept_band, eval_result_for, improves
-    from hillclimb.journal import PolicyJournal
-    from hillclimb.loop import (
+    from hillclimb.harness.candidate import Candidate, Replicate, Trial, source_hash
+    from hillclimb.harness.evaluation import EvalResult, accept_band, eval_result_for, improves
+    from hillclimb.harness.journal import PolicyJournal
+    from hillclimb.harness.loop import (
         ClimberError,
         Harness,
         HarnessClosed,
@@ -100,7 +100,7 @@ if TYPE_CHECKING:  # eager for type checkers and editors only
         SearchLoop,
         Ticket,
     )
-    from hillclimb.operators.base import (
+    from hillclimb.modules.operators.base import (
         ROLES,
         MemoryContext,
         Operator,
@@ -109,8 +109,8 @@ if TYPE_CHECKING:  # eager for type checkers and editors only
         ProblemInfo,
         inspiration_filename,
     )
-    from hillclimb.params import ParamSpace, ParamSpec, coerce
-    from hillclimb.policy import (
+    from hillclimb.harness.params import ParamSpace, ParamSpec, coerce
+    from hillclimb.modules.policies.base import (
         INJECT_ACTION,
         TUNE_ACTION,
         Action,
@@ -120,6 +120,6 @@ if TYPE_CHECKING:  # eager for type checkers and editors only
         Route,
         SearchPolicy,
     )
-    from hillclimb.similarity_scores.base import SimilarityScore, SimilarityUnavailable, Solution
-    from hillclimb.search_strategy import ParkedSearch
-    from hillclimb.tuner import Observation, Tuner
+    from hillclimb.modules.similarity.base import SimilarityScore, SimilarityUnavailable, Solution
+    from hillclimb.harness.glue import ParkedSearch
+    from hillclimb.modules.tuners.base import Observation, Tuner

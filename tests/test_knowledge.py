@@ -9,9 +9,9 @@ from pathlib import Path
 import pytest
 
 from hillclimb.backends.fake import FakeBackend
-from hillclimb.candidate import BackendInfo, Candidate
-from hillclimb.journal import Journal
-from hillclimb.knowledge import (
+from hillclimb.harness.candidate import BackendInfo, Candidate
+from hillclimb.harness.journal import Journal
+from hillclimb.modules.memory.knowledge import (
     KnowledgeCard,
     complexity_offset,
     distill_card,
@@ -182,8 +182,8 @@ class TestLiveSharing:
         self, task, task_larger, config, tmp_path, monkeypatch
     ):
         from hillclimb.api import create_search, execute_search
-        from hillclimb.budget import BudgetManager
-        from hillclimb.dirs import create_run_dir
+        from hillclimb.harness.budget import BudgetManager
+        from hillclimb.harness.dirs import create_run_dir
         import sys
 
         config.learning.dir = tmp_path / "knowledge"
@@ -230,8 +230,8 @@ class TestLiveSharing:
 class TestEndToEnd:
     def test_search_writes_card_and_next_search_reads_it(self, task, config, tmp_path, monkeypatch):
         from hillclimb.api import execute_search, create_search
-        from hillclimb.budget import BudgetManager
-        from hillclimb.dirs import create_run_dir
+        from hillclimb.harness.budget import BudgetManager
+        from hillclimb.harness.dirs import create_run_dir
         import sys
 
 
@@ -284,8 +284,8 @@ class TestEndToEnd:
 
         # credit assignment: run-two improved 0.7 -> 0.8 over run-one's
         # record, so the injected claim earned a full-reward event...
-        from hillclimb.credit import load_credit_events
-        from hillclimb.graph import graph_path, load_graph
+        from hillclimb.modules.memory.credit import load_credit_events
+        from hillclimb.modules.memory.graph import graph_path, load_graph
 
         events = load_credit_events(tmp_path / "knowledge")
         assert len(events) == 1

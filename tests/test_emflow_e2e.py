@@ -12,9 +12,9 @@ import pytest
 pytest.importorskip("emflow")
 
 from hillclimb.backends.fake import FakeBackend  # noqa: E402
-from hillclimb.budget import BudgetManager  # noqa: E402
-from hillclimb.executor import CommandExecutor, CommandHoldoutScorer  # noqa: E402
-from hillclimb.journal import Journal  # noqa: E402
+from hillclimb.harness.budget import BudgetManager  # noqa: E402
+from hillclimb.harness.executor import CommandExecutor, CommandHoldoutScorer  # noqa: E402
+from hillclimb.harness.journal import Journal  # noqa: E402
 from hillclimb.problem import load_problem  # noqa: E402
 from tests.harness_factory import SearchRig  # noqa: E402
 
@@ -61,7 +61,7 @@ def test_full_emflow_search(config, tmp_path):
     backend.queue(script=predictor_module("Climatology60d", "60D"), notes="improve: 60-day window\n")
 
     python = Path(sys.executable)
-    from hillclimb.evaluation import CandidateEvaluator
+    from hillclimb.harness.evaluation import CandidateEvaluator
 
     journal = Journal(search_dir / "journal.jsonl")
     evaluator = CandidateEvaluator(

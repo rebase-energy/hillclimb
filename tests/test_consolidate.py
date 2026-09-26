@@ -5,9 +5,9 @@ from __future__ import annotations
 import pytest
 
 from hillclimb.backends.fake import FakeBackend
-from hillclimb.claims import Entity, ensure_concepts, load_consolidated_claims, save_entities
+from hillclimb.modules.memory.claims import Entity, ensure_concepts, load_consolidated_claims, save_entities
 from hillclimb.config import Config
-from hillclimb.consolidate import (
+from hillclimb.modules.memory.consolidate import (
     GENERALIZE_MIN_FAMILIES,
     Playbook,
     consolidate,
@@ -16,8 +16,8 @@ from hillclimb.consolidate import (
     load_playbooks,
     render_playbooks,
 )
-from hillclimb.graph import build_graph, rebuild_graph
-from hillclimb.knowledge import write_card
+from hillclimb.modules.memory.graph import build_graph, rebuild_graph
+from hillclimb.modules.memory.knowledge import write_card
 from tests.test_graph import claim, make_card
 
 
@@ -65,7 +65,7 @@ class TestGeneralize:
         assert generalize_claims(build_graph(kdir)) == []
 
     def test_measured_confidence_preferred(self, knowledge_dir):
-        from hillclimb.credit import CreditEvent, write_credit_event
+        from hillclimb.modules.memory.credit import CreditEvent, write_credit_event
 
         # a1 has a poor measured record; the mean should use it, not 0.8
         write_credit_event(knowledge_dir, CreditEvent(
@@ -77,7 +77,7 @@ class TestGeneralize:
         assert generalized[0].confidence == pytest.approx(0.667, abs=1e-3)
 
     def test_consolidated_claims_join_graph_with_generalizes_edges(self, knowledge_dir):
-        from hillclimb.claims import save_consolidated_claims
+        from hillclimb.modules.memory.claims import save_consolidated_claims
 
         generalized = generalize_claims(build_graph(knowledge_dir))
         save_consolidated_claims(knowledge_dir, generalized)

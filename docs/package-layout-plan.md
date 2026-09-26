@@ -1,7 +1,7 @@
 # Package layout: `hillclimb.tui`, `hillclimb.modules`, `hillclimb.harness`
 
-Status: plan, 2026-09-26. Pure moves and renames, no behaviour change.
-Scheduled after launch except phase 1, which can go before.
+Status: DONE 2026-09-26, all five phases, on the `layout` branch (one commit each).
+Pure moves and renames, no behaviour change. `tests/test_layout.py` enforces the rules.
 
 ## Why
 

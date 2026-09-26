@@ -77,7 +77,7 @@ def _ring_floor(n: int, ring_size: int) -> float:
 
 @pytest.mark.parametrize("n", INSTANCES)
 def test_instance_loads_and_scores_its_sample(config: Config, generator, tmp_path, n):
-    from hillclimb.executor import CommandExecutor
+    from hillclimb.harness.executor import CommandExecutor
 
     spec = load_problem(f"tammes-{n}", config)
     assert spec.metric_name == "min-angle-deg" and spec.higher_is_better

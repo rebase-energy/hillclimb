@@ -41,9 +41,9 @@ from statistics import mean, median
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
-from hillclimb.direction import better
-from hillclimb.journal import Journal
-from hillclimb.store import DataStore, FileDataStore
+from hillclimb.harness.direction import better
+from hillclimb.harness.journal import Journal
+from hillclimb.harness.store import DataStore, FileDataStore
 
 EXPERIMENTS_DIRNAME = "experiments"
 
@@ -239,7 +239,7 @@ def collect_results(
 ) -> list[ExperimentRow]:
     """One row per finished, experiment-tagged search (every experiment
     unless one is named). A runs dir is shorthand for its FileDataStore."""
-    from hillclimb.tree import accepted_lineage, minutes_since
+    from hillclimb.tui.tree import accepted_lineage, minutes_since
 
     if isinstance(store, Path):
         store = FileDataStore(store)

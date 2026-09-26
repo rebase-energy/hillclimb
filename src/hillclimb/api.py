@@ -24,13 +24,13 @@ from typing import Callable, Mapping, Sequence
 
 from hillclimb.backends import get_backend
 from hillclimb.backends.base import OperatorRequest
-from hillclimb.budget import BudgetManager
-from hillclimb.candidate import Candidate
+from hillclimb.harness.budget import BudgetManager
+from hillclimb.harness.candidate import Candidate
 from hillclimb.config import Config
-from hillclimb.journal import Journal
+from hillclimb.harness.journal import Journal
 from hillclimb.problem import ProblemSpec, load_problem
-from hillclimb.run import RunMeta, SearchMeta, new_search_uid
-from hillclimb.search_strategy import (
+from hillclimb.harness.run import RunMeta, SearchMeta, new_search_uid
+from hillclimb.harness.glue import (
     ParkedSearch,
     StopRequested,
     build_loop,
@@ -39,9 +39,9 @@ from hillclimb.search_strategy import (
     holdout_timing,
     search_climber,
 )
-from hillclimb.status import SearchStatus, StatusWriter
-from hillclimb.store import key_for, open_store
-from hillclimb.dirs import allocate_search_dir, create_run_dir
+from hillclimb.harness.status import SearchStatus, StatusWriter
+from hillclimb.harness.store import key_for, open_store
+from hillclimb.harness.dirs import allocate_search_dir, create_run_dir
 
 Log = Callable[[str], None]
 
@@ -68,7 +68,7 @@ def new_run_id(name: str) -> str:
     return f"{datetime.now():%Y%m%d-%H%M%S}-{slug(name)}"
 
 
-from hillclimb.run import search_ref  # noqa: E402,F401  (re-exported; the helper lives with run.py's walkers)
+from hillclimb.harness.run import search_ref  # noqa: E402,F401  (re-exported; the helper lives with harness/run.py's walkers)
 
 
 def default_venv_python(config: Config, kind: str, requirements: Path | None = None) -> Path:
@@ -178,7 +178,7 @@ def interface_shim(log: Log = print) -> str | None:
 
 def build_executor(config: Config, problem: ProblemSpec, log: Log = print):
     """The problem's verifier command, wired to the runtime venv it needs."""
-    from hillclimb.executor import CommandExecutor
+    from hillclimb.harness.executor import CommandExecutor
 
     return CommandExecutor(
         ensure_runtime_venv(
@@ -194,7 +194,7 @@ def build_unit_test_runner(config: Config, problem: ProblemSpec, log: Log = prin
     """The run-frozen correctness gate, or None for verifier-only problems."""
     if problem.unit_tests is None:
         return None
-    from hillclimb.unit_tests import UnitTestRunner
+    from hillclimb.harness.unit_tests import UnitTestRunner
 
     return UnitTestRunner(
         ensure_runtime_venv(
@@ -223,7 +223,7 @@ def build_holdout_scorer(config: Config, problem: ProblemSpec, search_dir: Path,
             # loader hits private datasets unauthenticated and the holdout
             # silently scores nan
             os.environ["HF_TOKEN"] = os.environ["HUGGINGFACE_TOKEN"]
-    from hillclimb.executor import CommandHoldoutScorer
+    from hillclimb.harness.executor import CommandHoldoutScorer
 
     return CommandHoldoutScorer(
         ensure_runtime_venv(
@@ -250,7 +250,7 @@ def build_evaluator(
     """The host's evaluate service for one search: verifier trials plus the
     hidden split, scored at the timing the strategy's registry entry
     declares. Strategies receive this and never a holdout scorer."""
-    from hillclimb.evaluation import CandidateEvaluator
+    from hillclimb.harness.evaluation import CandidateEvaluator
 
     return CandidateEvaluator(
         executor=build_executor(config, problem, log),
@@ -321,7 +321,7 @@ def create_search(
 ) -> Path:
     from hillclimb import __version__
     from hillclimb.climber import snapshot_climber
-    from hillclimb.unit_tests import bundle_relative, freeze_for_run
+    from hillclimb.harness.unit_tests import bundle_relative, freeze_for_run
 
     # a climber that cannot be loaded — or whose prompts name a token nothing
     # fills — fails here, before a search dir exists
@@ -393,7 +393,7 @@ def build_knowledge_context(
     """(prior-experience prompt section, draft-complexity offset, injected
     claim ids) from the hillclimb dir's knowledge cards. The claim ids feed credit
     assignment: whoever gets quoted in the prompt answers for the outcome."""
-    from hillclimb.knowledge import (
+    from hillclimb.modules.memory.knowledge import (
         complexity_offset,
         load_cards,
         problem_family,
@@ -419,14 +419,14 @@ def build_knowledge_context(
         # flows to the claims the playbook was built from.
         # Best effort — the cards block above never depends on the graph.
         try:
-            from hillclimb.claims import problem_concepts, render_claims
-            from hillclimb.graph import load_or_build_graph, node_to_claim, retrieve_claims
+            from hillclimb.modules.memory.claims import problem_concepts, render_claims
+            from hillclimb.modules.memory.graph import load_or_build_graph, node_to_claim, retrieve_claims
 
             kind = problem.runtime
             concepts = problem_concepts(kind, problem.metric_name)
             playbooks = []
             if config.learning.playbooks:
-                from hillclimb.consolidate import load_playbooks, render_playbooks
+                from hillclimb.modules.memory.consolidate import load_playbooks, render_playbooks
 
                 playbooks = load_playbooks(knowledge_dir, concepts)
             if playbooks:
@@ -465,8 +465,8 @@ def _distill_knowledge(
     log: Log,
 ) -> None:
     """Best effort — learning must never fail a finished search."""
-    from hillclimb.knowledge import CARD_FILENAME, distill_card, write_card, write_live_card
-    from hillclimb.run import SEARCHES_DIRNAME
+    from hillclimb.modules.memory.knowledge import CARD_FILENAME, distill_card, write_card, write_live_card
+    from hillclimb.harness.run import SEARCHES_DIRNAME
 
     try:
         card = distill_card(
@@ -482,7 +482,7 @@ def _distill_knowledge(
         if config.learning.claims and knowledge_dir is not None:
             # inner guard: a failed distill pass costs the claims, not the card
             try:
-                from hillclimb.claims import distill_claims
+                from hillclimb.modules.memory.claims import distill_claims
 
                 card.claims = distill_claims(
                     journal,
@@ -523,13 +523,13 @@ def _distill_knowledge(
             # credit assignment: the claims this search's drafts were shown
             # share its outcome (see credit.py for the reward definition)
             try:
-                from hillclimb.credit import (
+                from hillclimb.modules.memory.credit import (
                     CreditEvent,
                     read_injected_claims,
                     search_reward,
                     write_credit_event,
                 )
-                from hillclimb.knowledge import load_cards
+                from hillclimb.modules.memory.knowledge import load_cards
 
                 claim_ids = read_injected_claims(search_dir)
                 if claim_ids:
@@ -561,7 +561,7 @@ def _distill_knowledge(
         if config.learning.skills and knowledge_dir is not None:
             # procedural memory: a scored winner joins the skill library
             try:
-                from hillclimb.skills import harvest_skill
+                from hillclimb.modules.memory.skills import harvest_skill
 
                 skill_dir = harvest_skill(
                     journal, problem=problem, card=card,
@@ -576,7 +576,7 @@ def _distill_knowledge(
             # keep the derived graph index fresh; cheap at this scale and
             # best-effort like everything else here
             try:
-                from hillclimb.graph import rebuild_graph
+                from hillclimb.modules.memory.graph import rebuild_graph
 
                 rebuild_graph(knowledge_dir)
             except Exception as exc:  # noqa: BLE001
@@ -679,7 +679,7 @@ def execute_search(
     parked/stopped/done; unexpected engine crashes finalize `failed` and
     re-raise."""
     run_dir = search_dir.parents[1]
-    from hillclimb.search_strategy import effective_memory
+    from hillclimb.harness.glue import effective_memory
 
     if config.learning.enabled and effective_memory(config, search_dir) == "none":
         config = config.model_copy(deep=True)
@@ -708,14 +708,14 @@ def execute_search(
         pass
     import threading
 
-    from hillclimb.slots import MachineSlots
+    from hillclimb.harness.slots import MachineSlots
 
     abort = threading.Event()
     _kc, _offset = (None, 0)
     if knowledge_context is None:
         _kc, _offset, _claim_ids = build_knowledge_context(config, problem, target, log)
         if _claim_ids:
-            from hillclimb.credit import record_injected_claims
+            from hillclimb.modules.memory.credit import record_injected_claims
 
             record_injected_claims(search_dir, _claim_ids)
     reference_solution: Path | None = None
@@ -724,9 +724,9 @@ def execute_search(
         _kdir = resolve_knowledge_dir(config)
         if _kdir is not None:
             try:
-                from hillclimb.claims import problem_concepts
-                from hillclimb.knowledge import problem_family
-                from hillclimb.skills import SKILL_CODE_FILENAME, select_skill
+                from hillclimb.modules.memory.claims import problem_concepts
+                from hillclimb.modules.memory.knowledge import problem_family
+                from hillclimb.modules.memory.skills import SKILL_CODE_FILENAME, select_skill
 
                 kind = problem.runtime
                 match = select_skill(
@@ -750,7 +750,7 @@ def execute_search(
     )
     if hasattr(backend_obj, "abort"):
         backend_obj.abort = abort
-    from hillclimb.routing import BackendPool, Router
+    from hillclimb.harness.routing import BackendPool, Router
 
     backends = BackendPool(
         abort=abort, pi_models_file=config.pi.models_file
@@ -773,7 +773,7 @@ def execute_search(
     machine_max = config.concurrency.effective_machine_max_operators()
     slots = MachineSlots(machine_cache_dir() / "agent-slots", machine_max) if machine_max > 0 else None
     evaluator = build_evaluator(config, problem, search_dir, journal, status=status, log=log)
-    from hillclimb.harness import Harness
+    from hillclimb.harness.core import Harness
 
     # validated before anything is scored: a bad climber costs nothing
     climber = search_climber(config, search_dir)
@@ -859,7 +859,7 @@ def _finish_holdout(
     no-op for `inline` timing (every candidate was scored as it landed)."""
     if evaluator.holdout_timing != "after" or evaluator.holdout_scorer is None:
         return selected
-    from hillclimb.control import resync_best
+    from hillclimb.harness.control import resync_best
 
     scored = evaluator.finalize_holdout(journal)
     if scored:
@@ -914,7 +914,7 @@ def _mlebench_grade(
     effort: a grading failure never fails a finished search."""
     import json
 
-    from hillclimb.grading import grade_submission
+    from hillclimb.harness.grading import grade_submission
 
     try:
         submission = Path(selected.candidate_dir) / "submission.csv"
@@ -1124,7 +1124,7 @@ def mixed_fleet(
         raise ValueError("repeats must be >= 1")
     if not climbers:
         raise ValueError("a mixed fleet needs at least one climber")
-    from hillclimb.policies import policy_label
+    from hillclimb.modules.policies import policy_label
 
     arms: list[tuple[str, str]] = []
     seen: dict[str, int] = {}
@@ -1233,7 +1233,7 @@ def run_fleet(
     # Freeze before starting any child engine. Every search in the fleet then
     # binds to this same run-owned bundle, even if the live problem tree changes
     # while the fleet is running.
-    from hillclimb.unit_tests import freeze_for_run
+    from hillclimb.harness.unit_tests import freeze_for_run
 
     problem.unit_tests = freeze_for_run(problem, run_dir)
     shared = dict(

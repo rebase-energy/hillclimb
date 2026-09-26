@@ -9,7 +9,7 @@ replicate, holdout fields and `params`/`index`/`is_best` on the trial. Pass
 
 from __future__ import annotations
 
-from hillclimb.candidate import Candidate, Replicate, Trial
+from hillclimb.harness.candidate import Candidate, Replicate, Trial
 
 TRIAL_FIELDS = {
     "index", "params", "is_best", "verdict", "unit_tests",

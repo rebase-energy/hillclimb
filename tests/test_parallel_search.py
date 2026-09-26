@@ -11,11 +11,11 @@ from pathlib import Path
 import pytest
 
 from hillclimb.backends.fake import FakeBackend
-from hillclimb.budget import BudgetManager
+from hillclimb.harness.budget import BudgetManager
 from tests.conftest import local_executor
-from hillclimb.journal import Journal
+from hillclimb.harness.journal import Journal
 from tests.harness_factory import SearchRig
-from hillclimb.dirs import create_search_dir
+from hillclimb.harness.dirs import create_search_dir
 from tests.conftest import ok_script
 
 SEEDED_SCRIPT = """\
@@ -120,7 +120,7 @@ class TestHoldoutTopK:
         from tests.test_search import FileHoldoutScorer
 
         config.holdout.top_k = top_k
-        from hillclimb.evaluation import CandidateEvaluator
+        from hillclimb.harness.evaluation import CandidateEvaluator
 
         search_dir = create_search_dir(config.paths.runs_dir, "test-search")
         journal = Journal(search_dir / "journal.jsonl")
@@ -192,8 +192,8 @@ import threading  # noqa: E402
 import time  # noqa: E402
 
 from hillclimb.backends.fake import GateBackend  # noqa: E402
-from hillclimb.control import ControlCommand, write_command  # noqa: E402
-from hillclimb.search import ParkedSearch, StopRequested  # noqa: E402
+from hillclimb.harness.control import ControlCommand, write_command  # noqa: E402
+from hillclimb.harness.glue import ParkedSearch, StopRequested  # noqa: E402
 
 
 def pool_searcher(task, config, backend, n, max_candidates=10, **kwargs):
@@ -516,7 +516,7 @@ class TestDecideNextPolicy:
     def test_prospective_branches_counts_pending(self, task, config):
         backend = FakeBackend()
         searcher, journal, _ = pool_searcher(task, config, backend, n=2)
-        from hillclimb.candidate import Candidate
+        from hillclimb.harness.candidate import Candidate
 
         journal.candidate_created(Candidate(candidate_id="c000", operator="draft", candidate_dir="w"))
         assert searcher._prospective_branches() == 1  # pending draft counts
@@ -524,7 +524,7 @@ class TestDecideNextPolicy:
     def test_debuggable_tip_skips_active_child_and_depth(self, task, config):
         backend = FakeBackend()
         searcher, journal, _ = pool_searcher(task, config, backend, n=2)
-        from hillclimb.candidate import Candidate
+        from hillclimb.harness.candidate import Candidate
 
         journal.candidate_result(Candidate(candidate_id="c000", operator="draft", status="buggy", candidate_dir="w"))
         assert searcher._debuggable_tip().candidate_id == "c000"
@@ -537,7 +537,7 @@ class TestDecideNextPolicy:
 
 class TestMachineSlots:
     def test_cap_and_release(self, tmp_path):
-        from hillclimb.slots import MachineSlots
+        from hillclimb.harness.slots import MachineSlots
 
         slots = MachineSlots(tmp_path, limit=1)
         first = slots.try_acquire()
@@ -549,7 +549,7 @@ class TestMachineSlots:
         second.release()
 
     def test_zero_limit_is_noop(self, tmp_path):
-        from hillclimb.slots import MachineSlots
+        from hillclimb.harness.slots import MachineSlots
 
         slots = MachineSlots(tmp_path / "slots", limit=0)
         assert slots.try_acquire() is not None
@@ -559,12 +559,12 @@ class TestMachineSlots:
         import subprocess
         import sys as _sys
 
-        from hillclimb.slots import MachineSlots
+        from hillclimb.harness.slots import MachineSlots
 
         holder = subprocess.Popen(
             [_sys.executable, "-c", (
                 "import sys, time; sys.path.insert(0, 'src');"
-                "from hillclimb.slots import MachineSlots;"
+                "from hillclimb.harness.slots import MachineSlots;"
                 f"h = MachineSlots(__import__('pathlib').Path({str(tmp_path)!r}), 1).try_acquire();"
                 "print('held', flush=True); time.sleep(30)"
             )],
@@ -581,7 +581,7 @@ class TestMachineSlots:
 class TestResumeAccounting:
     def test_reads_persisted_wall_clock(self, tmp_path):
         from hillclimb.api import resume_spent_seconds
-        from hillclimb.status import BudgetStatus, SearchStatus, write_status
+        from hillclimb.harness.status import BudgetStatus, SearchStatus, write_status
 
         write_status(
             tmp_path,
@@ -591,12 +591,12 @@ class TestResumeAccounting:
             ),
         )
         journal = Journal(tmp_path / "journal.jsonl")
-        from hillclimb.status import read_status
+        from hillclimb.harness.status import read_status
         assert resume_spent_seconds(read_status(tmp_path), journal) == 1234.0
 
     def test_falls_back_to_work_sum(self, tmp_path):
         from hillclimb.api import resume_spent_seconds
-        from hillclimb.candidate import BackendInfo, Candidate
+        from hillclimb.harness.candidate import BackendInfo, Candidate
 
         journal = Journal(tmp_path / "journal.jsonl")
         journal.candidate_result(
@@ -629,8 +629,8 @@ class TestCostCeiling:
         searcher._check_cost_ceiling()  # no raise
 
     def test_cost_in_status(self, task, config, tmp_path):
-        from hillclimb.budget import BudgetManager as BM
-        from hillclimb.status import SearchStatus, StatusWriter, read_status
+        from hillclimb.harness.budget import BudgetManager as BM
+        from hillclimb.harness.status import SearchStatus, StatusWriter, read_status
 
         backend = FakeBackend()
         backend.queue(script=ok_script(0.6), notes="d\n", result={"cost_usd": 1.25})
@@ -687,7 +687,7 @@ class TestIncumbentSeeding:
         searcher.max_candidates = 2  # baseline + seed, then stop
         searcher.run()
 
-        from hillclimb.budget import BudgetManager as BM
+        from hillclimb.harness.budget import BudgetManager as BM
 
         resumed = SearchRig(
             problem=task, config=config, journal=Journal(search_dir / "journal.jsonl"),

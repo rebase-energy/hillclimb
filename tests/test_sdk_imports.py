@@ -21,24 +21,24 @@ CLIMBER_MODULES = [
     "integrations/gepa/operator.py",
     "integrations/gepa/evaluator.py",
     "integrations/gepa/proposer.py",
-    "operators/builtin.py",
-    "policies/greedy.py",
-    "policies/openevolve.py",
-    "tuners/random_search.py",
-    "tuners/optuna.py",
-    "similarity_scores/builtin.py",
-    "similarity_scores/solution_card.py",
+    "modules/operators/builtin.py",
+    "modules/policies/greedy.py",
+    "modules/policies/openevolve.py",
+    "modules/tuners/random_search.py",
+    "modules/tuners/optuna.py",
+    "modules/similarity/builtin.py",
+    "modules/similarity/solution_card.py",
 ]
 
 # (module, imported name) -> why it is still allowed, and until when
 ALLOWED = {
-    ("policies/openevolve.py", "hillclimb.policies.greedy"):
+    ("modules/policies/openevolve.py", "hillclimb.modules.policies.greedy"):
         "reuses greedy's draft/debug decisions; becomes an sdk helper with the climber bundle (7a)",
-    ("similarity_scores/solution_card.py", "hillclimb.openrouter"):
+    ("modules/similarity/solution_card.py", "hillclimb.backends.openrouter"):
         "direct LLM + embedding client; moves behind an sdk completion service (7a)",
-    ("similarity_scores/solution_card.py", "hillclimb.similarity_scores.base"):
+    ("modules/similarity/solution_card.py", "hillclimb.modules.similarity.base"):
         "pre-sdk import; switched together with the completion service (7a)",
-    ("similarity_scores/solution_card.py", "hillclimb.similarity_scores.compute"):
+    ("modules/similarity/solution_card.py", "hillclimb.modules.similarity.compute"):
         "DiskCache for cards and vectors; exported by the sdk with the completion service (7a)",
 }
 

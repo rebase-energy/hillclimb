@@ -207,7 +207,7 @@ def _check_claude(auth: str) -> Status:
 def _with_quota(detail: str) -> str:
     """Append subscription window utilization when it is readable — the
     number that decides whether a long search will finish on this plan."""
-    from hillclimb import quota
+    from hillclimb.harness import quota
 
     snapshot = quota.snapshot() or {}
     window = snapshot.get("five_hour") or {}
@@ -286,7 +286,7 @@ def _check_pi(auth: str) -> Status:
 
 
 def _check_openrouter(auth: str = "openrouter") -> Status:
-    from hillclimb.openrouter import OpenRouterError, key_info
+    from hillclimb.backends.openrouter import OpenRouterError, key_info
 
     if not os.environ.get("OPENROUTER_API_KEY"):
         return Status(

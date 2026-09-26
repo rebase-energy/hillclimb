@@ -19,10 +19,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # for tests.factories
 
-from hillclimb.candidate import Candidate
-from hillclimb.journal import Journal
-from hillclimb.run import RunMeta, SearchMeta, write_run_meta, write_search_meta
-from hillclimb.status import SearchStatus, write_status
+from hillclimb.harness.candidate import Candidate
+from hillclimb.harness.journal import Journal
+from hillclimb.harness.run import RunMeta, SearchMeta, write_run_meta, write_search_meta
+from hillclimb.harness.status import SearchStatus, write_status
 from tests.factories import trial as mk_trial
 
 root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("/tmp/tree2-demo")

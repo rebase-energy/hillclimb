@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from hillclimb.graph import build_graph, fuzzy_match, query_graph, render_query_hits
+from hillclimb.modules.memory.graph import build_graph, fuzzy_match, query_graph, render_query_hits
 from tests.test_graph import claim, knowledge_dir, make_card  # noqa: F401 — fixture
 
 
 class TestQuery:
     def test_entity_hit_carries_claims_and_searches(self, knowledge_dir):  # noqa: F811
-        from hillclimb.credit import CreditEvent, write_credit_event
+        from hillclimb.modules.memory.credit import CreditEvent, write_credit_event
 
         write_credit_event(knowledge_dir, CreditEvent(
             run_ref="r9/s1", problem_id="spaceship-titanic",
@@ -47,12 +47,12 @@ class TestQuery:
         assert json.loads(json.dumps(hits)) == hits
 
     def test_fuzzy_match_moved_home(self):
-        from hillclimb.graph import GraphNode
+        from hillclimb.modules.memory.graph import GraphNode
 
         nodes = [GraphNode(id="entity:lightgbm", type="library", label="lightgbm")]
         assert fuzzy_match(nodes, "light")[0].label == "lightgbm"
         # graphview still re-exports it for the TUI search box
-        from hillclimb.graphview import fuzzy_match as gv_fuzzy
+        from hillclimb.tui.graphview import fuzzy_match as gv_fuzzy
 
         assert gv_fuzzy is fuzzy_match
 
@@ -64,8 +64,8 @@ class TestToolsClause:
         from pathlib import Path
 
         from hillclimb.backends.fake import FakeBackend
-        from hillclimb.budget import BudgetManager
-        from hillclimb.journal import Journal
+        from hillclimb.harness.budget import BudgetManager
+        from hillclimb.harness.journal import Journal
         from tests.harness_factory import SearchRig
 
         config.paths.runtime_python = Path(sys.executable)

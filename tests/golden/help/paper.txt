@@ -1,0 +1,13 @@
+                                                                                                                        
+ Usage: root paper [OPTIONS] COMMAND [ARGS]...                                                                          
+                                                                                                                        
+ Distill PDF papers into knowledge claims that seed future searches                                                     
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --help  -h        Show this message and exit.                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ add   Distill papers into typed claims and rebuild the knowledge graph.                                              │
+│ list  Ingested papers: slug, scope, claim count, and ingestion date.                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

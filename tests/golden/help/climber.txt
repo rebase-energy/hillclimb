@@ -1,0 +1,16 @@
+                                                                                                                        
+ Usage: root climber [OPTIONS] COMMAND [ARGS]...                                                                        
+                                                                                                                        
+ Climbers — the shareable bundle that decides HOW to hillclimb (policy, operators, prompts, tuner): list them, start    
+ your own, check one before spending budget on it                                                                       
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --help  -h        Show this message and exit.                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ check  Conformance check for a climber — the cheap pre-verifier.                                                     │
+│ list   The climbers `hillclimb run --climber` accepts: the bundled ones and                                          │
+│        every directory or one-file climber under hillclimb/climbers/.                                                │
+│ new    Start your own climber from a copy of an existing one.                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

@@ -93,9 +93,9 @@ def test_emflow_contract_prompt(econfig):
     from pathlib import Path
 
     from hillclimb.backends.fake import FakeBackend
-    from hillclimb.budget import BudgetManager
+    from hillclimb.harness.budget import BudgetManager
     from tests.conftest import local_executor
-    from hillclimb.journal import Journal
+    from hillclimb.harness.journal import Journal
     from tests.harness_factory import SearchRig
 
     spec = load_problem("emflow://swedish-temperatures:ar", econfig)

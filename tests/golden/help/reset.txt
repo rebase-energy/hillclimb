@@ -1,0 +1,17 @@
+                                                                                                                        
+ Usage: root reset [OPTIONS]                                                                                            
+                                                                                                                        
+ Kill every engine of THIS hillclimb dir and delete the dir.                                                            
+                                                                                                                        
+ The hillclimb dir is the one found from the current directory (or                                                      
+ `HILLCLIMB_DIR`). Only engines pinned to that exact dir are signalled —                                                
+ their agents and verifiers go with them — then the folder is removed.                                                  
+ Searches of other folders on the machine are untouched. `runs_dir` or                                                  
+ `problems_dir` configured outside the hillclimb dir are left in place and                                              
+ reported.                                                                                                              
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --yes   -y        Do not ask for confirmation                                                                        │
+│ --help  -h        Show this message and exit.                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

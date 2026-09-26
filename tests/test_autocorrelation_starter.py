@@ -72,7 +72,7 @@ def test_committed_dirs_match_the_generator(generator, tmp_path):
 
 @pytest.mark.parametrize("key", KEYS)
 def test_instance_loads_and_scores_its_sample(config: Config, tmp_path, key):
-    from hillclimb.executor import CommandExecutor
+    from hillclimb.harness.executor import CommandExecutor
 
     spec = load_problem(key, config)
     assert not spec.higher_is_better

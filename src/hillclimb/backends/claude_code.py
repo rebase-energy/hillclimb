@@ -8,8 +8,8 @@ import threading
 import time
 from pathlib import Path
 
-from hillclimb import quota
-from hillclimb.candidate import utcnow
+from hillclimb.harness import quota
+from hillclimb.harness.candidate import utcnow
 from hillclimb.backends.base import OperatorRequest, OperatorResult
 
 
@@ -20,7 +20,7 @@ def subscription_env(auth: str = "subscription") -> dict[str, str]:
     otherwise. auth="api-key" keeps it (headless/hosted runs with no
     subscription login). Single-threaded (see executor.SINGLE_THREAD_ENV):
     the agent's own experiment runs inherit it."""
-    from hillclimb.executor import single_threaded
+    from hillclimb.harness.executor import single_threaded
 
     env = os.environ.copy()
     if auth != "api-key":

@@ -3,8 +3,8 @@
 A climber is the shareable bundle that decides *how* to hillclimb — a search policy (or a whole loop), the operators it may use, their prompts and a tuner — that the fixed harness runs.
 
 *What to try next* is the climber's, and it is a seam of its own:
-`src/hillclimb/policy.py` defines the `SearchPolicy` protocol,
-`src/hillclimb/policies/` holds the implementations, and
+`src/hillclimb/modules/policies/base.py` defines the `SearchPolicy` protocol,
+`src/hillclimb/modules/policies/` holds the implementations, and
 `src/hillclimb/climbers/<name>/climber.yaml` bundles one with its operators,
 prompts and tuner. Everything else — candidate dirs, prompts, agent calls,
 trials, holdout, journaling, `best/` — is harness, and a climber never
@@ -85,7 +85,7 @@ result lands. `observe` is called after every terminal result, and replayed
 over every existing candidate when the policy is constructed, which is what
 makes `hillclimb resume` work.
 
-Three rules the harness relies on, spelled out in `policy.py`:
+Three rules the harness relies on, spelled out in `modules/policies/base.py`:
 
 - `propose`/`observe` run only on the scheduler thread, under the search's
   state lock. A policy may read candidate dirs; it must never write.
@@ -101,7 +101,7 @@ one-file climber, relative to the folder holding the hillclimb dir (like
 
 ```python
 # hillclimb/climbers/drafts_only.py
-from hillclimb.policies.greedy import GreedyPolicy
+from hillclimb.modules.policies.greedy import GreedyPolicy
 from hillclimb.sdk import Action
 
 
@@ -132,7 +132,7 @@ loads that copy, noting when the live file's hash has changed since — so
 editing the live file never changes a started search. Bundled names
 (`greedy`, `openevolve`, `gepa`) are the manifests under
 `src/hillclimb/climbers/<name>/climber.yaml`.
-`policies/greedy.py` is under 300 lines and is the reference. Beam search, MCTS,
+`modules/policies/greedy.py` is under 300 lines and is the reference. Beam search, MCTS,
 evolutionary populations, novelty search and bandits over operators all fit
 this shape — greedy is just the one that ships.
 

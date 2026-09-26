@@ -12,7 +12,7 @@ from pathlib import Path
 
 import emflow as ef
 
-from hillclimb.candidate import Candidate
+from hillclimb.harness.candidate import Candidate
 from hillclimb.config import Config
 from hillclimb.problem import ProblemSpec, ResolvedTarget, SuiteSpec
 

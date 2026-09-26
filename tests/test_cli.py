@@ -6,9 +6,11 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from hillclimb.cli import BANNER_LINES, LOGO_LINES, WORDMARK_LINES, _run_problem, _run_suite, resolve_search_dir
+from hillclimb.cli import BANNER_LINES, LOGO_LINES, WORDMARK_LINES, common
+from hillclimb.cli.common import resolve_search_dir
+from hillclimb.cli.run import _run_problem, _run_suite
 from hillclimb.cli import main as cli_main
-from hillclimb.run import (
+from hillclimb.harness.run import (
     RunMeta,
     SearchMeta,
     iter_run_dirs,
@@ -48,7 +50,7 @@ def test_run_problem_creates_run_and_search_metadata(config, tmp_path, monkeypat
     def fake_execute(config_arg, problem_arg, search_dir, budget, seed_from=None, knowledge_context=None):
         executed.append((problem_arg.problem_id, search_dir))
 
-    monkeypatch.setattr("hillclimb.cli._execute", fake_execute)
+    monkeypatch.setattr("hillclimb.cli.run._execute", fake_execute)
 
     _run_problem(str(problem), config, budget="10m", run_name="My Run")
 
@@ -219,7 +221,7 @@ def test_create_search_persists_policy_and_routing(task, config, tmp_path):
 def test_resume_restores_policy_and_routing(config, tmp_path, monkeypatch):
     """A search resumes under the policy/routing it started with, regardless
     of what the live candidate_dir config says."""
-    from hillclimb.cli import resume
+    from hillclimb.cli.run import resume
 
     config.paths.runs_dir = tmp_path / "runs"
     run_dir = config.paths.runs_dir / "run-1"
@@ -240,11 +242,11 @@ def test_resume_restores_policy_and_routing(config, tmp_path, monkeypatch):
     (search_dir / "journal.jsonl").write_text("")
     captured = {}
     monkeypatch.setattr(
-        "hillclimb.cli.load_config", lambda **kw: config.model_copy(deep=True)
+        "hillclimb.cli.common.load_config", lambda **kw: config.model_copy(deep=True)
     )
-    monkeypatch.setattr("hillclimb.cli.load_problem", lambda *a, **k: object())
+    monkeypatch.setattr("hillclimb.cli.run.load_problem", lambda *a, **k: object())
     monkeypatch.setattr(
-        "hillclimb.cli._execute",
+        "hillclimb.cli.run._execute",
         lambda config_arg, *a, **k: captured.setdefault("config", config_arg),
     )
 
@@ -262,8 +264,8 @@ def test_resume_all_spawns_only_resumable_searches(config, tmp_path, monkeypatch
     and leaves running/done ones alone."""
     import os
 
-    from hillclimb.cli import resume
-    from hillclimb.status import SearchStatus, write_status
+    from hillclimb.cli.run import resume
+    from hillclimb.harness.status import SearchStatus, write_status
 
     config.paths.runs_dir = tmp_path / "runs"
     states = {"a": "stopped", "b": "parked", "c": "done", "d": "running"}
@@ -271,10 +273,10 @@ def test_resume_all_spawns_only_resumable_searches(config, tmp_path, monkeypatch
         search_dir = make_search(config.paths.runs_dir, "run-1", search_id)
         pid = os.getpid() if state == "running" else None
         write_status(search_dir, SearchStatus(search_id=search_id, run_id="run-1", state=state, pid=pid))
-    monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config.model_copy(deep=True))
+    monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config.model_copy(deep=True))
     spawned = []
     monkeypatch.setattr(
-        "hillclimb.cli._spawn_resume",
+        "hillclimb.cli.run._spawn_resume",
         lambda cfg, record: spawned.append(record.ref) or (123, tmp_path / "log"),
     )
 
@@ -328,9 +330,9 @@ def test_resolve_search_dir_skips_v1_layout(config, tmp_path):
 
 
 def test_spent_seconds_sums_agent_and_trial_time(tmp_path):
-    from hillclimb.candidate import BackendInfo, Candidate
+    from hillclimb.harness.candidate import BackendInfo, Candidate
     from hillclimb.api import spent_seconds
-    from hillclimb.journal import Journal
+    from hillclimb.harness.journal import Journal
 
     journal = Journal(tmp_path / "j.jsonl")
     journal.candidate_result(
@@ -358,9 +360,9 @@ def test_resolve_search_dir_unknown_refs(config, tmp_path):
 
 
 def test_knowledge_live_renders_run_cards(config, tmp_path, monkeypatch, capsys):
-    from hillclimb.cli import knowledge_live
-    from hillclimb.knowledge import KnowledgeCard, write_live_card
-    from hillclimb.dirs import create_run_dir
+    from hillclimb.cli.knowledge import knowledge_live
+    from hillclimb.modules.memory.knowledge import KnowledgeCard, write_live_card
+    from hillclimb.harness.dirs import create_run_dir
 
     config.paths.runs_dir = tmp_path / "runs"
     run_dir = create_run_dir(config.paths.runs_dir, "r1")
@@ -378,7 +380,7 @@ def test_knowledge_live_renders_run_cards(config, tmp_path, monkeypatch, capsys)
         ),
         "gefcom2014-solar",
     )
-    monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
+    monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config)
 
     knowledge_live("r1")
     out = capsys.readouterr().out
@@ -389,9 +391,9 @@ def test_knowledge_live_renders_run_cards(config, tmp_path, monkeypatch, capsys)
 
 
 def test_show_lists_trials_with_their_params(config, tmp_path, monkeypatch, capsys):
-    from hillclimb.candidate import Candidate
-    from hillclimb.cli import show
-    from hillclimb.journal import Journal
+    from hillclimb.harness.candidate import Candidate
+    from hillclimb.cli.views import show
+    from hillclimb.harness.journal import Journal
 
     config.paths.runs_dir = tmp_path / "runs"
     search_dir = make_search(config.paths.runs_dir, "run-1", "a")
@@ -406,7 +408,7 @@ def test_show_lists_trials_with_their_params(config, tmp_path, monkeypatch, caps
             mk_trial(0.6, 0.62, params={"k": 4}, index=1, holdout_score=0.55),
         ],
     ))
-    monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
+    monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config)
 
     show("run-1/a", "c001")
     out = capsys.readouterr().out
@@ -417,9 +419,9 @@ def test_show_lists_trials_with_their_params(config, tmp_path, monkeypatch, caps
 
 
 def test_show_renders_report_diff_and_notes(config, tmp_path, monkeypatch, capsys):
-    from hillclimb.candidate import Candidate
-    from hillclimb.cli import show
-    from hillclimb.journal import Journal
+    from hillclimb.harness.candidate import Candidate
+    from hillclimb.cli.views import show
+    from hillclimb.harness.journal import Journal
 
     config.paths.runs_dir = tmp_path / "runs"
     search_dir = make_search(config.paths.runs_dir, "run-1", "a")
@@ -451,7 +453,7 @@ def test_show_renders_report_diff_and_notes(config, tmp_path, monkeypatch, capsy
                   candidate_dir=str(child_ws), summary="added lag features",
                   trials=[mk_trial(val_score=0.7, report=report)])
     )
-    monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
+    monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config)
 
     show("run-1/a", "c002")
     out = capsys.readouterr().out
@@ -541,7 +543,7 @@ def test_machine_max_operators_defaults_to_cores_minus_two_capped(monkeypatch):
 
 
 def test_orphan_engines_are_those_whose_dir_is_gone(tmp_path, monkeypatch):
-    from hillclimb import orphans
+    from hillclimb.harness import orphans
 
     alive = tmp_path / "hillclimb"
     alive.mkdir()
@@ -566,7 +568,7 @@ def test_kill_engines_takes_the_whole_process_group(tmp_path):
     import sys
     import time
 
-    from hillclimb.orphans import Engine, kill_engines
+    from hillclimb.harness.orphans import Engine, kill_engines
 
     # a session leader that spawns a detached child (its own session, like the
     # engine's verifiers and agents) and ignores SIGTERM, like a wedged engine
@@ -597,7 +599,7 @@ def test_kill_engines_takes_the_whole_process_group(tmp_path):
 
 
 def test_descendants_walks_the_ps_tree():
-    from hillclimb.orphans import _descendants
+    from hillclimb.harness.orphans import _descendants
 
     listing = "1 0\n10 1\n11 10\n12 11\n13 10\n20 1\n"
     assert sorted(_descendants(10, listing)) == [11, 12, 13]
@@ -606,15 +608,15 @@ def test_descendants_walks_the_ps_tree():
 
 def test_stop_all_without_a_dir_reaps_orphaned_engines(tmp_path, monkeypatch, capsys):
     from hillclimb import cli as cli_module
-    from hillclimb.orphans import Engine
+    from hillclimb.harness.orphans import Engine
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
     monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
     gone = tmp_path / "deleted" / "hillclimb"
     killed = []
-    monkeypatch.setattr("hillclimb.orphans.orphan_engines", lambda: [Engine(pid=7, pgid=7, hillclimb_dir=gone)])
-    monkeypatch.setattr("hillclimb.orphans.kill_engines", lambda engines, grace_s=5.0: killed.extend(engines) or [])
+    monkeypatch.setattr("hillclimb.harness.orphans.orphan_engines", lambda: [Engine(pid=7, pgid=7, hillclimb_dir=gone)])
+    monkeypatch.setattr("hillclimb.harness.orphans.kill_engines", lambda engines, grace_s=5.0: killed.extend(engines) or [])
     with pytest.raises(SystemExit) as exc:
         cli_main(["stop", "--all"])
     assert exc.value.code == 0
@@ -622,7 +624,7 @@ def test_stop_all_without_a_dir_reaps_orphaned_engines(tmp_path, monkeypatch, ca
     assert "pid 7" in capsys.readouterr().out
 
     # without --all the original error stands; with --all and no orphans it is reported
-    monkeypatch.setattr("hillclimb.orphans.orphan_engines", lambda: [])
+    monkeypatch.setattr("hillclimb.harness.orphans.orphan_engines", lambda: [])
     with pytest.raises(SystemExit) as exc:
         cli_main(["kill", "--all"])
     assert exc.value.code == 1
@@ -630,7 +632,7 @@ def test_stop_all_without_a_dir_reaps_orphaned_engines(tmp_path, monkeypatch, ca
 
 
 def test_engines_for_matches_only_this_hillclimb_dir(tmp_path, monkeypatch):
-    from hillclimb import orphans
+    from hillclimb.harness import orphans
 
     mine = tmp_path / "a" / "hillclimb"
     other = tmp_path / "b" / "hillclimb"
@@ -644,7 +646,7 @@ def test_engines_for_matches_only_this_hillclimb_dir(tmp_path, monkeypatch):
 
 
 def test_reset_kills_this_dirs_engines_and_deletes_it(tmp_path, monkeypatch, capsys):
-    from hillclimb.orphans import Engine
+    from hillclimb.harness.orphans import Engine
 
     root = tmp_path / "hillclimb"
     root.mkdir()
@@ -660,8 +662,8 @@ def test_reset_kills_this_dirs_engines_and_deletes_it(tmp_path, monkeypatch, cap
         Engine(pid=33, pgid=33, hillclimb_dir=None),
     ]
     killed = []
-    monkeypatch.setattr("hillclimb.orphans.live_engines", lambda: engines)
-    monkeypatch.setattr("hillclimb.orphans.kill_engines", lambda engines, grace_s=5.0: killed.extend(engines) or [])
+    monkeypatch.setattr("hillclimb.harness.orphans.live_engines", lambda: engines)
+    monkeypatch.setattr("hillclimb.harness.orphans.kill_engines", lambda engines, grace_s=5.0: killed.extend(engines) or [])
 
     # without --yes a declined prompt aborts and deletes nothing
     monkeypatch.setattr("typer.confirm", lambda *a, **k: False)
@@ -680,7 +682,7 @@ def test_reset_kills_this_dirs_engines_and_deletes_it(tmp_path, monkeypatch, cap
 
 
 def test_ps_lists_engines_with_their_process_trees(tmp_path, monkeypatch, capsys):
-    from hillclimb import orphans
+    from hillclimb.harness import orphans
 
     listing = (
         "100 1 100 0.5 40000 05:00 /venv/bin/python3 -m hillclimb.cli run circle-packing --budget 5m\n"
@@ -707,7 +709,7 @@ def test_ps_lists_engines_with_their_process_trees(tmp_path, monkeypatch, capsys
 
 
 def test_is_engine_matches_the_launcher_argv_only():
-    from hillclimb.orphans import is_engine
+    from hillclimb.harness.orphans import is_engine
 
     assert is_engine("/venv/bin/python3 -m hillclimb.cli run circle-packing")
     assert is_engine("/venv/bin/python3 -m hillclimb.cli resume run-1/search-1")
@@ -729,8 +731,8 @@ def _summit_search(
 ):
     """A finished-looking search: metadata, a journal of scored drafts, and a
     best/ dir stamped with its own address so tests can see whose files won."""
-    from hillclimb.candidate import Candidate
-    from hillclimb.journal import Journal
+    from hillclimb.harness.candidate import Candidate
+    from hillclimb.harness.journal import Journal
 
     run_dir = runs_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -773,7 +775,7 @@ def _summit_search(
 
 
 def test_summit_copies_the_best_search_across_runs(config, tmp_path):
-    from hillclimb.cli import _summit
+    from hillclimb.cli.problem import _summit
 
     _summit_search(config.paths.runs_dir, "r1", "p", "p", [0.1, 0.3])
     _summit_search(config.paths.runs_dir, "r2", "p", "p", [0.2])
@@ -790,7 +792,7 @@ def test_summit_copies_the_best_search_across_runs(config, tmp_path):
 
 
 def test_summit_respects_lower_is_better(config, tmp_path):
-    from hillclimb.cli import _summit
+    from hillclimb.cli.problem import _summit
 
     _summit_search(config.paths.runs_dir, "r1", "p", "p", [0.4], higher_is_better=False)
     _summit_search(config.paths.runs_dir, "r2", "p", "p", [0.2], higher_is_better=False)
@@ -804,7 +806,7 @@ def test_summit_respects_lower_is_better(config, tmp_path):
 
 
 def test_summit_copies_provider_declared_json_artifact(config, tmp_path):
-    from hillclimb.cli import _summit
+    from hillclimb.cli.problem import _summit
 
     _summit_search(
         config.paths.runs_dir,
@@ -836,7 +838,7 @@ def test_summit_command_accepts_a_new_destination(config, tmp_path, monkeypatch)
         output_artifacts=["submission.json"],
     )
     dest = tmp_path / "not-created-yet"
-    monkeypatch.setattr(cli, "load_config", lambda: config)
+    monkeypatch.setattr(common, "load_config", lambda: config)
 
     result = CliRunner().invoke(cli.app, ["summit", "--to", str(dest)])
 
@@ -846,7 +848,7 @@ def test_summit_command_accepts_a_new_destination(config, tmp_path, monkeypatch)
 
 
 def test_summit_requires_a_problem_when_several_exist(config, tmp_path):
-    from hillclimb.cli import _summit
+    from hillclimb.cli.problem import _summit
 
     _summit_search(config.paths.runs_dir, "r1", "a", "a", [0.1])
     _summit_search(config.paths.runs_dir, "r1", "b", "b", [0.2])
@@ -861,7 +863,7 @@ def test_summit_requires_a_problem_when_several_exist(config, tmp_path):
 
 
 def test_summit_with_no_scored_candidate_explains_itself(config, tmp_path):
-    from hillclimb.cli import _summit
+    from hillclimb.cli.problem import _summit
 
     _summit_search(config.paths.runs_dir, "r1", "p", "p", [])
     dest = tmp_path / "root"
@@ -905,11 +907,11 @@ def _lintable_problem(tmp_path, baseline_code: str, with_interface: bool = True)
 
 
 def _run_verify(config, tmp_path, monkeypatch):
-    from hillclimb.cli import verify
+    from hillclimb.cli.problem import verify
 
     config.paths.problems_dir = tmp_path / "problems"
     monkeypatch.setattr(
-        "hillclimb.cli.load_config", lambda **kw: config.model_copy(deep=True)
+        "hillclimb.cli.common.load_config", lambda **kw: config.model_copy(deep=True)
     )
     verify("fmt", solution=None, repeat=1, holdout=False)
 
@@ -982,8 +984,8 @@ def _capture_fleet(monkeypatch, config, tmp_path):
         calls.append({"target": target, **kwargs})
         return SimpleNamespace(run_id="20260910-120000-cp", run_dir=tmp_path / "runs" / "20260910-120000-cp")
 
-    monkeypatch.setattr(cli, "load_config", lambda backend=None, model=None: config)
-    monkeypatch.setattr(cli, "run_fleet", fake_run_fleet)
+    monkeypatch.setattr(common, "load_config", lambda backend=None, model=None: config)
+    monkeypatch.setattr("hillclimb.cli.run.run_fleet", fake_run_fleet)
     return calls
 
 
@@ -1044,7 +1046,7 @@ def test_run_mixed_fleet_repeats_every_arm_and_rejects_stray_flags(config, monke
 def test_resume_warns_when_the_policy_file_changed(config, tmp_path, monkeypatch, capsys):
     """A file policy resumes from its recorded path; a changed hash is said
     out loud (replay may diverge), a missing file is a usage error."""
-    from hillclimb.cli import resume
+    from hillclimb.cli.run import resume
     from tests.test_policy import FILE_POLICY
 
     policy_file = tmp_path / "drafts_only.py"
@@ -1063,9 +1065,9 @@ def test_resume_warns_when_the_policy_file_changed(config, tmp_path, monkeypatch
     )
     (search_dir / "journal.jsonl").write_text("")
     captured = {}
-    monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config.model_copy(deep=True))
-    monkeypatch.setattr("hillclimb.cli.load_problem", lambda *a, **k: object())
-    monkeypatch.setattr("hillclimb.cli._execute", lambda config_arg, *a, **k: captured.setdefault("config", config_arg))
+    monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config.model_copy(deep=True))
+    monkeypatch.setattr("hillclimb.cli.run.load_problem", lambda *a, **k: object())
+    monkeypatch.setattr("hillclimb.cli.run._execute", lambda config_arg, *a, **k: captured.setdefault("config", config_arg))
 
     resume("run-1/a")
     assert captured["config"].climber.ref == str(policy_file)

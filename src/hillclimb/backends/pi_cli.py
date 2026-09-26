@@ -26,7 +26,7 @@ from hillclimb.backends.claude_code import (
     _kill_group,
     usage_total_tokens,
 )
-from hillclimb.pricing import cost_usd
+from hillclimb.harness.pricing import cost_usd
 
 
 SAMPLING_EXTENSION = Path(__file__).with_name("pi_ext") / "hillclimb-sampling.ts"
@@ -113,7 +113,7 @@ def pi_home(auth: str, models_file: Path | None = None) -> Path:
 
 def pi_env(auth: str = "subscription", models_file: Path | None = None) -> dict[str, str]:
     """Build pi's isolated child environment for the selected billing mode."""
-    from hillclimb.executor import single_threaded
+    from hillclimb.harness.executor import single_threaded
 
     env = os.environ.copy()
     if auth not in {"subscription", "api-key", "openrouter"}:

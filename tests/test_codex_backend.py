@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-import hillclimb.pricing as pricing
+import hillclimb.harness.pricing as pricing
 from hillclimb.backends.base import OperatorRequest
 from hillclimb.backends.codex_cli import CodexCliBackend
 

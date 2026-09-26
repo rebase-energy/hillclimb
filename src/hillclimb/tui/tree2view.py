@@ -1,0 +1,204 @@
+"""`hillclimb tree2` — the archive tree of one search, live: the Darwin
+Gödel Machine's archive picture on hillclimb's journal (encoding in
+tree2.py).
+
+A thin skin over `treeview.py`: the widget swaps the plot builder and the
+legend through the hooks `TreePlotWidget` exposes and keeps its picking,
+camera, hover and selection; the screen swaps the widget and drops the
+legend filter for one of its own (the ring ladder toggles stages, the best and the lineage). Scrubbing through
+time, the candidate detail dock, n/p between searches and enter into the
+candidate screen are inherited unchanged.
+
+The one thing this widget adds: marks are sized to the projection. Every
+zoom, reset and resize rebuilds the plot with the radius `tree2.fit_radius`
+derives from the closest pair of centres, so circles never overlap and the
+numbers inside them (plotui draws those, only where they fit) come and go
+with the zoom. The hovered or selected node is also named beside its mark,
+for the fit view where the marks are too small to carry a number.
+"""
+
+from __future__ import annotations
+
+from textual import events
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Vertical
+from textual.widgets import Footer, Label, RichLog
+
+from hillclimb.config import Config
+from hillclimb.tui.graphview import GraphKeys, TimeScrubber, VNode, place_labels_by_node
+from hillclimb.tui.header import HillclimbHeader, TimezoneMixin
+from hillclimb.tui.theme import HILLCLIMB_CSS, apply_theme
+from hillclimb.tui.tree import SearchTree
+from hillclimb.tui.tree2 import (
+    BEST_SIZE_SCALE, DEFAULT_RADIUS, LEGEND_ENTRIES, LEGEND_KEYS, build_tree2_plot, fit_radius, hidden_fates,
+    label_nodes, legend_entries, legend_spans, lineage_nodes,
+)
+from hillclimb.tui.treeview import TreePlotWidget, TreeScreen, filter_hidden
+
+
+class Tree2PlotWidget(TreePlotWidget):
+    """The archive-tree encoding on the tree widget's plumbing. The screen
+    tells it the metric's name and direction (`higher_is_better`, `metric`)
+    before handing it a tree; both feed the fill ramp and its legend."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.higher_is_better = True
+        self.metric = "score"
+        self.radius = DEFAULT_RADIUS  # the last fitted mark radius, plotui units
+        self.star = BEST_SIZE_SCALE   # the star's size over the discs', as last fitted
+
+    def _build_plot(self, tree: SearchTree, selected: str | None, frame: SearchTree | None):
+        # build once to project at the camera the widget holds now, size
+        # the marks to that projection, then build the plot that is shown
+        # the lineage comes from the unfiltered tree: hiding a stage, or the
+        # best itself, removes circles, never the path (that is its own toggle)
+        lineage = lineage_nodes(self._tree) if self._tree is not None else None
+        legend = legend_entries(self._tree, self.hidden)  # counts from the unfiltered tree
+
+        def build(radius: float, star: float):
+            return build_tree2_plot(
+                tree, self.higher_is_better, selected=selected, frame=frame, radius=radius, star=star,
+                show_lineage="lineage" not in self.hidden, lineage=lineage, legend=legend,
+            )
+
+        probe, ids = build(self.radius, self.star)
+        if ids and self.size.width > 0:
+            _yaw, _pitch, zoom, pan_x, pan_y = self._plot.camera_state()
+            probe.set_camera_state(0.0, 0.0, zoom, pan_x, pan_y)
+            best = ids.index(tree.best_id) if tree.best_id in ids else None
+            self.radius, self.star = fit_radius(probe, *self._px_dims(), best_index=best)
+            return build(self.radius, self.star)
+        return probe, ids
+
+    def _label_nodes(self, tree: SearchTree) -> list[VNode]:
+        return label_nodes(tree, frame=self._frame)
+
+    def _place_labels(self, projected):
+        # zoom 0: only the selected/hovered node is named beside its mark
+        return place_labels_by_node(
+            self._labels, projected,
+            cols=self.size.width, rows=self.size.height, cell_px=(self._cell_w, self._cell_h),
+            zoom=0.0, selected=self.selected, hovered=self._hover,
+        )
+
+    def _filter(self, tree: SearchTree) -> SearchTree:
+        # the legend names stages, the widget's filter names fates
+        return filter_hidden(tree, hidden_fates(self.hidden))
+
+    def _legend_spans(self) -> list[tuple[int, int, str, str]]:
+        return legend_spans(self._tree, self.metric, self.higher_is_better, cols=self.size.width)
+
+    def _legend_entry_at(self, col: int, row: int) -> str | None:
+        # the ladder is drawn in the image: ask plotui which row the cell is on
+        hit = getattr(self._plot, "legend_entry_hit", None)
+        if hit is None or self.size.width <= 0 or self.size.height <= 0:
+            return None
+        px_w, px_h, px, py, _radius = self._pixel_geometry(col, row)
+        index = hit(px_w, px_h, px, py)
+        return LEGEND_ENTRIES[index] if index is not None and index < len(LEGEND_ENTRIES) else None
+
+    # -- the mark radius follows the projection: rebuild on every change of
+    # scale (zoom, reset, resize); a pan keeps the spacing --
+
+    def apply_zoom(self, factor: float) -> None:
+        self._plot.zoom_by(factor)
+        self.rebuild()
+
+    def apply_reset(self) -> None:
+        self._plot.set_camera_state(0.0, 0.0, 1.0, 0.0, 0.0)
+        self.rebuild()
+
+    def on_resize(self, event: events.Resize) -> None:
+        self.rebuild()
+
+
+class Tree2Keys(GraphKeys):
+    POINTER = [
+        ("drag", "pan"),
+        ("scroll", "zoom (numbers appear as the circles grow)"),
+        ("arrows", "pan"),
+        ("r", "reset view"),
+        ("click", "select"),
+        ("click again", "open"),
+        ("click legend", "hide a stage, the best or the lineage (1-5 too)"),
+        ("n / p", "next / previous search"),
+    ]
+
+
+class Tree2Screen(TreeScreen, inherit_bindings=False):
+    """Canvas + time scrubber + candidate detail, archive-tree encoding.
+    Reached via `hillclimb tree2 [search]`."""
+
+    BINDING_GROUP_TITLE = "tree2"
+    BINDINGS = [
+        Binding("escape", "dismiss_or_back", "back"),
+        Binding("enter", "activate", "open", show=False, priority=True),
+        Binding("+,=", "zoom_in", "zoom in", show=False),
+        Binding("-", "zoom_out", "zoom out", show=False),
+        Binding("f,0", "fit", "fit", show=False, tooltip="frame the whole tree"),
+        Binding("b", "select_best", "best", tooltip="select the current best"),
+        Binding("l", "toggle_lineage", "lineage", tooltip="show / hide the best's lineage"),
+        Binding("n", "next_search", "next search", tooltip="the next search in the store"),
+        Binding("p", "prev_search", "prev search", show=False, tooltip="the previous search"),
+        Binding("j", "scrub_back", "back in time", show=False, tooltip="one tick per landed result"),
+        Binding("k", "scrub_forward", "forward", show=False),
+        Binding("end", "scrub_live", "live", show=False, tooltip="jump to now"),
+        # The legend's keys: one binding per entry, only the first described,
+        # so the `?` panel shows a single "1-5" row for the lot.
+        Binding(LEGEND_KEYS[0], "toggle_type(0)", "hide/show a stage, the best or the lineage", show=False, key_display="1-5"),
+        *(Binding(LEGEND_KEYS[i], f"toggle_type({i})", show=False) for i in range(1, len(LEGEND_ENTRIES))),
+        Binding("question_mark", "toggle_help", "keys"),
+        Binding("q", "app.quit", "quit"),
+    ]
+    # `inherit_bindings=False`: Textual merges bindings base class first, so a
+    # key only this screen defines (`l`) would land after every inherited one
+    # in the footer. Owning the whole list keeps `l` beside `b`.
+
+    def compose(self) -> ComposeResult:
+        yield HillclimbHeader()
+        yield Label(id="treeline")
+        yield RichLog(id="node-detail", wrap=True, markup=False, auto_scroll=False, min_width=1)
+        with Vertical(id="tree-stage"):
+            yield Tree2PlotWidget(id="tree-canvas")
+            yield TimeScrubber(id="time-scrubber")
+        yield Footer()
+
+    def _apply_view(self) -> None:
+        if self._record is not None:
+            canvas = self._canvas()
+            canvas.higher_is_better = bool(self._record.meta.higher_is_better)
+            canvas.metric = self._record.meta.metric
+        super()._apply_view()
+
+    def action_toggle_type(self, index: int) -> None:
+        if 0 <= index < len(LEGEND_ENTRIES):
+            self._toggle_type(LEGEND_ENTRIES[index])
+
+    def action_toggle_lineage(self) -> None:
+        self._toggle_type("lineage")
+
+    def action_toggle_help(self) -> None:
+        panel = self.query(Tree2Keys)
+        if panel:
+            panel.remove()
+        else:
+            self.mount(Tree2Keys())
+
+
+class Tree2App(TimezoneMixin, App):
+    """Standalone shell for `hillclimb tree2`."""
+
+    BINDINGS = [Binding("t", "choose_timezone", "time zone", show=False)]
+    CSS = HILLCLIMB_CSS
+
+    def __init__(self, config: Config | None = None, search: str | None = None):
+        super().__init__()
+        self.config = config or Config.load()
+        self.search = search
+
+    def on_mount(self) -> None:
+        apply_theme(self)
+        self._init_timezone()
+        self.push_screen(Tree2Screen(self.config, self.search))

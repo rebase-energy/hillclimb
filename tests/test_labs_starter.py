@@ -39,7 +39,7 @@ def generator():
 
 def _score(spec, candidate_dir: Path, csv_text: str):
     """Run the real verifier contract on a solution that writes `csv_text`."""
-    from hillclimb.executor import CommandExecutor
+    from hillclimb.harness.executor import CommandExecutor
 
     candidate_dir.mkdir(parents=True, exist_ok=True)
     (candidate_dir / "data").symlink_to(spec.data_dir, target_is_directory=True)

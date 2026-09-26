@@ -302,7 +302,7 @@ class SimilarityConfig(BaseModel):
     """Similarity scores `hillclimb similarity scores` computes, name -> params.
     A name is a registry entry (solution-card, api-calls, code-tokens), a
     `.py` file (relative to the folder holding the hillclimb dir), or
-    `module:Class` — see similarity_scores/__init__.py."""
+    `module:Class` — see modules/similarity/__init__.py."""
 
     scores: dict[str, dict] = Field(default_factory=lambda: {
         "solution-card": {},

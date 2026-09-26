@@ -1,0 +1,19 @@
+                                                                                                                        
+ Usage: root demo [OPTIONS]                                                                                             
+                                                                                                                        
+ Try hillclimb in one command: agents climb the circle-packing problem.                                                 
+                                                                                                                        
+ Creates a hillclimb/ dir here if there is none, installs the bundled                                                   
+ problem, starts several searches in parallel in the background, and                                                    
+ prints the commands that show them live — run those right here.                                                        
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --budget                      TEXT                  Wall-clock budget per search, e.g. 10m [default: 10m]            │
+│ --parallel-searches           INTEGER RANGE [x>=1]  Searches to run at once [default: 3]                             │
+│ --parallel-operators          INTEGER RANGE [x>=1]  Concurrent operators (one candidate each) per search             │
+│                                                     [default: 3]                                                     │
+│ --model                       TEXT                  Model for operator calls, e.g. sonnet / opus                     │
+│ --backend                     TEXT                  Operator backend: claude-code | codex | pi | dummy               │
+│ --help                -h                            Show this message and exit.                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

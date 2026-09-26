@@ -1,0 +1,18 @@
+                                                                                                                        
+ Usage: root knowledge query [OPTIONS] TERMS                                                                            
+                                                                                                                        
+ Read-only memory lookup (no model calls).                                                                              
+                                                                                                                        
+ Also advertised to operator agents so they can consult accumulated                                                     
+ knowledge mid-search.                                                                                                  
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ *    terms      TEXT  Keywords, e.g. 'gradient boosting' or a technique slug [required]                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --family          TEXT     Restrict claims to one problem family                                                     │
+│ --limit           INTEGER  [default: 5]                                                                              │
+│ --json                     Machine-readable output                                                                   │
+│ --help    -h               Show this message and exit.                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

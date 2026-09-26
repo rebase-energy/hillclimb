@@ -1,0 +1,20 @@
+                                                                                                                        
+ Usage: root connect pi [OPTIONS]                                                                                       
+                                                                                                                        
+ The pi coding agent as the operator backend — the one that can sample.                                                 
+                                                                                                                        
+ pi logs in inside its own TUI, so this imports what that login wrote                                                   
+ (`~/.pi/agent/auth.json`) into pi's isolated hillclimb home, together                                                  
+ with `pi.models_file` if the config names one.                                                                         
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --auth                         TEXT  Who pays: subscription (default) | api-key | openrouter                         │
+│ --model                        TEXT  Model to ping with (default: the configured one)                                │
+│ --probe        --no-probe            Make one tool-free agent call to prove the route works [default: probe]         │
+│ --default      --no-default          Write this backend into config.yaml. Default: only when no backend is pinned    │
+│                                      there yet                                                                       │
+│ --user                               Write the defaults to ~/.config/hillclimb/config.yaml instead of the hillclimb  │
+│                                      dir                                                                             │
+│ --help     -h                        Show this message and exit.                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

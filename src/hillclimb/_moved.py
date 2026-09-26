@@ -1,0 +1,26 @@
+"""Module paths that moved in the package-layout refactor (docs/package-layout-plan.md).
+
+Run folders carry `module:Class` refs — a search's climber snapshot, the
+`climber_manifest` in search.yaml, a `similarity:` entry in config.yaml —
+so a search recorded before the move must still resume. Like
+`config.LEGACY_SETTINGS`, the old spelling is mapped at the one place it is
+imported and nowhere else.
+"""
+
+from __future__ import annotations
+
+MOVED = {
+    "hillclimb.policies.": "hillclimb.modules.policies.",
+    "hillclimb.operators.": "hillclimb.modules.operators.",
+    "hillclimb.tuners.": "hillclimb.modules.tuners.",
+    "hillclimb.similarity_scores.": "hillclimb.modules.similarity.",
+}
+
+
+def modernize(ref: str) -> str:
+    """`hillclimb.policies.greedy:GreedyPolicy` -> its current module path;
+    anything that did not move comes back unchanged."""
+    for old in sorted(MOVED, key=len, reverse=True):
+        if ref.startswith(old):
+            return MOVED[old] + ref[len(old):]
+    return ref

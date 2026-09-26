@@ -1,0 +1,45 @@
+                                                                                                                        
+ Usage: root run [OPTIONS] TARGET                                                                                       
+                                                                                                                        
+ Start a run on a problem or a run-spec YAML.                                                                           
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ *    target      TEXT  [required]                                                                                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --budget                                        TEXT                  Wall-clock budget, e.g. 2h / 30m               │
+│ --backend                                       TEXT                  Operator backend: claude-code | codex | pi |   │
+│                                                                       dummy                                          │
+│ --model                                         TEXT                  Model for operator calls, e.g. sonnet / opus   │
+│ --climber                                       TEXT                  The climber (default: greedy): a bundled name, │
+│                                                                       a directory holding climber.yaml, or one .py   │
+│                                                                       file; params via config climber.params. Repeat │
+│                                                                       it (--climber greedy --climber gepa) for a     │
+│                                                                       mixed fleet: one search per climber on the     │
+│                                                                       problem, under one run, each tagged as an arm  │
+│ --holdout                      --no-holdout                           Hidden selection holdout [default: holdout]    │
+│ --learning                     --no-learning                          Cross-search memory (cards/claims injection +  │
+│                                                                       distillation); off = memory-blind arm          │
+│                                                                       [default: learning]                            │
+│ --name                                          TEXT                  Run name shown in the TUI                      │
+│ --parallel-operators                            INTEGER               Concurrent operators per search (worker pool)  │
+│ --parallel-searches                             INTEGER RANGE [x>=1]  Independent searches on the problem at once    │
+│                                                                       (>1 runs them detached, in the background)     │
+│                                                                       [default: 1]                                   │
+│ --n-replicates,--n-trials                       INTEGER               Seeded runs per trial (the median is the       │
+│                                                                       trial's score; --n-trials is the old spelling) │
+│ --seed-from                                     PATH                  Incumbent solution.py scored as the floor      │
+│                                                                       candidate                                      │
+│ --set                                           TEXT                  Any config setting, dotted: --set              │
+│                                                                       climber.ref=openevolve --set                   │
+│                                                                       learning.enabled=false                         │
+│ --arm-set                                       TEXT                  A setting for one arm of a mixed fleet,        │
+│                                                                       ARM:KEY=VALUE: --arm-set                       │
+│                                                                       gepa:concurrency.parallel_operators=1 (applied │
+│                                                                       after --set)                                   │
+│ --experiment                                    TEXT                  Tag the search as one arm of an experiment     │
+│                                                                       (with --arm); names a mixed fleet's experiment │
+│ --arm                                           TEXT                  The arm name (with --experiment)               │
+│ --help                     -h                                         Show this message and exit.                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

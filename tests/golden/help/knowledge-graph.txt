@@ -1,0 +1,13 @@
+                                                                                                                        
+ Usage: root knowledge graph [OPTIONS]                                                                                  
+                                                                                                                        
+ Explore the knowledge graph.                                                                                           
+                                                                                                                        
+ Default: the interactive TUI screen (zoom/pan/click, time scrubber);                                                   
+ `--stats` prints a text summary.                                                                                       
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --stats            Print index stats instead of the TUI                                                              │
+│ --help   -h        Show this message and exit.                                                                       │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

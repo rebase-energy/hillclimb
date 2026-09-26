@@ -11,8 +11,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from hillclimb.candidate import Candidate
-from hillclimb.similarity import (
+from hillclimb.harness.candidate import Candidate
+from hillclimb.tui.similarity import (
     N_BINS,
     build_similarity,
     clear_caches,
@@ -250,7 +250,7 @@ class TestBuildView:
         assert by_id["c003"].bin < N_BINS
 
     def test_fates_match_the_tree(self, tmp_path):
-        from hillclimb.tree import build_tree
+        from hillclimb.tui.tree import build_tree
 
         candidates = self.make_search(tmp_path)
         view = build_similarity(candidates, tmp_path, True)

@@ -1,0 +1,10 @@
+                                                                                                                        
+ Usage: root intro [OPTIONS]                                                                                            
+                                                                                                                        
+ Replay the first-run 3D intro animation.                                                                               
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --reset            Forget that the intro played; it plays again on the next run                                      │
+│ --help   -h        Show this message and exit.                                                                       │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

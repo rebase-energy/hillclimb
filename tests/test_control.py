@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb.candidate import Candidate
-from hillclimb.control import (
+from hillclimb.harness.candidate import Candidate
+from hillclimb.harness.control import (
     ControlCommand,
     apply_prune,
     clear_stale_stops,
@@ -16,8 +16,8 @@ from hillclimb.control import (
     resync_best,
     write_command,
 )
-from hillclimb.journal import Journal
-from hillclimb.store import FileDataStore, key_for
+from hillclimb.harness.journal import Journal
+from hillclimb.harness.store import FileDataStore, key_for
 
 
 def make_candidate(candidate_id: str, **kwargs) -> Candidate:
@@ -153,7 +153,7 @@ def test_request_prune_offline_applies_directly(tmp_path: Path):
 def test_request_prune_queues_when_running(tmp_path: Path, monkeypatch):
     search_dir, journal = make_search(tmp_path)
     add_candidate(journal, search_dir, "c001", status="passing", val_score=0.5)
-    monkeypatch.setattr("hillclimb.control.derive_state", lambda _: "running")
+    monkeypatch.setattr("hillclimb.harness.control.derive_state", lambda _: "running")
 
     store = FileDataStore(search_dir.parents[2])
     outcome = request_prune(

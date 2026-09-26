@@ -1,0 +1,11 @@
+                                                                                                                        
+ Usage: root knowledge backfill [OPTIONS]                                                                               
+                                                                                                                        
+ Distill cards from every finished search that lacks one.                                                               
+                                                                                                                        
+ Walks runs/ and bootstraps learning from pre-existing history.                                                         
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --help  -h        Show this message and exit.                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

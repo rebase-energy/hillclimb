@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from hillclimb.pricing import Prices, cost_usd, model_prices
+from hillclimb.harness.pricing import Prices, cost_usd, model_prices
 
 CATALOGUE = {
     "data": [
@@ -64,7 +64,7 @@ def test_a_model_without_cache_prices_reads_them_as_zero():
 
 
 def test_a_fresh_cache_file_is_used_without_fetching(tmp_path, monkeypatch):
-    import hillclimb.pricing as pricing
+    import hillclimb.harness.pricing as pricing
 
     cache = tmp_path / "openrouter-models.json"
     cache.write_text(json.dumps(CATALOGUE))
@@ -80,7 +80,7 @@ def test_a_fresh_cache_file_is_used_without_fetching(tmp_path, monkeypatch):
 
 
 def test_a_stale_cache_that_cannot_be_refreshed_is_still_used(tmp_path, monkeypatch):
-    import hillclimb.pricing as pricing
+    import hillclimb.harness.pricing as pricing
 
     cache = tmp_path / "openrouter-models.json"
     cache.write_text(json.dumps(CATALOGUE))
@@ -94,7 +94,7 @@ def test_a_stale_cache_that_cannot_be_refreshed_is_still_used(tmp_path, monkeypa
 
 
 def test_a_failed_fetch_is_not_retried_on_every_call(tmp_path, monkeypatch):
-    import hillclimb.pricing as pricing
+    import hillclimb.harness.pricing as pricing
 
     calls = []
     monkeypatch.setattr(pricing, "_MEMO", None)

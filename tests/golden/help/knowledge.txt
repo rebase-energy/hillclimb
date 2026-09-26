@@ -1,0 +1,19 @@
+                                                                                                                        
+ Usage: root knowledge [OPTIONS] COMMAND [ARGS]...                                                                      
+                                                                                                                        
+ Cross-search learning: cards distilled from finished searches                                                          
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --help  -h        Show this message and exit.                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ backfill     Distill cards from every finished search that lacks one.                                                │
+│ consolidate  The sleep phase: generalize claims, rewrite playbooks.                                                  │
+│ distill      Run the LLM claims pass on a finished search.                                                           │
+│ graph        Explore the knowledge graph.                                                                            │
+│ live         Show the live cards concurrent searches in a run are sharing.                                           │
+│ query        Read-only memory lookup (no model calls).                                                               │
+│ rebuild      Force-rebuild knowledge/graph.json from cards and registries.                                           │
+│ show         Render the prior experience a new search would receive.                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

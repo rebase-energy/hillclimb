@@ -10,9 +10,9 @@ import pytest
 import typer
 import yaml
 
-from hillclimb.candidate import BackendInfo
+from hillclimb.harness.candidate import BackendInfo
 from hillclimb.config import Config, parse_set_overrides
-from hillclimb.dirs import create_run_dir, create_search_dir
+from hillclimb.harness.dirs import create_run_dir, create_search_dir
 from hillclimb.experiment import (
     ExperimentRow,
     collect_results,
@@ -23,9 +23,9 @@ from hillclimb.experiment import (
     resolve_experiment_path,
     summarize,
 )
-from hillclimb.journal import Journal
-from hillclimb.run import RunMeta, SearchMeta, write_run_meta, write_search_meta
-from hillclimb.status import ScoreRef, SearchStatus, write_status
+from hillclimb.harness.journal import Journal
+from hillclimb.harness.run import RunMeta, SearchMeta, write_run_meta, write_search_meta
+from hillclimb.harness.status import ScoreRef, SearchStatus, write_status
 from tests.test_watch import make_candidate
 
 SPEC = """
@@ -106,7 +106,7 @@ class TestOverrides:
     def test_create_search_records_the_tags(self, tmp_path):
         from hillclimb.api import create_search
         from hillclimb.problem import ProblemSpec
-        from hillclimb.run import load_search_meta
+        from hillclimb.harness.run import load_search_meta
 
         config = Config()
         config.paths.runs_dir = tmp_path / "runs"
@@ -218,8 +218,8 @@ class TestCollect:
 
 
 def test_chart_labels_and_colours_experiment_curves_by_arm():
-    from hillclimb.chart import ARM_PALETTE, Curve, build_plot, curve_colors, curve_label
-    from hillclimb.store import SearchRecord
+    from hillclimb.tui.chart import ARM_PALETTE, Curve, build_plot, curve_colors, curve_label
+    from hillclimb.harness.store import SearchRecord
 
     def record(arm, repeat, search_id):
         meta = SearchMeta(
@@ -254,7 +254,7 @@ class TestCli:
         hillclimb_dir = tmp_path / "hillclimb"
         spec = write_spec(hillclimb_dir / "experiments" / "ab.yaml", "problems: [p]\nrepeats: 1\narms:\n  a: {search.policy: greedy}\n  b: {learning.enabled: false, search.policy_params: {k: 1}}\n")
         config.hillclimb_dir = hillclimb_dir
-        monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
+        monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config)
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
         result = runner.invoke(app, ["experiment", "run", "ab", "--dry-run"])
@@ -298,7 +298,7 @@ class TestCli:
             "arms:\n  a: {search.policy: greedy}\n  b: {learning.enabled: false}\n",
         )
         config.hillclimb_dir = hillclimb_dir
-        monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
+        monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config)
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
         result = runner.invoke(app, ["experiment", "run", "ab", "--dry-run"])
@@ -332,7 +332,7 @@ class TestCli:
             "problems: [p]\nseed_from: seeds/nope.py\narms:\n  a: {}\n  b: {}\n",
         )
         config.hillclimb_dir = hillclimb_dir
-        monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
+        monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config)
         result = CliRunner().invoke(app, ["experiment", "run", "ab", "--dry-run"])
         assert result.exit_code != 0
         assert "seed_from not found" in result.output
@@ -355,8 +355,8 @@ class TestCli:
         assert resolved_seed(absolute) == seed.resolve()
 
     def test_run_set_and_arm_flags_reach_the_search(self, config, tmp_path, monkeypatch):
-        from hillclimb.cli import _run_problem
-        from hillclimb.run import load_search_meta
+        from hillclimb.cli.run import _run_problem
+        from hillclimb.harness.run import load_search_meta
         from tests.test_cli import write_problem
 
         problem = write_problem(tmp_path / "problems", "p")
@@ -367,7 +367,7 @@ class TestCli:
             seen["config"] = config_arg
             seen["search_dir"] = search_dir
 
-        monkeypatch.setattr("hillclimb.cli._execute", fake_execute)
+        monkeypatch.setattr("hillclimb.cli.run._execute", fake_execute)
         _run_problem(
             str(problem), config, budget="1m", experiment="ab", arm="b", repeat=1,
             arm_overrides=parse_set_overrides(["learning.enabled=false", "search.policy_params={k: 1}"]),
@@ -398,8 +398,8 @@ class TestBoundedLaunch:
         hillclimb_dir = tmp_path / "hillclimb"
         spec = write_spec(hillclimb_dir / "experiments" / "ab.yaml", spec_text)
         config.hillclimb_dir = hillclimb_dir
-        monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
-        monkeypatch.setattr("hillclimb.cli._REAP_POLL_S", 0)
+        monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config)
+        monkeypatch.setattr("hillclimb.cli.experiment._REAP_POLL_S", 0)
         monkeypatch.chdir(tmp_path)
         return spec
 
@@ -536,7 +536,7 @@ def test_run_records_the_seed_and_its_hash(config, tmp_path):
 
     from hillclimb.api import create_run, create_search
     from hillclimb.problem import load_problem
-    from hillclimb.run import load_search_meta
+    from hillclimb.harness.run import load_search_meta
     from tests.test_cli import write_problem
 
     root = tmp_path / "problems"

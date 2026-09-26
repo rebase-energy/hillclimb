@@ -1,0 +1,26 @@
+                                                                                                                        
+ Usage: root similarity scores [OPTIONS] [SEARCH]                                                                       
+                                                                                                                        
+ Pairwise similarity matrices between solutions, one per score.                                                         
+                                                                                                                        
+ Scores are pluggable: `solution-card` (an LLM writes a method card per                                                 
+ solution, cards are embedded, cosine between them — needs                                                              
+ OPENROUTER_API_KEY), `api-calls` (imports + library calls, no LLM),                                                    
+ `code-tokens` (token overlap), or your own `SimilarityScore` subclass in                                               
+ a .py file. 1.0 = the same; representations are cached per file content                                                
+ in ~/.cache/hillclimb/similarity/, nothing is written into the run.                                                    
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│   [search]      TEXT  latest (default), <run-id>, or <run-id>/<search-id>                                            │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --score       -s      TEXT  Score to compute (repeatable): a registry name, a .py file, or module:Class. Default:    │
+│                             similarity.scores from config                                                            │
+│ --candidates  -c      TEXT  Comma-separated candidate ids (default: all)                                             │
+│ --file        -f      PATH  Compare these solution files instead of a search (repeatable)                            │
+│ --explain                   Print each solution's representation text (e.g. its solution card)                       │
+│ --json                      Emit the matrices as JSON                                                                │
+│ --list                      List the registered scores and exit                                                      │
+│ --help        -h            Show this message and exit.                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

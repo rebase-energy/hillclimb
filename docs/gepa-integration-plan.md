@@ -1,5 +1,8 @@
 # GEPA × hillclimb implementation plan
 
+*Paths as written at the time: `search_strategy.py`, `policy.py`, `evaluation.py` and friends moved in the 2026-09 package-layout refactor — see `docs/package-layout-plan.md`.*
+
+
 This document is a self-contained implementation brief for a Codex coding agent. Work in the
 `hillclimb` repository, preserve unrelated local changes, implement the MVP described here, and
 do not broaden the scope without recording why.

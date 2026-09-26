@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from hillclimb.api import run_search
-from hillclimb.run import load_run_meta, load_search_meta
+from hillclimb.harness.run import load_run_meta, load_search_meta
 
 
 @pytest.mark.slow
@@ -118,7 +118,7 @@ def test_build_executor_dispatches_command_executor(config, tmp_path, monkeypatc
     import sys
 
     from hillclimb import api
-    from hillclimb.executor import CommandExecutor
+    from hillclimb.harness.executor import CommandExecutor
 
     monkeypatch.setattr(api, "ensure_runtime_venv", lambda *a, **k: Path(sys.executable))
     executor = api.build_executor(config, make_evaluator_problem(tmp_path), log=lambda *_: None)
@@ -129,7 +129,7 @@ def test_build_holdout_scorer_for_evaluator(config, tmp_path, monkeypatch):
     import sys
 
     from hillclimb import api
-    from hillclimb.executor import CommandHoldoutScorer
+    from hillclimb.harness.executor import CommandHoldoutScorer
 
     monkeypatch.delenv("HF_TOKEN", raising=False)
     monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
@@ -149,9 +149,9 @@ def test_build_holdout_scorer_for_evaluator(config, tmp_path, monkeypatch):
 def test_evaluator_baseline_placeholder_and_scored(config, tmp_path):
     import sys
 
-    from hillclimb.baseline import write_baseline
-    from hillclimb.executor import CommandExecutor
-    from hillclimb.dirs import create_search_dir
+    from hillclimb.harness.baseline import write_baseline
+    from hillclimb.harness.executor import CommandExecutor
+    from hillclimb.harness.dirs import create_search_dir
 
     problem = make_evaluator_problem(tmp_path)
     search_dir = create_search_dir(tmp_path / "runs" / "r1", "eval-problem")
@@ -164,7 +164,7 @@ def test_evaluator_baseline_placeholder_and_scored(config, tmp_path):
     baseline_file.write_text("def answer():\n    return 0.25\n")
     problem = make_evaluator_problem(tmp_path, baseline_text=baseline_file.read_text())
     search_dir = create_search_dir(tmp_path / "runs" / "r2", "eval-problem")
-    from hillclimb.evaluation import CandidateEvaluator
+    from hillclimb.harness.evaluation import CandidateEvaluator
 
     executor = CommandExecutor(Path(sys.executable), problem.verifier_cmd)
     evaluator = CandidateEvaluator(executor=executor, problem=problem, config=config)

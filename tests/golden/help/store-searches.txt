@@ -1,0 +1,10 @@
+                                                                                                                        
+ Usage: root store searches [OPTIONS]                                                                                   
+                                                                                                                        
+ List the searches the store knows, best score per search.                                                              
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --problem          TEXT  Only searches on this problem key                                                           │
+│ --help     -h            Show this message and exit.                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

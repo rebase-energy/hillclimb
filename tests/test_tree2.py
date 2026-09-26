@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import pytest
 
-from hillclimb.tree import build_tree, candidates_until
-from hillclimb.tree2 import (
+from hillclimb.tui.tree import build_tree, candidates_until
+from hillclimb.tui.tree2 import (
     ASPECT,
     BEST_RING_RGB,
     BEST_SIZE_SCALE,
@@ -45,7 +45,7 @@ from hillclimb.tree2 import (
     viridis,
     world_xy,
 )
-from hillclimb.treeview import ROW_H, build_tree_plot
+from hillclimb.tui.treeview import ROW_H, build_tree_plot
 from tests.test_tree import cand, forest, tree_workspace  # noqa: F401 (fixture)
 
 
@@ -116,8 +116,8 @@ class TestEncoding:
         best, the lineage) is one white, a scored node's ring is the ground — the
         same tone a failed node is filled with, so it reads hollow — and red
         is reserved for failure."""
-        from hillclimb.theme import PLOT_BG
-        from hillclimb.tree2 import HOLLOW_RGB, LINEAGE_RGB, WHITE_RGB
+        from hillclimb.tui.theme import PLOT_BG
+        from hillclimb.tui.tree2 import HOLLOW_RGB, LINEAGE_RGB, WHITE_RGB
 
         assert HOLLOW_RGB == PLOT_BG == STAGE_RGB["scored"] == UNSCORED_RGB
         assert STAGE_RGB["expanded"] == BEST_RING_RGB == LINEAGE_RGB == WHITE_RGB
@@ -303,7 +303,7 @@ class TestPlot:
 
     def test_plot_arguments(self):
         # the border, label and shape channels are handed to plotui per node
-        import hillclimb.theme as theme
+        import hillclimb.tui.theme as theme
 
         calls: dict[str, list] = {}
 
@@ -359,7 +359,7 @@ class TestLegend:
         assert top[2].strip() == "0.1"
 
     def test_entries_are_plotui_legend_rows_with_node_swatches(self):
-        from hillclimb.tree2 import LEGEND_ENTRIES, WHITE_RGB, hidden_fates, legend_entries
+        from hillclimb.tui.tree2 import LEGEND_ENTRIES, WHITE_RGB, hidden_fates, legend_entries
 
         assert LEGEND_ENTRIES == ("expanded", "scored", "failed", "best", "lineage")
         tree = build_tree(forest())
@@ -383,7 +383,7 @@ class TestLegend:
         assert hidden_fates({"lineage"}) == frozenset()
 
     def test_legend_is_drawn_in_the_plot_top_left_and_hit_by_row(self):
-        from hillclimb.tree2 import legend_entries
+        from hillclimb.tui.tree2 import legend_entries
 
         tree = build_tree(forest())
         plot, _ids = build_tree2_plot(tree, legend=legend_entries(tree))
@@ -404,8 +404,8 @@ class TestLegend:
         assert 0 < without < with_line  # the white rings stay, the thick line goes
 
     def test_hiding_the_best_keeps_the_lineage(self):
-        from hillclimb.treeview import filter_hidden
-        from hillclimb.tree2 import hidden_fates, lineage_nodes
+        from hillclimb.tui.treeview import filter_hidden
+        from hillclimb.tui.tree2 import hidden_fates, lineage_nodes
 
         tree = build_tree(forest())
         without_best = filter_hidden(tree, hidden_fates({"best"}))
@@ -426,8 +426,8 @@ class TestLegend:
 
 class TestWidget:
     def test_screen_is_a_tree_screen_with_its_own_legend_keys(self):
-        from hillclimb.tree2view import Tree2Screen
-        from hillclimb.treeview import TreeScreen
+        from hillclimb.tui.tree2view import Tree2Screen
+        from hillclimb.tui.treeview import TreeScreen
 
         assert issubclass(Tree2Screen, TreeScreen)
         keys = [b.key for b in Tree2Screen.BINDINGS]
@@ -435,7 +435,7 @@ class TestWidget:
         assert keys.index("b") + 1 == keys.index("l")  # lineage sits right after best in the footer
 
     def test_hooks(self):
-        from hillclimb.tree2view import Tree2PlotWidget
+        from hillclimb.tui.tree2view import Tree2PlotWidget
 
         widget = Tree2PlotWidget()
         widget._ids = ["c000", "c001"]
@@ -458,7 +458,7 @@ def test_cli_lists_tree2():
 
 @pytest.mark.asyncio
 async def test_tree2_app_mounts_sizes_marks_selects_and_scrubs(tree_workspace):
-    from hillclimb.tree2view import Tree2App, Tree2Keys, Tree2PlotWidget
+    from hillclimb.tui.tree2view import Tree2App, Tree2Keys, Tree2PlotWidget
 
     _search_dir, config = tree_workspace
     app = Tree2App(config, "r1/circle-packing")

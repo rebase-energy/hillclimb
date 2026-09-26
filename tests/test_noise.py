@@ -11,11 +11,11 @@ from math import isclose
 from pathlib import Path
 
 from hillclimb.backends.fake import FakeBackend
-from hillclimb.budget import BudgetManager
-from hillclimb.candidate import Candidate
-from hillclimb.journal import Journal
+from hillclimb.harness.budget import BudgetManager
+from hillclimb.harness.candidate import Candidate
+from hillclimb.harness.journal import Journal
 from tests.harness_factory import SearchRig
-from hillclimb.dirs import create_search_dir
+from hillclimb.harness.dirs import create_search_dir
 from tests.conftest import executor_for, ok_script
 
 
@@ -154,7 +154,7 @@ def test_within_noise_candidate_is_not_promoted(task, config):
 
 
 def test_bandit_reward_ignores_gains_inside_the_band():
-    from hillclimb.bandit import REWARD_OK_NO_GAIN, candidate_reward
+    from hillclimb.harness.bandit import REWARD_OK_NO_GAIN, candidate_reward
 
     parent = candidate("c1", 0.60)
     child = candidate("c2", 0.61, parent="c1")

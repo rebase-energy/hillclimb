@@ -6,8 +6,8 @@ from tests.factories import trial as mk_trial
 
 import json
 
-from hillclimb.candidate import Candidate
-from hillclimb.report import (
+from hillclimb.harness.candidate import Candidate
+from hillclimb.harness.report import (
     candidate_report,
     compact_report,
     render_delta,
@@ -166,7 +166,7 @@ class TestCompact:
 
 class TestCandidateReport:
     def test_best_trials_first_replicate_with_report_wins(self):
-        from hillclimb.candidate import Replicate
+        from hillclimb.harness.candidate import Replicate
 
         report = {"version": 1, "overall": {"score": 1.0}}
         cand = Candidate(

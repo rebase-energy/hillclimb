@@ -1,0 +1,32 @@
+                                                                                                                        
+ Usage: root chart [OPTIONS] [SEARCH]                                                                                   
+                                                                                                                        
+ Live hillclimb chart: best score so far vs tested candidates.                                                          
+                                                                                                                        
+ With no argument and several charts to show (more than one problem, or                                                 
+ the same problem in more than one run), first a table of them — one row                                                
+ per problem worked in a run, newest activity first; enter opens that                                                   
+ chart, esc comes back to the table. `hillclimb watch` reaches the same                                                 
+ chart with `c` from its runs, searches and candidates tables.                                                          
+                                                                                                                        
+ One staircase across every search of the problem, every scored candidate                                               
+ a dot (bright where it set a new best, dim where it missed), plus optional                                             
+ problem-config baselines; an experiment gets one line per arm instead.                                                 
+ Refreshes as candidates land.                                                                                          
+ Keys: r=refresh, t=toggle improvement text, d=detail                                                                   
+ (every scored candidate as a mark, parent edges, accepted lineage bold),                                               
+ h=toggle holdout/validation, c=cost overlay, p=switch problem,                                                         
+ esc=back to the table, q=quit.                                                                                         
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│   [search]      TEXT  latest (default), <run-id>, or <run-id>/<search-id>                                            │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --detail   -d        One search only, with its exploration tree drawn on the curve                                   │
+│ --holdout            Force the holdout view. Default: a holdout-scored problem opens on holdout (the split its       │
+│                      reference baselines live on), others on validation; h toggles either way                        │
+│ --cost               Overlay cumulative agent tokens and verifier CPU-minutes on right-hand axes — what the climb    │
+│                      cost as it climbed                                                                              │
+│ --help     -h        Show this message and exit.                                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

@@ -8,8 +8,8 @@ from types import SimpleNamespace
 import pytest
 
 from hillclimb.config import Config
-from hillclimb.graph import GraphEdge, GraphNode, KnowledgeGraph, rebuild_graph
-from hillclimb.graphview import (
+from hillclimb.modules.memory.graph import GraphEdge, GraphNode, KnowledgeGraph, rebuild_graph
+from hillclimb.tui.graphview import (
     COLLAPSE_ENTER,
     COLLAPSE_EXIT,
     EDGE_COLORS,
@@ -120,7 +120,7 @@ class TestAdapter:
     def test_node_shape_follows_type(self):
         from plotui import Plot
 
-        from hillclimb.graphview import NODE_SHAPES, node_shape
+        from hillclimb.tui.graphview import NODE_SHAPES, node_shape
 
         for type_, shape in NODE_SHAPES.items():
             assert node_shape(VNode(id=type_, type=type_, label="", x=0, y=0)) == shape
@@ -130,7 +130,7 @@ class TestAdapter:
             Plot().add_graph3d([0.0], [0.0], [0.0], edges=[], node_shapes=[shape])
 
     def test_build_plot_maps_ids_and_survives_rendering(self):
-        from hillclimb.graphview import VEdge
+        from hillclimb.tui.graphview import VEdge
 
         vg = VisibleGraph(
             nodes=(
@@ -226,7 +226,7 @@ class TestFilter:
 
 class TestSearchAndScrub:
     def test_filter_types(self):
-        from hillclimb.graphview import filter_types
+        from hillclimb.tui.graphview import filter_types
 
         graph = KnowledgeGraph(nodes=[
             GraphNode(id="s", type="search", label="s"),
@@ -239,7 +239,7 @@ class TestSearchAndScrub:
         assert filter_types(graph, frozenset()) is graph
 
     def test_legend_spans_and_hit_test(self):
-        from hillclimb.graphview import (
+        from hillclimb.tui.graphview import (
             LEGEND_COL, LEGEND_ROW, LEGEND_TYPES, LEGEND_WIDTH, legend_entry_at, legend_spans,
         )
 
@@ -265,7 +265,7 @@ class TestSearchAndScrub:
         assert hidden[7] == "8   search" and len(hidden) == len(LEGEND_TYPES)
 
     def test_place_labels_by_node_pairs_each_span_with_its_node(self):
-        from hillclimb.graphview import VNode, place_labels_by_node
+        from hillclimb.tui.graphview import VNode, place_labels_by_node
 
         nodes = [VNode(id="a", type="concept", label="alpha", x=0, y=0, z=0),
                  VNode(id="b", type="concept", label="beta", x=0, y=0, z=0)]
@@ -298,7 +298,7 @@ class TestSearchAndScrub:
     def test_render_scrubber(self):
         from rich.cells import cell_len
 
-        from hillclimb.graphview import KNOB, TICK
+        from hillclimb.tui.graphview import KNOB, TICK
 
         track, label = render_scrubber(["t1", "t2"], None, 60).plain.split("\n")
         assert cell_len(track) == 60 and track.endswith(KNOB) and track.startswith("━" + TICK) and KNOB == "●"
@@ -313,7 +313,7 @@ class TestSearchAndScrub:
         assert render_scrubber([], None, 40).plain.endswith("no finished searches yet")
 
     def test_event_stamp_is_local_and_minute_precise(self):
-        from hillclimb.graphview import event_stamp
+        from hillclimb.tui.graphview import event_stamp
 
         assert len(event_stamp("2026-08-22T07:55:38.777516+00:00")) == len("2026-08-22 09:55")
         assert event_stamp("not a date") == "not a date"
@@ -339,8 +339,8 @@ class TestDetail:
 
 @pytest.fixture
 def graph_workspace(tmp_path, monkeypatch):
-    from hillclimb.claims import Entity, ensure_concepts, save_entities
-    from hillclimb.knowledge import write_card
+    from hillclimb.modules.memory.claims import Entity, ensure_concepts, save_entities
+    from hillclimb.modules.memory.knowledge import write_card
 
     # deterministic render path regardless of the terminal the tests run in
     # (placeholder emits escape strings — safe headlessly)
@@ -385,7 +385,7 @@ def _cell_of_some_node(canvas) -> tuple[int, int, str]:
 
 @pytest.mark.asyncio
 async def test_graph_app_mounts_and_zooms(graph_workspace):
-    from hillclimb.graphview import GraphApp, GraphPlotWidget
+    from hillclimb.tui.graphview import GraphApp, GraphPlotWidget
 
     app = GraphApp(graph_workspace)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -404,7 +404,7 @@ async def test_graph_app_mounts_and_zooms(graph_workspace):
 
 @pytest.mark.asyncio
 async def test_drag_rotates_and_pan_moves_camera(graph_workspace):
-    from hillclimb.graphview import GraphApp, GraphPlotWidget
+    from hillclimb.tui.graphview import GraphApp, GraphPlotWidget
 
     app = GraphApp(graph_workspace)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -429,7 +429,7 @@ async def test_drag_rotates_and_pan_moves_camera(graph_workspace):
 async def test_click_selects_node_and_opens_detail(graph_workspace):
     from textual.widgets import RichLog
 
-    from hillclimb.graphview import GraphApp, GraphPlotWidget
+    from hillclimb.tui.graphview import GraphApp, GraphPlotWidget
 
     app = GraphApp(graph_workspace)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -450,7 +450,7 @@ async def test_click_selects_node_and_opens_detail(graph_workspace):
 
 @pytest.mark.asyncio
 async def test_scrubber_steps_and_refresh_keeps_state(graph_workspace):
-    from hillclimb.graphview import GraphApp, GraphPlotWidget, TimeScrubber
+    from hillclimb.tui.graphview import GraphApp, GraphPlotWidget, TimeScrubber
 
     app = GraphApp(graph_workspace)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -477,7 +477,7 @@ async def test_scrubber_steps_and_refresh_keeps_state(graph_workspace):
 
 @pytest.mark.asyncio
 async def test_scrubber_drag_rewinds_without_selecting_text(graph_workspace):
-    from hillclimb.graphview import GraphApp, GraphPlotWidget, TimeScrubber
+    from hillclimb.tui.graphview import GraphApp, GraphPlotWidget, TimeScrubber
 
     app = GraphApp(graph_workspace)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -505,7 +505,7 @@ async def test_scrubber_drag_rewinds_without_selecting_text(graph_workspace):
 
 @pytest.mark.asyncio
 async def test_zoom_out_collapses_and_members_expand(graph_workspace):
-    from hillclimb.graphview import GraphApp, GraphPlotWidget
+    from hillclimb.tui.graphview import GraphApp, GraphPlotWidget
 
     app = GraphApp(graph_workspace)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -526,7 +526,7 @@ async def test_zoom_out_collapses_and_members_expand(graph_workspace):
 
 @pytest.mark.asyncio
 async def test_legend_toggles_node_types_by_key_and_click(graph_workspace):
-    from hillclimb.graphview import LEGEND_COL, LEGEND_ROW, GraphApp, GraphPlotWidget
+    from hillclimb.tui.graphview import LEGEND_COL, LEGEND_ROW, GraphApp, GraphPlotWidget
 
     app = GraphApp(graph_workspace)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -549,7 +549,7 @@ async def test_legend_toggles_node_types_by_key_and_click(graph_workspace):
         assert "search" in types() and canvas.hidden_types == frozenset()
 
         # the `?` panel lists the hotkeys once, not eight times
-        from hillclimb.graphview import GraphKeys
+        from hillclimb.tui.graphview import GraphKeys
 
         await pilot.press("question_mark")
         await pilot.pause()
@@ -560,8 +560,8 @@ async def test_legend_toggles_node_types_by_key_and_click(graph_workspace):
 
 @pytest.mark.asyncio
 async def test_watch_g_opens_graph_screen(graph_workspace):
-    from hillclimb.graphview import GraphScreen
-    from hillclimb.watch import WatchApp
+    from hillclimb.tui.graphview import GraphScreen
+    from hillclimb.tui.watch import WatchApp
 
     graph_workspace.paths.runs_dir.mkdir(parents=True, exist_ok=True)
     app = WatchApp(graph_workspace)
@@ -577,7 +577,7 @@ async def test_watch_g_opens_graph_screen(graph_workspace):
 
 @pytest.mark.asyncio
 async def test_help_panel_toggles_and_lists_every_command(graph_workspace):
-    from hillclimb.graphview import GraphApp, GraphKeys, GraphPlotWidget
+    from hillclimb.tui.graphview import GraphApp, GraphKeys, GraphPlotWidget
 
     app = GraphApp(graph_workspace)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -608,8 +608,8 @@ async def test_help_panel_toggles_and_lists_every_command(graph_workspace):
 
 @pytest.mark.asyncio
 async def test_apps_use_the_cyan_theme(graph_workspace):
-    from hillclimb.graphview import GraphApp
-    from hillclimb.theme import HILLCLIMB_THEME
+    from hillclimb.tui.graphview import GraphApp
+    from hillclimb.tui.theme import HILLCLIMB_THEME
 
     app = GraphApp(graph_workspace)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -623,7 +623,7 @@ async def test_apps_use_the_cyan_theme(graph_workspace):
 
 @pytest.mark.asyncio
 async def test_hovering_and_clicking_a_label_hits_its_node(graph_workspace):
-    from hillclimb.graphview import GraphApp, GraphPlotWidget
+    from hillclimb.tui.graphview import GraphApp, GraphPlotWidget
 
     app = GraphApp(graph_workspace)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -646,7 +646,7 @@ def test_scrubber_ticks_are_evenly_spaced():
     """Many events on a narrow track used to round onto cells as gaps of
     two and three — pairs. The graduations are a ruler: equal gaps, fewer
     marks than events when they would not fit; one per event when they do."""
-    from hillclimb.graphview import tick_columns
+    from hillclimb.tui.graphview import tick_columns
 
     def gaps(cols: set[int]) -> set[int]:
         ordered = sorted(cols)
@@ -666,7 +666,7 @@ def test_scrubber_ticks_are_evenly_spaced():
     # the marks are the line's own cells with a centred stroke over them: never a box cross
     from rich.cells import cell_len
 
-    from hillclimb.graphview import TICK
+    from hillclimb.tui.graphview import TICK
 
     track = render_scrubber([f"t{i}" for i in range(81)], 40, 190).plain.split("\n")[0]
     assert "┼" not in track and "┿" not in track and cell_len(track) == 190
@@ -686,9 +686,9 @@ async def test_granularity_toggle_keeps_the_moment(graph_workspace):
     """`g` swaps the timeline to one tick per graph change and back; a
     historical cursor stays on the same moment, re-expressed in the new
     unit's index."""
-    from hillclimb.graph import rebuild_graph
-    from hillclimb.graphview import GraphApp, TimeScrubber
-    from hillclimb.knowledge import write_card
+    from hillclimb.modules.memory.graph import rebuild_graph
+    from hillclimb.tui.graphview import GraphApp, TimeScrubber
+    from hillclimb.modules.memory.knowledge import write_card
 
     # a claim observed mid-search (its candidate's finish): a tick of its own
     kdir = graph_workspace.learning.dir

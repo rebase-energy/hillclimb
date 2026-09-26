@@ -4,7 +4,7 @@
 # Needs the optional extra: pip install 'hillclimb[openevolve]'
 name: openevolve
 description: Quality-diversity search (MAP-Elites + islands) over hillclimb's operators.
-policy: hillclimb.policies.openevolve:OpenEvolvePolicy
+policy: hillclimb.modules.policies.openevolve:OpenEvolvePolicy
 params:
   num_drafts: 3          # seed population before evolving
   num_inspirations: 2    # extra solutions shown to each mutation

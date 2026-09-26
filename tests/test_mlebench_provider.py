@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from hillclimb import api
-from hillclimb.candidate import Candidate
+from hillclimb.harness.candidate import Candidate
 from hillclimb.problem import load_problem, resolve_target
 
 
@@ -99,7 +99,7 @@ def test_comp_id_resolves_as_problem(mb_config):
 
 
 def test_search_meta_records_resumable_target(mb_config, tmp_path):
-    from hillclimb.run import load_search_meta
+    from hillclimb.harness.run import load_search_meta
 
     problem = load_problem("mlebench://fake-comp", mb_config)
     run_dir = tmp_path / "runs" / "r1"
@@ -123,7 +123,7 @@ def test_post_search_grading_writes_report(mb_config, tmp_path, monkeypatch):
         graded["args"] = (submission, comp_id)
         return {"score": 0.91, "gold_medal": False, "silver_medal": True, "bronze_medal": False}
 
-    monkeypatch.setattr("hillclimb.grading.grade_submission", fake_grade)
+    monkeypatch.setattr("hillclimb.harness.grading.grade_submission", fake_grade)
     logs = []
     api._mlebench_grade(mb_config, problem, search_dir, selected, logs.append)
 

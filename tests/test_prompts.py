@@ -1,5 +1,4 @@
-from tests.factories import trial as mk_trial
-from hillclimb.operators.builtin import COMPLEXITY_CUES
+from hillclimb.modules.operators.builtin import COMPLEXITY_CUES
 from hillclimb.prompts.render import render
 import pytest
 
@@ -98,27 +97,6 @@ def test_all_complexity_cues_distinct():
     assert len(set(COMPLEXITY_CUES.values())) == 3
 
 
-def test_build_tree_marks_best_and_edges(tmp_path):
-    from hillclimb.journal import Journal
-    from hillclimb.candidate import Candidate
-    from hillclimb.viz import build_tree
-
-    journal = Journal(tmp_path / "j.jsonl")
-    journal.candidate_result(Candidate(candidate_id="c001", operator="draft", status="passing",
-                                       trials=[mk_trial(val_score=0.6)]))
-    journal.candidate_result(Candidate(candidate_id="c002", operator="debug", parent_id="c001", status="buggy"))
-    journal.candidate_result(Candidate(candidate_id="c003", operator="improve", parent_id="c001",
-                                       status="passing", trials=[mk_trial(val_score=0.8)],
-                                       summary="one change"))
-    graph = build_tree(journal, higher_is_better=True)
-    unq = lambda s: str(s).strip('"')
-    nodes = {unq(n.get_name()): n for n in graph.get_nodes()}
-    assert unq(nodes["c003"].get("fillcolor")) == "#fff59d"  # best = gold
-    assert unq(nodes["c002"].get("fillcolor")) == "#ffcdd2"  # buggy = red
-    edges = {(unq(e.get_source()), unq(e.get_destination())): e for e in graph.get_edges()}
-    assert unq(edges[("c001", "c002")].get("style")) == "dashed"  # debug edge
-
-
 # --- prompt overrides: <hillclimb dir>/prompts/<name>.md shadows the package ---
 
 
@@ -172,7 +150,7 @@ def test_search_record_pins_the_climber_and_snapshots_it(config, tmp_path):
     from hillclimb.api import create_run, create_search
     from hillclimb.climber import load_climber, load_snapshot
     from hillclimb.problem import load_problem
-    from hillclimb.run import RunMeta, load_search_meta
+    from hillclimb.harness.run import RunMeta, load_search_meta
     from tests.test_cli import write_problem
 
     root = tmp_path / "problems"
@@ -184,7 +162,7 @@ def test_search_record_pins_the_climber_and_snapshots_it(config, tmp_path):
     (climber_dir / "prompts").mkdir(parents=True)
     (climber_dir / "prompts" / "improve.md").write_text("tighter improve prompt: {{best_score}}\n\n{{contract}}\n")
     (climber_dir / "climber.yaml").write_text(
-        "policy: hillclimb.policies.greedy:GreedyPolicy\nparams: {num_drafts: 1}\nprompts: prompts\n"
+        "policy: hillclimb.modules.policies.greedy:GreedyPolicy\nparams: {num_drafts: 1}\nprompts: prompts\n"
     )
     config.climber.ref = str(climber_dir)
     search_dir = create_search(config, load_problem("p", config), run_dir, "r1", 60)
@@ -206,7 +184,7 @@ def test_a_search_refuses_to_start_on_a_climber_whose_prompts_do_not_lint(config
     in: create_search refuses before a search dir exists."""
     from hillclimb.api import create_run, create_search
     from hillclimb.problem import load_problem
-    from hillclimb.run import RunMeta
+    from hillclimb.harness.run import RunMeta
     from tests.test_cli import write_problem
 
     root = tmp_path / "problems"
@@ -215,7 +193,7 @@ def test_a_search_refuses_to_start_on_a_climber_whose_prompts_do_not_lint(config
     run_dir = create_run(config, RunMeta(run_id="r1", name="r1", kind="problem", target="p", problem_ids=["p"]))
     climber = tmp_path / "mine"
     (climber / "prompts").mkdir(parents=True)
-    (climber / "climber.yaml").write_text("policy: hillclimb.policies.greedy:GreedyPolicy\nprompts: prompts\n")
+    (climber / "climber.yaml").write_text("policy: hillclimb.modules.policies.greedy:GreedyPolicy\nprompts: prompts\n")
     (climber / "prompts" / "draft.md").write_text("{{typo_token}}\n")
     config.climber.ref = str(climber)
     with pytest.raises(ValueError, match="typo_token"):

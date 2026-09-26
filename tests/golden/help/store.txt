@@ -1,0 +1,13 @@
+                                                                                                                        
+ Usage: root store [OPTIONS] COMMAND [ARGS]...                                                                          
+                                                                                                                        
+ The record store behind the cross-run views (`store.backend` in config.yaml: files | sqlite)                           
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --help  -h        Show this message and exit.                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ searches  List the searches the store knows, best score per search.                                                  │
+│ sync      Import the hillclimb folder's searches into the configured store.                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

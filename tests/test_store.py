@@ -14,14 +14,14 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from hillclimb.candidate import Candidate
-from hillclimb.chart import climb_curves
+from hillclimb.harness.candidate import Candidate
+from hillclimb.tui.chart import climb_curves
 from hillclimb.config import Config
-from hillclimb.control import ControlCommand
-from hillclimb.journal import FileJournal, Journal
-from hillclimb.run import RunMeta, SearchMeta, load_search_meta
-from hillclimb.status import SearchStatus
-from hillclimb.store import DataStore, FileDataStore, SqliteDataStore, key_for, open_store, sync_store
+from hillclimb.harness.control import ControlCommand
+from hillclimb.harness.journal import FileJournal, Journal
+from hillclimb.harness.run import RunMeta, SearchMeta, load_search_meta
+from hillclimb.harness.status import SearchStatus
+from hillclimb.harness.store import DataStore, FileDataStore, SqliteDataStore, key_for, open_store, sync_store
 
 
 def _meta(run_id: str, search_id: str, key: str = "p", started: str = "2026-08-22T10:00:00+00:00") -> SearchMeta:

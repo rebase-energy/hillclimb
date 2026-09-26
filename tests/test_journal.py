@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from hillclimb.candidate import Candidate
-from hillclimb.journal import Journal
+from hillclimb.harness.candidate import Candidate
+from hillclimb.harness.journal import Journal
 
 
 def make_candidate(candidate_id: str, **kwargs) -> Candidate:
@@ -268,7 +268,7 @@ def test_old_and_new_records_for_one_candidate_replay_last_wins(tmp_path: Path):
 
 
 def test_flat_record_replays_through_the_sqlite_store(tmp_path: Path):
-    from hillclimb.store import SqliteDataStore
+    from hillclimb.harness.store import SqliteDataStore
 
     store = SqliteDataStore(tmp_path / "store.sqlite", runs_dir=tmp_path / "runs")
     key = ("run-1", "search-1")

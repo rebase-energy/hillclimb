@@ -1,0 +1,18 @@
+                                                                                                                        
+ Usage: root tree [OPTIONS] [SEARCH]                                                                                    
+                                                                                                                        
+ Live exploration tree of one search: what was expanded, what was left.                                                 
+                                                                                                                        
+ Roots across the top, one row per operator step; colour is the operator,                                               
+ silhouette is the fate (filled = expanded, ring = discontinued, diamond =                                              
+ best, dot = failed). Scroll zooms, drag pans, click a node for details,                                                
+ enter opens it in the candidate screen, j/k scrub through time, n/p switch                                             
+ search, `?` keys.                                                                                                      
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│   [search]      TEXT  latest (default), <run-id>, or <run-id>/<search-id>                                            │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --help  -h        Show this message and exit.                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

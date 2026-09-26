@@ -8,7 +8,7 @@ import sys
 import textwrap
 from pathlib import Path
 
-from hillclimb.executor import CommandExecutor, CommandHoldoutScorer
+from hillclimb.harness.executor import CommandExecutor, CommandHoldoutScorer
 
 EVALUATE = textwrap.dedent(
     """

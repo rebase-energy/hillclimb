@@ -1,0 +1,22 @@
+                                                                                                                        
+ Usage: root connect codex [OPTIONS]                                                                                    
+                                                                                                                        
+ The Codex CLI as the operator backend.                                                                                 
+                                                                                                                        
+ Runs `codex login`, then copies the credential into the isolated                                                       
+ `CODEX_HOME` searches use, so your personal `~/.codex` settings change                                                 
+ neither a search's results nor its token bill. `--auth openrouter` bills                                               
+ OpenRouter credits instead (`hillclimb connect openrouter` first).                                                     
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --auth                         TEXT  Who pays: subscription (default) | api-key | openrouter                         │
+│ --model                        TEXT  Model to ping with (default: the configured one)                                │
+│ --probe        --no-probe            Make one tool-free agent call to prove the route works [default: probe]         │
+│ --login        --no-login            Run `codex login` when logged out [default: login]                              │
+│ --default      --no-default          Write this backend into config.yaml. Default: only when no backend is pinned    │
+│                                      there yet                                                                       │
+│ --user                               Write the defaults to ~/.config/hillclimb/config.yaml instead of the hillclimb  │
+│                                      dir                                                                             │
+│ --help     -h                        Show this message and exit.                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

@@ -8,9 +8,9 @@ from tests.factories import trial as mk_trial
 import json
 from math import isclose
 
-from hillclimb.candidate import BackendInfo, Candidate
-from hillclimb.dirs import create_candidate_dir, create_search_dir
-from hillclimb.evaluation import (
+from hillclimb.harness.candidate import BackendInfo, Candidate
+from hillclimb.harness.dirs import create_candidate_dir, create_search_dir
+from hillclimb.harness.evaluation import (
     CandidateEvaluator,
     EvalResult,
     accept_band,
@@ -19,8 +19,8 @@ from hillclimb.evaluation import (
     holdout_threshold,
     improves,
 )
-from hillclimb.executor import RESULT_FILE
-from hillclimb.journal import Journal
+from hillclimb.harness.executor import RESULT_FILE
+from hillclimb.harness.journal import Journal
 from tests.conftest import CRASH_SCRIPT, executor_for, ok_script
 
 

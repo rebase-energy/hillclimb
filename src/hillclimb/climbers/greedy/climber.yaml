@@ -6,7 +6,7 @@
 #   > improve the best
 name: greedy
 description: Debug failing tips, draft a few branches, then improve the best; ensemble at the end.
-policy: hillclimb.policies.greedy:GreedyPolicy
+policy: hillclimb.modules.policies.greedy:GreedyPolicy
 params:
   num_drafts: 3                   # draft branches before improving
   max_debug_depth: 3              # failed fixes per failing chain

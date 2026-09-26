@@ -9,9 +9,9 @@ import pytest
 
 from hillclimb.backends.fake import FakeBackend
 from hillclimb.climber import ClimberLoadError, bundled_climbers, load_climber, tree_sha256
-from hillclimb.loop import PolicyLoop, SearchLoop
-from hillclimb.policies.greedy import GreedyPolicy
-from hillclimb.policy import Action
+from hillclimb.harness.loop import PolicyLoop, SearchLoop
+from hillclimb.modules.policies.greedy import GreedyPolicy
+from hillclimb.modules.policies.base import Action
 from tests.conftest import ok_script
 from tests.harness_factory import make_harness
 
@@ -97,7 +97,7 @@ def test_a_directory_climber_runs_with_its_own_operator_and_prompts(task, config
     draft_prompt = Path(journal.get("c001").candidate_dir, "prompt.md").read_text()
     assert draft_prompt.startswith("MY OWN DRAFT PROMPT for accuracy.")  # shadows the built-in by name
     # scoped to this search: the built-in registry never heard of `cross`
-    from hillclimb.operators import operator_names
+    from hillclimb.modules.operators import operator_names
     assert "cross" not in operator_names()
 
 
@@ -207,7 +207,7 @@ def test_a_run_folder_written_before_climbers_still_loads(tmp_path):
     the model)."""
     import yaml
 
-    from hillclimb.run import SearchMeta, load_search_meta
+    from hillclimb.harness.run import SearchMeta, load_search_meta
 
     search_dir = tmp_path / "runs" / "r" / "searches" / "gefcom-solar"
     search_dir.mkdir(parents=True)
@@ -235,14 +235,14 @@ def test_a_run_folder_written_before_climbers_still_loads(tmp_path):
 def test_the_engine_uses_the_tuner_the_user_or_the_manifest_names(config, tmp_path):
     """`search.tuner` reaches the harness (it silently did not for a while:
     the rig-based tune tests never went through api's wiring)."""
-    from hillclimb.search_strategy import build_tuner
-    from hillclimb.tuners.random_search import RandomTuner
+    from hillclimb.harness.glue import build_tuner
+    from hillclimb.modules.tuners.random_search import RandomTuner
 
     assert isinstance(build_tuner(config), RandomTuner)  # greedy's manifest says random
     root = tmp_path / "with-tuner"
     root.mkdir()
     (root / "climber.yaml").write_text(
-        "policy: hillclimb.policies.greedy:GreedyPolicy\ntuner: random\ntuner_params: {seed: 7}\n"
+        "policy: hillclimb.modules.policies.greedy:GreedyPolicy\ntuner: random\ntuner_params: {seed: 7}\n"
     )
     config.climber.ref = str(root)
     assert build_tuner(config).params == {"seed": 7}  # the manifest's params
@@ -258,10 +258,10 @@ def test_the_engine_uses_the_tuner_the_user_or_the_manifest_names(config, tmp_pa
 def test_execute_search_hands_the_harness_the_climbers_tuner(task, config, tmp_path, monkeypatch):
     """End to end through api: the Harness is constructed with the tuner,
     the operators and the prompts of the search's climber snapshot."""
-    import hillclimb.harness as harness_module
+    import hillclimb.harness.core as harness_module
     from hillclimb import api
-    from hillclimb.budget import BudgetManager
-    from hillclimb.run import RunMeta
+    from hillclimb.harness.budget import BudgetManager
+    from hillclimb.harness.run import RunMeta
 
     seen = {}
     original = harness_module.Harness
@@ -288,3 +288,42 @@ def test_execute_search_hands_the_harness_the_climbers_tuner(task, config, tmp_p
     assert seen["tuner"].params == {"seed": 11}
     assert seen["operators"].names() == ("draft", "debug", "improve", "ensemble")
     assert (search_dir / "climber" / "climber.yaml").is_file()  # the snapshot the engine loaded
+
+
+# --- refs recorded before the package-layout move still resolve ---
+
+def test_modernize_maps_only_what_moved():
+    from hillclimb._moved import modernize
+
+    assert modernize("hillclimb.policies.greedy:GreedyPolicy") == "hillclimb.modules.policies.greedy:GreedyPolicy"
+    assert modernize("hillclimb.similarity_scores.builtin:ApiCalls") == "hillclimb.modules.similarity.builtin:ApiCalls"
+    assert modernize("hillclimb.integrations.gepa.loop:GepaLoop") == "hillclimb.integrations.gepa.loop:GepaLoop"
+    assert modernize("mypkg.policies.x:Y") == "mypkg.policies.x:Y"
+
+
+def test_a_manifest_with_a_pre_move_ref_still_loads(tmp_path):
+    from hillclimb.modules.policies.greedy import GreedyPolicy
+
+    root = tmp_path / "old"
+    root.mkdir()
+    (root / "climber.yaml").write_text("name: old\npolicy: hillclimb.policies.greedy:GreedyPolicy\n")
+    loop = load_climber(str(root)).build_loop()
+    assert isinstance(loop.policy, GreedyPolicy)
+
+
+def test_a_search_snapshot_with_a_pre_move_ref_still_resumes(task, config, tmp_path):
+    """The v3 run folder written before the move: its climber/ snapshot names
+    the policy by the old module path, and resume loads that snapshot."""
+    from hillclimb import api
+    from hillclimb.climber import load_snapshot
+    from hillclimb.modules.policies.greedy import GreedyPolicy
+    from hillclimb.harness.run import RunMeta
+
+    run_dir = api.create_run(config, RunMeta(run_id="r1", name="r1", kind="problem", target="t", problem_ids=[task.problem_id]))
+    search_dir = api.create_search(config, task, run_dir, "r1", 600)
+    manifest = search_dir / "climber" / "climber.yaml"
+    text = manifest.read_text().replace("hillclimb.modules.policies.greedy:", "hillclimb.policies.greedy:")
+    assert "hillclimb.policies.greedy:GreedyPolicy" in text  # the old spelling is what we test
+    manifest.write_text(text)
+    loop = load_snapshot(search_dir, name="greedy").build_loop()
+    assert isinstance(loop.policy, GreedyPolicy)

@@ -8,12 +8,12 @@ from pathlib import Path
 import pytest
 
 from hillclimb.backends.fake import FakeBackend
-from hillclimb.budget import BudgetManager
+from hillclimb.harness.budget import BudgetManager
 from tests.conftest import local_executor
-from hillclimb.journal import Journal
+from hillclimb.harness.journal import Journal
 from tests.harness_factory import SearchRig
-from hillclimb.search import ParkedSearch
-from hillclimb.status import (
+from hillclimb.harness.glue import ParkedSearch
+from hillclimb.harness.status import (
     SearchStatus,
     StatusWriter,
     effective_state,
@@ -21,7 +21,7 @@ from hillclimb.status import (
     read_status,
     write_status,
 )
-from hillclimb.dirs import create_search_dir
+from hillclimb.harness.dirs import create_search_dir
 from tests.conftest import ok_script
 
 DEAD_PID = 2**22  # above macOS/Linux pid ranges

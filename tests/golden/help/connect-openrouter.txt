@@ -1,0 +1,22 @@
+                                                                                                                        
+ Usage: root connect openrouter [OPTIONS]                                                                               
+                                                                                                                        
+ OpenRouter credits as the bill for codex or pi operators.                                                              
+                                                                                                                        
+ The only credential hillclimb stores itself: the key is validated against                                              
+ OpenRouter (one unbilled call), then written to the `.env` beside                                                      
+ config.yaml that `hillclimb init` gitignores — never into config.yaml,                                                 
+ where it could be journaled. `--backend codex` also pins the route.                                                    
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --key                          TEXT  The API key; omitted, connect asks for it (input hidden)                        │
+│ --backend                      TEXT  Also route this backend through OpenRouter: codex | pi                          │
+│ --model                        TEXT  OpenRouter model id, e.g. qwen/qwen3-coder                                      │
+│ --probe        --no-probe            Make one tool-free agent call to prove the route works [default: probe]         │
+│ --default      --no-default          Write this backend into config.yaml. Default: only when no backend is pinned    │
+│                                      there yet                                                                       │
+│ --user                               Write the defaults to ~/.config/hillclimb/config.yaml instead of the hillclimb  │
+│                                      dir                                                                             │
+│ --help     -h                        Show this message and exit.                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

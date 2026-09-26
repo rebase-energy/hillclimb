@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb import kaggle_client
-from hillclimb.kaggle_client import (
+from hillclimb.integrations.mlebench import kaggle_client
+from hillclimb.integrations.mlebench.kaggle_client import (
     KaggleError,
     list_submissions,
     submit_competition,

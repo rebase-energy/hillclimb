@@ -1,5 +1,8 @@
 # GEPA × OpenEvolve × Greedy — three-arm live results
 
+*Paths as written at the time: `search_strategy.py`, `policy.py`, `evaluation.py` and friends moved in the 2026-09 package-layout refactor — see `docs/package-layout-plan.md`.*
+
+
 The Phase 9 acceptance experiment from `docs/gepa-integration-plan.md`: one
 problem, three search engines, one shared seed, three repeats each. The gate is
 honest execution and measurement, not a win for any arm.

@@ -1,0 +1,16 @@
+                                                                                                                        
+ Usage: root problem get [OPTIONS] [PROBLEM]                                                                            
+                                                                                                                        
+ Copy a ready-made problem into hillclimb/problems/.                                                                    
+                                                                                                                        
+ Creates the hillclimb/ dir here if there is none, then copies the                                                      
+ problem's files in and lists them — read them before you run: the                                                      
+ verifier IS the problem. An existing folder is never overwritten.                                                      
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│   [problem]      TEXT  A bundled problem id (see: hillclimb problem list) [default: circle-packing]                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --help  -h        Show this message and exit.                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
