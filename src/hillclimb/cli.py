@@ -451,11 +451,11 @@ PROBLEM_FILES = (
     ("problem.yaml", "metric, direction, budget — the problem's identity"),
     ("description.md", "what the agents read before drafting"),
     ("contract.md", "the interface solution.py must implement"),
-    ("interface.py", "machine-checked I/O declaration (hillclimb spaces)"),
+    ("interface.py", "the output format, machine-checked (hillclimb spaces)"),
     ("verifier.sh", "the ONLY process hillclimb starts: drives solution.py and reports the score"),
     ("verify.py", "the scorer — writes the score to $HILLCLIMB_RESULT"),
     ("baseline.py", "the starting solution scored at t=0"),
-    ("sample_submission.csv", "the output format a solution must produce"),
+    ("sample_submission.csv", "a valid, weak submission: the floor the search starts from"),
     ("requirements.txt", "the solution venv"),
 )
 
