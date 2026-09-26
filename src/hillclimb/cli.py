@@ -145,6 +145,52 @@ BANNER_LINES = [
 BANNER_WIDTH = max(len(line) for line in BANNER_LINES)
 
 
+_CONSOLE = None
+
+
+def _console():
+    """One rich console for the CLI's own messages, on the theme's palette:
+    commands bold cyan, paths cyan, explanations dim. No color when stdout
+    is not a terminal (a pipe, a test), exactly like the banner."""
+    global _CONSOLE
+    if _CONSOLE is None:
+        from rich.console import Console
+        from rich.theme import Theme
+
+        _CONSOLE = Console(highlight=False, theme=Theme({
+            "cmd": "bold cyan", "path": "cyan", "note": "dim", "head": "bold",
+            "ok": "green", "warn": "yellow", "bad": "bold red",
+        }))
+    return _CONSOLE
+
+
+def say(text: str = "") -> None:
+    """Print with rich markup: [cmd]hillclimb init[/], [path]…[/], [note]…[/], [head]…[/]."""
+    _console().print(text, soft_wrap=True)
+
+
+def _m(text) -> str:
+    """Escape a value (a path, an id) for rich markup."""
+    from rich.markup import escape
+
+    return escape(str(text))
+
+
+def legend(rows, indent: int = 2) -> None:
+    """Aligned `key — note` rows: the key in the path color, the note dim."""
+    width = max(len(key) for key, _ in rows)
+    for key, note in rows:
+        say(f"{' ' * indent}[path]{_m(key):<{width}}[/]  [note]— {_m(note)}[/]")
+
+
+def next_steps(rows) -> None:
+    """`Next:` then one command per line with a dim note beside it."""
+    width = max(len(cmd) for cmd, _ in rows)
+    for index, (cmd, note) in enumerate(rows):
+        lead = "[head]Next:[/]" if index == 0 else "     "
+        say(f"{lead} [cmd]{_m(cmd):<{width}}[/]  [note]{_m(note)}[/]")
+
+
 def print_banner() -> None:
     """Print the mark + wordmark; drop the mark, then the art, as the terminal narrows."""
     from rich.console import Console
@@ -410,21 +456,22 @@ def problem_get(
         typer.echo(f"error: no bundled problem {problem!r} (available: {available})", err=True)
         raise typer.Exit(1)
     if find_hillclimb_dir() is None:
-        typer.echo(f"No hillclimb dir here. {problem} needs one: a hillclimb/ folder holding")
-        typer.echo("config.yaml, problems/ (where the problem goes) and runs/ (where searches land).")
+        say(f"[head]No hillclimb dir here.[/] {_m(problem)} needs one: a [path]hillclimb/[/] folder holding")
+        say("[path]config.yaml[/], [path]problems/[/] [note](where the problem goes)[/] and [path]runs/[/] [note](where searches land)[/].")
         if _stdin_is_tty() and not typer.confirm(f"Create {Path.cwd() / MARKER_DIR}?", default=True):
-            typer.echo("Not created. Run `hillclimb init` where you want it, then `hillclimb problem get` again.")
+            say("Not created. Run [cmd]hillclimb init[/] where you want it, then [cmd]hillclimb problem get[/] again.")
             raise typer.Exit(1)
         folder = scaffold_hillclimb_dir(Path.cwd(), example=False)
-        typer.echo(f"Created {folder} (config.yaml, problems/, runs/)")
+        say(f"Created [path]{_m(folder)}[/] [note](config.yaml, problems/, runs/)[/]")
     config = load_config()
     problem_dir, created = install_demo_problem(config.paths.problems_dir, problem)
     verb = "Fetched" if created else "Already have"
-    typer.echo(f"{verb} {problem} at {problem_dir}")
-    for name, what in PROBLEM_FILES:
-        if (problem_dir / name).exists():
-            typer.echo(f"  {name:<24}— {what}")
-    typer.echo(f"Next: hillclimb verify {problem}   (then: hillclimb run {problem} --budget 10m)")
+    say(f"[head]{verb} {_m(problem)}[/] at [path]{_m(problem_dir)}[/]")
+    legend([(name, what) for name, what in PROBLEM_FILES if (problem_dir / name).exists()])
+    next_steps([
+        (f"hillclimb verify {problem}", "scores the floor; the spread it prints is the noise"),
+        (f"hillclimb run {problem} --budget 10m", "then climb"),
+    ])
 
 
 @app.command(hidden=True)
@@ -495,14 +542,18 @@ def init(
         )
         raise typer.Exit(1)
     folder = scaffold_hillclimb_dir(root)
-    typer.echo(f"Initialized hillclimb dir at {folder}")
-    typer.echo(f"  {MARKER_DIR}/{MARKER_FILE}    — config (edit defaults here)")
-    typer.echo(f"  {MARKER_DIR}/problems/      — problem definitions (example/ is a working one)")
-    typer.echo(f"  {MARKER_DIR}/specs/         — committed run specs")
-    typer.echo(f"  {MARKER_DIR}/runs/          — search artifacts (gitignored)")
-    typer.echo("Next: hillclimb connect                  (which agent runs the operators, and who pays)")
-    typer.echo("      hillclimb problem get heilbronn-11  (a bundled problem; `problem list` shows them all)")
-    typer.echo("      hillclimb verify example            (or your own: edit problems/example, then run it)")
+    say(f"[head]Initialized hillclimb dir[/] at [path]{_m(folder)}[/]")
+    legend([
+        (f"{MARKER_DIR}/{MARKER_FILE}", "config (edit defaults here)"),
+        (f"{MARKER_DIR}/problems/", "problem definitions (example/ is a working one)"),
+        (f"{MARKER_DIR}/specs/", "committed run specs"),
+        (f"{MARKER_DIR}/runs/", "search artifacts (gitignored)"),
+    ])
+    next_steps([
+        ("hillclimb connect", "which agent runs the operators, and who pays"),
+        ("hillclimb problem get heilbronn-11", "a bundled problem; `problem list` shows them all"),
+        ("hillclimb verify example", "or your own: edit problems/example, then run it"),
+    ])
 
 
 @app.command()
@@ -548,7 +599,7 @@ def verify(
         problem.unit_tests = freeze_for_run(problem, root)
         executor = build_executor(config, problem)
         test_runner = build_unit_test_runner(config, problem)
-        typer.echo(f"{problem.problem_id}: {' '.join(problem.verifier_cmd)}")
+        say(f"[head]{_m(problem.problem_id)}[/]: [path]{_m(' '.join(problem.verifier_cmd))}[/]")
         for index in range(max(1, repeat)):
             candidate_dir = create_candidate_dir(
                 root, f"v{index}", problem.data_dir, problem.problem_dir,
@@ -572,7 +623,7 @@ def verify(
                 typer.echo(f"  logs: {result.stdout_path}", err=True)
                 raise typer.Exit(1)
             scores.append(result.val_score)
-            typer.echo(f"  run {index}: {problem.metric_name} = {result.val_score:.6g}")
+            say(f"  run {index}: {_m(problem.metric_name)} = [head]{result.val_score:.6g}[/]")
             if index == 0 and test_runner is not None:
                 remaining = config.budget.exec_timeout_s - result.duration_s
                 if remaining <= 0:
@@ -610,7 +661,7 @@ def verify(
                     for violation in violations:
                         typer.echo(f"  interface: {violation}", err=True)
                     raise typer.Exit(1)
-                typer.echo("  interface: OK")
+                say("  interface: [ok]OK[/]")
             if holdout:
                 scorer = build_holdout_scorer(config, problem, root)
                 if scorer is None:
@@ -622,12 +673,12 @@ def verify(
         centre = statistics.median(scores)
         mad = statistics.median([abs(value - centre) for value in scores])
         spread = max(scores) - min(scores)
-        typer.echo(
-            f"\n{len(scores)} runs: median {centre:.6g}, spread {spread:.6g}, "
-            f"noise floor (MAD) {mad:.6g}"
+        say(
+            f"\n{len(scores)} runs: median [head]{centre:.6g}[/], spread [head]{spread:.6g}[/], "
+            f"noise floor (MAD) [head]{mad:.6g}[/]"
         )
         if mad == 0:
-            typer.echo("deterministic across runs — any improvement is real")
+            say("[ok]deterministic across runs — any improvement is real[/]")
             return
         typer.echo(
             f"an improvement smaller than ~{2 * mad:.3g} cannot be told from noise. "
@@ -1696,17 +1747,17 @@ def _execute(
         scores = f"val_score={selected.val_score}"
         if selected.holdout_score is not None:
             scores += f", holdout={selected.holdout_score:.5g}"
-        typer.echo(
-            f"\nDone. Selected candidate {selected.candidate_id}: {scores} "
-            f"({problem.metric_name}, {'higher' if problem.higher_is_better else 'lower'} is better)"
+        say(
+            f"\n[head]Done.[/] Selected candidate [head]{_m(selected.candidate_id)}[/]: {_m(scores)} "
+            f"[note]({_m(problem.metric_name)}, {'higher' if problem.higher_is_better else 'lower'} is better)[/]"
         )
     else:
-        typer.echo("\nDone. No scored solution; best/ holds the t=0 baseline.")
+        say("\n[head]Done.[/] No scored solution; best/ holds the t=0 baseline.")
     # the solution is always the artifact; a submission file only exists
     # where the problem's verifier asks for one
     artifact = "solution.py"
-    typer.echo(f"Best artifact: {search_dir / 'best' / artifact}")
-    typer.echo(f"Inspect with: hillclimb status {ref}")
+    say(f"Best artifact: [path]{_m(search_dir / 'best' / artifact)}[/]")
+    say(f"Inspect with:  [cmd]hillclimb status {_m(ref)}[/]")
 
 
 def _run_problem(
@@ -2353,7 +2404,7 @@ def reset(
     mine = engines_for(root, engines)
     unknown = [e for e in engines if e.hillclimb_dir is None]
 
-    typer.echo(f"Will delete {root}")
+    say(f"[head]Will delete[/] [path]{_m(root)}[/]")
     if mine:
         typer.echo(f"and terminate {len(mine)} engine(s) running against it (with their agents and verifiers):")
         for engine in mine:
@@ -2382,7 +2433,7 @@ def reset(
             + (f"; {len(forced)} needed SIGKILL." if forced else ".")
         )
     shutil.rmtree(root)
-    typer.echo(f"Deleted {root}")
+    say(f"[head]Deleted[/] [path]{_m(root)}[/]")
 
 
 @app.command()
