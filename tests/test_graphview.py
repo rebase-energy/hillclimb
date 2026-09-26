@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from hillclimb.config import Config
-from hillclimb.graph import GraphEdge, GraphNode, KnowledgeGraph, rebuild_graph
+from hillclimb.modules.memory.graph import GraphEdge, GraphNode, KnowledgeGraph, rebuild_graph
 from hillclimb.tui.graphview import (
     COLLAPSE_ENTER,
     COLLAPSE_EXIT,
@@ -339,8 +339,8 @@ class TestDetail:
 
 @pytest.fixture
 def graph_workspace(tmp_path, monkeypatch):
-    from hillclimb.claims import Entity, ensure_concepts, save_entities
-    from hillclimb.knowledge import write_card
+    from hillclimb.modules.memory.claims import Entity, ensure_concepts, save_entities
+    from hillclimb.modules.memory.knowledge import write_card
 
     # deterministic render path regardless of the terminal the tests run in
     # (placeholder emits escape strings — safe headlessly)
@@ -686,9 +686,9 @@ async def test_granularity_toggle_keeps_the_moment(graph_workspace):
     """`g` swaps the timeline to one tick per graph change and back; a
     historical cursor stays on the same moment, re-expressed in the new
     unit's index."""
-    from hillclimb.graph import rebuild_graph
+    from hillclimb.modules.memory.graph import rebuild_graph
     from hillclimb.tui.graphview import GraphApp, TimeScrubber
-    from hillclimb.knowledge import write_card
+    from hillclimb.modules.memory.knowledge import write_card
 
     # a claim observed mid-search (its candidate's finish): a tick of its own
     kdir = graph_workspace.learning.dir

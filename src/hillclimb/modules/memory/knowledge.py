@@ -30,7 +30,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from hillclimb.candidate import utcnow
 from hillclimb.direction import legacy_direction_key
-from hillclimb.claims import Claim
+from hillclimb.modules.memory.claims import Claim
 
 SCHEMA_VERSION = 1
 CARD_FILENAME = "knowledge_card.yaml"

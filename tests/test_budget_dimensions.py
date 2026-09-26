@@ -9,8 +9,8 @@ from hillclimb.budget import Spend, journal_spend
 from hillclimb.candidate import BackendInfo, Candidate
 from hillclimb.journal import Journal
 from hillclimb.loop import PolicyLoop, SearchLoop
-from hillclimb.policies.greedy import GreedyPolicy
-from hillclimb.policy import Action
+from hillclimb.modules.policies.greedy import GreedyPolicy
+from hillclimb.modules.policies.base import Action
 from hillclimb.status import SearchStatus, StatusWriter
 from tests.conftest import ok_script
 from tests.factories import trial as mk_trial

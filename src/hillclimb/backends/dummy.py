@@ -121,7 +121,7 @@ class DummyBackend:
             return OperatorResult(ok=True, session_id=f"dummy-{self.calls}", duration_s=0.0)
         # canned behaviour follows the KIND of attempt, so a climber's own
         # operators get a sensible stand-in too
-        from hillclimb.operators import role_of
+        from hillclimb.modules.operators import role_of
 
         role = request.role or role_of(request.operator)
         if role == "create" and self.calls == 1:

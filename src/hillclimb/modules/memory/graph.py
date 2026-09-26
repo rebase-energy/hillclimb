@@ -24,7 +24,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from hillclimb.candidate import utcnow
-from hillclimb.claims import (
+from hillclimb.modules.memory.claims import (
     Claim,
     claim_key,
     load_concepts,
@@ -102,7 +102,7 @@ def graph_path(knowledge_dir: Path) -> Path:
 def load_all_cards(knowledge_dir: Path) -> list:
     """Every card in the knowledge dir (family subdirs), oldest first.
     Corrupt or version-mismatched cards are skipped, as everywhere."""
-    from hillclimb.knowledge import SCHEMA_VERSION, KnowledgeCard
+    from hillclimb.modules.memory.knowledge import SCHEMA_VERSION, KnowledgeCard
 
     cards = []
     if not knowledge_dir.exists():
@@ -325,7 +325,7 @@ def build_graph(knowledge_dir: Path, previous: KnowledgeGraph | None = None) -> 
     # to a `paper:` node instead of a `search:` node. A scoped paper also
     # materializes its family/problem anchors so the linkage is inspectable
     # BEFORE any search has run on that problem.
-    from hillclimb.papers import load_papers
+    from hillclimb.modules.memory.papers import load_papers
 
     for paper in load_papers(knowledge_dir):
         t = paper.added_at
@@ -376,7 +376,7 @@ def build_graph(knowledge_dir: Path, previous: KnowledgeGraph | None = None) -> 
 
     # generalized (consolidated) claims: scoped to a concept, linked down to
     # the family-scoped claims they were lifted from
-    from hillclimb.claims import load_consolidated_claims
+    from hillclimb.modules.memory.claims import load_consolidated_claims
 
     for claim in load_consolidated_claims(knowledge_dir):
         all_claims.append(claim)
@@ -413,7 +413,7 @@ def build_graph(knowledge_dir: Path, previous: KnowledgeGraph | None = None) -> 
     # fold credit events into per-claim track records: adjusted confidence
     # drives retrieval; a conclusively bad record retires the claim through
     # the same supersession machinery (visible in history, gone from now)
-    from hillclimb.credit import (
+    from hillclimb.modules.memory.credit import (
         adjusted_confidence,
         fold_track,
         load_credit_events,

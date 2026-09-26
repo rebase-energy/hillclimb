@@ -12,7 +12,7 @@ from hillclimb.budget import BudgetManager
 from hillclimb.config import Config, RouteConfig
 from tests.conftest import local_executor
 from hillclimb.journal import Journal
-from hillclimb.policy import Route
+from hillclimb.modules.policies.base import Route
 from hillclimb.routing import BackendPool, ResolvedRoute, Router
 from tests.harness_factory import SearchRig
 from hillclimb.dirs import create_search_dir

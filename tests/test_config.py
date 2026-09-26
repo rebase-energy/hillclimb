@@ -181,7 +181,7 @@ def test_pi_models_file_resolves_from_project_root(tmp_path: Path, monkeypatch):
 
 
 def test_sampling_validation_checks_inherited_routes_and_action_override():
-    from hillclimb.policy import Route
+    from hillclimb.modules.policies.base import Route
     from hillclimb.routing import Router
 
     with pytest.raises(ValueError, match="routing.improve: sampling"):

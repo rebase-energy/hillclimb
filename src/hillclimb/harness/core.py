@@ -19,9 +19,9 @@ from hillclimb.executor import Executor
 from hillclimb.journal import Journal, PolicyJournal
 from hillclimb.params import ParamsFile, read_candidate_space, write_inherited_params
 from hillclimb.loop import ClimberError, HarnessClosed, Outcome, SearchInfo, SearchLoop, Ticket
-from hillclimb.policy import INJECT_ACTION, TUNE_ACTION, Action, BudgetView, InflightRef, PolicyInput
+from hillclimb.modules.policies.base import INJECT_ACTION, TUNE_ACTION, Action, BudgetView, InflightRef, PolicyInput
 from hillclimb.climber import OperatorSet
-from hillclimb.operators import (
+from hillclimb.modules.operators import (
     CONTRACT_TOKEN,
     MemoryContext,
     Operator,
@@ -38,7 +38,7 @@ from hillclimb.search_strategy import ParkedSearch, StopRequested  # noqa: F401 
 from hillclimb.slots import MachineSlots
 from hillclimb.spaces import describe_params as spaces_describe, with_values
 from hillclimb.status import CandidateCounts, CurrentCandidate, ScoreRef, StatusWriter
-from hillclimb.tuner import Tuner, history_for, tune_seed
+from hillclimb.modules.tuners.base import Tuner, history_for, tune_seed
 from hillclimb.problem import ProblemSpec
 from hillclimb.dirs import create_candidate_dir
 
@@ -181,7 +181,7 @@ class Harness:
         self.reference_solution = reference_solution
         self.reference_note = reference_note
         if tuner is None:
-            from hillclimb.tuners.random_search import RandomTuner
+            from hillclimb.modules.tuners.random_search import RandomTuner
 
             tuner = RandomTuner(config.climber.tuner_params)
         self.tuner = tuner  # which params a `tune` action tries; WHEN is the policy's call
@@ -651,7 +651,7 @@ class Harness:
         run_dir = self._live_run_dir()
         if run_dir is None:
             return
-        from hillclimb.knowledge import distill_card, write_live_card
+        from hillclimb.modules.memory.knowledge import distill_card, write_live_card
 
         try:
             card = distill_card(
@@ -674,7 +674,7 @@ class Harness:
         run_dir = self._live_run_dir()
         if run_dir is None:
             return ""
-        from hillclimb.knowledge import load_live_cards, problem_family, render_live_experience
+        from hillclimb.modules.memory.knowledge import load_live_cards, problem_family, render_live_experience
 
         try:
             cards = load_live_cards(

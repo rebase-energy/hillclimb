@@ -33,7 +33,7 @@ from rich.style import Style
 from rich.text import Text
 
 from hillclimb.config import Config
-from hillclimb.graph import GraphNode, KnowledgeGraph, fuzzy_match, graph_at
+from hillclimb.modules.memory.graph import GraphNode, KnowledgeGraph, fuzzy_match, graph_at
 from hillclimb.tui.theme import HILLCLIMB_CSS, apply_theme, themed_plot
 
 # --- pure data layer ---
@@ -1125,7 +1125,7 @@ class GraphScreen(KeysMixin, Screen):
         return resolve_knowledge_dir(self.config)
 
     def refresh_data(self) -> None:
-        from hillclimb.graph import graph_path, load_or_build_graph
+        from hillclimb.modules.memory.graph import graph_path, load_or_build_graph
 
         canvas = self.query_one("#graph-canvas", GraphPlotWidget)
         if canvas.dragging:
@@ -1259,7 +1259,7 @@ class GraphScreen(KeysMixin, Screen):
 
     def _timeline(self) -> tuple[list[str], str]:
         """The scrubber's events and unit for the current granularity."""
-        from hillclimb.graph import change_events
+        from hillclimb.modules.memory.graph import change_events
 
         if self._graph is None:
             return [], "search"

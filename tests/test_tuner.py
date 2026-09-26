@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from hillclimb.params import parse_space
-from hillclimb.tuner import Observation, history_for, tune_seed
-from hillclimb.tuners import get_tuner
+from hillclimb.modules.tuners.base import Observation, history_for, tune_seed
+from hillclimb.modules.tuners import get_tuner
 from tests.factories import candidate, trial
 
 SPACE = parse_space({

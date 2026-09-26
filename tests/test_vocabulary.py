@@ -61,7 +61,7 @@ def test_no_lower_is_better_in_source():
 
 
 def test_legacy_lower_is_better_key_loads_inverted():
-    from hillclimb.knowledge import KnowledgeCard
+    from hillclimb.modules.memory.knowledge import KnowledgeCard
     from hillclimb.run import SearchMeta
     from hillclimb.report import compact_report
 

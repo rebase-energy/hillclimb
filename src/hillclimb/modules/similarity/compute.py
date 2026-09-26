@@ -11,7 +11,7 @@ from typing import Any
 
 import numpy as np
 
-from hillclimb.similarity_scores.base import SimilarityScore, Solution
+from hillclimb.modules.similarity.base import SimilarityScore, Solution
 
 
 def cache_root() -> Path:

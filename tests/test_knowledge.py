@@ -11,7 +11,7 @@ import pytest
 from hillclimb.backends.fake import FakeBackend
 from hillclimb.candidate import BackendInfo, Candidate
 from hillclimb.journal import Journal
-from hillclimb.knowledge import (
+from hillclimb.modules.memory.knowledge import (
     KnowledgeCard,
     complexity_offset,
     distill_card,
@@ -284,8 +284,8 @@ class TestEndToEnd:
 
         # credit assignment: run-two improved 0.7 -> 0.8 over run-one's
         # record, so the injected claim earned a full-reward event...
-        from hillclimb.credit import load_credit_events
-        from hillclimb.graph import graph_path, load_graph
+        from hillclimb.modules.memory.credit import load_credit_events
+        from hillclimb.modules.memory.graph import graph_path, load_graph
 
         events = load_credit_events(tmp_path / "knowledge")
         assert len(events) == 1

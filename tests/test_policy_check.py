@@ -11,9 +11,9 @@ import pytest
 
 from hillclimb.candidate import Candidate
 from hillclimb.journal import Journal
-from hillclimb.policies.greedy import GreedyPolicy
-from hillclimb.policy import Action, PolicyInput
-from hillclimb.policy_check import JournalCase, check_policy
+from hillclimb.modules.policies.greedy import GreedyPolicy
+from hillclimb.modules.policies.base import Action, PolicyInput
+from hillclimb.modules.policies.check import JournalCase, check_policy
 from tests.test_policy import add_candidate
 
 

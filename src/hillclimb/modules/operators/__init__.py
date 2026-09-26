@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from hillclimb.operators.base import (
+from hillclimb.modules.operators.base import (
     CONTRACT_TOKEN,
     RESERVED_ROLES,
     ROLES,
@@ -21,7 +21,7 @@ from hillclimb.operators.base import (
     ProblemInfo,
     inspiration_filename,
 )
-from hillclimb.operators.builtin import BUILTIN_OPERATORS
+from hillclimb.modules.operators.builtin import BUILTIN_OPERATORS
 
 _OPERATORS: dict[str, type[Operator]] = {cls.name: cls for cls in BUILTIN_OPERATORS}
 

@@ -6,7 +6,7 @@ need no persistent study state: the engine rebuilds the history from the
 journal on every call. WHEN to tune, and how much, is the search policy's
 decision (`Action(operator="tune")`), never the tuner's.
 
-Implementations live in `hillclimb.tuners` (`random`: stdlib, the default
+Implementations live in `hillclimb.modules.tuners` (`random`: stdlib, the default
 and the test double; `optuna`: TPE via the optional extra).
 """
 

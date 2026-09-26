@@ -24,7 +24,7 @@ from hillclimb.candidate import Candidate
 from hillclimb.config import Config
 from hillclimb.control import request_prune, request_stop
 from hillclimb.journal import Journal
-from hillclimb.policies import policy_label
+from hillclimb.modules.policies import policy_label
 from hillclimb.run import RunMeta, SearchMeta, run_display_name
 from hillclimb.run import search_ref as _search_ref
 from hillclimb.status import SearchStatus, live_remaining_s, live_spent_s

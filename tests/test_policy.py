@@ -16,9 +16,9 @@ from hillclimb.candidate import Candidate
 from tests.conftest import local_executor
 from hillclimb.journal import Journal
 from hillclimb.evaluation import accept_band
-from hillclimb.policies import get_policy
-from hillclimb.policies.greedy import GreedyPolicy
-from hillclimb.policy import Action, BudgetView, InflightRef, PolicyInput
+from hillclimb.modules.policies import get_policy
+from hillclimb.modules.policies.greedy import GreedyPolicy
+from hillclimb.modules.policies.base import Action, BudgetView, InflightRef, PolicyInput
 from tests.harness_factory import SearchRig
 from hillclimb.dirs import create_search_dir
 from tests.conftest import ok_script
@@ -298,8 +298,8 @@ def test_ensemble_knobs_from_policy_params(journal, config, tmp_path):
 # --- file policies: an edited exploration process loaded from a path ---
 
 FILE_POLICY = '''
-from hillclimb.policies.greedy import GreedyPolicy
-from hillclimb.policy import Action
+from hillclimb.modules.policies.greedy import GreedyPolicy
+from hillclimb.modules.policies.base import Action
 
 
 class DraftsOnly(GreedyPolicy):
@@ -318,7 +318,7 @@ class DraftsOnly(GreedyPolicy):
 def test_file_policy_loads_by_path_and_is_hashed(tmp_path, journal, config):
     import hashlib
 
-    from hillclimb.policies import get_policy, policy_label, policy_path, policy_sha256
+    from hillclimb.modules.policies import get_policy, policy_label, policy_path, policy_sha256
 
     path = tmp_path / "hillclimb" / "policies" / "drafts_only.py"
     path.parent.mkdir(parents=True)
@@ -339,11 +339,11 @@ def test_file_policy_loads_by_path_and_is_hashed(tmp_path, journal, config):
 
 
 def test_file_policy_exposes_POLICY_class_or_factory(tmp_path):
-    from hillclimb.policies import get_policy
+    from hillclimb.modules.policies import get_policy
 
     factory_file = tmp_path / "factory.py"
     factory_file.write_text(
-        "from hillclimb.policies.greedy import GreedyPolicy\n"
+        "from hillclimb.modules.policies.greedy import GreedyPolicy\n"
         "class A(GreedyPolicy):\n    name = 'a'\n"
         "class B(GreedyPolicy):\n    name = 'b'\n"
         "def POLICY(params, *, complexity_start=0):\n"
@@ -365,7 +365,7 @@ def test_file_policy_exposes_POLICY_class_or_factory(tmp_path):
 
 
 def test_file_policy_errors_name_the_file(tmp_path):
-    from hillclimb.policies import get_policy
+    from hillclimb.modules.policies import get_policy
 
     with pytest.raises(ValueError, match="policy file not found"):
         get_policy(str(tmp_path / "nope.py"))
@@ -375,7 +375,7 @@ def test_file_policy_errors_name_the_file(tmp_path):
         get_policy(str(broken))
     two = tmp_path / "two.py"
     two.write_text(
-        "from hillclimb.policies.greedy import GreedyPolicy\n"
+        "from hillclimb.modules.policies.greedy import GreedyPolicy\n"
         "class A(GreedyPolicy): pass\nclass B(GreedyPolicy): pass\n"
     )
     with pytest.raises(ValueError, match="exactly one policy class"):

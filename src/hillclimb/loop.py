@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from hillclimb.candidate import Candidate
     from hillclimb.evaluation import EvalResult
-    from hillclimb.policy import Action, InflightRef, PolicyInput, SearchPolicy
+    from hillclimb.modules.policies.base import Action, InflightRef, PolicyInput, SearchPolicy
 
 
 class HarnessClosed(Exception):

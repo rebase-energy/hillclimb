@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from hillclimb.candidate import Candidate
     from hillclimb.journal import PolicyJournal
-    from hillclimb.policy import Action, BudgetView
+    from hillclimb.modules.policies.base import Action, BudgetView
 
 # What an operator's candidates ARE to the rest of the system. Views colour
 # by role and the journal walks chains by role, so a climber's own operators

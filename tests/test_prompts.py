@@ -1,4 +1,4 @@
-from hillclimb.operators.builtin import COMPLEXITY_CUES
+from hillclimb.modules.operators.builtin import COMPLEXITY_CUES
 from hillclimb.prompts.render import render
 import pytest
 
@@ -162,7 +162,7 @@ def test_search_record_pins_the_climber_and_snapshots_it(config, tmp_path):
     (climber_dir / "prompts").mkdir(parents=True)
     (climber_dir / "prompts" / "improve.md").write_text("tighter improve prompt: {{best_score}}\n\n{{contract}}\n")
     (climber_dir / "climber.yaml").write_text(
-        "policy: hillclimb.policies.greedy:GreedyPolicy\nparams: {num_drafts: 1}\nprompts: prompts\n"
+        "policy: hillclimb.modules.policies.greedy:GreedyPolicy\nparams: {num_drafts: 1}\nprompts: prompts\n"
     )
     config.climber.ref = str(climber_dir)
     search_dir = create_search(config, load_problem("p", config), run_dir, "r1", 60)
@@ -193,7 +193,7 @@ def test_a_search_refuses_to_start_on_a_climber_whose_prompts_do_not_lint(config
     run_dir = create_run(config, RunMeta(run_id="r1", name="r1", kind="problem", target="p", problem_ids=["p"]))
     climber = tmp_path / "mine"
     (climber / "prompts").mkdir(parents=True)
-    (climber / "climber.yaml").write_text("policy: hillclimb.policies.greedy:GreedyPolicy\nprompts: prompts\n")
+    (climber / "climber.yaml").write_text("policy: hillclimb.modules.policies.greedy:GreedyPolicy\nprompts: prompts\n")
     (climber / "prompts" / "draft.md").write_text("{{typo_token}}\n")
     config.climber.ref = str(climber)
     with pytest.raises(ValueError, match="typo_token"):

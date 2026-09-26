@@ -29,7 +29,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from hillclimb.similarity_scores.base import (
+from hillclimb._moved import modernize
+from hillclimb.modules.similarity.base import (
     SimilarityScore,
     SimilarityUnavailable,
     Solution,
@@ -38,9 +39,9 @@ from hillclimb.similarity_scores.base import (
     jaccard,
     sparse_cosine,
 )
-from hillclimb.similarity_scores.builtin import ApiCalls, CodeTokens
-from hillclimb.similarity_scores.compute import SimilarityMatrix, representations, similarity_matrix
-from hillclimb.similarity_scores.solution_card import SolutionCard
+from hillclimb.modules.similarity.builtin import ApiCalls, CodeTokens
+from hillclimb.modules.similarity.compute import SimilarityMatrix, representations, similarity_matrix
+from hillclimb.modules.similarity.solution_card import SolutionCard
 
 __all__ = [
     "SimilarityMatrix",
@@ -127,7 +128,7 @@ def load_score_file(path: Path) -> type[SimilarityScore]:
 
 
 def _load_import_path(spec: str) -> type[SimilarityScore]:
-    module_name, _, attr = spec.partition(":")
+    module_name, _, attr = modernize(spec).partition(":")  # a ref written before a move
     try:
         target = getattr(importlib.import_module(module_name), attr)
     except (ImportError, AttributeError) as exc:

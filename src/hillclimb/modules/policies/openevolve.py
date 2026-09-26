@@ -9,7 +9,7 @@ not: the mutation itself (an `improve` agent call rather than a one-shot LLM
 diff), evaluation (the verifier), journaling, and hillclimb's `debug` step,
 which OpenEvolve has no equivalent of and which this policy keeps.
 
-Replay contract (see policy.py): the database is rebuilt by `observe()` in
+Replay contract (see base.py): the database is rebuilt by `observe()` in
 journal order on construction, and every random draw is seeded from
 (random_seed, journal size) inside a saved/restored global-RNG window —
 OpenEvolve samples through the `random` module — so `resume` and a fresh
@@ -37,7 +37,7 @@ from dataclasses import fields as dataclass_fields
 from datetime import datetime
 from pathlib import Path
 
-from hillclimb.policies.greedy import GreedyPolicy, _improvable
+from hillclimb.modules.policies.greedy import GreedyPolicy, _improvable
 from hillclimb.sdk import Action, Candidate, PolicyInput
 
 BUILTIN_FEATURES = ("complexity", "diversity", "score")

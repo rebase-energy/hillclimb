@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field, model_validator
 from hillclimb.candidate import utcnow
 from hillclimb.direction import better
 from hillclimb.direction import legacy_direction_key
-from hillclimb.knowledge import extract_libraries
+from hillclimb.modules.memory.knowledge import extract_libraries
 
 SKILLS_DIRNAME = "skills"
 SKILLS_PER_FAMILY = 2
@@ -110,7 +110,7 @@ def harvest_skill(
         if not better(selected.val_score, worst_skill.score, problem.higher_is_better):
             return None
         shutil.rmtree(worst_dir, ignore_errors=True)
-    from hillclimb.claims import problem_concepts
+    from hillclimb.modules.memory.claims import problem_concepts
 
     kind = "emflow" if card.target.startswith("emflow://") else "csv"
     skill = Skill(

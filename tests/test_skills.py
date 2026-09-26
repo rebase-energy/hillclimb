@@ -10,8 +10,8 @@ import pytest
 
 from hillclimb.candidate import Candidate
 from hillclimb.journal import Journal
-from hillclimb.knowledge import KnowledgeCard
-from hillclimb.skills import (
+from hillclimb.modules.memory.knowledge import KnowledgeCard
+from hillclimb.modules.memory.skills import (
     SKILL_CODE_FILENAME,
     SKILLS_PER_FAMILY,
     harvest_skill,
@@ -167,7 +167,7 @@ class TestInjection:
         # search 1: no skills yet -> no reference anywhere; harvests a winner
         search_1 = run_once("run-one", [0.7, 0.75])
         assert not list(search_1.glob("candidates/*/reference_solution.py"))
-        from hillclimb.skills import load_skills
+        from hillclimb.modules.memory.skills import load_skills
 
         assert len(load_skills(tmp_path / "knowledge")) == 1
 

@@ -15,9 +15,9 @@ from hillclimb.budget import BudgetManager
 from hillclimb.candidate import Candidate
 from hillclimb.dirs import create_search_dir
 from hillclimb.journal import Journal
-from hillclimb.policies.greedy import GreedyPolicy
+from hillclimb.modules.policies.greedy import GreedyPolicy
 from hillclimb.evaluation import accept_band
-from hillclimb.policy import TUNE_ACTION, Action, BudgetView, InflightRef, PolicyInput
+from hillclimb.modules.policies.base import TUNE_ACTION, Action, BudgetView, InflightRef, PolicyInput
 from tests.harness_factory import SearchRig
 from hillclimb.search import OutcomeMsg
 from tests.conftest import executor_for, ok_script

@@ -38,7 +38,7 @@ from hillclimb.routing import Router
 
 if TYPE_CHECKING:
     from hillclimb.journal import Journal
-    from hillclimb.knowledge import KnowledgeCard
+    from hillclimb.modules.memory.knowledge import KnowledgeCard
 
 CLAIMS_FILENAME = "claims.yaml"
 ENTITIES_FILENAME = "entities.yaml"

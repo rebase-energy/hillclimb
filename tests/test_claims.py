@@ -8,7 +8,7 @@ import yaml
 
 from hillclimb.backends.fake import FakeBackend
 from hillclimb.candidate import Candidate
-from hillclimb.claims import (
+from hillclimb.modules.memory.claims import (
     Claim,
     Concept,
     Entity,
@@ -29,7 +29,7 @@ from hillclimb.claims import (
 )
 from hillclimb.config import Config
 from hillclimb.journal import Journal
-from hillclimb.knowledge import KnowledgeCard, distill_card, load_cards, write_card
+from hillclimb.modules.memory.knowledge import KnowledgeCard, distill_card, load_cards, write_card
 
 
 def make_journal(tmp_path, entries) -> Journal:

@@ -23,7 +23,7 @@ from pathlib import Path
 from hillclimb.backends import OperatorBackend, get_backend
 from hillclimb.bandit import OperatorBandits
 from hillclimb.config import Config
-from hillclimb.policy import Route
+from hillclimb.modules.policies.base import Route
 
 
 @dataclass(frozen=True)

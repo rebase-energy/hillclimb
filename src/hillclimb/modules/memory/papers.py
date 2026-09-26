@@ -22,7 +22,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from hillclimb.candidate import utcnow
-from hillclimb.claims import (
+from hillclimb.modules.memory.claims import (
     CLAIMS_FILENAME,
     Claim,
     absorb_parsed,
@@ -31,7 +31,7 @@ from hillclimb.claims import (
     slugify,
 )
 from hillclimb.config import Config
-from hillclimb.knowledge import problem_family
+from hillclimb.modules.memory.knowledge import problem_family
 
 PAPERS_DIRNAME = "papers"
 PAPER_SCHEMA_VERSION = 1
@@ -124,8 +124,8 @@ def distill_paper(
     absorbed into the registries and saved as `papers/<slug>.yaml`. Cached by
     content hash — re-adding the same PDF is a no-op without --force. Returns
     None when the distill agent failed (nothing is written then)."""
-    from hillclimb.claims import _concepts_block, _entities_block, ensure_concepts, load_entities
-    from hillclimb.claims import CLAIM_RELATIONS
+    from hillclimb.modules.memory.claims import _concepts_block, _entities_block, ensure_concepts, load_entities
+    from hillclimb.modules.memory.claims import CLAIM_RELATIONS
     from hillclimb.project import machine_cache_dir
     from hillclimb.prompts.render import render
 

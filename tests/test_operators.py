@@ -8,11 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb import operators
+from hillclimb.modules import operators
 from hillclimb.backends.fake import FakeBackend
 from hillclimb.candidate import Candidate
 from hillclimb.journal import Journal
-from hillclimb.policy import Action
+from hillclimb.modules.policies.base import Action
 from hillclimb.sdk import Operator, OperatorContext, Preparation
 from tests.conftest import ok_script
 from tests.factories import trial as mk_trial

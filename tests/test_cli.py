@@ -359,7 +359,7 @@ def test_resolve_search_dir_unknown_refs(config, tmp_path):
 
 def test_knowledge_live_renders_run_cards(config, tmp_path, monkeypatch, capsys):
     from hillclimb.cli import knowledge_live
-    from hillclimb.knowledge import KnowledgeCard, write_live_card
+    from hillclimb.modules.memory.knowledge import KnowledgeCard, write_live_card
     from hillclimb.dirs import create_run_dir
 
     config.paths.runs_dir = tmp_path / "runs"

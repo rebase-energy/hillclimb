@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from hillclimb.backends.fake import FakeBackend
 from hillclimb.config import Config
-from hillclimb.papers import distill_paper, load_papers, paper_scope
+from hillclimb.modules.memory.papers import distill_paper, load_papers, paper_scope
 
 PAPER_CLAIMS_YAML = """\
 paper_title: "Probabilistic wind power forecasting with analog ensembles"
@@ -77,7 +77,7 @@ def test_distill_paper_end_to_end(tmp_path, monkeypatch):
     assert (request.candidate_dir / "anen_wind.pdf").exists()
     # persisted record and merged registries
     assert (knowledge_dir / "papers" / "anen_wind.yaml").exists()
-    from hillclimb.claims import load_entities
+    from hillclimb.modules.memory.claims import load_entities
     assert {e.slug for e in load_entities(knowledge_dir)} >= {"analog-ensemble", "quantile-regression"}
     assert load_papers(knowledge_dir)[0].sha256 == record.sha256
 
@@ -102,7 +102,7 @@ def test_failed_agent_writes_nothing(tmp_path, monkeypatch):
 
 def test_paper_claims_enter_graph_and_retrieval(tmp_path, monkeypatch):
     record, knowledge_dir, _ = _ingest(tmp_path, monkeypatch)
-    from hillclimb.graph import build_graph, retrieve_claims
+    from hillclimb.modules.memory.graph import build_graph, retrieve_claims
 
     graph = build_graph(knowledge_dir)
     nodes = graph.node_map()

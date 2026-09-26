@@ -20,8 +20,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from hillclimb import openrouter
-from hillclimb.similarity_scores.base import SimilarityScore, SimilarityUnavailable, Solution
-from hillclimb.similarity_scores.compute import DiskCache
+from hillclimb.modules.similarity.base import SimilarityScore, SimilarityUnavailable, Solution
+from hillclimb.modules.similarity.compute import DiskCache
 
 PROMPT_FILE = Path(__file__).with_name("solution_card.md")
 SOURCE_TOKEN = "{{source}}"

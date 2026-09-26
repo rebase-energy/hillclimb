@@ -7,8 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from hillclimb.claims import Claim, Entity, ensure_concepts, save_entities
-from hillclimb.graph import (
+from hillclimb.modules.memory.claims import Claim, Entity, ensure_concepts, save_entities
+from hillclimb.modules.memory.graph import (
     KnowledgeGraph,
     build_graph,
     compute_supersessions,
@@ -19,7 +19,7 @@ from hillclimb.graph import (
     load_or_build_graph,
     write_graph,
 )
-from hillclimb.knowledge import ApproachNote, KnowledgeCard, OperatorStat, write_card
+from hillclimb.modules.memory.knowledge import ApproachNote, KnowledgeCard, OperatorStat, write_card
 
 
 def make_card(problem_id="spaceship-titanic", run_ref="r1/s1", finished_at="2026-07-01T00:00:00Z",
@@ -96,7 +96,7 @@ class TestBuild:
         def no_networkx(*args, **kwargs):
             raise ModuleNotFoundError("networkx")
 
-        monkeypatch.setattr("hillclimb.graph._spring_positions", no_networkx)
+        monkeypatch.setattr("hillclimb.modules.memory.graph._spring_positions", no_networkx)
         bare = build_graph(knowledge_dir)
         assert all(n.pos is None for n in bare.nodes)
         assert all(n.pos3 is None for n in bare.nodes)
@@ -161,7 +161,7 @@ class TestSupersession:
 
 class TestRetrieval:
     def test_ranking_and_scope(self, knowledge_dir):
-        from hillclimb.graph import node_to_claim, retrieve_claims
+        from hillclimb.modules.memory.graph import node_to_claim, retrieve_claims
 
         # cross-family card whose claim shares the `tabular` concept via its
         # subject entity, plus one claim about an unrelated concept space
@@ -211,7 +211,7 @@ class TestRetrieval:
         assert none_injected == []
 
     def test_superseded_claims_not_retrieved(self, knowledge_dir):
-        from hillclimb.graph import retrieve_claims
+        from hillclimb.modules.memory.graph import retrieve_claims
 
         write_card(knowledge_dir, make_card(
             run_ref="r5/s1", finished_at="2026-07-05T00:00:00Z",
@@ -228,7 +228,7 @@ class TestRetrieval:
 
 class TestCreditFold:
     def _event(self, knowledge_dir, run_ref, claim_ids, reward, observed):
-        from hillclimb.credit import CreditEvent, write_credit_event
+        from hillclimb.modules.memory.credit import CreditEvent, write_credit_event
 
         write_credit_event(knowledge_dir, CreditEvent(
             run_ref=run_ref, problem_id="spaceship-titanic",
@@ -246,7 +246,7 @@ class TestCreditFold:
         assert track["adjusted_confidence"] == pytest.approx(2.6 / 3, abs=1e-3)
 
     def test_track_record_reorders_retrieval(self, knowledge_dir):
-        from hillclimb.graph import retrieve_claims
+        from hillclimb.modules.memory.graph import retrieve_claims
 
         # a humble claim with wins vs a confident claim with losses
         write_card(knowledge_dir, make_card(
@@ -268,7 +268,7 @@ class TestCreditFold:
         assert ids.index("claim:humble") < ids.index("claim:cl1")
 
     def test_conclusive_losers_retire(self, knowledge_dir):
-        from hillclimb.graph import retrieve_claims
+        from hillclimb.modules.memory.graph import retrieve_claims
 
         write_card(knowledge_dir, make_card(
             run_ref="r3/s1", finished_at="2026-07-03T00:00:00Z",
@@ -328,7 +328,7 @@ class TestPersistence:
 def test_change_events_lists_every_distinct_moment(knowledge_dir):
     """The fine timeline: every first_seen and superseded_at once, sorted,
     the timeless '' dropped — a superset of the per-search events."""
-    from hillclimb.graph import change_events, rebuild_graph
+    from hillclimb.modules.memory.graph import change_events, rebuild_graph
 
     # a claim backdated to its candidate's finish: a moment of its own
     write_card(knowledge_dir, make_card(
@@ -344,7 +344,7 @@ def test_change_events_lists_every_distinct_moment(knowledge_dir):
 
 
 def test_backdate_claims_stamps_evidence_finish():
-    from hillclimb.claims import backdate_claims
+    from hillclimb.modules.memory.claims import backdate_claims
 
     class _J:
         candidates = {

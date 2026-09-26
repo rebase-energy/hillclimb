@@ -90,7 +90,7 @@ def test_openevolve_prompts_match_golden(task, config, tmp_path):
     from hillclimb.budget import BudgetManager
     from hillclimb.dirs import create_search_dir
     from hillclimb.journal import Journal
-    from hillclimb.policies import get_policy
+    from hillclimb.modules.policies import get_policy
     from tests.harness_factory import SearchRig
     from tests.conftest import local_executor, ok_script
     from tests.test_openevolve_policy import PARAMS

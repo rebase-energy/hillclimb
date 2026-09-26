@@ -4,17 +4,17 @@ from __future__ import annotations
 
 from typing import Callable
 
-from hillclimb.tuner import Tuner
+from hillclimb.modules.tuners.base import Tuner
 
 
 def _make_random(params: dict) -> Tuner:
-    from hillclimb.tuners.random_search import RandomTuner
+    from hillclimb.modules.tuners.random_search import RandomTuner
 
     return RandomTuner(params)
 
 
 def _make_optuna(params: dict) -> Tuner:
-    from hillclimb.tuners.optuna import OptunaTuner  # optional extra
+    from hillclimb.modules.tuners.optuna import OptunaTuner  # optional extra
 
     return OptunaTuner(params)
 

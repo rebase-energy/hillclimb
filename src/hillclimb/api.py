@@ -393,7 +393,7 @@ def build_knowledge_context(
     """(prior-experience prompt section, draft-complexity offset, injected
     claim ids) from the hillclimb dir's knowledge cards. The claim ids feed credit
     assignment: whoever gets quoted in the prompt answers for the outcome."""
-    from hillclimb.knowledge import (
+    from hillclimb.modules.memory.knowledge import (
         complexity_offset,
         load_cards,
         problem_family,
@@ -419,14 +419,14 @@ def build_knowledge_context(
         # flows to the claims the playbook was built from.
         # Best effort — the cards block above never depends on the graph.
         try:
-            from hillclimb.claims import problem_concepts, render_claims
-            from hillclimb.graph import load_or_build_graph, node_to_claim, retrieve_claims
+            from hillclimb.modules.memory.claims import problem_concepts, render_claims
+            from hillclimb.modules.memory.graph import load_or_build_graph, node_to_claim, retrieve_claims
 
             kind = problem.runtime
             concepts = problem_concepts(kind, problem.metric_name)
             playbooks = []
             if config.learning.playbooks:
-                from hillclimb.consolidate import load_playbooks, render_playbooks
+                from hillclimb.modules.memory.consolidate import load_playbooks, render_playbooks
 
                 playbooks = load_playbooks(knowledge_dir, concepts)
             if playbooks:
@@ -465,7 +465,7 @@ def _distill_knowledge(
     log: Log,
 ) -> None:
     """Best effort — learning must never fail a finished search."""
-    from hillclimb.knowledge import CARD_FILENAME, distill_card, write_card, write_live_card
+    from hillclimb.modules.memory.knowledge import CARD_FILENAME, distill_card, write_card, write_live_card
     from hillclimb.run import SEARCHES_DIRNAME
 
     try:
@@ -482,7 +482,7 @@ def _distill_knowledge(
         if config.learning.claims and knowledge_dir is not None:
             # inner guard: a failed distill pass costs the claims, not the card
             try:
-                from hillclimb.claims import distill_claims
+                from hillclimb.modules.memory.claims import distill_claims
 
                 card.claims = distill_claims(
                     journal,
@@ -523,13 +523,13 @@ def _distill_knowledge(
             # credit assignment: the claims this search's drafts were shown
             # share its outcome (see credit.py for the reward definition)
             try:
-                from hillclimb.credit import (
+                from hillclimb.modules.memory.credit import (
                     CreditEvent,
                     read_injected_claims,
                     search_reward,
                     write_credit_event,
                 )
-                from hillclimb.knowledge import load_cards
+                from hillclimb.modules.memory.knowledge import load_cards
 
                 claim_ids = read_injected_claims(search_dir)
                 if claim_ids:
@@ -561,7 +561,7 @@ def _distill_knowledge(
         if config.learning.skills and knowledge_dir is not None:
             # procedural memory: a scored winner joins the skill library
             try:
-                from hillclimb.skills import harvest_skill
+                from hillclimb.modules.memory.skills import harvest_skill
 
                 skill_dir = harvest_skill(
                     journal, problem=problem, card=card,
@@ -576,7 +576,7 @@ def _distill_knowledge(
             # keep the derived graph index fresh; cheap at this scale and
             # best-effort like everything else here
             try:
-                from hillclimb.graph import rebuild_graph
+                from hillclimb.modules.memory.graph import rebuild_graph
 
                 rebuild_graph(knowledge_dir)
             except Exception as exc:  # noqa: BLE001
@@ -715,7 +715,7 @@ def execute_search(
     if knowledge_context is None:
         _kc, _offset, _claim_ids = build_knowledge_context(config, problem, target, log)
         if _claim_ids:
-            from hillclimb.credit import record_injected_claims
+            from hillclimb.modules.memory.credit import record_injected_claims
 
             record_injected_claims(search_dir, _claim_ids)
     reference_solution: Path | None = None
@@ -724,9 +724,9 @@ def execute_search(
         _kdir = resolve_knowledge_dir(config)
         if _kdir is not None:
             try:
-                from hillclimb.claims import problem_concepts
-                from hillclimb.knowledge import problem_family
-                from hillclimb.skills import SKILL_CODE_FILENAME, select_skill
+                from hillclimb.modules.memory.claims import problem_concepts
+                from hillclimb.modules.memory.knowledge import problem_family
+                from hillclimb.modules.memory.skills import SKILL_CODE_FILENAME, select_skill
 
                 kind = problem.runtime
                 match = select_skill(
@@ -1124,7 +1124,7 @@ def mixed_fleet(
         raise ValueError("repeats must be >= 1")
     if not climbers:
         raise ValueError("a mixed fleet needs at least one climber")
-    from hillclimb.policies import policy_label
+    from hillclimb.modules.policies import policy_label
 
     arms: list[tuple[str, str]] = []
     seen: dict[str, int] = {}

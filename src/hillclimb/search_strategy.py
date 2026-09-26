@@ -32,7 +32,7 @@ def search_climber(config: Config, search_dir=None) -> Climber:
     holding the hillclimb dir) — or, for a search that already exists, the
     snapshot it was started with. A `ClimberLoadError` names the unknowns."""
     from hillclimb.climber import load_climber, load_snapshot
-    from hillclimb.policies import policy_base_dir, policy_label
+    from hillclimb.modules.policies import policy_base_dir, policy_label
 
     if search_dir is not None:
         snapshot = load_snapshot(search_dir, name=policy_label(config.climber.ref))
@@ -43,7 +43,7 @@ def search_climber(config: Config, search_dir=None) -> Climber:
 
 def is_loop_climber(name: str, config: Config | None = None) -> bool:
     from hillclimb.climber import load_climber
-    from hillclimb.policies import policy_base_dir
+    from hillclimb.modules.policies import policy_base_dir
 
     return load_climber(name, policy_base_dir(config) if config is not None else None).is_loop
 
@@ -57,7 +57,7 @@ def holdout_timing(config: Config, search_dir=None) -> str:
 
 def build_tuner(config: Config, search_dir=None):
     """The climber's tuner, unless the user named one (`search.tuner`)."""
-    from hillclimb.tuners import get_tuner
+    from hillclimb.modules.tuners import get_tuner
 
     manifest = search_climber(config, search_dir).manifest
     if config.climber.tuner is not None:  # the user named one: it wins

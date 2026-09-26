@@ -32,8 +32,8 @@ def make_harness(task, config, backend, *, name: str = "test-search", **kwargs):
 
 from hillclimb.candidate import Candidate  # noqa: E402
 from hillclimb.loop import PolicyLoop  # noqa: E402
-from hillclimb.policies.greedy import GreedyPolicy  # noqa: E402
-from hillclimb.policy import TUNE_ACTION, Action, SearchPolicy  # noqa: E402
+from hillclimb.modules.policies.greedy import GreedyPolicy  # noqa: E402
+from hillclimb.modules.policies.base import TUNE_ACTION, Action, SearchPolicy  # noqa: E402
 
 
 class LiveParams(dict):

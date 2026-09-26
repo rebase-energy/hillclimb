@@ -18,14 +18,14 @@ from typing import TYPE_CHECKING
 
 _LAZY = {
     # what to try next
-    "Action": ("hillclimb.policy", "Action"),
-    "Route": ("hillclimb.policy", "Route"),
-    "InflightRef": ("hillclimb.policy", "InflightRef"),
-    "BudgetView": ("hillclimb.policy", "BudgetView"),
-    "PolicyInput": ("hillclimb.policy", "PolicyInput"),
-    "SearchPolicy": ("hillclimb.policy", "SearchPolicy"),
-    "TUNE_ACTION": ("hillclimb.policy", "TUNE_ACTION"),
-    "INJECT_ACTION": ("hillclimb.policy", "INJECT_ACTION"),
+    "Action": ("hillclimb.modules.policies.base", "Action"),
+    "Route": ("hillclimb.modules.policies.base", "Route"),
+    "InflightRef": ("hillclimb.modules.policies.base", "InflightRef"),
+    "BudgetView": ("hillclimb.modules.policies.base", "BudgetView"),
+    "PolicyInput": ("hillclimb.modules.policies.base", "PolicyInput"),
+    "SearchPolicy": ("hillclimb.modules.policies.base", "SearchPolicy"),
+    "TUNE_ACTION": ("hillclimb.modules.policies.base", "TUNE_ACTION"),
+    "INJECT_ACTION": ("hillclimb.modules.policies.base", "INJECT_ACTION"),
     # control flow over the harness (most climbers only need a SearchPolicy)
     "SearchLoop": ("hillclimb.loop", "SearchLoop"),
     "PolicyLoop": ("hillclimb.loop", "PolicyLoop"),
@@ -49,23 +49,23 @@ _LAZY = {
     "improves": ("hillclimb.evaluation", "improves"),
     "accept_band": ("hillclimb.evaluation", "accept_band"),
     # how one attempt is made
-    "Operator": ("hillclimb.operators.base", "Operator"),
-    "OperatorContext": ("hillclimb.operators.base", "OperatorContext"),
-    "Preparation": ("hillclimb.operators.base", "Preparation"),
-    "ProblemInfo": ("hillclimb.operators.base", "ProblemInfo"),
-    "MemoryContext": ("hillclimb.operators.base", "MemoryContext"),
-    "inspiration_filename": ("hillclimb.operators.base", "inspiration_filename"),
-    "ROLES": ("hillclimb.operators.base", "ROLES"),
+    "Operator": ("hillclimb.modules.operators.base", "Operator"),
+    "OperatorContext": ("hillclimb.modules.operators.base", "OperatorContext"),
+    "Preparation": ("hillclimb.modules.operators.base", "Preparation"),
+    "ProblemInfo": ("hillclimb.modules.operators.base", "ProblemInfo"),
+    "MemoryContext": ("hillclimb.modules.operators.base", "MemoryContext"),
+    "inspiration_filename": ("hillclimb.modules.operators.base", "inspiration_filename"),
+    "ROLES": ("hillclimb.modules.operators.base", "ROLES"),
     # which parameter values next
-    "Tuner": ("hillclimb.tuner", "Tuner"),
-    "Observation": ("hillclimb.tuner", "Observation"),
+    "Tuner": ("hillclimb.modules.tuners.base", "Tuner"),
+    "Observation": ("hillclimb.modules.tuners.base", "Observation"),
     "ParamSpace": ("hillclimb.params", "ParamSpace"),
     "ParamSpec": ("hillclimb.params", "ParamSpec"),
     "coerce": ("hillclimb.params", "coerce"),
     # how alike two solutions are
-    "SimilarityScore": ("hillclimb.similarity_scores.base", "SimilarityScore"),
-    "SimilarityUnavailable": ("hillclimb.similarity_scores.base", "SimilarityUnavailable"),
-    "Solution": ("hillclimb.similarity_scores.base", "Solution"),
+    "SimilarityScore": ("hillclimb.modules.similarity.base", "SimilarityScore"),
+    "SimilarityUnavailable": ("hillclimb.modules.similarity.base", "SimilarityUnavailable"),
+    "Solution": ("hillclimb.modules.similarity.base", "Solution"),
 }
 
 __all__ = sorted(_LAZY)
@@ -100,7 +100,7 @@ if TYPE_CHECKING:  # eager for type checkers and editors only
         SearchLoop,
         Ticket,
     )
-    from hillclimb.operators.base import (
+    from hillclimb.modules.operators.base import (
         ROLES,
         MemoryContext,
         Operator,
@@ -110,7 +110,7 @@ if TYPE_CHECKING:  # eager for type checkers and editors only
         inspiration_filename,
     )
     from hillclimb.params import ParamSpace, ParamSpec, coerce
-    from hillclimb.policy import (
+    from hillclimb.modules.policies.base import (
         INJECT_ACTION,
         TUNE_ACTION,
         Action,
@@ -120,6 +120,6 @@ if TYPE_CHECKING:  # eager for type checkers and editors only
         Route,
         SearchPolicy,
     )
-    from hillclimb.similarity_scores.base import SimilarityScore, SimilarityUnavailable, Solution
+    from hillclimb.modules.similarity.base import SimilarityScore, SimilarityUnavailable, Solution
     from hillclimb.search_strategy import ParkedSearch
-    from hillclimb.tuner import Observation, Tuner
+    from hillclimb.modules.tuners.base import Observation, Tuner

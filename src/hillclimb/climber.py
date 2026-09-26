@@ -38,9 +38,10 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from hillclimb._moved import modernize
 from hillclimb.loop import PolicyLoop, SearchLoop
-from hillclimb.operators import Operator
-from hillclimb.operators.builtin import BUILTIN_OPERATORS
+from hillclimb.modules.operators import Operator
+from hillclimb.modules.operators.builtin import BUILTIN_OPERATORS
 
 MANIFEST = "climber.yaml"
 BUNDLED_DIR = Path(__file__).parent / "climbers"
@@ -218,7 +219,7 @@ class Climber:
             base = SearchLoop if key == "loop" else None
             return _only_class(module, key, self.source, base)
         if ":" in ref:
-            module_name, _, attr = ref.partition(":")
+            module_name, _, attr = modernize(ref).partition(":")  # a ref recorded before a move
             try:
                 return getattr(importlib.import_module(module_name), attr)
             except (ImportError, AttributeError) as exc:

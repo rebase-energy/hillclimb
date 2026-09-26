@@ -61,7 +61,7 @@ from hillclimb.run import (
     search_ref,
 )
 from hillclimb.harness import Harness
-from hillclimb.policy import Action
+from hillclimb.modules.policies.base import Action
 from hillclimb.status import read_status
 from hillclimb.store import (
     DataStore,
@@ -720,7 +720,7 @@ def knowledge_backfill():
     Walks runs/ and bootstraps learning from pre-existing history.
     """
     from hillclimb.api import resolve_knowledge_dir
-    from hillclimb.knowledge import distill_card, write_card
+    from hillclimb.modules.memory.knowledge import distill_card, write_card
     from hillclimb.run import load_search_meta
 
     config = load_config()
@@ -762,7 +762,7 @@ def knowledge_live(run: str = typer.Argument("latest", help="Run id, or `latest`
 
     The discoveries a sibling's next operator would receive.
     """
-    from hillclimb.knowledge import load_live_cards, render_live_experience
+    from hillclimb.modules.memory.knowledge import load_live_cards, render_live_experience
 
     config = load_config()
     runs_dir = config.paths.runs_dir
@@ -800,7 +800,7 @@ def knowledge_show(target: str = typer.Argument(..., help="Problem target, e.g. 
     Scoped to this target.
     """
     from hillclimb.api import resolve_knowledge_dir
-    from hillclimb.knowledge import load_cards, problem_family, render_prior_experience
+    from hillclimb.modules.memory.knowledge import load_cards, problem_family, render_prior_experience
 
     config = load_config()
     knowledge_dir = resolve_knowledge_dir(config)
@@ -833,8 +833,8 @@ def knowledge_distill(
     extracts them across existing cards.
     """
     from hillclimb.api import resolve_knowledge_dir
-    from hillclimb.claims import distill_claims, distill_claims_from_card
-    from hillclimb.knowledge import SCHEMA_VERSION, KnowledgeCard, distill_card, write_card
+    from hillclimb.modules.memory.claims import distill_claims, distill_claims_from_card
+    from hillclimb.modules.memory.knowledge import SCHEMA_VERSION, KnowledgeCard, distill_card, write_card
 
     import yaml as _yaml
 
@@ -916,7 +916,7 @@ def knowledge_query(
     import json as _json
 
     from hillclimb.api import resolve_knowledge_dir
-    from hillclimb.graph import load_or_build_graph, query_graph, render_query_hits
+    from hillclimb.modules.memory.graph import load_or_build_graph, query_graph, render_query_hits
 
     config = load_config()
     knowledge_dir = resolve_knowledge_dir(config)
@@ -944,7 +944,7 @@ def knowledge_consolidate(
     diffs.
     """
     from hillclimb.api import resolve_knowledge_dir
-    from hillclimb.consolidate import consolidate
+    from hillclimb.modules.memory.consolidate import consolidate
 
     config = load_config()
     knowledge_dir = resolve_knowledge_dir(config)
@@ -969,7 +969,7 @@ def knowledge_rebuild():
     The graph is a derived index — always safe to rebuild, never hand-edit.
     """
     from hillclimb.api import resolve_knowledge_dir
-    from hillclimb.graph import graph_path, graph_stats, rebuild_graph
+    from hillclimb.modules.memory.graph import graph_path, graph_stats, rebuild_graph
 
     config = load_config()
     knowledge_dir = resolve_knowledge_dir(config)
@@ -1017,8 +1017,8 @@ def paper_add(
     retrieval and credit paths — inspect the wiring with `hillclimb graph`
     before starting a run.
     """
-    from hillclimb.graph import rebuild_graph
-    from hillclimb.papers import distill_paper
+    from hillclimb.modules.memory.graph import rebuild_graph
+    from hillclimb.modules.memory.papers import distill_paper
 
     config, knowledge_dir = _paper_knowledge_dir()
     ingested = 0
@@ -1041,7 +1041,7 @@ def paper_add(
 @paper_app.command("list")
 def paper_list():
     """Ingested papers: slug, scope, claim count, and ingestion date."""
-    from hillclimb.papers import load_papers
+    from hillclimb.modules.memory.papers import load_papers
 
     _config, knowledge_dir = _paper_knowledge_dir()
     papers = load_papers(knowledge_dir)
@@ -1067,7 +1067,7 @@ def knowledge_graph(
     `--stats` prints a text summary.
     """
     from hillclimb.api import resolve_knowledge_dir
-    from hillclimb.graph import graph_stats, load_or_build_graph
+    from hillclimb.modules.memory.graph import graph_stats, load_or_build_graph
 
     config = load_config()
     knowledge_dir = resolve_knowledge_dir(config)
@@ -1384,7 +1384,7 @@ def climber_list(as_json: bool = typer.Option(False, "--json", help="Machine-rea
     """The climbers `hillclimb run --climber` accepts: the bundled ones and
     every directory or one-file climber under hillclimb/climbers/."""
     from hillclimb.climber import ClimberLoadError, bundled_climbers, load_climber
-    from hillclimb.policies import policy_base_dir
+    from hillclimb.modules.policies import policy_base_dir
 
     config = load_config()
     base_dir = policy_base_dir(config)
@@ -1441,7 +1441,7 @@ def climber_new(
     import yaml
 
     from hillclimb.climber import ClimberLoadError, load_climber
-    from hillclimb.policies import policy_base_dir
+    from hillclimb.modules.policies import policy_base_dir
 
     config = load_config()
     local = _local_climbers_dir(config)
@@ -1475,7 +1475,9 @@ def climber_new(
             ref = data.get(key)
             if not isinstance(ref, str) or ":" not in ref or not ref.startswith("hillclimb."):
                 continue
-            module_name, cls = ref.split(":", 1)
+            from hillclimb._moved import modernize
+
+            module_name, cls = modernize(ref).split(":", 1)
             import importlib
 
             module_file = Path(importlib.import_module(module_name).__file__)
@@ -1531,8 +1533,8 @@ def climber_check(
         typer.echo("note: `--policy` is now `--climber` (same values)", err=True)
     from hillclimb.api import run_search
     from hillclimb.climber import ClimberLoadError, load_climber
-    from hillclimb.policies import policy_base_dir, policy_path
-    from hillclimb.policy_check import JournalCase, check_policy
+    from hillclimb.modules.policies import policy_base_dir, policy_path
+    from hillclimb.modules.policies.check import JournalCase, check_policy
 
     config = load_config()
     config.apply_overrides(_parse_set(set_ or []))
@@ -2135,7 +2137,7 @@ def resume(
     config.climber.params = meta.climber_params
     if meta.climber_sha256 is not None:
         from hillclimb.climber import ClimberLoadError, load_climber, load_snapshot
-        from hillclimb.policies import policy_base_dir
+        from hillclimb.modules.policies import policy_base_dir
 
         # the search resumes from the snapshot in its own folder, so an
         # edited (or deleted) live climber changes nothing — but say so
@@ -2961,9 +2963,9 @@ def similarity_scores(
     a .py file. 1.0 = the same; representations are cached per file content
     in ~/.cache/hillclimb/similarity/, nothing is written into the run.
     """
-    from hillclimb.policies import policy_base_dir
+    from hillclimb.modules.policies import policy_base_dir
     from hillclimb.tui.similarity import dir_for
-    from hillclimb.similarity_scores import (
+    from hillclimb.modules.similarity import (
         SimilarityUnavailable,
         Solution,
         get_score,

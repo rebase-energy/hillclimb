@@ -230,7 +230,7 @@ class Candidate(BaseModel):
     @model_validator(mode="after")
     def _backfill_role(self) -> Candidate:
         if self.role is None:
-            from hillclimb.operators import role_of
+            from hillclimb.modules.operators import role_of
 
             self.role = role_of(self.operator)
         return self

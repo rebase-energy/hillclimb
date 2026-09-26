@@ -29,7 +29,7 @@ from pathlib import Path
 import yaml
 
 from hillclimb.candidate import utcnow
-from hillclimb.claims import (
+from hillclimb.modules.memory.claims import (
     Claim,
     invoke_knowledge_agent,
     load_consolidated_claims,
@@ -37,7 +37,7 @@ from hillclimb.claims import (
     save_consolidated_claims,
 )
 from hillclimb.config import Config
-from hillclimb.graph import GraphNode, KnowledgeGraph, node_to_claim
+from hillclimb.modules.memory.graph import GraphNode, KnowledgeGraph, node_to_claim
 from hillclimb.prompts.render import render
 
 PLAYBOOKS_DIRNAME = "playbooks"
@@ -267,7 +267,7 @@ def write_concept_playbook(
 
 def consolidate(knowledge_dir: Path, config: Config, log, *, dry_run: bool = False) -> dict:
     """The full sleep phase. Returns a summary dict for the CLI."""
-    from hillclimb.graph import load_or_build_graph, rebuild_graph
+    from hillclimb.modules.memory.graph import load_or_build_graph, rebuild_graph
 
     graph = load_or_build_graph(knowledge_dir)
     generalized = generalize_claims(graph)

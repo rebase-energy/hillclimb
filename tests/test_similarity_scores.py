@@ -11,7 +11,7 @@ from typer.testing import CliRunner
 
 from hillclimb import cli, openrouter
 from hillclimb.config import Config
-from hillclimb.similarity_scores import (
+from hillclimb.modules.similarity import (
     SimilarityScore,
     SimilarityUnavailable,
     Solution,
@@ -21,7 +21,7 @@ from hillclimb.similarity_scores import (
     registered_scores,
     similarity_matrix,
 )
-from hillclimb.similarity_scores import compute
+from hillclimb.modules.similarity import compute
 
 SLSQP = """\
 import numpy as np
@@ -178,7 +178,7 @@ def test_unknown_name_lists_options():
 def test_file_score_single_class_named_after_stem(tmp_path):
     path = tmp_path / "my_score.py"
     path.write_text(
-        "from hillclimb.similarity_scores import SimilarityScore\n"
+        "from hillclimb.modules.similarity import SimilarityScore\n"
         "class Mine(SimilarityScore):\n"
         "    def represent(self, solution):\n"
         "        return {'n': float(len(solution.source))}\n"
@@ -193,7 +193,7 @@ def test_file_score_single_class_named_after_stem(tmp_path):
 def test_file_score_attr_wins_and_errors_name_the_file(tmp_path):
     two = tmp_path / "two.py"
     two.write_text(
-        "from hillclimb.similarity_scores import SimilarityScore\n"
+        "from hillclimb.modules.similarity import SimilarityScore\n"
         "class A(SimilarityScore):\n    name = 'a'\n    def represent(self, s): return [1.0]\n"
         "class B(SimilarityScore):\n    name = 'b'\n    def represent(self, s): return [1.0]\n"
     )
@@ -211,7 +211,8 @@ def test_file_score_attr_wins_and_errors_name_the_file(tmp_path):
 
 
 def test_import_path_and_register(tmp_path):
-    assert get_score("hillclimb.similarity_scores.builtin:ApiCalls").name == "api-calls"
+    assert get_score("hillclimb.modules.similarity.builtin:ApiCalls").name == "api-calls"
+    assert get_score("hillclimb.similarity_scores.builtin:ApiCalls").name == "api-calls"  # a config written before the move
     with pytest.raises(ValueError, match="not a SimilarityScore"):
         get_score("hillclimb.config:Config")
 
@@ -225,7 +226,7 @@ def test_import_path_and_register(tmp_path):
     try:
         assert isinstance(get_score("test-registered"), Registered)
     finally:
-        from hillclimb import similarity_scores
+        from hillclimb.modules import similarity as similarity_scores
 
         similarity_scores._SCORES.pop("test-registered")
 

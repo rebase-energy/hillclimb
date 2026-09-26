@@ -21,8 +21,8 @@ import sys
 from pathlib import Path
 from typing import Callable
 
-from hillclimb.policies.greedy import GreedyPolicy
-from hillclimb.policy import SearchPolicy
+from hillclimb.modules.policies.greedy import GreedyPolicy
+from hillclimb.modules.policies.base import SearchPolicy
 
 POLICY_FILE_SUFFIX = ".py"
 
@@ -35,7 +35,7 @@ def _make_greedy(params: dict, *, complexity_start: int = 0) -> GreedyPolicy:
 
 
 def _make_openevolve(params: dict, *, complexity_start: int = 0) -> SearchPolicy:
-    from hillclimb.policies.openevolve import OpenEvolvePolicy  # optional extra
+    from hillclimb.modules.policies.openevolve import OpenEvolvePolicy  # optional extra
 
     return OpenEvolvePolicy(params=params, complexity_start=complexity_start)
 

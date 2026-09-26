@@ -1,7 +1,7 @@
 """Policy conformance check: the cheap pre-verifier for an edited
 exploration process.
 
-A `SearchPolicy` that violates its contract (policy.py) does not fail
+A `SearchPolicy` that violates its contract (base.py) does not fail
 loudly — it stalls a search, proposes a target that does not exist, or
 makes `resume` diverge from the run it resumes. Each of those burns a
 real budget hour before anyone notices. This module replays recorded
@@ -35,10 +35,10 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from hillclimb.evaluation import accept_band
-from hillclimb.operators import get_operator, operator_names
+from hillclimb.modules.operators import get_operator, operator_names
 from hillclimb.config import Config
 from hillclimb.journal import Journal
-from hillclimb.policy import TUNE_ACTION, Action, BudgetView, PolicyInput, SearchPolicy
+from hillclimb.modules.policies.base import TUNE_ACTION, Action, BudgetView, PolicyInput, SearchPolicy
 
 # Fractions of the budget still remaining at which every journal is
 # probed: fresh, mid-search, and inside the ensemble window.
