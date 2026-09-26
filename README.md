@@ -10,7 +10,7 @@ compared on the same problem under the same budget.
 
 ## Get started
 
-Seven commands, ten minutes. Each step says what you should see.
+Eight commands, ten minutes. Each step says what you should see.
 
 **1. Install and connect an agent.**
 
@@ -22,16 +22,18 @@ hillclimb connect claude       # logs in; operator calls bill your Claude subscr
 `connect codex` and `connect pi` do the same for the other backends. No agent
 yet? Add `--backend dummy` to any `run` below: it climbs with no LLM at all.
 
-**2. Get a problem and read it.**
+**2. Make a hillclimb dir, get a problem, read it.**
 
 ```bash
+hillclimb init                         # hillclimb/ here: config.yaml, problems/, runs/
 hillclimb problem list                 # the bundled starter problems, with the best known value
 hillclimb problem get heilbronn-11
 ```
 
-This creates a `hillclimb/` dir in the current folder and copies the problem
-into `hillclimb/problems/heilbronn-11/`. Open `verify.py`: the verifier *is*
-the problem. Everything the agents will be told is in `description.md`.
+Everything hillclimb writes lives under that one `hillclimb/` folder. The
+problem lands in `hillclimb/problems/heilbronn-11/`. Open `verify.py`: the
+verifier *is* the problem. Everything the agents will be told is in
+`description.md`.
 
 **3. Check the verifier.**
 

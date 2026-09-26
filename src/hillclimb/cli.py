@@ -287,10 +287,12 @@ INIT_SPEC_EXAMPLE = """\
 """
 
 
-def scaffold_hillclimb_dir(root: Path) -> Path:
+def scaffold_hillclimb_dir(root: Path, *, example: bool = True) -> Path:
     """Create `<root>/hillclimb/` with config, the example problem, an
     example spec, and gitignore entries for runs/ and the .env that carries
-    provider keys. Idempotent on the folder
+    provider keys. `example=False` (what `problem get` does when it has to
+    create the dir) leaves out the example problem and spec: the user asked
+    for one bundled problem, not a scaffold. Idempotent on the folder
     layout; never overwrites an existing config."""
     from hillclimb.project import MARKER_DIR, MARKER_FILE
 
@@ -300,13 +302,14 @@ def scaffold_hillclimb_dir(root: Path) -> Path:
         (folder / sub / ".gitkeep").touch()
     if not (folder / MARKER_FILE).exists():
         (folder / MARKER_FILE).write_text(INIT_CONFIG)
-    (folder / "specs" / "example.yaml").write_text(INIT_SPEC_EXAMPLE)
-    example = folder / "problems" / "example"
-    example.mkdir(parents=True, exist_ok=True)
-    (example / "problem.yaml").write_text(INIT_PROBLEM_YAML)
-    (example / "description.md").write_text(INIT_PROBLEM_DESCRIPTION)
-    (example / "verifier.sh").write_text(INIT_PROBLEM_VERIFIER)
-    (example / "verifier.sh").chmod(0o755)
+    if example:
+        (folder / "specs" / "example.yaml").write_text(INIT_SPEC_EXAMPLE)
+        example_dir = folder / "problems" / "example"
+        example_dir.mkdir(parents=True, exist_ok=True)
+        (example_dir / "problem.yaml").write_text(INIT_PROBLEM_YAML)
+        (example_dir / "description.md").write_text(INIT_PROBLEM_DESCRIPTION)
+        (example_dir / "verifier.sh").write_text(INIT_PROBLEM_VERIFIER)
+        (example_dir / "verifier.sh").chmod(0o755)
     gitignore = root / ".gitignore"
     existing_ignore = gitignore.read_text() if gitignore.exists() else ""
     present = existing_ignore.splitlines()
@@ -400,15 +403,20 @@ def problem_get(
     verifier IS the problem. An existing folder is never overwritten.
     """
     from hillclimb.demo import BUNDLED_PROBLEM_IDS, install_demo_problem
-    from hillclimb.project import find_hillclimb_dir
+    from hillclimb.project import MARKER_DIR, find_hillclimb_dir
 
     if problem not in BUNDLED_PROBLEM_IDS:
         available = ", ".join(BUNDLED_PROBLEM_IDS)
         typer.echo(f"error: no bundled problem {problem!r} (available: {available})", err=True)
         raise typer.Exit(1)
     if find_hillclimb_dir() is None:
-        folder = scaffold_hillclimb_dir(Path.cwd())
-        typer.echo(f"Created hillclimb dir at {folder}")
+        typer.echo(f"No hillclimb dir here. {problem} needs one: a hillclimb/ folder holding")
+        typer.echo("config.yaml, problems/ (where the problem goes) and runs/ (where searches land).")
+        if _stdin_is_tty() and not typer.confirm(f"Create {Path.cwd() / MARKER_DIR}?", default=True):
+            typer.echo("Not created. Run `hillclimb init` where you want it, then `hillclimb problem get` again.")
+            raise typer.Exit(1)
+        folder = scaffold_hillclimb_dir(Path.cwd(), example=False)
+        typer.echo(f"Created {folder} (config.yaml, problems/, runs/)")
     config = load_config()
     problem_dir, created = install_demo_problem(config.paths.problems_dir, problem)
     verb = "Fetched" if created else "Already have"
@@ -445,6 +453,11 @@ def fetch(
     """Deprecated spelling of `hillclimb problem get`."""
     typer.echo("note: `hillclimb fetch` is now `hillclimb problem get`", err=True)
     problem_get(problem)
+
+
+def _stdin_is_tty() -> bool:
+    """Whether there is a person to ask; a script or a pipe gets the default."""
+    return sys.stdin.isatty()
 
 
 PROBLEM_FILES = (
@@ -487,8 +500,9 @@ def init(
     typer.echo(f"  {MARKER_DIR}/problems/      — problem definitions (example/ is a working one)")
     typer.echo(f"  {MARKER_DIR}/specs/         — committed run specs")
     typer.echo(f"  {MARKER_DIR}/runs/          — search artifacts (gitignored)")
-    typer.echo("Next: hillclimb connect          (which agent runs the operators, and who pays)")
-    typer.echo("      hillclimb verify example  (then: hillclimb run example --budget 30m)")
+    typer.echo("Next: hillclimb connect                  (which agent runs the operators, and who pays)")
+    typer.echo("      hillclimb problem get heilbronn-11  (a bundled problem; `problem list` shows them all)")
+    typer.echo("      hillclimb verify example            (or your own: edit problems/example, then run it)")
 
 
 @app.command()

@@ -457,3 +457,26 @@ def test_build_climb_plot_renders_steps_and_dots(tmp_path):
     solo = climb_for_problem(solo_runs, "p")
     assert [e.x for e in solo.events] == [1.0]
     build_climb_plot(solo).render_rgba(200, 100)
+
+
+def test_problem_get_asks_before_creating_a_hillclimb_dir(tmp_path, monkeypatch):
+    """Outside a hillclimb dir, `problem get` says what it would create and
+    asks; a decline creates nothing and points at `hillclimb init`. A yes
+    (or no terminal to ask on) creates the minimal dir: no example problem."""
+    from typer.testing import CliRunner
+
+    from hillclimb import cli
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
+    monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
+    monkeypatch.setattr(cli, "_stdin_is_tty", lambda: True)
+    result = CliRunner().invoke(cli.app, ["problem", "get", "golomb-20"], input="n\n")
+    assert result.exit_code == 1 and "hillclimb init" in result.output
+    assert not (tmp_path / "hillclimb").exists()
+
+    result = CliRunner().invoke(cli.app, ["problem", "get", "golomb-20"], input="y\n")
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "hillclimb" / "problems" / "golomb-20" / "interface.py").exists()
+    assert not (tmp_path / "hillclimb" / "problems" / "example").exists()
+    assert not (tmp_path / "hillclimb" / "specs" / "example.yaml").exists()
