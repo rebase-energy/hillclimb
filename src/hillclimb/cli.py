@@ -2074,16 +2074,24 @@ def _run_problem_fleet(
     operators = parallel_operators if parallel_operators is not None else config.concurrency.parallel_operators
     if engines:
         arms = ", ".join(dict.fromkeys(engine.arm for engine in engines))
-        typer.echo(
-            f"Run {fleet.run_id}: {len(engines)} searches ({arms}) x {operators} operators "
-            f"running in the background; engine logs in {fleet.run_dir / 'logs'}"
+        say(
+            f"[head]Run {_m(fleet.run_id)}[/]: {len(engines)} searches ({_m(arms)}) x {operators} operators "
+            f"running in the background"
         )
-        typer.echo(f"Compare the arms with: hillclimb experiment report {experiment or fleet.run_id}")
     else:
-        typer.echo(
-            f"Run {fleet.run_id}: {parallel_searches} searches x {operators} operators "
-            f"running in the background; engine logs in {fleet.run_dir / 'logs'}"
+        say(
+            f"[head]Run {_m(fleet.run_id)}[/]: {parallel_searches} searches x {operators} operators "
+            f"running in the background"
         )
+    say(f"Engine logs in [path]{_m(fleet.run_dir / 'logs')}[/]")
+    steps = [
+        ("hillclimb watch", "every agent, what it is doing, its candidate's score"),
+        ("hillclimb chart", "best score so far against time"),
+        ("hillclimb stop --all", "end the run; the best solution of every search stays in runs/"),
+    ]
+    if engines:
+        steps.insert(2, (f"hillclimb experiment report {experiment or fleet.run_id}", "compare the arms"))
+    next_steps(steps)
     return fleet.run_dir
 
 
