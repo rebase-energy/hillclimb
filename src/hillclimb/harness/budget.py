@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from hillclimb.journal import Journal
+    from hillclimb.harness.journal import Journal
 
 # the harness's own floor measurements: their first trial is not the climber's spend
 FLOOR_OPERATORS = ("baseline", "seed")

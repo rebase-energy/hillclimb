@@ -25,8 +25,8 @@ from hillclimb.backends.claude_code import (
     _kill_group,
     usage_total_tokens,
 )
-from hillclimb.candidate import utcnow
-from hillclimb.pricing import cost_usd
+from hillclimb.harness.candidate import utcnow
+from hillclimb.harness.pricing import cost_usd
 
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
@@ -66,7 +66,7 @@ def codex_home(auth: str) -> Path:
 def codex_env(auth: str = "subscription") -> dict[str, str]:
     """Build the child environment for ChatGPT-login, API-key or OpenRouter
     auth. A missing OpenRouter key raises here, before the spawn."""
-    from hillclimb.executor import single_threaded
+    from hillclimb.harness.executor import single_threaded
 
     env = os.environ.copy()
     if auth == "openrouter":

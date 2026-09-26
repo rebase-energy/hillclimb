@@ -32,13 +32,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from hillclimb.budget import FLOOR_OPERATORS
-from hillclimb.candidate import Candidate
+from hillclimb.harness.budget import FLOOR_OPERATORS
+from hillclimb.harness.candidate import Candidate
 from hillclimb.config import Config
-from hillclimb.direction import better
-from hillclimb.run import SearchMeta, load_search_meta, search_ref
-from hillclimb.journal import Journal
-from hillclimb.store import DataStore, FileDataStore, SearchRecord, key_for, open_store, resolve_search
+from hillclimb.harness.direction import better
+from hillclimb.harness.run import SearchMeta, load_search_meta, search_ref
+from hillclimb.harness.journal import Journal
+from hillclimb.harness.store import DataStore, FileDataStore, SearchRecord, key_for, open_store, resolve_search
 
 # Searches drawn at once; older ones of the same problem fall off the chart
 # rather than turning it into a haystack. Sized so a three-arm experiment

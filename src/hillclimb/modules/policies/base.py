@@ -37,8 +37,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from hillclimb.candidate import Candidate
-    from hillclimb.journal import Journal
+    from hillclimb.harness.candidate import Candidate
+    from hillclimb.harness.journal import Journal
 
 
 TUNE_ACTION = "tune"
@@ -106,7 +106,7 @@ class BudgetView:
 
     def remaining_str(self) -> str:
         """The clock as prompts and logs print it (`1h 05m` | `59 minutes`)."""
-        from hillclimb.budget import format_remaining
+        from hillclimb.harness.budget import format_remaining
 
         return format_remaining(self.remaining_s)
 
@@ -130,7 +130,7 @@ class PolicyInput:
     accept_band: float = 0.0
 
     def __post_init__(self) -> None:
-        from hillclimb.journal import PolicyJournal
+        from hillclimb.harness.journal import PolicyJournal
 
         if not isinstance(self.journal, PolicyJournal):
             object.__setattr__(self, "journal", PolicyJournal(self.journal))

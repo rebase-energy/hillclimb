@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb import quota
+from hillclimb.harness import quota
 
 
 @pytest.fixture(autouse=True)

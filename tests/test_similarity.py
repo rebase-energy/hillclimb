@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from hillclimb.candidate import Candidate
+from hillclimb.harness.candidate import Candidate
 from hillclimb.tui.similarity import (
     N_BINS,
     build_similarity,

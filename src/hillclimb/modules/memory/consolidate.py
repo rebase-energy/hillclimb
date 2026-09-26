@@ -28,7 +28,7 @@ from pathlib import Path
 
 import yaml
 
-from hillclimb.candidate import utcnow
+from hillclimb.harness.candidate import utcnow
 from hillclimb.modules.memory.claims import (
     Claim,
     invoke_knowledge_agent,

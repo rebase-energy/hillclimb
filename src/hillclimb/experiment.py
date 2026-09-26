@@ -41,9 +41,9 @@ from statistics import mean, median
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
-from hillclimb.direction import better
-from hillclimb.journal import Journal
-from hillclimb.store import DataStore, FileDataStore
+from hillclimb.harness.direction import better
+from hillclimb.harness.journal import Journal
+from hillclimb.harness.store import DataStore, FileDataStore
 
 EXPERIMENTS_DIRNAME = "experiments"
 

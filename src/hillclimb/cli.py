@@ -44,26 +44,26 @@ from hillclimb.api import (
     spawn_search_proc,
 )
 from hillclimb.backends import get_backend
-from hillclimb.budget import BudgetManager
+from hillclimb.harness.budget import BudgetManager
 from hillclimb.config import Config, RouteConfig
-from hillclimb.control import request_prune, request_stop
-from hillclimb.journal import Journal
+from hillclimb.harness.control import request_prune, request_stop
+from hillclimb.harness.journal import Journal
 from hillclimb.problem import (
     ProblemSpec,
     load_problem,
     resolve_target,
     suite_problem_targets,
 )
-from hillclimb.run import (
+from hillclimb.harness.run import (
     load_run_meta,
     load_search_meta,
     RunMeta,
     search_ref,
 )
-from hillclimb.harness import Harness
+from hillclimb.harness.core import Harness
 from hillclimb.modules.policies.base import Action
-from hillclimb.status import read_status
-from hillclimb.store import (
+from hillclimb.harness.status import read_status
+from hillclimb.harness.store import (
     DataStore,
     SearchRecord,
     key_for,
@@ -529,7 +529,7 @@ def verify(
     import statistics
     import tempfile
 
-    from hillclimb.dirs import create_candidate_dir
+    from hillclimb.harness.dirs import create_candidate_dir
 
     config = load_config()
     problem = load_problem(target, config)
@@ -548,7 +548,7 @@ def verify(
     scores: list[float] = []
     with tempfile.TemporaryDirectory(prefix="hillclimb-verify-") as tmp:
         root = Path(tmp)
-        from hillclimb.unit_tests import freeze_for_run
+        from hillclimb.harness.unit_tests import freeze_for_run
 
         problem.unit_tests = freeze_for_run(problem, root)
         executor = build_executor(config, problem)
@@ -661,7 +661,7 @@ def store_sync():
     repeat. Run it after switching `store.backend` to `sqlite` so history
     written as files shows up in the chart and best-ever views.
     """
-    from hillclimb.store import FileDataStore, open_store, sync_store
+    from hillclimb.harness.store import FileDataStore, open_store, sync_store
 
     config = load_config()
     if config.store.backend == "files":
@@ -683,8 +683,8 @@ def store_searches(
     problem: str | None = typer.Option(None, "--problem", help="Only searches on this problem key"),
 ):
     """List the searches the store knows, best score per search."""
-    from hillclimb.direction import better
-    from hillclimb.store import open_store
+    from hillclimb.harness.direction import better
+    from hillclimb.harness.store import open_store
 
     config = load_config()
     store = open_store(config)
@@ -721,7 +721,7 @@ def knowledge_backfill():
     """
     from hillclimb.api import resolve_knowledge_dir
     from hillclimb.modules.memory.knowledge import distill_card, write_card
-    from hillclimb.run import load_search_meta
+    from hillclimb.harness.run import load_search_meta
 
     config = load_config()
     knowledge_dir = resolve_knowledge_dir(config)
@@ -1812,7 +1812,7 @@ def _run_suite(
     )
     # Snapshot every suite before launching the first child search. A child
     # only reuses these run-owned bundles; it never observes later live edits.
-    from hillclimb.unit_tests import freeze_for_run
+    from hillclimb.harness.unit_tests import freeze_for_run
 
     for problem_target in problem_targets:
         freeze_for_run(load_problem(problem_target, config), run_dir)
@@ -2163,7 +2163,7 @@ def resume(
     config.climber.tuner_params = meta.tuner_params
     config.routing = {op: RouteConfig(**route) for op, route in meta.routing.items()}
     problem = load_problem(meta.problem, config)
-    from hillclimb.unit_tests import restore_frozen
+    from hillclimb.harness.unit_tests import restore_frozen
 
     problem = restore_frozen(
         problem,
@@ -2189,7 +2189,7 @@ def _load_config_or_reap_orphans(all_: bool) -> Config:
     """`load_config()`, except that `--all` with no hillclimb dir in sight
     falls back to the live engines: the dir was deleted under them, so the
     control queue is gone and the only way to stop them is by signal."""
-    from hillclimb.orphans import kill_engines, orphan_engines
+    from hillclimb.harness.orphans import kill_engines, orphan_engines
     from hillclimb.project import HillclimbDirNotFound
 
     try:
@@ -2235,7 +2235,7 @@ def ps():
     and their children nested underneath. Engines whose hillclimb dir has
     been deleted are tagged `orphan` — `hillclimb stop --all` reaps those.
     """
-    from hillclimb.orphans import engine_trees, process_table
+    from hillclimb.harness.orphans import engine_trees, process_table
 
     table = process_table()
     trees = engine_trees(table)
@@ -2357,7 +2357,7 @@ def reset(
     """
     import shutil
 
-    from hillclimb.orphans import engines_for, kill_engines, live_engines
+    from hillclimb.harness.orphans import engines_for, kill_engines, live_engines
 
     config = load_config()
     root = config.hillclimb_dir
@@ -2552,8 +2552,8 @@ def show(
     """
     import difflib
 
-    from hillclimb.report import candidate_report, render_delta, render_report
-    from hillclimb.search import tail
+    from hillclimb.harness.report import candidate_report, render_delta, render_report
+    from hillclimb.harness.evaluation import tail
 
     config = load_config()
     store, record = open_search(config, search)
@@ -3557,7 +3557,7 @@ def connect_openrouter(
     where it could be journaled. `--backend codex` also pins the route.
     """
     from hillclimb import connect as connect_mod
-    from hillclimb.openrouter import OpenRouterError, key_info
+    from hillclimb.backends.openrouter import OpenRouterError, key_info
 
     config = _connect_config()
     # an ambient key is already usable — only a key typed here gets stored
@@ -3634,7 +3634,7 @@ def smoke(
         ),
     )
     search_dir = create_search(config, problem, run_dir, run_id, total_s=1800)
-    from hillclimb.routing import BackendPool, Router
+    from hillclimb.harness.routing import BackendPool, Router
 
     backend_instance = get_backend(
         config.backend, auth=config.backend_auth, pi_models_file=config.pi.models_file

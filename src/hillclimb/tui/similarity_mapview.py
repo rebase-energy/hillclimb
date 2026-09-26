@@ -37,7 +37,7 @@ from textual.widgets import Footer, Label
 
 from hillclimb.config import Config
 from hillclimb.tui.header import HillclimbHeader
-from hillclimb.journal import Journal
+from hillclimb.harness.journal import Journal
 from hillclimb.tui.similarity_map import METRICS, MapNode, MapView, build_map, build_run_map
 from hillclimb.tui.similarityview import (
     BEST_RGB,
@@ -55,7 +55,7 @@ from hillclimb.tui.similarityview import (
     search_inputs,
     run_state,
 )
-from hillclimb.store import SearchRecord
+from hillclimb.harness.store import SearchRecord
 from hillclimb.tui.theme import themed_plot
 from hillclimb.tui.treeview import FATE_SHAPE, dim_rgb
 from hillclimb.tui.watch import STATE_STYLE

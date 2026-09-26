@@ -246,9 +246,9 @@ def test_bin_packing_repo_problem_loads_and_scores(config, tmp_path):
     it and its baseline scores through the real command executor."""
     import sys
 
-    from hillclimb.baseline import write_baseline
-    from hillclimb.executor import CommandExecutor
-    from hillclimb.dirs import create_search_dir
+    from hillclimb.harness.baseline import write_baseline
+    from hillclimb.harness.executor import CommandExecutor
+    from hillclimb.harness.dirs import create_search_dir
 
     spec = load_problem("bin-packing", config)
     assert spec.verifier_cmd[0].endswith("problems/bin-packing/verifier.sh")
@@ -257,7 +257,7 @@ def test_bin_packing_repo_problem_loads_and_scores(config, tmp_path):
     assert "pack(items" in spec.contract
 
     search_dir = create_search_dir(tmp_path / "runs" / "r1", "bin-packing")
-    from hillclimb.evaluation import CandidateEvaluator
+    from hillclimb.harness.evaluation import CandidateEvaluator
 
     executor = CommandExecutor(Path(sys.executable), spec.verifier_cmd)
     evaluator = CandidateEvaluator(executor=executor, problem=spec, config=config)
@@ -291,7 +291,7 @@ def test_numeric_baseline_is_authoritative_chart_reference(evaluator_dir, config
 
 
 def test_declared_floor_is_scored_but_has_no_code(evaluator_dir, config, tmp_path):
-    from hillclimb.baseline import write_baseline
+    from hillclimb.harness.baseline import write_baseline
 
     (evaluator_dir / "problem.yaml").write_text(
         "metric: sum-radii\nhigher_is_better: true\nbaseline: 0.5\n"

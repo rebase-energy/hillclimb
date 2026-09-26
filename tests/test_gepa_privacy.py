@@ -12,10 +12,10 @@ from pathlib import Path
 
 from hillclimb.api import _finish_holdout
 from hillclimb.backends.fake import FakeBackend
-from hillclimb.dirs import create_search_dir
-from hillclimb.evaluation import CandidateEvaluator
-from hillclimb.journal import Journal
-from hillclimb.search_strategy import holdout_timing
+from hillclimb.harness.dirs import create_search_dir
+from hillclimb.harness.evaluation import CandidateEvaluator
+from hillclimb.harness.journal import Journal
+from hillclimb.harness.glue import holdout_timing
 from tests.conftest import executor_for, ok_script
 from tests.gepa_fakes import FakeGEPADriver, make_gepa
 

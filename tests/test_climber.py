@@ -9,7 +9,7 @@ import pytest
 
 from hillclimb.backends.fake import FakeBackend
 from hillclimb.climber import ClimberLoadError, bundled_climbers, load_climber, tree_sha256
-from hillclimb.loop import PolicyLoop, SearchLoop
+from hillclimb.harness.loop import PolicyLoop, SearchLoop
 from hillclimb.modules.policies.greedy import GreedyPolicy
 from hillclimb.modules.policies.base import Action
 from tests.conftest import ok_script
@@ -207,7 +207,7 @@ def test_a_run_folder_written_before_climbers_still_loads(tmp_path):
     the model)."""
     import yaml
 
-    from hillclimb.run import SearchMeta, load_search_meta
+    from hillclimb.harness.run import SearchMeta, load_search_meta
 
     search_dir = tmp_path / "runs" / "r" / "searches" / "gefcom-solar"
     search_dir.mkdir(parents=True)
@@ -235,7 +235,7 @@ def test_a_run_folder_written_before_climbers_still_loads(tmp_path):
 def test_the_engine_uses_the_tuner_the_user_or_the_manifest_names(config, tmp_path):
     """`search.tuner` reaches the harness (it silently did not for a while:
     the rig-based tune tests never went through api's wiring)."""
-    from hillclimb.search_strategy import build_tuner
+    from hillclimb.harness.glue import build_tuner
     from hillclimb.modules.tuners.random_search import RandomTuner
 
     assert isinstance(build_tuner(config), RandomTuner)  # greedy's manifest says random
@@ -258,10 +258,10 @@ def test_the_engine_uses_the_tuner_the_user_or_the_manifest_names(config, tmp_pa
 def test_execute_search_hands_the_harness_the_climbers_tuner(task, config, tmp_path, monkeypatch):
     """End to end through api: the Harness is constructed with the tuner,
     the operators and the prompts of the search's climber snapshot."""
-    import hillclimb.harness as harness_module
+    import hillclimb.harness.core as harness_module
     from hillclimb import api
-    from hillclimb.budget import BudgetManager
-    from hillclimb.run import RunMeta
+    from hillclimb.harness.budget import BudgetManager
+    from hillclimb.harness.run import RunMeta
 
     seen = {}
     original = harness_module.Harness
@@ -317,7 +317,7 @@ def test_a_search_snapshot_with_a_pre_move_ref_still_resumes(task, config, tmp_p
     from hillclimb import api
     from hillclimb.climber import load_snapshot
     from hillclimb.modules.policies.greedy import GreedyPolicy
-    from hillclimb.run import RunMeta
+    from hillclimb.harness.run import RunMeta
 
     run_dir = api.create_run(config, RunMeta(run_id="r1", name="r1", kind="problem", target="t", problem_ids=[task.problem_id]))
     search_dir = api.create_search(config, task, run_dir, "r1", 600)

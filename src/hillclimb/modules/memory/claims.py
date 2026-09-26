@@ -31,13 +31,13 @@ import yaml
 from pydantic import BaseModel, Field, field_validator
 
 from hillclimb.backends.base import OperatorRequest
-from hillclimb.candidate import utcnow
+from hillclimb.harness.candidate import utcnow
 from hillclimb.config import Config
 from hillclimb.prompts.render import render
-from hillclimb.routing import Router
+from hillclimb.harness.routing import Router
 
 if TYPE_CHECKING:
-    from hillclimb.journal import Journal
+    from hillclimb.harness.journal import Journal
     from hillclimb.modules.memory.knowledge import KnowledgeCard
 
 CLAIMS_FILENAME = "claims.yaml"

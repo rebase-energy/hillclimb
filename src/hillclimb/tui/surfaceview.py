@@ -26,9 +26,9 @@ from textual.widgets import Footer, Label
 
 from hillclimb.config import Config
 from hillclimb.tui.header import HillclimbHeader, TimezoneMixin
-from hillclimb.journal import Journal
+from hillclimb.harness.journal import Journal
 from hillclimb.problem import ProblemSpec, load_problem
-from hillclimb.store import DataStore, SearchRecord, open_store, resolve_search
+from hillclimb.harness.store import DataStore, SearchRecord, open_store, resolve_search
 from hillclimb.tui.surface import LandscapeError, SurfaceView, build_surface, load_landscape
 from hillclimb.tui.theme import HILLCLIMB_CSS, apply_theme, themed_plot
 from hillclimb.tui.watch import STATE_STYLE, LiveScreen

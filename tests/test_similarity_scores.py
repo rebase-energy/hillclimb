@@ -9,7 +9,8 @@ import numpy as np
 import pytest
 from typer.testing import CliRunner
 
-from hillclimb import cli, openrouter
+from hillclimb import cli
+from hillclimb.backends import openrouter
 from hillclimb.config import Config
 from hillclimb.modules.similarity import (
     SimilarityScore,

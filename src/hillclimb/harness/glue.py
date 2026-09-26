@@ -1,4 +1,5 @@
-"""Which climber drives a search, and the two ways a search ends early.
+"""The glue from config to climber: which climber drives a search, and the two
+ways a search ends early (this module was `search_strategy.py`).
 
 Every climber runs the same way: `Harness.execute(loop)`. `search_climber`
 resolves the configured reference (a bundled name, a directory, one file —
@@ -15,7 +16,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from hillclimb.climber import Climber, OperatorSet
     from hillclimb.config import Config
-    from hillclimb.loop import SearchLoop
+    from hillclimb.harness.loop import SearchLoop
 
 
 class ParkedSearch(Exception):

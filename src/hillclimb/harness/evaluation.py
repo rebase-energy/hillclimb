@@ -33,15 +33,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from hillclimb.candidate import Candidate, Replicate, Trial, UnitTestResult, utcnow
+from hillclimb.harness.candidate import Candidate, Replicate, Trial, UnitTestResult, utcnow
 from hillclimb.config import Config
-from hillclimb.executor import RESULT_FILE, Executor, HoldoutScorer, read_result
-from hillclimb.journal import Journal
+from hillclimb.harness.executor import RESULT_FILE, Executor, HoldoutScorer, read_result
+from hillclimb.harness.journal import Journal
 from hillclimb.problem import ProblemSpec
 
 if TYPE_CHECKING:
-    from hillclimb.status import StatusWriter
-    from hillclimb.unit_tests import UnitTestRunner
+    from hillclimb.harness.status import StatusWriter
+    from hillclimb.harness.unit_tests import UnitTestRunner
 
 HOLDOUT_TIMINGS = ("inline", "after")
 # floors are always holdout-scored: they are the selection floor a re-search
@@ -109,7 +109,7 @@ class CandidateEvaluator:
         would measure each other."""
         from concurrent.futures import ThreadPoolExecutor
 
-        from hillclimb.dirs import create_replicate_dir, create_trial_dir, hoist_replicate, replicate_dir
+        from hillclimb.harness.dirs import create_replicate_dir, create_trial_dir, hoist_replicate, replicate_dir
 
         explicit_index = index  # tune jobs: the status entry is keyed by trial
         if index is None:
@@ -238,7 +238,7 @@ class CandidateEvaluator:
         (replay keeps the last record). Idempotent — candidates that already
         carry a holdout count toward k and are not re-scored. Returns the
         candidates it scored."""
-        from hillclimb.status import CurrentCandidate
+        from hillclimb.harness.status import CurrentCandidate
 
         if self.holdout_scorer is None:
             return []
@@ -283,7 +283,7 @@ class CandidateEvaluator:
     def hoist_trial(self, candidate_dir: Path, trial: Trial) -> None:
         """Re-surface a trial's r0 outputs at the candidate root — called by
         engines when a later trial becomes the candidate's best."""
-        from hillclimb.dirs import hoist_replicate, replicate_dir, trial_dir
+        from hillclimb.harness.dirs import hoist_replicate, replicate_dir, trial_dir
 
         hoist_replicate(
             candidate_dir, replicate_dir(trial_dir(candidate_dir, trial.index), 0),
@@ -334,7 +334,7 @@ class CandidateEvaluator:
             return None
         if payload.get("split") != "validation" or not isinstance(payload.get("report"), dict):
             return None
-        from hillclimb.report import compact_report
+        from hillclimb.harness.report import compact_report
 
         try:
             compact = compact_report(payload["report"])

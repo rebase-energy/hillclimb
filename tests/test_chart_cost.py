@@ -5,7 +5,7 @@ PlotSpy the way test_tree.py drives build_climb_plot.
 """
 
 from tests.factories import trial as mk_trial
-from hillclimb.candidate import BackendInfo, Candidate
+from hillclimb.harness.candidate import BackendInfo, Candidate
 from hillclimb.tui.chart import (
     Climb,
     ClimbEvent,

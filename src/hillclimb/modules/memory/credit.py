@@ -28,7 +28,7 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, Field
 
-from hillclimb.candidate import utcnow
+from hillclimb.harness.candidate import utcnow
 
 CREDIT_SCHEMA_VERSION = 1
 CREDIT_DIRNAME = "credit"

@@ -43,7 +43,7 @@ def test_committed_dirs_match_the_generator(generator, tmp_path):
 
 @pytest.mark.parametrize("n", LEVELS)
 def test_level_loads_and_scores_its_sample(config: Config, tmp_path, n):
-    from hillclimb.executor import CommandExecutor
+    from hillclimb.harness.executor import CommandExecutor
 
     spec = load_problem(f"heilbronn-{n}", config)
     assert spec.metric_name == "min-triangle-area" and spec.higher_is_better

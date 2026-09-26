@@ -9,8 +9,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, model_validator
 
-from hillclimb.budget import BudgetManager
-from hillclimb.candidate import utcnow
+from hillclimb.harness.budget import BudgetManager
+from hillclimb.harness.candidate import utcnow
 
 STATUS_FILE = "status.json"
 

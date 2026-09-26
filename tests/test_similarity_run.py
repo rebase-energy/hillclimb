@@ -10,10 +10,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from hillclimb.candidate import Candidate
-from hillclimb.journal import Journal
+from hillclimb.harness.candidate import Candidate
+from hillclimb.harness.journal import Journal
 from hillclimb.problem import load_problem
-from hillclimb.run import RunMeta, SearchMeta, write_run_meta, write_search_meta
+from hillclimb.harness.run import RunMeta, SearchMeta, write_run_meta, write_search_meta
 from hillclimb.tui.similarity import (
     FingerprintError,
     SearchInput,

@@ -10,10 +10,10 @@ from pathlib import Path
 import pytest
 from rich.style import Style
 
-from hillclimb.candidate import Candidate
+from hillclimb.harness.candidate import Candidate
 from hillclimb.tui.chart import build_detail_plot, detail_layout
 from hillclimb.config import Config
-from hillclimb.journal import Journal
+from hillclimb.harness.journal import Journal
 from hillclimb.tui.tree import (
     FATES,
     accepted_lineage,
@@ -670,7 +670,7 @@ async def test_chart_defaults_to_holdout_when_the_search_scores_one(tree_workspa
     """Fair by default: a holdout-scored problem opens on the holdout view
     (the split its baselines live on); `h` toggles back to validation."""
     from hillclimb.tui.chart import ChartApp
-    from hillclimb.run import load_search_meta, write_search_meta
+    from hillclimb.harness.run import load_search_meta, write_search_meta
 
     search_dir, config = tree_workspace
     meta = load_search_meta(search_dir)
@@ -721,7 +721,7 @@ async def test_chart_cycles_between_problems(tree_workspace, tmp_path, monkeypat
 async def test_chart_detail_toggle(tree_workspace, monkeypatch):
     from hillclimb.tui.chart import ChartApp
     from plotui.textual import PlotWidget
-    from hillclimb.run import load_search_meta, write_search_meta
+    from hillclimb.harness.run import load_search_meta, write_search_meta
 
     search_dir, config = tree_workspace
     monkeypatch.setenv("PLOTUI_RENDER", "placeholder")

@@ -6,11 +6,11 @@ from __future__ import annotations
 
 import json
 
-from hillclimb.candidate import Candidate, Replicate
-from hillclimb.dirs import create_candidate_dir, create_search_dir
-from hillclimb.evaluation import CandidateEvaluator, eval_result_for
-from hillclimb.executor import result_instances, result_metrics
-from hillclimb.journal import Journal
+from hillclimb.harness.candidate import Candidate, Replicate
+from hillclimb.harness.dirs import create_candidate_dir, create_search_dir
+from hillclimb.harness.evaluation import CandidateEvaluator, eval_result_for
+from hillclimb.harness.executor import result_instances, result_metrics
+from hillclimb.harness.journal import Journal
 from tests.conftest import executor_for
 from tests.factories import trial as mk_trial
 
@@ -132,7 +132,7 @@ def _bridge(*, higher_is_better=True):
 
 
 def _result(instances, score=1.0, valid=True):
-    from hillclimb.evaluation import EvalResult
+    from hillclimb.harness.evaluation import EvalResult
 
     return EvalResult(candidate_id="c001", score=score, valid=valid, instance_scores=instances)
 

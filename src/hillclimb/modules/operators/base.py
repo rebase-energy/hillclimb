@@ -20,8 +20,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from hillclimb.candidate import Candidate
-    from hillclimb.journal import PolicyJournal
+    from hillclimb.harness.candidate import Candidate
+    from hillclimb.harness.journal import PolicyJournal
     from hillclimb.modules.policies.base import Action, BudgetView
 
 # What an operator's candidates ARE to the rest of the system. Views colour

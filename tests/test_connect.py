@@ -281,7 +281,7 @@ def test_connect_openrouter_validates_before_storing(monkeypatch, tmp_path):
     monkeypatch.setenv("HILLCLIMB_DIR", str(folder))
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setattr(
-        "hillclimb.openrouter.key_info",
+        "hillclimb.backends.openrouter.key_info",
         lambda key=None, timeout=10: {"label": "hill", "usage": 0.0, "limit": None},
     )
     result = CliRunner().invoke(cli.app, ["connect", "openrouter", "--key", "sk-or-test"])
@@ -290,7 +290,7 @@ def test_connect_openrouter_validates_before_storing(monkeypatch, tmp_path):
 
 
 def test_connect_openrouter_stores_nothing_when_the_key_is_refused(monkeypatch, tmp_path):
-    from hillclimb.openrouter import OpenRouterError
+    from hillclimb.backends.openrouter import OpenRouterError
 
     folder = _hillclimb_dir(tmp_path)
     monkeypatch.setenv("HILLCLIMB_DIR", str(folder))
@@ -299,7 +299,7 @@ def test_connect_openrouter_stores_nothing_when_the_key_is_refused(monkeypatch, 
     def refuse(key=None, timeout=10):
         raise OpenRouterError("OpenRouter key HTTP 401: User not found.")
 
-    monkeypatch.setattr("hillclimb.openrouter.key_info", refuse)
+    monkeypatch.setattr("hillclimb.backends.openrouter.key_info", refuse)
     result = CliRunner().invoke(cli.app, ["connect", "openrouter", "--key", "nope"])
     assert result.exit_code == 1
     assert "401" in result.output

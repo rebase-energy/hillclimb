@@ -8,14 +8,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from hillclimb.backends.fake import FakeBackend
-from hillclimb.budget import BudgetManager
+from hillclimb.harness.budget import BudgetManager
 from hillclimb.climber import load_climber
-from hillclimb.dirs import create_search_dir
-from hillclimb.harness import Harness
+from hillclimb.harness.dirs import create_search_dir
+from hillclimb.harness.core import Harness
 from hillclimb.integrations.gepa import build_gepa_loop
 from hillclimb.integrations.gepa.loop import GepaLoop
 from hillclimb.integrations.gepa.proposer import COMPONENT, ProposerError
-from hillclimb.journal import Journal
+from hillclimb.harness.journal import Journal
 from tests.conftest import executor_for, ok_script
 
 

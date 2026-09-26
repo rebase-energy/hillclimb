@@ -3,8 +3,8 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from hillclimb.candidate import Candidate, Replicate, Trial, utcnow
-from hillclimb.dirs import create_candidate_dir
+from hillclimb.harness.candidate import Candidate, Replicate, Trial, utcnow
+from hillclimb.harness.dirs import create_candidate_dir
 from hillclimb.problem import ProblemSpec
 
 

@@ -10,8 +10,8 @@ import tempfile
 import time
 from pathlib import Path
 
-from hillclimb.candidate import UnitTestResult
-from hillclimb.executor import (
+from hillclimb.harness.candidate import UnitTestResult
+from hillclimb.harness.executor import (
     PARAMS_FILE,
     prepend_pythonpath,
     run_logged,

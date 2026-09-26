@@ -28,8 +28,8 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, Field, model_validator
 
-from hillclimb.candidate import utcnow
-from hillclimb.direction import legacy_direction_key
+from hillclimb.harness.candidate import utcnow
+from hillclimb.harness.direction import legacy_direction_key
 from hillclimb.modules.memory.claims import Claim
 
 SCHEMA_VERSION = 1

@@ -6,7 +6,7 @@ from pathlib import Path
 from statistics import median
 from typing import Protocol
 
-from hillclimb.candidate import Candidate, utcnow
+from hillclimb.harness.candidate import Candidate, utcnow
 
 
 def _ranks(values: list[float], higher_is_better: bool) -> list[float]:

@@ -2,7 +2,7 @@
 
 Strictly a *viewer*: all state is read from disk (run.yaml, search.yaml,
 status.json, journal.jsonl, agent_stream.jsonl — via the configured DataStore) and the only writes go through
-the control-command queue in hillclimb.control, same as the CLI. The pure
+the control-command queue in hillclimb.harness.control, same as the CLI. The pure
 data-assembly functions at the top carry the logic so they stay testable
 without driving Textual.
 """
@@ -20,15 +20,15 @@ from hillclimb.backends.claude_code import (
     is_concrete_model_id,
     usage_total_tokens,
 )
-from hillclimb.candidate import Candidate
+from hillclimb.harness.candidate import Candidate
 from hillclimb.config import Config
-from hillclimb.control import request_prune, request_stop
-from hillclimb.journal import Journal
+from hillclimb.harness.control import request_prune, request_stop
+from hillclimb.harness.journal import Journal
 from hillclimb.modules.policies import policy_label
-from hillclimb.run import RunMeta, SearchMeta, run_display_name
-from hillclimb.run import search_ref as _search_ref
-from hillclimb.status import SearchStatus, live_remaining_s, live_spent_s
-from hillclimb.store import DataStore, FileDataStore, SearchRecord, key_for, open_store
+from hillclimb.harness.run import RunMeta, SearchMeta, run_display_name
+from hillclimb.harness.run import search_ref as _search_ref
+from hillclimb.harness.status import SearchStatus, live_remaining_s, live_spent_s
+from hillclimb.harness.store import DataStore, FileDataStore, SearchRecord, key_for, open_store
 from hillclimb.tui.theme import HILLCLIMB_CSS, apply_theme
 
 STATE_STYLE = {
@@ -1209,7 +1209,7 @@ def candidate_detail_renderables(
             Panel(Text(notes), title="Notes", title_align="left", border_style="dim cyan")
         )
 
-    from hillclimb.report import candidate_report, render_report
+    from hillclimb.harness.report import candidate_report, render_report
 
     report_text = render_report(candidate_report(candidate), metric)
     if report_text:
@@ -2513,7 +2513,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         canvas.set_tree(shown, frame=live_tree)
 
     def _render_gantt(self) -> None:
-        from hillclimb.candidate import utcnow
+        from hillclimb.harness.candidate import utcnow
         from hillclimb.tui.gantt import build_gantt
         from hillclimb.tui.ganttview import GanttPanel
 

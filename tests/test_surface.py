@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb.candidate import Candidate
+from hillclimb.harness.candidate import Candidate
 from hillclimb.problem import load_problem
 from hillclimb.tui.surface import LIFT, LandscapeError, build_surface, load_landscape
 from hillclimb.tui.tree import build_tree

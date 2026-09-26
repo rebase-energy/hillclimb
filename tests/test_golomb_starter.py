@@ -40,7 +40,7 @@ def generator():
 
 def _score(config: Config, tmp_path: Path, m: int, submission: str) -> float:
     """Run the problem's verifier on `submission` through the executor."""
-    from hillclimb.executor import CommandExecutor
+    from hillclimb.harness.executor import CommandExecutor
 
     spec = load_problem(f"golomb-{m}", config)
     candidate_dir = tmp_path / "cand"

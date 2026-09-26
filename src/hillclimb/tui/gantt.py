@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from hillclimb.candidate import Candidate
+from hillclimb.harness.candidate import Candidate
 from hillclimb.tui.tree import minutes_since
 
 # Two spans whose endpoints meet within this are "back to back": the later

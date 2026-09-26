@@ -250,8 +250,8 @@ from textual.widgets import Footer, Label, RichLog  # noqa: E402
 
 from hillclimb.tui.graphview import GraphKeys, TimeScrubber, place_labels_by_node  # noqa: E402
 from hillclimb.tui.header import HillclimbHeader, TimezoneMixin  # noqa: E402
-from hillclimb.journal import Journal  # noqa: E402
-from hillclimb.store import DataStore, SearchRecord, open_store, resolve_search  # noqa: E402
+from hillclimb.harness.journal import Journal  # noqa: E402
+from hillclimb.harness.store import DataStore, SearchRecord, open_store, resolve_search  # noqa: E402
 from hillclimb.tui.theme import HILLCLIMB_CSS, apply_theme, themed_plot  # noqa: E402
 from hillclimb.tui.tree import build_tree, candidates_until, tree_events  # noqa: E402
 from hillclimb.tui.watch import (  # noqa: E402

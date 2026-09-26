@@ -11,16 +11,16 @@ from pathlib import Path
 import pytest
 
 from hillclimb.backends.fake import FakeBackend
-from hillclimb.budget import BudgetManager
-from hillclimb.candidate import Candidate
+from hillclimb.harness.budget import BudgetManager
+from hillclimb.harness.candidate import Candidate
 from tests.conftest import local_executor
-from hillclimb.journal import Journal
-from hillclimb.evaluation import accept_band
+from hillclimb.harness.journal import Journal
+from hillclimb.harness.evaluation import accept_band
 from hillclimb.modules.policies import get_policy
 from hillclimb.modules.policies.greedy import GreedyPolicy
 from hillclimb.modules.policies.base import Action, BudgetView, InflightRef, PolicyInput
 from tests.harness_factory import SearchRig
-from hillclimb.dirs import create_search_dir
+from hillclimb.harness.dirs import create_search_dir
 from tests.conftest import ok_script
 
 
@@ -244,7 +244,7 @@ def test_every_knob_is_one_dict_with_defaults(config):
     """A policy never sees the harness's config: knobs come from the
     climber's params (the manifest's, with the user's `climber.params` laid
     over them), else DEFAULTS."""
-    from hillclimb.search_strategy import build_loop
+    from hillclimb.harness.glue import build_loop
 
     assert GreedyPolicy().resolved_params()["num_drafts"] == 3
     resolved = build_loop(config).policy.resolved_params()  # the bundled manifest's params
@@ -397,8 +397,8 @@ def test_file_policy_drives_a_search_and_is_recorded(task, config, tmp_path):
     record pins the file's hash."""
     from hillclimb.api import create_run, create_search
     from hillclimb.problem import load_problem
-    from hillclimb.run import RunMeta, load_search_meta
-    from hillclimb.search_strategy import build_loop
+    from hillclimb.harness.run import RunMeta, load_search_meta
+    from hillclimb.harness.glue import build_loop
     from tests.harness_factory import make_harness
     from tests.test_cli import write_problem
 

@@ -7,14 +7,14 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb.candidate import Candidate
+from hillclimb.harness.candidate import Candidate
 from hillclimb.backends.fake import FakeBackend
-from hillclimb.budget import BudgetManager
-from hillclimb.control import apply_prune, resync_best
-from hillclimb.dirs import create_candidate_dir, create_search_dir
-from hillclimb.evaluation import CandidateEvaluator
-from hillclimb.executor import CommandExecutor
-from hillclimb.journal import Journal
+from hillclimb.harness.budget import BudgetManager
+from hillclimb.harness.control import apply_prune, resync_best
+from hillclimb.harness.dirs import create_candidate_dir, create_search_dir
+from hillclimb.harness.evaluation import CandidateEvaluator
+from hillclimb.harness.executor import CommandExecutor
+from hillclimb.harness.journal import Journal
 from hillclimb.problem import ProblemSpec
 from hillclimb.runtime import RUN_SOLUTION
 from tests.harness_factory import SearchRig

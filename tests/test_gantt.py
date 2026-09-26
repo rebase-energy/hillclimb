@@ -8,7 +8,7 @@ from tests.factories import trial as mk_trial
 
 import random
 
-from hillclimb.candidate import Candidate
+from hillclimb.harness.candidate import Candidate
 from hillclimb.tui.gantt import GanttLayout, GanttSpan, build_gantt, minute_to_col
 from hillclimb.tui.ganttview import LANE_LABEL_W, render_gantt
 

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb.executor import (
+from hillclimb.harness.executor import (
     RESULT_FILE,
     read_result,
     render_argv,
@@ -183,7 +183,7 @@ def test_verifier_env_and_render(tmp_path):
 def test_pythonpath_reaches_verifier_env(tmp_path):
     """The interface shim rides PYTHONPATH into the verifier process; without
     one the env is untouched."""
-    from hillclimb.executor import CommandExecutor, prepend_pythonpath
+    from hillclimb.harness.executor import CommandExecutor, prepend_pythonpath
     from tests.conftest import SELF_REPORT_CMD
 
     code = (
@@ -212,7 +212,7 @@ def test_pythonpath_reaches_verifier_env(tmp_path):
 
 def test_solution_and_agent_envs_are_single_threaded(monkeypatch):
     from hillclimb.backends.claude_code import subscription_env
-    from hillclimb.executor import SINGLE_THREAD_ENV
+    from hillclimb.harness.executor import SINGLE_THREAD_ENV
 
     monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
     monkeypatch.setenv("MKL_NUM_THREADS", "4")  # an explicit parent value wins

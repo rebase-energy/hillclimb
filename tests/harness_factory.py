@@ -3,10 +3,10 @@
 
 from __future__ import annotations
 
-from hillclimb.budget import BudgetManager
-from hillclimb.dirs import create_search_dir
-from hillclimb.harness import Harness
-from hillclimb.journal import Journal
+from hillclimb.harness.budget import BudgetManager
+from hillclimb.harness.dirs import create_search_dir
+from hillclimb.harness.core import Harness
+from hillclimb.harness.journal import Journal
 from tests.conftest import local_executor
 
 
@@ -30,8 +30,8 @@ def make_harness(task, config, backend, *, name: str = "test-search", **kwargs):
 
 # --- a policy-driven rig for tests -----------------------------------------
 
-from hillclimb.candidate import Candidate  # noqa: E402
-from hillclimb.loop import PolicyLoop  # noqa: E402
+from hillclimb.harness.candidate import Candidate  # noqa: E402
+from hillclimb.harness.loop import PolicyLoop  # noqa: E402
 from hillclimb.modules.policies.greedy import GreedyPolicy  # noqa: E402
 from hillclimb.modules.policies.base import TUNE_ACTION, Action, SearchPolicy  # noqa: E402
 

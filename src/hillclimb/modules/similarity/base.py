@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
 
-from hillclimb.candidate import Candidate
+from hillclimb.harness.candidate import Candidate
 
 SOLUTION_FILE = "solution.py"
 

@@ -26,7 +26,7 @@ from pathlib import Path
 
 import numpy as np
 
-from hillclimb.candidate import Candidate
+from hillclimb.harness.candidate import Candidate
 from hillclimb.tui.tree import build_tree
 
 GRID_N = 121        # terrain samples per axis for the rendered surface

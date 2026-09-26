@@ -150,7 +150,7 @@ def test_search_record_pins_the_climber_and_snapshots_it(config, tmp_path):
     from hillclimb.api import create_run, create_search
     from hillclimb.climber import load_climber, load_snapshot
     from hillclimb.problem import load_problem
-    from hillclimb.run import RunMeta, load_search_meta
+    from hillclimb.harness.run import RunMeta, load_search_meta
     from tests.test_cli import write_problem
 
     root = tmp_path / "problems"
@@ -184,7 +184,7 @@ def test_a_search_refuses_to_start_on_a_climber_whose_prompts_do_not_lint(config
     in: create_search refuses before a search dir exists."""
     from hillclimb.api import create_run, create_search
     from hillclimb.problem import load_problem
-    from hillclimb.run import RunMeta
+    from hillclimb.harness.run import RunMeta
     from tests.test_cli import write_problem
 
     root = tmp_path / "problems"

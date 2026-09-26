@@ -7,11 +7,11 @@ import sys
 from pathlib import Path
 
 from hillclimb.backends.fake import FakeBackend
-from hillclimb.budget import BudgetManager
+from hillclimb.harness.budget import BudgetManager
 from tests.conftest import local_executor
-from hillclimb.journal import Journal
+from hillclimb.harness.journal import Journal
 from tests.harness_factory import SearchRig
-from hillclimb.dirs import create_search_dir
+from hillclimb.harness.dirs import create_search_dir
 from tests.conftest import ok_script
 
 

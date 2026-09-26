@@ -10,7 +10,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from hillclimb.executor import RESULT_FILE, read_result, run_logged
+from hillclimb.harness.executor import RESULT_FILE, read_result, run_logged
 
 EVAL_RUNNER = Path(__file__).parent / "eval_runner.py"
 

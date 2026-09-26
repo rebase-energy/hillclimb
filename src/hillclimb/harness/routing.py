@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from hillclimb.backends import OperatorBackend, get_backend
-from hillclimb.bandit import OperatorBandits
+from hillclimb.harness.bandit import OperatorBandits
 from hillclimb.config import Config
 from hillclimb.modules.policies.base import Route
 

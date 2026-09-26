@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from hillclimb import spaces
-from hillclimb.params import ParamsFile, coerce, parse_space, read_candidate_space, write_inherited_params, write_trial_params
+from hillclimb.harness.params import ParamsFile, coerce, parse_space, read_candidate_space, write_inherited_params, write_trial_params
 from hillclimb.spaces import ParamsError, check_params_space, describe_params, fold_defaults, params, with_values
 
 SPACE = {
@@ -153,7 +153,7 @@ class TestExecutorWiring:
     values file and nothing else from the trial dir."""
 
     def test_verifier_env_sets_params_only_when_given(self, tmp_path):
-        from hillclimb.executor import RESULT_FILE, verifier_env
+        from hillclimb.harness.executor import RESULT_FILE, verifier_env
 
         base = (Path(sys.executable), tmp_path / "s.py", tmp_path / RESULT_FILE, "validation")
         assert "HILLCLIMB_PARAMS" not in verifier_env(*base)
@@ -162,10 +162,10 @@ class TestExecutorWiring:
         assert "HILLCLIMB_REPLICATE_SEED" not in env
 
     def test_executor_exports_the_replicate_dirs_params_file(self, tmp_path, task, config):
-        from hillclimb.candidate import Candidate
-        from hillclimb.dirs import create_candidate_dir, create_search_dir
-        from hillclimb.evaluation import CandidateEvaluator
-        from hillclimb.params import ParamsFile
+        from hillclimb.harness.candidate import Candidate
+        from hillclimb.harness.dirs import create_candidate_dir, create_search_dir
+        from hillclimb.harness.evaluation import CandidateEvaluator
+        from hillclimb.harness.params import ParamsFile
         from tests.conftest import executor_for
 
         search_dir = create_search_dir(tmp_path / "runs" / "r", "s")
@@ -195,7 +195,7 @@ class TestExecutorWiring:
         assert trial_.val_score == pytest.approx(0.5)  # the solution's own defaults
 
     def test_holdout_scorer_materializes_the_trials_values(self, tmp_path):
-        from hillclimb.executor import CommandHoldoutScorer, trial_params_doc
+        from hillclimb.harness.executor import CommandHoldoutScorer, trial_params_doc
         from tests.factories import trial as mk_trial
 
         candidate_dir = tmp_path / "c001"

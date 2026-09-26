@@ -8,13 +8,13 @@ from typing import TYPE_CHECKING, Sequence
 
 from pydantic import BaseModel, Field
 
-from hillclimb.candidate import utcnow
-from hillclimb.dirs import PARAMS_FILE, trial_dir
-from hillclimb.journal import Journal
-from hillclimb.status import derive_state
+from hillclimb.harness.candidate import utcnow
+from hillclimb.harness.dirs import PARAMS_FILE, trial_dir
+from hillclimb.harness.journal import Journal
+from hillclimb.harness.status import derive_state
 
 if TYPE_CHECKING:
-    from hillclimb.store import DataStore, SearchKey
+    from hillclimb.harness.store import DataStore, SearchKey
 
 CONTROL_DIR = "control"
 ACTIONS = ("stop", "prune")

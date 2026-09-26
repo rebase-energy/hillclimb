@@ -182,7 +182,7 @@ def test_pi_models_file_resolves_from_project_root(tmp_path: Path, monkeypatch):
 
 def test_sampling_validation_checks_inherited_routes_and_action_override():
     from hillclimb.modules.policies.base import Route
-    from hillclimb.routing import Router
+    from hillclimb.harness.routing import Router
 
     with pytest.raises(ValueError, match="routing.improve: sampling"):
         Config(routing={
@@ -278,7 +278,7 @@ def test_legacy_set_overrides_keep_working_and_removed_keys_say_what_to_do():
 
 
 def test_the_users_operator_overlay_reaches_the_operators():
-    from hillclimb.search_strategy import build_operators, effective_memory
+    from hillclimb.harness.glue import build_operators, effective_memory
 
     config = Config()
     assert build_operators(config).get("draft").params == {"retrieval": True}  # the manifest's

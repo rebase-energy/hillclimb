@@ -17,8 +17,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, Sequence
 
 if TYPE_CHECKING:
-    from hillclimb.candidate import Candidate
-    from hillclimb.params import ParamSpace
+    from hillclimb.harness.candidate import Candidate
+    from hillclimb.harness.params import ParamSpace
 
 
 @dataclass(frozen=True)

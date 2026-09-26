@@ -8,13 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb.candidate import BackendInfo, Candidate
+from hillclimb.harness.candidate import BackendInfo, Candidate
 from hillclimb.config import Config
-from hillclimb.control import read_commands
-from hillclimb.store import FileDataStore, key_for
-from hillclimb.journal import Journal
-from hillclimb.run import RunMeta, SearchMeta, load_search_meta, write_run_meta, write_search_meta
-from hillclimb.status import SearchStatus, write_status
+from hillclimb.harness.control import read_commands
+from hillclimb.harness.store import FileDataStore, key_for
+from hillclimb.harness.journal import Journal
+from hillclimb.harness.run import RunMeta, SearchMeta, load_search_meta, write_run_meta, write_search_meta
+from hillclimb.harness.status import SearchStatus, write_status
 from hillclimb.tui.watch import (
     DETAIL_MIN_HEIGHT,
     DETAIL_STEP,
@@ -276,7 +276,7 @@ def test_stream_tokens_live_and_final(tmp_path: Path):
 def test_search_row_counts_in_flight_tokens(tmp_path: Path):
     import json
 
-    from hillclimb.status import CurrentCandidate, SearchStatus
+    from hillclimb.harness.status import CurrentCandidate, SearchStatus
     from hillclimb.tui.watch import _search_row
 
     runs_dir = tmp_path / "runs"
@@ -296,7 +296,7 @@ def test_search_row_counts_in_flight_tokens(tmp_path: Path):
         current=[CurrentCandidate(candidate_id="c003", operator="improve", phase="agent",
                                   candidate_dir=str(live))],
     )
-    from hillclimb.status import write_status
+    from hillclimb.harness.status import write_status
     write_status(search_dir, status)
     store = FileDataStore(search_dir.parents[2])
     row = _search_row(store, store.search(key_for(search_dir)))
@@ -316,7 +316,7 @@ def test_search_row_shows_resolved_model_id(tmp_path: Path):
 
     import json
 
-    from hillclimb.status import CurrentCandidate, SearchStatus, write_status
+    from hillclimb.harness.status import CurrentCandidate, SearchStatus, write_status
 
     runs_dir = tmp_path / "runs"
     search_dir = make_run_with_search(runs_dir, "20260701-run")
@@ -638,7 +638,7 @@ def test_parse_stream_line_timestamps_kinds_and_noise():
 def test_running_candidate_detail_shows_backend_tokens_and_elapsed(tmp_path: Path):
     from rich.console import Console
 
-    from hillclimb.candidate import BackendInfo, Candidate, utcnow
+    from hillclimb.harness.candidate import BackendInfo, Candidate, utcnow
 
     search_dir = make_run_with_search(tmp_path / "runs", "r")
     journal = Journal(search_dir / "journal.jsonl")
@@ -1150,7 +1150,7 @@ async def test_tree_panel_caps_the_searches_table_at_eight_rows(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_hold_column_only_for_holdout_searches(tmp_path: Path):
-    from hillclimb.candidate import Candidate
+    from hillclimb.harness.candidate import Candidate
 
     search_dir, config = make_demo_search(tmp_path, "hold-run")
     app = WatchApp(config)
@@ -1413,7 +1413,7 @@ def test_budget_left_shows_seconds():
 def test_live_remaining_counts_down_between_heartbeats():
     from datetime import datetime, timedelta, timezone
 
-    from hillclimb.status import BudgetStatus, SearchStatus, live_remaining_s
+    from hillclimb.harness.status import BudgetStatus, SearchStatus, live_remaining_s
 
     written = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
     status = SearchStatus(search_id="p", state="running", budget=BudgetStatus(remaining_s=100), updated_at=written)
@@ -1427,7 +1427,7 @@ def test_live_remaining_counts_down_between_heartbeats():
 def test_live_spent_s_keeps_counting_past_the_budget():
     from datetime import datetime, timedelta, timezone
 
-    from hillclimb.status import BudgetStatus, SearchStatus, live_spent_s
+    from hillclimb.harness.status import BudgetStatus, SearchStatus, live_spent_s
 
     written = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
     # over budget and still running: remaining is floored at 0 but spent is not
@@ -1749,7 +1749,7 @@ def test_candidate_paths_fall_back_to_the_search_dir_when_recorded_elsewhere(tmp
     """A mirror of a hosted run keeps the layout but not the container's
     absolute paths: the detail, the token counts and the model all read the
     candidate dir under the search dir instead."""
-    from hillclimb.status import CurrentCandidate
+    from hillclimb.harness.status import CurrentCandidate
     from hillclimb.tui.watch import _search_row, resolve_candidate_dir
 
     runs_dir = tmp_path / "runs"
@@ -1792,7 +1792,7 @@ def test_pending_candidate_detail_is_in_flight_only_while_the_search_lives(tmp_p
     that is the status the in-flight rows (elapsed, tokens so far) key on."""
     from rich.console import Console
 
-    from hillclimb.candidate import utcnow
+    from hillclimb.harness.candidate import utcnow
     from hillclimb.tui.watch import candidate_in_flight
 
     search_dir = make_run_with_search(tmp_path / "runs", "r")
@@ -1856,8 +1856,8 @@ def _console_text(console) -> str:
 
 @pytest.mark.asyncio
 async def test_running_candidate_detail_has_a_following_console(tmp_path: Path):
-    from hillclimb.candidate import utcnow
-    from hillclimb.status import CurrentCandidate
+    from hillclimb.harness.candidate import utcnow
+    from hillclimb.harness.status import CurrentCandidate
     from hillclimb.tui.watch import ConsoleLog
 
     runs_dir = tmp_path / "runs"

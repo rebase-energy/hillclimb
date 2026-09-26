@@ -8,17 +8,17 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from hillclimb.backends.base import OperatorBackend, OperatorRequest, OperatorResult
-from hillclimb.baseline import write_baseline
-from hillclimb.budget import BudgetManager, Spend, journal_spend
-from hillclimb.candidate import BackendInfo, Candidate, source_hash, utcnow
+from hillclimb.harness.baseline import write_baseline
+from hillclimb.harness.budget import BudgetManager, Spend, journal_spend
+from hillclimb.harness.candidate import BackendInfo, Candidate, source_hash, utcnow
 from hillclimb.config import Config
-from hillclimb.control import ControlCommand, apply_prune, drain_commands_dir, resync_best
-from hillclimb import evaluation
-from hillclimb.evaluation import TAIL_CHARS, CandidateEvaluator, tail  # noqa: F401 — re-exported (cli imports tail from here)
-from hillclimb.executor import Executor
-from hillclimb.journal import Journal, PolicyJournal
-from hillclimb.params import ParamsFile, read_candidate_space, write_inherited_params
-from hillclimb.loop import ClimberError, HarnessClosed, Outcome, SearchInfo, SearchLoop, Ticket
+from hillclimb.harness.control import ControlCommand, apply_prune, drain_commands_dir, resync_best
+from hillclimb.harness import evaluation
+from hillclimb.harness.evaluation import CandidateEvaluator
+from hillclimb.harness.executor import Executor
+from hillclimb.harness.journal import Journal, PolicyJournal
+from hillclimb.harness.params import ParamsFile, read_candidate_space, write_inherited_params
+from hillclimb.harness.loop import ClimberError, HarnessClosed, Outcome, SearchInfo, SearchLoop, Ticket
 from hillclimb.modules.policies.base import INJECT_ACTION, TUNE_ACTION, Action, BudgetView, InflightRef, PolicyInput
 from hillclimb.climber import OperatorSet
 from hillclimb.modules.operators import (
@@ -32,15 +32,15 @@ from hillclimb.modules.operators import (
     inspiration_filename,
 )
 from hillclimb.prompts.render import render
-from hillclimb.routing import BackendPool, ResolvedRoute, Router
-from hillclimb.run import SEARCHES_DIRNAME
-from hillclimb.search_strategy import ParkedSearch, StopRequested  # noqa: F401 — re-exported (their historic home)
-from hillclimb.slots import MachineSlots
+from hillclimb.harness.routing import BackendPool, ResolvedRoute, Router
+from hillclimb.harness.run import SEARCHES_DIRNAME
+from hillclimb.harness.glue import ParkedSearch, StopRequested
+from hillclimb.harness.slots import MachineSlots
 from hillclimb.spaces import describe_params as spaces_describe, with_values
-from hillclimb.status import CandidateCounts, CurrentCandidate, ScoreRef, StatusWriter
+from hillclimb.harness.status import CandidateCounts, CurrentCandidate, ScoreRef, StatusWriter
 from hillclimb.modules.tuners.base import Tuner, history_for, tune_seed
 from hillclimb.problem import ProblemSpec
-from hillclimb.dirs import create_candidate_dir
+from hillclimb.harness.dirs import create_candidate_dir
 
 
 @dataclass
@@ -118,7 +118,7 @@ class Harness:
     the journal (single writer), `best/` selection, the accept band, budgets,
     the control queue, crash recovery and holdout. A loop reaches it only
     through `view`/`capacity`/`inflight`/`open`/`submit`/`wait`/`run`/`source`
-    (`hillclimb.loop.Harness`); `execute(loop)` runs a search to its end.
+    (`hillclimb.harness.loop.Harness`); `execute(loop)` runs a search to its end.
     """
 
     def __init__(
@@ -253,7 +253,7 @@ class Harness:
             ),
         )
 
-    # --- the interface a SearchLoop sees (hillclimb.loop.Harness) ---
+    # --- the interface a SearchLoop sees (hillclimb.harness.loop.Harness) ---
 
     @property
     def info(self) -> SearchInfo:
@@ -571,7 +571,7 @@ class Harness:
             try:
                 outcome = self._execute_job(job)
             except BaseException as exc:  # noqa: BLE001
-                from hillclimb.unit_tests import UnitTestInfrastructureError
+                from hillclimb.harness.unit_tests import UnitTestInfrastructureError
 
                 if isinstance(exc, UnitTestInfrastructureError):
                     outcome = OutcomeMsg(job=job, kind="infrastructure_failed", error=exc)
@@ -1405,7 +1405,7 @@ class Harness:
         journaled terminal result and for every candidate on construction."""
         if self.router is None:
             return
-        from hillclimb.bandit import candidate_reward
+        from hillclimb.harness.bandit import candidate_reward
 
         parent = (
             self.journal.candidates.get(candidate.parent_id) if candidate.parent_id else None
@@ -1651,7 +1651,7 @@ class Harness:
         config.report.enabled — injection only; the data is always recorded."""
         if not self.config.report.enabled:
             return ""
-        from hillclimb.report import candidate_report, render_delta, render_report
+        from hillclimb.harness.report import candidate_report, render_delta, render_report
 
         target_report = candidate_report(target)
         body = render_report(target_report, self.problem.metric_name)

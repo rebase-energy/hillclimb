@@ -39,7 +39,7 @@ from textual.widgets import Footer, Label
 from hillclimb.tui.chart import ARM_PALETTE
 from hillclimb.config import Config
 from hillclimb.tui.header import HillclimbHeader, TimezoneMixin
-from hillclimb.journal import Journal
+from hillclimb.harness.journal import Journal
 from hillclimb.problem import ProblemSpec, load_problem
 from hillclimb.tui.similarity import (
     N_BINS,
@@ -49,7 +49,7 @@ from hillclimb.tui.similarity import (
     build_similarity,
     clear_caches,
 )
-from hillclimb.store import DataStore, SearchRecord, open_store, resolve_search
+from hillclimb.harness.store import DataStore, SearchRecord, open_store, resolve_search
 from hillclimb.tui.theme import HILLCLIMB_CSS, apply_theme, themed_plot
 from hillclimb.tui.watch import STATE_STYLE, LiveScreen
 

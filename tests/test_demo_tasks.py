@@ -38,7 +38,7 @@ def test_demo_problems_load(config: Config):
 def test_demo_verifiers_score_the_sample_submission(config: Config, tmp_path):
     """The shipped verifiers run end to end through the real contract: the
     sample submission is valid by construction, so each must report a score."""
-    from hillclimb.executor import CommandExecutor
+    from hillclimb.harness.executor import CommandExecutor
 
     for problem_id, _, _ in DEMO_PROBLEMS:
         spec = load_problem(problem_id, config)
@@ -66,7 +66,7 @@ def test_demo_verifiers_score_the_sample_submission(config: Config, tmp_path):
 
 def test_heilbronn_convex_13_loads_and_scores_baseline(config: Config, tmp_path):
     """The comparison demo is directly runnable with its published chart lines."""
-    from hillclimb.executor import CommandExecutor
+    from hillclimb.harness.executor import CommandExecutor
 
     spec = load_problem("heilbronn-convex-13", config)
     assert spec.metric_name == "normalized-min-triangle-area"

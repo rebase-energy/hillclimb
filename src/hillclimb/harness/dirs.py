@@ -5,7 +5,7 @@ import os
 import shutil
 from pathlib import Path
 
-from hillclimb.run import SEARCHES_DIRNAME
+from hillclimb.harness.run import SEARCHES_DIRNAME
 
 
 def create_run_dir(runs_dir: Path, run_id: str) -> Path:
@@ -127,7 +127,7 @@ def create_candidate_dir(
     if parent_solution and parent_solution.exists():
         shutil.copy(parent_solution, candidate_dir / "solution.py")
     if unit_tests_dir is not None:
-        from hillclimb.unit_tests import copy_visible_root
+        from hillclimb.harness.unit_tests import copy_visible_root
 
         copy_visible_root(unit_tests_dir, candidate_dir)
     return candidate_dir

@@ -159,7 +159,7 @@ def test_quota_snapshots_bracket_the_call(tmp_path: Path, monkeypatch):
             {"fetched_at": "t1", "five_hour": {"utilization": 12}},
         ]
     )
-    monkeypatch.setattr("hillclimb.quota.snapshot", lambda: next(snaps))
+    monkeypatch.setattr("hillclimb.harness.quota.snapshot", lambda: next(snaps))
     backend = ClaudeCodeBackend(claude_bin=make_stub(tmp_path, STUB_OK))
     result = backend.invoke(make_request(tmp_path))
 
@@ -171,7 +171,7 @@ def test_quota_snapshots_bracket_the_call(tmp_path: Path, monkeypatch):
 def test_api_key_auth_skips_quota(tmp_path: Path, monkeypatch):
     """API-key runs are not subscription-billed — no window to measure."""
     monkeypatch.setattr(
-        "hillclimb.quota.snapshot",
+        "hillclimb.harness.quota.snapshot",
         lambda: pytest.fail("api-key auth must not fetch quota"),
     )
     backend = ClaudeCodeBackend(claude_bin=make_stub(tmp_path, STUB_OK), auth="api-key")

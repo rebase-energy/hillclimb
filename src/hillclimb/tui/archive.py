@@ -28,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from hillclimb.tui.chart import CYAN, MISS_RGB, LegendEntry, step_points
-from hillclimb.direction import better
+from hillclimb.harness.direction import better
 from hillclimb.tui.tree import SearchTree, TreeNode
 from hillclimb.tui.tree2 import LINEAGE_RGB, LINEAGE_WIDTH, best_lineage, node_number, score_range
 

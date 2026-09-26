@@ -6,7 +6,7 @@ from tests.factories import trial as mk_trial
 
 import pytest
 
-from hillclimb.candidate import Candidate
+from hillclimb.harness.candidate import Candidate
 from hillclimb.modules.memory.credit import (
     PRIOR_WEIGHT,
     RETIRE_MIN_INJECTIONS,
@@ -23,7 +23,7 @@ from hillclimb.modules.memory.credit import (
     should_retire,
     write_credit_event,
 )
-from hillclimb.journal import Journal
+from hillclimb.harness.journal import Journal
 from hillclimb.modules.memory.knowledge import KnowledgeCard
 
 

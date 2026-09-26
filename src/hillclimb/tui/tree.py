@@ -18,8 +18,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from hillclimb.candidate import Candidate
-from hillclimb.direction import better
+from hillclimb.harness.candidate import Candidate
+from hillclimb.harness.direction import better
 
 # What happened to a candidate after it landed. Order is the legend order.
 FATES = ("expanded", "best", "discontinued", "failed", "pruned")

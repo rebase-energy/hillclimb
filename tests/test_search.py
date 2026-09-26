@@ -8,14 +8,14 @@ from pathlib import Path
 import pytest
 
 from hillclimb.backends.fake import FakeBackend
-from hillclimb.budget import BudgetManager
-from hillclimb.control import ControlCommand, write_command
+from hillclimb.harness.budget import BudgetManager
+from hillclimb.harness.control import ControlCommand, write_command
 from tests.conftest import executor_for, local_executor
-from hillclimb.evaluation import CandidateEvaluator
-from hillclimb.journal import Journal
+from hillclimb.harness.evaluation import CandidateEvaluator
+from hillclimb.harness.journal import Journal
 from tests.harness_factory import SearchRig
-from hillclimb.search import ParkedSearch, StopRequested
-from hillclimb.dirs import create_search_dir
+from hillclimb.harness.glue import ParkedSearch, StopRequested
+from hillclimb.harness.dirs import create_search_dir
 from tests.conftest import CRASH_SCRIPT, ok_script
 
 
@@ -458,8 +458,8 @@ def test_trial_killed_at_the_budget_wall_is_abandoned_not_buggy(task, config):
     nothing about the code: the candidate is abandoned (no debug target),
     with the cut spelled out in its summary. The same kill under the
     problem's own execution limit stays buggy."""
-    from hillclimb.candidate import Candidate
-    from hillclimb.search import Job, OutcomeMsg
+    from hillclimb.harness.candidate import Candidate
+    from hillclimb.harness.core import Job, OutcomeMsg
 
     backend = FakeBackend()
     searcher, journal, search_dir = make_searcher(task, config, backend, max_candidates=3)
@@ -491,7 +491,7 @@ def test_trial_killed_at_the_budget_wall_is_abandoned_not_buggy(task, config):
 def test_stale_pending_node_recovered_on_resume(task, config):
     """If the orchestrator dies mid-operator, the pending node must be
     abandoned at next construction, not block the tree forever."""
-    from hillclimb.candidate import Candidate
+    from hillclimb.harness.candidate import Candidate
 
     search_dir = create_search_dir(config.paths.runs_dir, "crash-test")
     journal = Journal(search_dir / "journal.jsonl")
@@ -765,7 +765,7 @@ print(f"val_score: {score}")
 
 
 def make_evaluator_searcher(config, tmp_path, backend, evaluate_py=EVALUATOR_EVALUATE, **searcher_kwargs):
-    from hillclimb.executor import CommandExecutor
+    from hillclimb.harness.executor import CommandExecutor
     from hillclimb.problem import ProblemSpec
 
     problem_dir = tmp_path / "eval-problem"

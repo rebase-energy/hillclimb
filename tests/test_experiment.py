@@ -10,9 +10,9 @@ import pytest
 import typer
 import yaml
 
-from hillclimb.candidate import BackendInfo
+from hillclimb.harness.candidate import BackendInfo
 from hillclimb.config import Config, parse_set_overrides
-from hillclimb.dirs import create_run_dir, create_search_dir
+from hillclimb.harness.dirs import create_run_dir, create_search_dir
 from hillclimb.experiment import (
     ExperimentRow,
     collect_results,
@@ -23,9 +23,9 @@ from hillclimb.experiment import (
     resolve_experiment_path,
     summarize,
 )
-from hillclimb.journal import Journal
-from hillclimb.run import RunMeta, SearchMeta, write_run_meta, write_search_meta
-from hillclimb.status import ScoreRef, SearchStatus, write_status
+from hillclimb.harness.journal import Journal
+from hillclimb.harness.run import RunMeta, SearchMeta, write_run_meta, write_search_meta
+from hillclimb.harness.status import ScoreRef, SearchStatus, write_status
 from tests.test_watch import make_candidate
 
 SPEC = """
@@ -106,7 +106,7 @@ class TestOverrides:
     def test_create_search_records_the_tags(self, tmp_path):
         from hillclimb.api import create_search
         from hillclimb.problem import ProblemSpec
-        from hillclimb.run import load_search_meta
+        from hillclimb.harness.run import load_search_meta
 
         config = Config()
         config.paths.runs_dir = tmp_path / "runs"
@@ -219,7 +219,7 @@ class TestCollect:
 
 def test_chart_labels_and_colours_experiment_curves_by_arm():
     from hillclimb.tui.chart import ARM_PALETTE, Curve, build_plot, curve_colors, curve_label
-    from hillclimb.store import SearchRecord
+    from hillclimb.harness.store import SearchRecord
 
     def record(arm, repeat, search_id):
         meta = SearchMeta(
@@ -356,7 +356,7 @@ class TestCli:
 
     def test_run_set_and_arm_flags_reach_the_search(self, config, tmp_path, monkeypatch):
         from hillclimb.cli import _run_problem
-        from hillclimb.run import load_search_meta
+        from hillclimb.harness.run import load_search_meta
         from tests.test_cli import write_problem
 
         problem = write_problem(tmp_path / "problems", "p")
@@ -536,7 +536,7 @@ def test_run_records_the_seed_and_its_hash(config, tmp_path):
 
     from hillclimb.api import create_run, create_search
     from hillclimb.problem import load_problem
-    from hillclimb.run import load_search_meta
+    from hillclimb.harness.run import load_search_meta
     from tests.test_cli import write_problem
 
     root = tmp_path / "problems"

@@ -42,7 +42,7 @@ from pathlib import Path
 
 import numpy as np
 
-from hillclimb.candidate import Candidate
+from hillclimb.harness.candidate import Candidate
 from hillclimb.tui.similarity import (
     CLIP,
     DEFAULT_ARTIFACTS,

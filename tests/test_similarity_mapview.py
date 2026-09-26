@@ -183,7 +183,7 @@ def _seeded_search(runs_dir, run_id: str, search_id: str, arm: str | None) -> No
 
     _experiment_search(runs_dir, run_id, search_id, arm or "greedy", seed=True)
     search_dir = runs_dir / run_id / "searches" / search_id
-    from hillclimb.journal import Journal
+    from hillclimb.harness.journal import Journal
 
     journal = Journal(search_dir / "journal.jsonl")
     for i, (score, offset) in enumerate(((0.6, 1.0), (0.8, 2.0)), start=2):

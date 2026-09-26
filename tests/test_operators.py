@@ -10,8 +10,8 @@ import pytest
 
 from hillclimb.modules import operators
 from hillclimb.backends.fake import FakeBackend
-from hillclimb.candidate import Candidate
-from hillclimb.journal import Journal
+from hillclimb.harness.candidate import Candidate
+from hillclimb.harness.journal import Journal
 from hillclimb.modules.policies.base import Action
 from hillclimb.sdk import Operator, OperatorContext, Preparation
 from tests.conftest import ok_script

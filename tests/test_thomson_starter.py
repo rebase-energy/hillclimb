@@ -77,7 +77,7 @@ def test_committed_dirs_match_the_generator(generator, tmp_path):
 
 @pytest.mark.parametrize("n", INSTANCES)
 def test_instance_loads_and_scores_its_sample(config: Config, generator, tmp_path, n):
-    from hillclimb.executor import CommandExecutor
+    from hillclimb.harness.executor import CommandExecutor
 
     spec = load_problem(f"thomson-{n}", config)
     assert spec.metric_name == "coulomb-energy" and not spec.higher_is_better

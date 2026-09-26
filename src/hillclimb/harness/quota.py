@@ -25,7 +25,7 @@ import threading
 import time
 import urllib.request
 
-from hillclimb.candidate import utcnow
+from hillclimb.harness.candidate import utcnow
 
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 _OK_TTL_S = 30.0  # deltas shorter than this collapse to zero — acceptable

@@ -21,7 +21,7 @@ from __future__ import annotations
 import math
 import threading
 
-from hillclimb.candidate import Candidate
+from hillclimb.harness.candidate import Candidate
 
 REWARD_OK_NO_GAIN = 0.25
 

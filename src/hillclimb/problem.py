@@ -9,7 +9,7 @@ import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from hillclimb.config import Config
-from hillclimb.direction import legacy_direction_key
+from hillclimb.harness.direction import legacy_direction_key
 
 
 class UnitTestSpec(BaseModel):
@@ -172,7 +172,7 @@ class ProblemSpec(BaseModel):
         """Canonical identity of the problem across runs (SearchMeta.problem_key)."""
         if self.problem_key_override:
             return self.problem_key_override
-        from hillclimb.run import problem_key_for
+        from hillclimb.harness.run import problem_key_for
 
         return problem_key_for(self.target or "", self.problem_id)
 

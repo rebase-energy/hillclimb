@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb.candidate import Candidate
-from hillclimb.journal import Journal
+from hillclimb.harness.candidate import Candidate
+from hillclimb.harness.journal import Journal
 from hillclimb.modules.memory.knowledge import KnowledgeCard
 from hillclimb.modules.memory.skills import (
     SKILL_CODE_FILENAME,
@@ -138,8 +138,8 @@ class TestInjection:
 
         from hillclimb.api import create_search, execute_search
         from hillclimb.backends.fake import FakeBackend
-        from hillclimb.budget import BudgetManager
-        from hillclimb.dirs import create_run_dir
+        from hillclimb.harness.budget import BudgetManager
+        from hillclimb.harness.dirs import create_run_dir
         from tests.conftest import ok_script
 
         config.learning.dir = tmp_path / "knowledge"

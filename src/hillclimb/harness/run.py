@@ -7,8 +7,8 @@ import uuid
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from hillclimb.candidate import utcnow
-from hillclimb.direction import legacy_direction_key
+from hillclimb.harness.candidate import utcnow
+from hillclimb.harness.direction import legacy_direction_key
 
 SCHEMA_VERSION = 3
 # what `_load_meta` still reads: v2 search records name a `policy`; they are
@@ -233,7 +233,7 @@ def iter_search_dirs(run_dir: Path) -> list[Path]:
 
 def latest_search_dir(runs_dir: Path) -> Path | None:
     """`store.latest_search` of the folder backend, as a dir."""
-    from hillclimb.store import FileDataStore, latest_search
+    from hillclimb.harness.store import FileDataStore, latest_search
 
     record = latest_search(FileDataStore(runs_dir))
     return record.search_dir if record else None
@@ -241,13 +241,13 @@ def latest_search_dir(runs_dir: Path) -> Path | None:
 
 def running_search_dirs(runs_dir: Path) -> list[Path]:
     """`store.running_searches` of the folder backend, as dirs."""
-    from hillclimb.store import FileDataStore, running_searches
+    from hillclimb.harness.store import FileDataStore, running_searches
 
     return [r.search_dir for r in running_searches(FileDataStore(runs_dir))]
 
 
 def resolve_search_dir(runs_dir: Path, ref: str | None) -> Path:
     """`store.resolve_search` of the folder backend, as a dir."""
-    from hillclimb.store import FileDataStore, resolve_search
+    from hillclimb.harness.store import FileDataStore, resolve_search
 
     return resolve_search(FileDataStore(runs_dir), ref).search_dir

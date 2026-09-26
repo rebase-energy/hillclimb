@@ -11,12 +11,12 @@ import time
 
 import pytest
 
-import hillclimb.pricing as pricing
+import hillclimb.harness.pricing as pricing
 from hillclimb.backends.base import OperatorRequest
 from hillclimb.backends.pi_cli import PiCliBackend, pi_env
 from hillclimb.backends.base import OperatorResult
 from hillclimb.config import Config
-from hillclimb.routing import BackendPool, Router
+from hillclimb.harness.routing import BackendPool, Router
 
 
 CATALOGUE = {
@@ -379,9 +379,9 @@ def test_preflight_checks_every_pool_model_and_auth(tmp_path):
 
 def test_search_preflight_failure_finalizes_before_evaluation(tmp_path, monkeypatch, task, config):
     from hillclimb.api import create_search, execute_search
-    from hillclimb.budget import BudgetManager
-    from hillclimb.dirs import create_run_dir
-    from hillclimb.store import key_for, open_store
+    from hillclimb.harness.budget import BudgetManager
+    from hillclimb.harness.dirs import create_run_dir
+    from hillclimb.harness.store import key_for, open_store
 
     config.backend = "pi"
     config.learning.enabled = False

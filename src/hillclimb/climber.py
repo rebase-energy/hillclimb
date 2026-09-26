@@ -39,7 +39,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from hillclimb._moved import modernize
-from hillclimb.loop import PolicyLoop, SearchLoop
+from hillclimb.harness.loop import PolicyLoop, SearchLoop
 from hillclimb.modules.operators import Operator
 from hillclimb.modules.operators.builtin import BUILTIN_OPERATORS
 

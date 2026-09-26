@@ -9,15 +9,15 @@ import sys
 from pathlib import Path
 
 from hillclimb.backends.fake import FakeBackend
-from hillclimb.bandit import UCB1, OperatorBandits, candidate_reward
-from hillclimb.budget import BudgetManager
-from hillclimb.candidate import BackendInfo, Candidate
+from hillclimb.harness.bandit import UCB1, OperatorBandits, candidate_reward
+from hillclimb.harness.budget import BudgetManager
+from hillclimb.harness.candidate import BackendInfo, Candidate
 from hillclimb.config import Config, RouteConfig
 from tests.conftest import local_executor
-from hillclimb.journal import Journal
-from hillclimb.routing import Router
+from hillclimb.harness.journal import Journal
+from hillclimb.harness.routing import Router
 from tests.harness_factory import SearchRig
-from hillclimb.dirs import create_search_dir
+from hillclimb.harness.dirs import create_search_dir
 from tests.conftest import ok_script
 
 

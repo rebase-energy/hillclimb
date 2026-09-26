@@ -34,10 +34,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Sequence
 
-from hillclimb.evaluation import accept_band
+from hillclimb.harness.evaluation import accept_band
 from hillclimb.modules.operators import get_operator, operator_names
 from hillclimb.config import Config
-from hillclimb.journal import Journal
+from hillclimb.harness.journal import Journal
 from hillclimb.modules.policies.base import TUNE_ACTION, Action, BudgetView, PolicyInput, SearchPolicy
 
 # Fractions of the budget still remaining at which every journal is

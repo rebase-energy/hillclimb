@@ -64,8 +64,8 @@ class TestToolsClause:
         from pathlib import Path
 
         from hillclimb.backends.fake import FakeBackend
-        from hillclimb.budget import BudgetManager
-        from hillclimb.journal import Journal
+        from hillclimb.harness.budget import BudgetManager
+        from hillclimb.harness.journal import Journal
         from tests.harness_factory import SearchRig
 
         config.paths.runtime_python = Path(sys.executable)

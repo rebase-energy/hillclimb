@@ -90,3 +90,21 @@ def test_only_module_implementations_import_the_sdk_eagerly():
         and "hillclimb.sdk" in _top_level_hillclimb_imports(path)
     ]
     assert not offenders, "\n".join(offenders)
+
+
+def test_package_inits_under_harness_and_modules_import_nothing():
+    """harness/__init__ importing core would make every `hillclimb.harness.x`
+    import load the whole engine — and close the harness <-> modules cycle."""
+    inits = [HARNESS / "__init__.py", MODULES / "__init__.py", MODULES / "memory" / "__init__.py"]
+    offenders = [str(p.relative_to(SRC)) for p in inits if p.is_file() and hillclimb_imports(p)]
+    assert not offenders, offenders
+
+
+# the flat top level is the public surface and nothing else (cli: until its split)
+FLAT = {"__init__", "_moved", "api", "benchmark_providers", "cli", "climber", "config",
+        "connect", "experiment", "problem", "project", "spaces"}
+
+
+def test_top_level_is_only_the_public_surface():
+    stray = sorted(p.stem for p in SRC.glob("*.py") if p.stem not in FLAT)
+    assert not stray, f"move into harness/, modules/ or tui/: {stray}"

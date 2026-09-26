@@ -32,16 +32,16 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
-from hillclimb.candidate import utcnow
+from hillclimb.harness.candidate import utcnow
 from hillclimb.config import Config
-from hillclimb.control import (
+from hillclimb.harness.control import (
     ControlCommand,
     clear_stale_stops_dir,
     drain_commands_dir,
     write_command,
 )
-from hillclimb.journal import FileJournal, JournalBackend
-from hillclimb.run import (
+from hillclimb.harness.journal import FileJournal, JournalBackend
+from hillclimb.harness.run import (
     SEARCHES_DIRNAME,
     RunMeta,
     SearchMeta,
@@ -52,9 +52,9 @@ from hillclimb.run import (
     write_run_meta,
     write_search_meta,
 )
-from hillclimb.status import SearchStatus, derive_state
-from hillclimb.status import read_status as read_status_file
-from hillclimb.status import write_status as write_status_file
+from hillclimb.harness.status import SearchStatus, derive_state
+from hillclimb.harness.status import read_status as read_status_file
+from hillclimb.harness.status import write_status as write_status_file
 
 SQLITE_SCHEMA_VERSION = 2
 

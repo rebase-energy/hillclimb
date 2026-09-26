@@ -87,9 +87,9 @@ def test_openevolve_prompts_match_golden(task, config, tmp_path):
     """A policy's `extra_prompt_context` and its inspiration files ride the
     same assembly path; MAP-Elites sampling is seeded, so this is stable."""
     pytest.importorskip("openevolve")
-    from hillclimb.budget import BudgetManager
-    from hillclimb.dirs import create_search_dir
-    from hillclimb.journal import Journal
+    from hillclimb.harness.budget import BudgetManager
+    from hillclimb.harness.dirs import create_search_dir
+    from hillclimb.harness.journal import Journal
     from hillclimb.modules.policies import get_policy
     from tests.harness_factory import SearchRig
     from tests.conftest import local_executor, ok_script

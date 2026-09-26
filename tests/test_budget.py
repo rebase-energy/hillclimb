@@ -1,4 +1,4 @@
-from hillclimb.budget import BudgetManager
+from hillclimb.harness.budget import BudgetManager
 
 
 def test_remaining_and_stop():

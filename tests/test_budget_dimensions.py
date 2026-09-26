@@ -5,13 +5,13 @@ it; the counts are journal-derived, so a resumed search needs no counter."""
 from __future__ import annotations
 
 from hillclimb.backends.fake import FakeBackend
-from hillclimb.budget import Spend, journal_spend
-from hillclimb.candidate import BackendInfo, Candidate
-from hillclimb.journal import Journal
-from hillclimb.loop import PolicyLoop, SearchLoop
+from hillclimb.harness.budget import Spend, journal_spend
+from hillclimb.harness.candidate import BackendInfo, Candidate
+from hillclimb.harness.journal import Journal
+from hillclimb.harness.loop import PolicyLoop, SearchLoop
 from hillclimb.modules.policies.greedy import GreedyPolicy
 from hillclimb.modules.policies.base import Action
-from hillclimb.status import SearchStatus, StatusWriter
+from hillclimb.harness.status import SearchStatus, StatusWriter
 from tests.conftest import ok_script
 from tests.factories import trial as mk_trial
 from tests.harness_factory import make_harness

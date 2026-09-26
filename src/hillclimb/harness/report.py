@@ -12,8 +12,8 @@ missing, foreign-version, or error-only reports.
 
 from __future__ import annotations
 
-from hillclimb.candidate import Candidate
-from hillclimb.direction import legacy_direction_key
+from hillclimb.harness.candidate import Candidate
+from hillclimb.harness.direction import legacy_direction_key
 
 KNOWN_VERSION = 1
 COMPACT_WORST_ZONES = 8  # plus the single best zone as contrast

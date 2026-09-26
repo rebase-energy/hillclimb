@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb.candidate import Candidate
-from hillclimb.journal import Journal
+from hillclimb.harness.candidate import Candidate
+from hillclimb.harness.journal import Journal
 from hillclimb.modules.policies.greedy import GreedyPolicy
 from hillclimb.modules.policies.base import Action, PolicyInput
 from hillclimb.modules.policies.check import JournalCase, check_policy
@@ -228,7 +228,7 @@ def test_cli_replays_the_stores_journals(tmp_path, monkeypatch, capsys):
     from hillclimb.cli import main as cli_main
     from hillclimb.config import Config
     from hillclimb.problem import load_problem
-    from hillclimb.run import RunMeta
+    from hillclimb.harness.run import RunMeta
     from tests.test_cli import write_problem
 
     root = tmp_path / "hillclimb"

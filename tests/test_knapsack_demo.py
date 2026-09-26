@@ -8,7 +8,7 @@ import pytest
 
 from hillclimb.cli import main as cli_main
 from hillclimb.demo import BUNDLED_PROBLEM_IDS, install_demo_problem
-from hillclimb.executor import CommandExecutor, RESULT_FILE
+from hillclimb.harness.executor import CommandExecutor, RESULT_FILE
 from hillclimb.problem import load_problem
 
 

@@ -10,8 +10,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from hillclimb.candidate import Candidate
-from hillclimb.status import CurrentCandidate
+from hillclimb.harness.candidate import Candidate
+from hillclimb.harness.status import CurrentCandidate
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "hillclimb"
 ALLOWED = re.compile(
@@ -62,8 +62,8 @@ def test_no_lower_is_better_in_source():
 
 def test_legacy_lower_is_better_key_loads_inverted():
     from hillclimb.modules.memory.knowledge import KnowledgeCard
-    from hillclimb.run import SearchMeta
-    from hillclimb.report import compact_report
+    from hillclimb.harness.run import SearchMeta
+    from hillclimb.harness.report import compact_report
 
     meta = SearchMeta.model_validate(
         {"search_id": "s", "run_id": "r", "problem": "p", "problem_id": "p", "backend": "dummy",

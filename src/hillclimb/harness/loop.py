@@ -25,8 +25,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from hillclimb.candidate import Candidate
-    from hillclimb.evaluation import EvalResult
+    from hillclimb.harness.candidate import Candidate
+    from hillclimb.harness.evaluation import EvalResult
     from hillclimb.modules.policies.base import Action, InflightRef, PolicyInput, SearchPolicy
 
 
