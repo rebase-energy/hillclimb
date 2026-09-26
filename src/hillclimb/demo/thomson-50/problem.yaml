@@ -1,0 +1,10 @@
+problem_id: thomson-50
+metric: coulomb-energy
+higher_is_better: false
+description: description.md
+# valid-by-construction floor: best/ always holds something
+baseline_files: {submission.csv: sample_submission.csv}
+chart_baselines:
+  "best known (Wikipedia Thomson table)": 1055.182315
+time_budget_s: 900
+allow_network: false

@@ -1,0 +1,10 @@
+problem_id: golomb-27
+metric: length
+higher_is_better: false
+description: description.md
+# valid-by-construction floor: best/ always holds something
+baseline_files: {submission.csv: sample_submission.csv}
+chart_baselines:
+  "optimal (distributed.net 2014)": 553
+time_budget_s: 900
+allow_network: false

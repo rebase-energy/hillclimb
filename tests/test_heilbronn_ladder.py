@@ -31,12 +31,14 @@ def generator():
 
 
 def test_committed_dirs_match_the_generator(generator, tmp_path):
-    """Rerun the generator after editing a template; the dirs are committed."""
+    """Rerun the generator after editing a template; the dirs are committed —
+    both the repo's problems/ and the wheel's bundled copy."""
     for n in LEVELS:
         generated = generator.stamp(tmp_path, n)
-        committed = REPO / "problems" / f"heilbronn-{n}"
-        for path in generated.iterdir():
-            assert (committed / path.name).read_text() == path.read_text(), f"{committed / path.name} is stale"
+        for root in (REPO / "problems", REPO / "src" / "hillclimb" / "demo"):
+            committed = root / f"heilbronn-{n}"
+            for path in generated.iterdir():
+                assert (committed / path.name).read_text() == path.read_text(), f"{committed / path.name} is stale"
 
 
 @pytest.mark.parametrize("n", LEVELS)

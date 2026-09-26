@@ -11,7 +11,27 @@ from importlib import resources
 from pathlib import Path
 
 DEMO_PROBLEM_ID = "circle-packing"
-BUNDLED_PROBLEM_IDS = (DEMO_PROBLEM_ID, "knapsack", "heilbronn-convex-13")
+
+# The starter catalog, in ladder order: construction problems in one shape —
+# a small CSV of numbers, an exact verifier, no data, no holdout, no noise —
+# each family from the instance a ten-minute run climbs to the one an hour
+# does not saturate. Every family is stamped by a generator in problems/
+# (`make_<family>.py`) into both problems/ and this package; the two copies
+# must stay identical (tests/test_demo.py). circle-packing is the one
+# deliberate exception: a lean runtime and a short budget for `hillclimb demo`.
+STARTER_PROBLEM_IDS = (
+    DEMO_PROBLEM_ID, "circle-packing-32",
+    "heilbronn-11", "heilbronn-14", "heilbronn-17", "heilbronn-convex-13",
+    "labs-40", "labs-60",
+    "tammes-30", "tammes-50",
+    "thomson-50", "thomson-100",
+    "autocorr-1", "autocorr-3", "erdos-overlap",
+    "kissing-11",
+    "golomb-20", "golomb-27",
+    "tsp-200",
+)
+# bundled beyond the starter set: a data + holdout example
+BUNDLED_PROBLEM_IDS = (*STARTER_PROBLEM_IDS, "knapsack")
 
 
 def demo_problem_resource(problem_id: str = DEMO_PROBLEM_ID):

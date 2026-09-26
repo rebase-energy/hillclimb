@@ -41,6 +41,26 @@ def test_bundled_problem_loads_and_mirrors_repo_problem(tmp_path, config):
         assert (bundled / name).read_text() == (repo / name).read_text(), name
 
 
+def test_every_bundled_problem_mirrors_the_repo_problem():
+    """The wheel ships a copy of each starter problem; the repo's problems/
+    is what the generators stamp and the tests exercise. The two must not
+    drift — circle-packing is the one deliberate exception (a lean runtime
+    and a short budget so `hillclimb demo` starts in seconds)."""
+    from hillclimb.demo import STARTER_PROBLEM_IDS
+
+    for problem_id in STARTER_PROBLEM_IDS:
+        if problem_id == DEMO_PROBLEM_ID:
+            continue
+        repo = Path("problems") / problem_id
+        bundled = Path("src/hillclimb/demo") / problem_id
+        assert repo.is_dir(), f"{problem_id} is bundled but missing from problems/"
+        repo_files = {p.relative_to(repo) for p in repo.rglob("*") if p.is_file() and "__pycache__" not in p.parts}
+        bundled_files = {p.relative_to(bundled) for p in bundled.rglob("*") if p.is_file() and "__pycache__" not in p.parts}
+        assert repo_files == bundled_files, (problem_id, repo_files ^ bundled_files)
+        for rel in repo_files:
+            assert (bundled / rel).read_bytes() == (repo / rel).read_bytes(), f"{problem_id}/{rel} drifted"
+
+
 def _search(runs_dir: Path, run_id: str, name: str, scores: list[tuple[str, float]], lower=False):
     run_dir = runs_dir / run_id
     write_run_meta(run_dir, RunMeta(run_id=run_id, name=name, kind="problem", target="p", problem_ids=["p"]))
