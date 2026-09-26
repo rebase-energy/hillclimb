@@ -31,22 +31,22 @@ defaults:
   backend: claude-code
   model: claude-opus-5
   learning.enabled: false
-  search.parallel_operators: 1
-  search.n_replicates: 1
+  concurrency.parallel_operators: 1
+  evaluation.n_replicates: 1
 
 arms:
   greedy:
-    search.policy: greedy
-    search.policy_params: {}
+    climber.ref: greedy
+    climber.params: {}
 
   openevolve:
-    search.policy: openevolve
-    search.policy_params:
+    climber.ref: openevolve
+    climber.params:
       random_seed: 42
 
   gepa:
-    search.policy: gepa
-    search.policy_params:
+    climber.ref: gepa
+    climber.params:
       # the heilbronn scorer emits no per-instance breakdown, so the
       # instance frontier degenerates to the aggregate score and metric
       # calls count per search: 60 is far beyond what a 15m clock allows,

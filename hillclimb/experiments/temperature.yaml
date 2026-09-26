@@ -20,10 +20,10 @@ defaults:
   backend_auth: openrouter
   model: openrouter/deepseek/deepseek-v3.2
   learning.enabled: false
-  search.policy: greedy
-  search.policy_params: {tune_budget: 0}
-  search.parallel_operators: 1
-  search.n_replicates: 1
+  climber.ref: greedy
+  climber.params: {tune_budget: 0}
+  concurrency.parallel_operators: 1
+  evaluation.n_replicates: 1
   budget.max_cost_usd: 2.0
 arms:
   t0.2:

@@ -12,15 +12,15 @@ schedule: parallel
 max_concurrent: 2
 defaults:
   learning.enabled: false
-  search.parallel_operators: 1
+  concurrency.parallel_operators: 1
   # agents write ~7 min solvers here; one draft, then tune it, is the only
   # schedule that reaches tune jobs inside an hour (a 30m pilot with the
   # default three drafts never got there)
-  search.num_drafts: 1
-  search.n_replicates: 1
-  search.tuner: optuna
+  climber.params.num_drafts: 1
+  evaluation.n_replicates: 1
+  climber.tuner: optuna
 arms:
   no-tune:
-    search.policy_params.tune_budget: 0
+    climber.params.tune_budget: 0
   tune-8:
-    search.policy_params.tune_budget: 8
+    climber.params.tune_budget: 8

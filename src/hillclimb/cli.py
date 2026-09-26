@@ -184,17 +184,26 @@ INIT_CONFIG = """\
 model: sonnet
 # backend: claude-code
 
+# climber: greedy          # HOW to climb: greedy | openevolve | gepa | hillclimb/climbers/<name>
+# climber:                 # ...or with your overrides on the climber's own params
+#   ref: greedy
+#   params: {num_drafts: 3}
+#   tuner: random          # random | optuna (parameter tuning of candidates that declare params.json)
+
 # budget:
 #   total_s: 7200
 #   deadline: graceful     # `hard` aborts in-flight operators when total_s runs out
+#   max_evaluations: 0     # verifier trials the climber may spend (0 = unlimited)
 
-# search:
-#   parallel_operators: 1   # >1 runs concurrent operators
-#   machine_max_operators: 8  # cap across every search on this machine (default min(8, cores-2))
+# evaluation:
 #   n_replicates: 1        # seeded runs per trial (median is the trial's score)
 #   replicate_mode: parallel # `serial` when the metric measures the machine (time!)
-#   noise_k: 0           # require gains > k x the measured noise floor
-#   min_improvement: 0   # ...or an absolute floor, in metric units
+#   noise_k: 0             # require gains > k x the measured noise floor
+#   min_improvement: 0     # ...or an absolute floor, in metric units
+
+# concurrency:
+#   parallel_operators: 1   # >1 runs concurrent operators
+#   machine_max_operators: 8  # cap across every search on this machine (default min(8, cores-2))
 
 # holdout:
 #   enabled: true
@@ -343,7 +352,7 @@ def problem_list():
     from hillclimb.demo import BUNDLED_PROBLEM_IDS, demo_problem_resource
 
     rows = []
-    for problem_id in sorted(BUNDLED_PROBLEM_IDS):
+    for problem_id in BUNDLED_PROBLEM_IDS:  # ladder order, as declared
         resource = demo_problem_resource(problem_id) / "problem.yaml"
         metadata = yaml.safe_load(resource.read_text()) or {}
         rows.append((
@@ -351,22 +360,30 @@ def problem_list():
             str(metadata.get("metric", "-")),
             "maximize" if metadata.get("higher_is_better", True) else "minimize",
             _compact_duration(int(metadata.get("time_budget_s", 0))),
+            _best_known(metadata.get("chart_baselines") or {}, bool(metadata.get("higher_is_better", True))),
         ))
 
+    headers = ("problem", "metric", "direction", "budget", "best known")
     widths = [
         max(len(header), *(len(row[index]) for row in rows))
-        for index, header in enumerate(("problem", "metric", "direction", "budget"))
+        for index, header in enumerate(headers)
     ]
-    typer.echo(
-        f"{'problem':<{widths[0]}}  {'metric':<{widths[1]}}  "
-        f"{'direction':<{widths[2]}}  budget"
-    )
-    for problem_id, metric, direction, budget in rows:
-        typer.echo(
-            f"{problem_id:<{widths[0]}}  {metric:<{widths[1]}}  "
-            f"{direction:<{widths[2]}}  {budget}"
-        )
+    typer.echo("  ".join(f"{header:<{widths[index]}}" for index, header in enumerate(headers)).rstrip())
+    for row in rows:
+        typer.echo("  ".join(f"{cell:<{widths[index]}}" for index, cell in enumerate(row)).rstrip())
     typer.echo("\nGet one with: hillclimb problem get <problem>")
+
+
+def _best_known(chart_baselines: dict, higher_is_better: bool) -> str:
+    """The frontier a chart draws, as `value who`: the best of the declared
+    reference lines in the metric's direction (never the problem's own floor)."""
+    lines = {label: value for label, value in chart_baselines.items() if label != "baseline"}
+    if not lines:
+        return "-"
+    label, value = (max if higher_is_better else min)(lines.items(), key=lambda item: item[1])
+    if label.startswith("best known"):  # "best known (who)" -> "who"
+        label = label[len("best known"):].strip(" ()")
+    return f"{value:.6g}  {label}".rstrip()
 
 
 @problem_app.command("get")
@@ -498,6 +515,11 @@ def verify(
     config = load_config()
     problem = load_problem(target, config)
     source = solution.read_text() if solution else problem.baseline_text
+    floor_files = {} if solution else problem.baseline_files
+    if source is None and floor_files:
+        # the floor is a set of files scored as they are (heilbronn's
+        # sample_submission.csv), so the "solution" has nothing to do
+        source = "# the problem's declared floor: its baseline_files, scored as they are\n"
     if source is None:
         typer.echo(
             f"{problem.problem_id} ships no baseline — pass --solution <file> to score one",
@@ -520,6 +542,8 @@ def verify(
             )
             script = candidate_dir / "solution.py"
             script.write_text(source)
+            for dest, src in floor_files.items():
+                shutil.copy2(src, candidate_dir / dest)
             # distinct seeds, exactly as the engine's repeated trials run, so
             # the floor reported here is the one the search will face
             result = executor.execute(
@@ -1307,20 +1331,163 @@ def _experiment_report_impl(
         typer.echo(render_report(summaries))
 
 
-policy_app = typer.Typer(
-    cls=HillclimbGroup, help="Search policies: check an exploration process before spending budget on it"
+climber_app = typer.Typer(
+    cls=HillclimbGroup,
+    help=(
+        "Climbers — the shareable bundle that decides HOW to hillclimb (policy, operators, "
+        "prompts, tuner): list them, start your own, check one before spending budget on it"
+    ),
 )
-app.add_typer(policy_app, name="policy")
+app.add_typer(climber_app, name="climber")
+policy_app = typer.Typer(cls=HillclimbGroup, hidden=True, help="Old spelling of `hillclimb climber`")
+app.add_typer(policy_app, name="policy", hidden=True)
+
+LOCAL_CLIMBERS_DIRNAME = "climbers"  # <hillclimb dir>/climbers/<name>/ — where `climber new` writes
 
 
-@policy_app.command("check")
-def policy_check(
-    policy: str = typer.Option(None, "--policy", help="Policy name (default: config search.policy)"),
+def _local_climbers_dir(config: Config) -> Path | None:
+    return config.hillclimb_dir / LOCAL_CLIMBERS_DIRNAME if config.hillclimb_dir is not None else None
+
+
+def _climber_ref(path: Path, base_dir: Path | None) -> str:
+    """How to name a local climber on the command line: relative to the
+    folder holding the hillclimb dir, the anchor every relative ref resolves from."""
+    if base_dir is not None:
+        try:
+            return str(path.resolve().relative_to(base_dir.resolve()))
+        except ValueError:
+            pass
+    return str(path)
+
+
+@climber_app.command("list")
+def climber_list(as_json: bool = typer.Option(False, "--json", help="Machine-readable output")):
+    """The climbers `hillclimb run --climber` accepts: the bundled ones and
+    every directory or one-file climber under hillclimb/climbers/."""
+    from hillclimb.climber import ClimberLoadError, bundled_climbers, load_climber
+    from hillclimb.policies import policy_base_dir
+
+    config = load_config()
+    base_dir = policy_base_dir(config)
+    refs = [(name, "bundled") for name in bundled_climbers()]
+    local = _local_climbers_dir(config)
+    if local is not None and local.is_dir():
+        for path in sorted(local.iterdir()):
+            if (path / "climber.yaml").is_file() or (path.is_file() and path.suffix == ".py"):
+                refs.append((_climber_ref(path, base_dir), "local"))
+    rows = []
+    for ref, origin in refs:
+        try:
+            climber = load_climber(ref, base_dir)
+        except ClimberLoadError as exc:
+            rows.append({"ref": ref, "origin": origin, "kind": "?", "description": f"BROKEN: {exc}",
+                         "sha256": None, "default": ref == config.climber.ref})
+            continue
+        rows.append({
+            "ref": ref, "origin": origin, "kind": "loop" if climber.is_loop else "policy",
+            "description": climber.manifest.description, "sha256": climber.sha256[:12],
+            "default": ref == config.climber.ref,
+        })
+    if as_json:
+        typer.echo(json.dumps(rows, indent=2))
+        return
+    width = max(len(row["ref"]) for row in rows)
+    for row in rows:
+        mark = "*" if row["default"] else " "
+        typer.echo(f"{mark} {row['ref']:<{width}}  {row['origin']:<7} {row['kind']:<6} {row['description']}")
+    typer.echo("\n* = config climber.ref.  Run one:        hillclimb run <problem> --climber <ref>")
+    typer.echo("                          Start your own: hillclimb climber new <name> --from greedy")
+
+
+_COPIED_MODULE_KEYS = ("policy", "loop")
+
+
+@climber_app.command("new")
+def climber_new(
+    name: str = typer.Argument(..., help="Name of the new climber (becomes hillclimb/climbers/<name>/)"),
+    from_: str = typer.Option(
+        "greedy", "--from", help="Climber to copy: a bundled name, a directory holding climber.yaml, or a .py file"
+    ),
+):
+    """Start your own climber from a copy of an existing one.
+
+    Copies the manifest, the policy (or loop) source and the prompts into
+    hillclimb/climbers/<name>/ so every part is a file you can edit, then
+    prints how to check and run it. A bundled climber's `module:Class`
+    policy is copied in as `<module>.py:Class` — edit that file.
+    """
+    import re as _re
+    import shutil
+
+    import yaml
+
+    from hillclimb.climber import ClimberLoadError, load_climber
+    from hillclimb.policies import policy_base_dir
+
+    config = load_config()
+    local = _local_climbers_dir(config)
+    if local is None:
+        raise typer.BadParameter("no hillclimb dir here — run `hillclimb init` (or `hillclimb problem get`) first")
+    if not _re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", name):
+        raise typer.BadParameter(f"{name!r}: a climber name is letters, digits, - and _")
+    base_dir = policy_base_dir(config)
+    try:
+        source = load_climber(from_, base_dir)
+    except ClimberLoadError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    target = local / name
+    if target.exists() or target.with_suffix(".py").exists():
+        raise typer.BadParameter(f"{_climber_ref(target, base_dir)} already exists")
+    local.mkdir(parents=True, exist_ok=True)
+    if source.root is None:  # a one-file climber stays one file
+        target = target.with_suffix(".py")
+        shutil.copy2(source.source, target)
+    else:
+        shutil.copytree(
+            source.root, target,
+            ignore=lambda _dir, names: [n for n in names if n == "__pycache__" or n.startswith(".")],
+        )
+        manifest_path = target / "climber.yaml"
+        data = yaml.safe_load(manifest_path.read_text()) or {}
+        data["name"] = name
+        # a bundled manifest names its brain by package module; bring the
+        # source in so the copy is editable without touching the package
+        for key in _COPIED_MODULE_KEYS:
+            ref = data.get(key)
+            if not isinstance(ref, str) or ":" not in ref or not ref.startswith("hillclimb."):
+                continue
+            module_name, cls = ref.split(":", 1)
+            import importlib
+
+            module_file = Path(importlib.import_module(module_name).__file__)
+            shutil.copy2(module_file, target / module_file.name)
+            data[key] = f"{module_file.name}:{cls}"
+        manifest_path.write_text(yaml.safe_dump(data, sort_keys=False))
+    ref = _climber_ref(target, base_dir)
+    try:
+        load_climber(ref, base_dir)
+    except ClimberLoadError as exc:  # never leave a broken copy behind
+        shutil.rmtree(target) if target.is_dir() else target.unlink()
+        raise typer.BadParameter(f"the copy does not load: {exc}") from exc
+    typer.echo(f"Created {ref} from {from_}")
+    files = sorted(p for p in target.rglob("*") if p.is_file()) if target.is_dir() else [target]
+    for path in files:
+        typer.echo(f"  {path.relative_to(target if target.is_dir() else target.parent)}")
+    typer.echo(f"Next: edit it, then   hillclimb climber check --climber {ref}")
+    typer.echo(f"      and climb with   hillclimb run <problem> --climber {ref}")
+
+
+@climber_app.command("check")
+@policy_app.command("check", hidden=True)
+def climber_check(
+    ctx: typer.Context,
+    climber: str = typer.Option(None, "--climber", help="Climber ref (default: config climber.ref)"),
+    policy: str = typer.Option(None, "--policy", hidden=True),
     problem: str = typer.Option(
         None, "--problem", help="Replay only this problem's recorded searches (default: every search)"
     ),
     set_: list[str] = typer.Option(
-        None, "--set", help="Config override, dotted: --set search.policy_params.num_drafts=1",
+        None, "--set", help="Config override, dotted: --set climber.params.num_drafts=1",
     ),
     limit: int = typer.Option(20, "--limit", help="Newest recorded searches to replay"),
     smoke: bool = typer.Option(
@@ -1329,40 +1496,49 @@ def policy_check(
     smoke_budget: str = typer.Option("2m", "--smoke-budget", help="Wall clock for the smoke search"),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
 ):
-    """Conformance check for a search policy — the cheap pre-verifier.
+    """Conformance check for a climber — the cheap pre-verifier.
 
-    Replays every recorded journal (plus an empty one) through the policy
-    with no agent or verifier: two fresh instances must propose the same
-    action at every budget point (the resume contract), every referenced
-    candidate must exist, the policy must never write, and the prompt
-    override dir must lint clean. Exit 1 on any breach. `--smoke` follows
-    up with a short `--backend dummy` search so the whole loop — prompts
-    included — runs once before an agent hour is spent on it.
+    Replays every recorded journal (plus an empty one) through the climber's
+    policy with no agent or verifier: two fresh instances must propose the
+    same action at every budget point (the resume contract), every referenced
+    candidate must exist, the policy must never write, and the climber's
+    prompts must lint clean. Exit 1 on any breach. `--smoke` follows up with
+    a short `--backend dummy` search so the whole loop — prompts included —
+    runs once before an agent hour is spent on it.
     """
+    if ctx.parent is not None and ctx.parent.info_name == "policy":
+        typer.echo("note: `hillclimb policy check` is now `hillclimb climber check`", err=True)
+    if policy:
+        typer.echo("note: `--policy` is now `--climber` (same values)", err=True)
     from hillclimb.api import run_search
-    from hillclimb.policies import get_policy, policy_base_dir, policy_path
+    from hillclimb.climber import ClimberLoadError, load_climber
+    from hillclimb.policies import policy_base_dir, policy_path
     from hillclimb.policy_check import JournalCase, check_policy
-    from hillclimb.search_strategy import is_loop_climber
 
     config = load_config()
     config.apply_overrides(_parse_set(set_ or []))
-    name = policy or config.climber.ref
+    name = climber or policy or config.climber.ref
     params = dict(config.climber.params)  # the user's overlay; the manifest's params are the base
     base_dir = policy_base_dir(config)
     source = policy_path(name, base_dir)
     if source is not None and not source.is_file():
-        raise typer.BadParameter(f"policy file not found: {source}")
-
-    if is_loop_climber(name, config):
+        raise typer.BadParameter(f"climber file not found: {source}")
+    try:
+        loaded = load_climber(name, base_dir)
+    except ClimberLoadError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+    if loaded.is_loop:
         typer.echo(
             f"{name} brings its own SearchLoop; "
-            "the conformance check covers SearchPolicy implementations",
+            "the conformance check covers climbers built on a SearchPolicy",
             err=True,
         )
         raise typer.Exit(2)
 
     def make_policy():
-        return get_policy(name, params, base_dir=base_dir)
+        # a fresh policy per call, exactly as a search builds it
+        return loaded.build_loop(params=params, log=lambda *_: None).policy
 
     problem_key = None
     if problem:
@@ -1380,11 +1556,7 @@ def policy_check(
                     search_dir=record.search_dir,
                 )
             )
-    from hillclimb.climber import load_climber
-
-    report = check_policy(
-        make_policy, cases, config, prompts_dir=load_climber(name, base_dir).prompts_dir
-    )
+    report = check_policy(make_policy, cases, config, prompts_dir=loaded.prompts_dir)
     if report.ok:
         resolved = getattr(make_policy(), "resolved_params", None)
         resolved_params = resolved() if callable(resolved) else params
@@ -1403,7 +1575,7 @@ def policy_check(
         outcome = run_search(
             problem,
             budget_s=parse_budget(smoke_budget),
-            name="policy-check",
+            name="climber-check",
             config=smoke_config,
             log=(lambda *_: None) if as_json else typer.echo,
         )
@@ -1587,7 +1759,7 @@ def _run_suite(
     model: str | None,
     holdout: bool,
     name: str | None,
-    policy: str | None = None,
+    climber: str | None = None,
     parallel_operators: int | None = None,
     n_replicates: int | None = None,
     seed_from: Path | None = None,
@@ -1640,8 +1812,8 @@ def _run_suite(
             cmd += ["--backend", child_backend]
         if child_model:
             cmd += ["--model", child_model]
-        if policy:
-            cmd += ["--policy", policy]
+        if climber:
+            cmd += ["--climber", climber]
         if child_parallel is not None:
             cmd += ["--parallel-operators", str(child_parallel)]
         if child_replicates is not None:
@@ -1671,14 +1843,16 @@ def run(
     budget: str = typer.Option(None, help="Wall-clock budget, e.g. 2h / 30m"),
     backend: str = typer.Option(None, help="Operator backend: claude-code | codex | pi | dummy"),
     model: str = typer.Option(None, help="Model for operator calls, e.g. sonnet / opus"),
-    policy: list[str] = typer.Option(
-        None, "--policy",
+    climber: list[str] = typer.Option(
+        None, "--climber",
         help=(
-            "Search policy (default: greedy); params via config search.policy_params. "
-            "Repeat it (--policy greedy --policy gepa) for a mixed fleet: one search per policy "
+            "The climber (default: greedy): a bundled name, a directory holding climber.yaml, "
+            "or one .py file; params via config climber.params. Repeat it "
+            "(--climber greedy --climber gepa) for a mixed fleet: one search per climber "
             "on the problem, under one run, each tagged as an arm"
         ),
     ),
+    policy: list[str] = typer.Option(None, "--policy", hidden=True),
     holdout: bool = typer.Option(True, "--holdout/--no-holdout", help="Hidden selection holdout"),
     learning: bool = typer.Option(
         True, "--learning/--no-learning",
@@ -1700,13 +1874,13 @@ def run(
         None, "--seed-from", help="Incumbent solution.py scored as the floor candidate"
     ),
     set_: list[str] = typer.Option(
-        None, "--set", help="Any config setting, dotted: --set search.policy=openevolve --set learning.enabled=false",
+        None, "--set", help="Any config setting, dotted: --set climber.ref=openevolve --set learning.enabled=false",
     ),
     arm_set: list[str] = typer.Option(
         None, "--arm-set",
         help=(
             "A setting for one arm of a mixed fleet, ARM:KEY=VALUE: "
-            "--arm-set gepa:search.parallel_operators=1 (applied after --set)"
+            "--arm-set gepa:concurrency.parallel_operators=1 (applied after --set)"
         ),
     ),
     experiment: str = typer.Option(
@@ -1728,14 +1902,16 @@ def run(
         config.holdout.enabled = False
     if not learning:
         config.learning.enabled = False
-    policies = list(policy or [])
-    mixed = len(policies) > 1
+    if policy:
+        typer.echo("note: `--policy` is now `--climber` (same values)", err=True)
+    climbers = [*(climber or []), *(policy or [])]
+    mixed = len(climbers) > 1
     arm_overrides = _parse_arm_set(arm_set or [])
     if arm_overrides and not mixed:
-        raise typer.BadParameter("--arm-set needs a mixed fleet (two or more --policy)")
-    single_policy = None if mixed else (policies[0] if policies else None)
-    if single_policy is not None:
-        config.climber.ref = single_policy
+        raise typer.BadParameter("--arm-set needs a mixed fleet (two or more --climber)")
+    single_climber = None if mixed else (climbers[0] if climbers else None)
+    if single_climber is not None:
+        config.climber.ref = single_climber
     if parallel_operators is not None:
         config.concurrency.parallel_operators = parallel_operators
     if n_replicates is not None:
@@ -1749,21 +1925,21 @@ def run(
     resolved = resolve_target(target, config)
     if resolved.kind == "suite":
         if mixed:
-            raise typer.BadParameter("a spec takes one --policy; mixed fleets run on a single problem")
+            raise typer.BadParameter("a spec takes one --climber; mixed fleets run on a single problem")
         _run_suite(
             target, config, budget, backend, model, holdout, name,
-            policy=single_policy, parallel_operators=parallel_operators, n_replicates=n_replicates,
+            climber=single_climber, parallel_operators=parallel_operators, n_replicates=n_replicates,
             seed_from=seed_from, learning=learning, set_=set_,
         )
         return
     if mixed:
         try:
-            engines = mixed_fleet(policies, repeats=parallel_searches, arm_overrides=arm_overrides)
+            engines = mixed_fleet(climbers, repeats=parallel_searches, arm_overrides=arm_overrides)
         except ValueError as exc:
             raise typer.BadParameter(str(exc)) from exc
         _run_problem_fleet(
             target, config, budget, parallel_searches, name,
-            backend=backend, model=model, policy=None, parallel_operators=parallel_operators,
+            backend=backend, model=model, climber=None, parallel_operators=parallel_operators,
             n_replicates=n_replicates, holdout=holdout, learning=learning, set_=set_ or [],
             seed_from=seed_from, knowledge_context_file=knowledge_context_file,
             engines=engines, experiment=experiment,
@@ -1774,7 +1950,7 @@ def run(
             raise typer.BadParameter("--parallel-searches does not combine with --experiment/--run-id")
         _run_problem_fleet(
             target, config, budget, parallel_searches, name,
-            backend=backend, model=model, policy=single_policy, parallel_operators=parallel_operators,
+            backend=backend, model=model, climber=single_climber, parallel_operators=parallel_operators,
             n_replicates=n_replicates, holdout=holdout, learning=learning, set_=set_ or [],
             seed_from=seed_from, knowledge_context_file=knowledge_context_file,
         )
@@ -1803,7 +1979,7 @@ def _run_problem_fleet(
     *,
     backend: str | None,
     model: str | None,
-    policy: str | None,
+    climber: str | None,
     parallel_operators: int | None,
     n_replicates: int | None,
     holdout: bool,
@@ -1823,7 +1999,7 @@ def _run_problem_fleet(
         parallel_searches=parallel_searches,
         run_name=name,
         budget=budget,
-        backend=backend, model=model, policy=policy,
+        backend=backend, model=model, climber=climber,
         parallel_operators=parallel_operators, n_replicates=n_replicates,
         holdout=holdout, learning=learning, seed_from=seed_from,
         knowledge_context_file=knowledge_context_file, overrides=set_,
@@ -2464,33 +2640,6 @@ def show(
         typer.echo(tail(candidate_dir / "exec_stdout.log").rstrip())
 
 
-@app.command()
-def tree(
-    search: str = typer.Argument("latest"),
-    out: Path = typer.Option(None, help="Output image path (.png/.svg/.pdf); default <search>/tree.png"),
-):
-    """Render the search's exploration tree to an image.
-
-    Shows which candidates were created, built upon, or pruned.
-    """
-    try:
-        from hillclimb.viz import render_tree
-    except ModuleNotFoundError as exc:
-        raise typer.BadParameter(
-            "`hillclimb tree` needs the TUI extra: pip install 'hillclimb[tui]'"
-        ) from exc
-
-    config = load_config()
-    store, record = open_search(config, search)
-    meta, search_dir = record.meta, record.search_dir
-    higher = bool(meta.higher_is_better)
-    journal = Journal(store.journal(record.key))
-    out_path = out or (search_dir / "tree.png")
-    title = f"{meta.problem_id}  ({meta.model}, budget {meta.budget_s}s)"
-    render_tree(journal, higher, out_path, title)
-    typer.echo(f"Wrote {out_path} ({len(journal.candidates)} candidates)")
-
-
 def _watch_app():
     try:
         from hillclimb.watch import WatchApp
@@ -3058,7 +3207,7 @@ def demo(
     _demo_preflight(config.backend)
     run_dir = _run_problem_fleet(
         DEMO_PROBLEM_ID, config, budget, parallel_searches, "demo",
-        backend=backend, model=model, policy=None, parallel_operators=parallel_operators,
+        backend=backend, model=model, climber=None, parallel_operators=parallel_operators,
         n_replicates=None, holdout=True, learning=True, set_=[],
     )
     _print_demo_intro(config.hillclimb_dir, parallel_searches, parallel_operators, budget)

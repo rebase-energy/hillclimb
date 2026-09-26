@@ -1047,7 +1047,7 @@ def fleet_argv(
     budget: int | str | None = None,
     backend: str | None = None,
     model: str | None = None,
-    policy: str | None = None,
+    climber: str | None = None,
     parallel_operators: int | None = None,
     n_replicates: int | None = None,
     holdout: bool = True,
@@ -1074,8 +1074,8 @@ def fleet_argv(
         argv += ["--backend", backend]
     if model:
         argv += ["--model", model]
-    if policy:
-        argv += ["--policy", policy]
+    if climber:
+        argv += ["--climber", climber]
     if parallel_operators is not None:
         argv += ["--parallel-operators", str(parallel_operators)]
     if n_replicates is not None:
@@ -1095,52 +1095,52 @@ def fleet_argv(
 
 @dataclass(frozen=True)
 class FleetEngine:
-    """One engine of a mixed fleet: the arm it is tagged as, the policy it
+    """One engine of a mixed fleet: the arm it is tagged as, the climber it
     runs, and the `--set` overrides that apply to this engine only (after the
-    fleet-wide ones, so they win). `policy=None` keeps the fleet-wide policy.
-    Overrides are the one per-arm knob — `search.parallel_operators=1` for a
-    serial engine like GEPA, `search.policy_params.seed=7`, anything
+    fleet-wide ones, so they win). `climber=None` keeps the fleet-wide climber.
+    Overrides are the one per-arm knob — `concurrency.parallel_operators=1`
+    for a serial climber like GEPA, `climber.params.seed=7`, anything
     `Config.apply_overrides` accepts."""
 
     arm: str
-    policy: str | None = None
+    climber: str | None = None
     overrides: tuple[str, ...] = ()
     repeat: int = 0
 
 
 def mixed_fleet(
-    policies: Sequence[str],
+    climbers: Sequence[str],
     *,
     repeats: int = 1,
     arm_overrides: Mapping[str, Sequence[str]] | None = None,
 ) -> list[FleetEngine]:
-    """The engines of a fleet that runs one search per policy on the same
-    problem. Arms are named after their policy (a repeated policy gets a
+    """The engines of a fleet that runs one search per climber on the same
+    problem. Arms are named after their climber (a repeated climber gets a
     `-2`, `-3` suffix); `repeats` > 1 clones every arm that many times,
     repeat-major so every arm has seen the same shared state when it
     starts. `arm_overrides` maps an arm name to that arm's `--set` pairs;
     a name that matches no arm is an error."""
     if repeats < 1:
         raise ValueError("repeats must be >= 1")
-    if not policies:
-        raise ValueError("a mixed fleet needs at least one policy")
+    if not climbers:
+        raise ValueError("a mixed fleet needs at least one climber")
     from hillclimb.policies import policy_label
 
     arms: list[tuple[str, str]] = []
     seen: dict[str, int] = {}
-    for policy in policies:
-        label = policy_label(policy)  # a file policy's arm is its stem
+    for climber in climbers:
+        label = policy_label(climber)  # a one-file climber's arm is its stem
         count = seen.get(label, 0) + 1
         seen[label] = count
-        arms.append((label if count == 1 else f"{label}-{count}", policy))
+        arms.append((label if count == 1 else f"{label}-{count}", climber))
     overrides = {arm: tuple(pairs) for arm, pairs in (arm_overrides or {}).items()}
     unknown = sorted(set(overrides) - {arm for arm, _ in arms})
     if unknown:
         raise ValueError(f"arm override for unknown arm(s) {', '.join(unknown)}; arms are {', '.join(a for a, _ in arms)}")
     return [
-        FleetEngine(arm=arm, policy=policy, overrides=overrides.get(arm, ()), repeat=repeat if repeats > 1 else 0)
+        FleetEngine(arm=arm, climber=climber, overrides=overrides.get(arm, ()), repeat=repeat if repeats > 1 else 0)
         for repeat in range(1, repeats + 1)
-        for arm, policy in arms
+        for arm, climber in arms
     ]
 
 
@@ -1200,7 +1200,7 @@ def run_fleet(
     budget: int | str | None = None,
     backend: str | None = None,
     model: str | None = None,
-    policy: str | None = None,
+    climber: str | None = None,
     parallel_operators: int | None = None,
     n_replicates: int | None = None,
     holdout: bool = True,
@@ -1218,7 +1218,7 @@ def run_fleet(
 
     Two shapes. `parallel_searches=N`: N identical engines. `engines=[...]`
     (see `FleetEngine`, `mixed_fleet`): one engine per entry, each with its
-    own policy and overrides on top of the fleet-wide arguments, tagged as
+    own climber and overrides on top of the fleet-wide arguments, tagged as
     an arm of `experiment` (default: the run id) so `hillclimb experiment
     report <run-id>` compares them — three optimizers on one problem under
     one run. `parallel_searches` is ignored when `engines` is given."""
@@ -1243,13 +1243,13 @@ def run_fleet(
     )
     plan: list[tuple[str, list[str]]] = []  # (log slug, argv) per engine
     if engines is None:
-        argv = fleet_argv(target, run_dir, name, policy=policy, overrides=overrides, **shared)
+        argv = fleet_argv(target, run_dir, name, climber=climber, overrides=overrides, **shared)
         plan = [(problem.problem_id, argv)] * parallel_searches
     else:
         experiment = experiment or run_dir.name
         for engine in engines:
             argv = fleet_argv(
-                target, run_dir, name, policy=engine.policy or policy,
+                target, run_dir, name, climber=engine.climber or climber,
                 overrides=(*overrides, *engine.overrides),
                 experiment=experiment, arm=engine.arm, repeat=engine.repeat, **shared,
             )

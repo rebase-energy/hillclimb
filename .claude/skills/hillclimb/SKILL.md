@@ -138,10 +138,12 @@ uv run hillclimb paper add <pdf> --problem <t>  # distill a PDF paper into claim
 uv run hillclimb paper list                     # ingested papers with scope and claim counts
 uv run hillclimb experiment run <spec> [--dry-run] [--parallel]  # arms × problems × repeats (real searches; --dry-run lists jobs)
 uv run hillclimb experiment report [spec]       # compare the arms on holdout, gap vs control judged against the noise floor (--json: gaps + verdicts as data)
-uv run hillclimb policy check [--policy hillclimb/policies/x.py] [--set search.policy_params.k=v] [--problem P --smoke]  # replay recorded journals through the policy (no agent): resume-determinism, dangling ids, writes, prompt overrides; exit 1 on a breach
-uv run hillclimb run <problem> --policy hillclimb/policies/x.py  # a policy file (one SearchPolicy class, or POLICY=...) instead of a registry name; search.yaml records policy_sha256
-uv run hillclimb run <problem> --set search.policy=openevolve --experiment E --arm A  # one arm by hand (counts in the report)
-uv run hillclimb run <problem> --policy greedy --policy openevolve --policy gepa --arm-set gepa:search.parallel_operators=1  # mixed fleet: one search per optimizer under one run; `experiment report <run-id>` compares
+uv run hillclimb climber list                     # bundled climbers (greedy | openevolve | gepa) + hillclimb/climbers/* — the `--climber` refs
+uv run hillclimb climber new mine --from greedy   # copy a climber into hillclimb/climbers/mine/ (manifest + policy source + prompts) to edit
+uv run hillclimb climber check [--climber hillclimb/climbers/mine] [--set climber.params.k=v] [--problem P --smoke]  # replay recorded journals through the climber's policy (no agent): resume-determinism, dangling ids, writes, prompt lint; exit 1 on a breach
+uv run hillclimb run <problem> --climber hillclimb/climbers/mine  # a climber dir (climber.yaml) or one .py file (a SearchPolicy class, or POLICY=...) instead of a bundled name; search.yaml records climber_sha256 and snapshots it
+uv run hillclimb run <problem> --set climber.ref=openevolve --experiment E --arm A  # one arm by hand (counts in the report)
+uv run hillclimb run <problem> --climber greedy --climber openevolve --climber gepa --arm-set gepa:concurrency.parallel_operators=1  # mixed fleet: one search per climber under one run; `experiment report <run-id>` compares
 ```
 
 ## Rules

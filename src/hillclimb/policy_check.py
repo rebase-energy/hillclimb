@@ -23,7 +23,7 @@ agent, verifier or venv, and reports every contract breach it can see:
 - `templates`         the prompt override dir lints clean (render.py)
 
 Pure by construction: nothing here writes. `check_policy` is the library
-entry; `hillclimb policy check` wraps it over the store's journals and can
+entry; `hillclimb climber check` wraps it over the store's journals and can
 follow up with a dummy-backend smoke search.
 """
 
@@ -327,4 +327,4 @@ class _NullBackend:
         return iter(())
 
     def append(self, record: dict) -> None:
-        raise RuntimeError("policy check journals are read-only")
+        raise RuntimeError("climber check journals are read-only")

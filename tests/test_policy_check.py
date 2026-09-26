@@ -246,7 +246,7 @@ def test_cli_replays_the_stores_journals(tmp_path, monkeypatch, capsys):
     add_candidate(journal, "c001", "draft", val_score=0.4)
 
     with pytest.raises(SystemExit) as exc:
-        cli_main(["policy", "check", "--json", "--set", "search.policy_params.num_drafts=1"])
+        cli_main(["climber", "check", "--json", "--set", "climber.params.num_drafts=1"])
     assert exc.value.code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True and payload["policy"] == "greedy"
@@ -257,7 +257,7 @@ def test_cli_replays_the_stores_journals(tmp_path, monkeypatch, capsys):
 
     # a climber that brings its own SearchLoop is out of scope, and says so
     with pytest.raises(SystemExit) as exc:
-        cli_main(["policy", "check", "--policy", "gepa"])
+        cli_main(["climber", "check", "--climber", "gepa"])
     assert exc.value.code == 2
     assert "brings its own SearchLoop" in capsys.readouterr().err
 
@@ -275,7 +275,7 @@ def test_cli_checks_a_file_policy_relative_to_the_hillclimb_dir(tmp_path, monkey
     monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
 
     with pytest.raises(SystemExit) as exc:
-        cli_main(["policy", "check", "--policy", "hillclimb/policies/drafts_only.py", "--json"])
+        cli_main(["climber", "check", "--climber", "hillclimb/policies/drafts_only.py", "--json"])
     assert exc.value.code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
@@ -287,11 +287,11 @@ def test_cli_checks_a_file_policy_relative_to_the_hillclimb_dir(tmp_path, monkey
         "    def observe(self, view, candidate):\n        pass\n"
     )
     with pytest.raises(SystemExit) as exc:
-        cli_main(["policy", "check", "--policy", "hillclimb/policies/stalls.py"])
+        cli_main(["climber", "check", "--climber", "hillclimb/policies/stalls.py"])
     assert exc.value.code == 1
     assert "never start" in capsys.readouterr().out
 
     with pytest.raises(SystemExit) as exc:
-        cli_main(["policy", "check", "--policy", "hillclimb/policies/missing.py"])
+        cli_main(["policy", "check", "--policy", "hillclimb/policies/missing.py"])  # the old spelling still works
     assert exc.value.code == 2
-    assert "policy file not found" in capsys.readouterr().err
+    assert "climber file not found" in capsys.readouterr().err

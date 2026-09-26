@@ -8,6 +8,6 @@ budget: 15m
 schedule: sequential   # memory arms share the knowledge graph: keep them in lockstep
 noise_floor: 0.01
 arms:
-  greedy:       {search.policy: greedy}
-  greedy-nomem: {search.policy: greedy, learning.enabled: false}
-  openevolve:   {search.policy: openevolve}
+  greedy:       {climber.ref: greedy}
+  greedy-nomem: {climber.ref: greedy, learning.enabled: false}
+  openevolve:   {climber.ref: openevolve}

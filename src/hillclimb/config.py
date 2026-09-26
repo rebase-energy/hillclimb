@@ -519,8 +519,8 @@ class Config(BaseModel):
         return config
 
     def apply_overrides(self, overrides: dict[str, object]) -> None:
-        """Set dotted config paths (`search.policy`, `learning.enabled`,
-        `search.policy_params.population_size`, top-level `model`) with
+        """Set dotted config paths (`climber.ref`, `learning.enabled`,
+        `climber.params.population_size`, top-level `model`) with
         pydantic validation at each level — the one way an experiment arm
         or `hillclimb run --set` changes a setting. Unknown paths raise
         KeyError naming the offending key."""

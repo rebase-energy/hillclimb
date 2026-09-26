@@ -2,7 +2,7 @@
 
 An experiment is a problem (or several) × named *arms* × N repeats. An arm
 is a set of config overrides — anything `Config.apply_overrides` accepts
-(`search.policy`, `learning.enabled`, `model`, `search.policy_params.*`,
+(`climber.ref`, `learning.enabled`, `model`, `climber.params.*`,
 …) — so "does memory help?", "greedy or openevolve?", "sonnet or opus?" are
 all the same experiment with different arms. A spec is a YAML file:
 
@@ -15,9 +15,9 @@ all the same experiment with different arms. A spec is a YAML file:
     noise_floor: 0.02               # a number, or {problem-id: number}
     defaults: {model: sonnet}       # overrides every arm starts from
     arms:
-      greedy:        {search.policy: greedy}
-      greedy-nomem:  {search.policy: greedy, learning.enabled: false}
-      openevolve:    {search.policy: openevolve, search.policy_params: {population_size: 50}}
+      greedy:        {climber.ref: greedy}
+      greedy-nomem:  {climber.ref: greedy, learning.enabled: false}
+      openevolve:    {climber.ref: openevolve, climber.params: {population_size: 50}}
 
 `expand` turns it into jobs in a fair order — round-robin over arms within
 each repeat, so shared state (the knowledge graph) is seen by every arm at
@@ -116,7 +116,7 @@ class ExperimentSpec(BaseModel):
 
 def flatten_overrides(overrides: dict, prefix: str = "") -> dict:
     """Nested mappings → dotted keys (`{search: {policy: x}}` ==
-    `{search.policy: x}`), except that a mapping under a key that already
+    `{climber.ref: x}`), except that a mapping under a key that already
     holds a dict value in Config (`policy_params`) is kept whole by the
     caller's convention: we flatten one level at a time and only recurse
     into mappings whose keys look like settings (no dots)."""
