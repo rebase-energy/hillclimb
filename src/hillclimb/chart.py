@@ -11,6 +11,13 @@ other's "greedy r1". Same figure as the website's, in the same colours. Strictly
 (store.py — the hillclimb folder by default, or the SQLite index), and the
 pure data functions at the top stay testable without Textual.
 
+The x axis counts the candidates the climber tested, from 1. The harness's
+own floor — the problem's baseline (and a `--seed-from` seed), scored before
+any climber spent anything — sits at x = 0: it is the "naive" case the climb
+is measured against, so the axis and the reference lines start there when
+the floor was scored, and at 1 when it was not (an unscored placeholder, or
+no baseline at all).
+
 `--detail` anchors on one search and overlays its exploration tree on the
 curve: every scored candidate as a mark at (evaluation number, its score),
 parent→child edges between them, the accepted lineage bold — the climb and
@@ -25,6 +32,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from hillclimb.budget import FLOOR_OPERATORS
 from hillclimb.candidate import Candidate
 from hillclimb.config import Config
 from hillclimb.direction import better
@@ -69,7 +77,7 @@ _KITTY_BELOW_CELL_BACKGROUND_Z = -1_073_741_825
 class Curve:
     label: str
     state: str
-    xs: list[float] = field(default_factory=list)  # 1-based scored-candidate count
+    xs: list[float] = field(default_factory=list)  # tested-candidate count; the floor at 0
     ys: list[float] = field(default_factory=list)  # best-so-far score (val, or its holdout)
     arm: str | None = None  # experiment arm, when the search is one
 
@@ -103,6 +111,26 @@ def score_time(cand: Candidate) -> datetime | None:
     return _landing_time(cand)
 
 
+def is_floor(cand: Candidate) -> bool:
+    """The harness's own floor (baseline/seed): scored before the climber
+    spent anything, so it takes x = 0 rather than a tested-candidate slot."""
+    return cand.operator in FLOOR_OPERATORS
+
+
+def _slot_numbers(floors: list[bool]) -> list[float]:
+    """x per landed candidate, in landing order: floors at 0, everything
+    else counted from 1."""
+    xs: list[float] = []
+    tested = 0
+    for floor in floors:
+        if floor:
+            xs.append(0.0)
+        else:
+            tested += 1
+            xs.append(float(tested))
+    return xs
+
+
 def _counts_as_scored(cand: Candidate) -> bool:
     """The one predicate for "this candidate occupies an x slot on the climb".
     `climb_from_searches` and `cost_series` must agree on it exactly, or the
@@ -120,8 +148,8 @@ def curve_from_candidates(
     split: str = "val",
 ) -> Curve:
     """Best-so-far curve for one search. A point per scored, unpruned
-    candidate in finish order; the 1-based x value is how many candidates
-    have been tested.
+    candidate in finish order; the x value is how many candidates have been
+    tested — the floor (baseline/seed) sits at 0, the first tested at 1.
 
     `split="val"` (default) plots the score the search climbs on, so the line
     only ever moves in the metric's good direction. `split="holdout"` keeps
@@ -142,13 +170,14 @@ def curve_from_candidates(
         when = score_time(cand)
         if when is None:
             continue
-        scored.append((when, cand.val_score, cand.holdout_score))
+        scored.append((when, is_floor(cand), cand.val_score, cand.holdout_score))
     scored.sort(key=lambda item: item[0])
     if not scored:
         return curve
     best: float | None = None
     plotted: float | None = None
-    for experiment, (_when, val, holdout) in enumerate(scored, start=1):
+    slots = _slot_numbers([floor for _when, floor, _val, _holdout in scored])
+    for experiment, (_when, _floor, val, holdout) in zip(slots, scored):
         if best is None or better(val, best, higher):
             best = val
             if split == "holdout":
@@ -157,7 +186,7 @@ def curve_from_candidates(
                 plotted = val
         if plotted is None:
             continue
-        curve.xs.append(float(experiment))
+        curve.xs.append(experiment)
         curve.ys.append(plotted)
     return curve
 
@@ -254,6 +283,11 @@ class Climb:
     searches: int = 0
 
     @property
+    def origin(self) -> float:
+        """Where the axis starts: 0 when a scored floor is on the chart, else 1."""
+        return curves_origin([e.x for e in self.events])
+
+    @property
     def best(self) -> float | None:
         hits = [e for e in self.events if e.best]
         return hits[-1].y if hits else None
@@ -266,6 +300,13 @@ class Climb:
         """The best-so-far line as step points, flat to `extent`."""
         hits = [e for e in self.events if e.best]
         return step_points([e.x for e in hits], [e.y for e in hits], self.extent)
+
+
+def curves_origin(xs: list[float]) -> float:
+    """The left edge of the candidate axis for a set of plotted x values: 0
+    when a floor (x = 0) is among them, else 1 — the chart starts at the
+    first tested candidate unless there is a naive case to improve on."""
+    return 0.0 if any(x == 0.0 for x in xs) else 1.0
 
 
 def step_points(xs: list[float], ys: list[float], extent: float | None = None) -> tuple[list[float], list[float]]:
@@ -294,7 +335,8 @@ def climb_from_searches(
 ) -> Climb:
     """Fold every search's scored, unpruned candidates into one climb.
     `searches` is (label, candidates, started_at) per search; `started_at` is
-    retained in that shape for callers but x is the 1-based candidate count.
+    retained in that shape for callers but x is the tested-candidate count
+    (the floor — every search's baseline/seed — at 0, the first tested at 1).
     `best` is judged against everything that landed before, whichever search
     it came from — always on the validation score, the signal the searches
     climb on. `split="holdout"` plots each event at its candidate's holdout
@@ -302,13 +344,13 @@ def climb_from_searches(
     drawn), so the staircase reads as the incumbent's held-out result and may
     move the wrong way where a validation gain did not transfer."""
     higher = higher_is_better
-    landed: list[tuple[datetime, float, float | None, str, str, str]] = []
+    landed: list[tuple[datetime, bool, float, float | None, str, str, str]] = []
     for label, candidates, _ in searches:
         for cand in candidates:
             if not _counts_as_scored(cand):
                 continue
             landed.append((
-                _landing_time(cand), cand.val_score, cand.holdout_score,
+                _landing_time(cand), is_floor(cand), cand.val_score, cand.holdout_score,
                 label, cand.operator or "", cand.summary or "",
             ))
     landed.sort(key=lambda item: item[0])
@@ -316,15 +358,16 @@ def climb_from_searches(
     if not landed:
         return climb
     best: float | None = None
-    for experiment, (_when, val, holdout, label, operator, summary) in enumerate(landed, start=1):
+    slots = _slot_numbers([item[1] for item in landed])
+    for experiment, (_when, _floor, val, holdout, label, operator, summary) in zip(slots, landed):
         improved = best is None or better(val, best, higher)
         if improved:
             best = val
         y = holdout if split == "holdout" else val
         if y is None:
             continue
-        climb.events.append(ClimbEvent(float(experiment), y, improved, label, operator, summary))
-    climb.extent = float(len(landed))
+        climb.events.append(ClimbEvent(experiment, y, improved, label, operator, summary))
+    climb.extent = max(slots)
     return climb
 
 
@@ -393,11 +436,12 @@ def cost_series(searches: list[tuple[str, list[Candidate], str | None]]) -> Cost
     Every candidate is walked — buggy, pruned, agent-failed included: they
     burned tokens and CPU even though they never became climb events. Only a
     candidate that `climb_from_searches` counts (`_counts_as_scored`) advances
-    x and emits the running totals, so `xs` lands 1:1 on `ClimbEvent.x`; a
-    failure's cost surfaces at the next scored slot. Cost trailing the last
-    scored candidate lands as one final point at the same x (a vertical step
-    to the true total). Timestampless candidates sort first, attaching their
-    cost to slot 1."""
+    x and emits the running totals, so `xs` lands 1:1 on the tested slots of
+    `ClimbEvent.x`; a failure's cost surfaces at the next scored slot, and so
+    does the floor's (the baseline/seed sits at x = 0 on the climb and is not
+    the climber's spend). Cost trailing the last scored candidate lands as
+    one final point at the same x (a vertical step to the true total).
+    Timestampless candidates sort first, attaching their cost to slot 1."""
     landed: list[tuple[tuple[bool, datetime], Candidate]] = []
     for _label, candidates, _ in searches:
         for cand in candidates:
@@ -415,7 +459,7 @@ def cost_series(searches: list[tuple[str, list[Candidate], str | None]]) -> Cost
         cand_tokens, cand_cpu = _candidate_cost(cand)
         tokens += cand_tokens
         cpu += cand_cpu
-        if _counts_as_scored(cand):
+        if _counts_as_scored(cand) and not is_floor(cand):
             slot += 1
             xs.append(float(slot))
             token_points.append(tokens)
@@ -453,7 +497,7 @@ def cost_for_problem(
 @dataclass(frozen=True)
 class DetailMark:
     id: str
-    x: float            # 1-based scored-candidate count
+    x: float            # tested-candidate count; the floor at 0
     y: float            # plotted score (val, or holdout in the holdout view)
     operator: str
     fate: str
@@ -508,11 +552,12 @@ def detail_layout(
     for cand in scored.values():
         when = score_time(cand)
         if when is not None:
-            landed.append((when, cand.candidate_id))
+            landed.append((when, is_floor(cand), cand.candidate_id))
     landed.sort(key=lambda item: item[0])
+    slots = _slot_numbers([floor for _when, floor, _id in landed])
     experiment_by_id = {
-        candidate_id: float(index)
-        for index, (_when, candidate_id) in enumerate(landed, start=1)
+        candidate_id: slot
+        for slot, (_when, _floor, candidate_id) in zip(slots, landed)
     }
     on_path = set(tree.accepted)
     at: dict[str, tuple[float, float]] = {}
@@ -787,19 +832,22 @@ def _add_chart_baselines(
     baselines: Mapping[str, float],
     extent: float,
     *,
+    origin: float = 1.0,
     show_legend: bool = True,
     hidden: frozenset[str] | set[str] = frozenset(),
 ) -> None:
-    """Add arbitrary named horizontal score references behind the data.
+    """Add arbitrary named horizontal score references behind the data,
+    from `origin` (the axis's left edge: 0 with a scored floor, else 1) to
+    the climb's extent.
 
     `hidden` entries are skipped but keep their palette slot, so toggling one
     off never recolours the others out from under the legend."""
-    right = max(1.0, extent)
+    right = max(origin + 1.0, extent)
     for index, (label, value) in enumerate(baselines.items()):
         if label in hidden:
             continue
         plot.add_line(
-            [0.0, right],
+            [origin, right],
             [value, value],
             color=CHART_BASELINE_PALETTE[index % len(CHART_BASELINE_PALETTE)],
             width=1.0,
@@ -820,7 +868,10 @@ def build_plot(
     plot = themed_plot()
     _hide_plot_legend(plot, show_legend)
     extent = max((max(c.xs, default=0.0) for c in curves), default=0.0)
-    _add_chart_baselines(plot, baselines or {}, extent, show_legend=show_legend, hidden=hidden)
+    origin = curves_origin([x for c in curves for x in c.xs[:1]])
+    _add_chart_baselines(
+        plot, baselines or {}, extent, origin=origin, show_legend=show_legend, hidden=hidden,
+    )
     trace_index = len(baselines or {})
     for curve, color in zip(curves, curve_colors(curves)):
         if not curve.xs:
@@ -926,7 +977,10 @@ def build_climb_plot(
     `cost` overlays the cumulative token/CPU lines on right-hand axes."""
     plot = themed_plot()
     _hide_plot_legend(plot, show_legend)
-    _add_chart_baselines(plot, baselines or {}, climb.extent, show_legend=show_legend, hidden=hidden)
+    _add_chart_baselines(
+        plot, baselines or {}, climb.extent, origin=climb.origin,
+        show_legend=show_legend, hidden=hidden,
+    )
     misses = [e for e in climb.events if not e.best]
     if misses and "attempt" not in hidden:
         plot.add_scatter(
@@ -1106,8 +1160,9 @@ def climb_plot_bounds(
     xs = [event.x for event in climb.events]
     ys = [event.y for event in climb.events]
     if baselines:
-        right = max(1.0, climb.extent)
-        xs.extend((0.0, right))
+        origin = climb.origin
+        right = max(origin + 1.0, climb.extent)
+        xs.extend((origin, right))
         ys.extend(float(value) for value in baselines.values())
     if not xs or not ys:
         return (-1.0, 1.0, -1.0, 1.0)

@@ -312,14 +312,16 @@ class TestChartDetail:
         # scored, unpruned only — c005 failed and c006 pruned are left out
         assert set(by_id) == {"c000", "c001", "c002", "c003", "c004", "c007"}
         assert layout.unscored == 2
-        assert by_id["c007"].x == 6.0 and by_id["c007"].y == 0.8 and by_id["c007"].on_path
+        # the baseline is the floor at x = 0; tested candidates count from 1
+        assert by_id["c000"].x == 0.0
+        assert by_id["c007"].x == 5.0 and by_id["c007"].y == 0.8 and by_id["c007"].on_path
         assert by_id["c003"].on_path is False
         edges = {((e.x0, e.y0), (e.x1, e.y1)): e.on_path for e in layout.edges}
-        assert edges[((3.0, 0.6), (5.0, 0.7))] is True   # c002 -> c004
-        assert edges[((3.0, 0.6), (4.0, 0.55))] is False  # c002 -> c003
+        assert edges[((2.0, 0.6), (4.0, 0.7))] is True   # c002 -> c004
+        assert edges[((2.0, 0.6), (3.0, 0.55))] is False  # c002 -> c003
         assert len(layout.edges) == 3  # c005/c006 children are not drawn
         # the staircase is the chart's own curve
-        assert layout.curve.xs == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+        assert layout.curve.xs == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
         assert layout.curve.ys == [0.1, 0.5, 0.6, 0.6, 0.7, 0.8]
 
     def test_holdout_split_plots_incumbent_holdout_scores(self):
@@ -353,6 +355,54 @@ class TestChartDetail:
         ]
         assert holdout.extent == 4.0
 
+    def test_scored_floor_sits_at_zero_and_starts_the_axis_there(self, monkeypatch):
+        """The baseline (and a seed) is the naive case the climb improves on:
+        it takes x = 0, the first tested candidate x = 1, and the reference
+        lines run from 0 so the floor is visibly on the chart."""
+        from hillclimb.chart import (
+            build_climb_plot, climb_from_searches, climb_plot_bounds, cost_series,
+        )
+
+        candidates = [
+            cand("c000", "baseline", score=0.1, t=0),
+            cand("c001", "draft", score=0.5, t=1),
+            cand("c002", "draft", score=0.4, t=2),
+        ]
+        climb = climb_from_searches([("s", candidates, None)])
+        assert [(e.x, e.y, e.best) for e in climb.events] == [
+            (0.0, 0.1, True), (1.0, 0.5, True), (2.0, 0.4, False),
+        ]
+        assert climb.extent == 2.0 and climb.origin == 0.0
+        assert climb.staircase() == ([0.0, 1.0, 1.0, 2.0], [0.1, 0.1, 0.5, 0.5])
+        # the floor is not the climber's spend: its cost lands on slot 1
+        assert cost_series([("s", candidates, None)]).xs == [1.0, 2.0]
+        # the reference lines and the padded bounds start at the floor
+        lines = []
+        plot = type("Spy", (), {
+            "legend_visible": True,
+            "add_line": lambda self, xs, ys, **kw: lines.append((xs, kw["name"])),
+            "add_scatter": lambda self, *a, **kw: None,
+        })()
+        monkeypatch.setattr("hillclimb.chart.themed_plot", lambda: plot)
+        build_climb_plot(climb, {"OpenEvolve": 0.6})
+        assert lines[0] == ([0.0, 2.0], "OpenEvolve")
+        assert climb_plot_bounds(climb, {"OpenEvolve": 0.6})[0] == -0.1
+
+        # a placeholder floor never scored leaves the chart starting at 1
+        unscored = [cand("c000", "baseline", t=0)] + candidates[1:]
+        without = climb_from_searches([("s", unscored, None)])
+        assert [e.x for e in without.events] == [1.0, 2.0] and without.origin == 1.0
+        assert climb_plot_bounds(without, {"OpenEvolve": 0.6})[0] == 0.95
+
+        # every search's floor lands at 0 when several searches fold into one climb
+        twice = climb_from_searches([("a", candidates, None), ("b", [
+            cand("c000", "baseline", score=0.1, t=3),
+            cand("c001", "draft", score=0.7, t=4),
+        ], None)])
+        assert [(e.x, e.best) for e in twice.events] == [
+            (0.0, True), (1.0, True), (2.0, False), (0.0, False), (3.0, True),
+        ]
+
     def test_empty_detail(self):
         layout = detail_layout([cand("c001", status="buggy")], label="x", state="done")
         assert layout.marks == [] and layout.edges == [] and layout.unscored == 1
@@ -384,10 +434,11 @@ class TestChartDetail:
         climb = Climb(events=[ClimbEvent(1.0, 0.6, True, "r", "draft")], extent=1.0)
         baselines = {"baseline": 0.5, "OpenEvolve best": 0.7, "AlphaEvolve best": 0.8}
         assert build_climb_plot(climb, baselines) is plot
+        # no scored floor on the chart: the axis, and the lines, start at 1
         assert [(xs, ys, options["name"]) for xs, ys, options in plot.lines] == [
-            ([0.0, 1.0], [0.5, 0.5], "baseline"),
-            ([0.0, 1.0], [0.7, 0.7], "OpenEvolve best"),
-            ([0.0, 1.0], [0.8, 0.8], "AlphaEvolve best"),
+            ([1.0, 2.0], [0.5, 0.5], "baseline"),
+            ([1.0, 2.0], [0.7, 0.7], "OpenEvolve best"),
+            ([1.0, 2.0], [0.8, 0.8], "AlphaEvolve best"),
         ]
 
         # ChartScreen draws its legend in a dedicated Textual band, so the
