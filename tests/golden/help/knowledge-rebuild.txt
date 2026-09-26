@@ -1,0 +1,11 @@
+                                                                                                                        
+ Usage: root knowledge rebuild [OPTIONS]                                                                                
+                                                                                                                        
+ Force-rebuild knowledge/graph.json from cards and registries.                                                          
+                                                                                                                        
+ The graph is a derived index — always safe to rebuild, never hand-edit.                                                
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --help  -h        Show this message and exit.                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

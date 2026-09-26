@@ -1,0 +1,15 @@
+                                                                                                                        
+ Usage: root init [OPTIONS] [DIRECTORY]                                                                                 
+                                                                                                                        
+ Create a hillclimb dir.                                                                                                
+                                                                                                                        
+ A hillclimb/ folder holding config, problems, run specs, and runs.                                                     
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│   [directory]      PATH  Where to create the hillclimb/ dir [default: .]                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --force            Create one even inside an existing hillclimb dir                                                  │
+│ --help   -h        Show this message and exit.                                                                       │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

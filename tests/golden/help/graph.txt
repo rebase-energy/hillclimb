@@ -1,0 +1,12 @@
+                                                                                                                        
+ Usage: root graph [OPTIONS]                                                                                            
+                                                                                                                        
+ Live knowledge graph (same screen as `hillclimb knowledge graph`).                                                     
+                                                                                                                        
+ Problems, searches, techniques, and claims, growing as searches finish.                                                
+ Drag rotates, scroll zooms, click a node for details, `?` lists keys.                                                  
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --help  -h        Show this message and exit.                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

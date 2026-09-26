@@ -1,0 +1,42 @@
+                                                                                                                        
+ Usage: root [OPTIONS] COMMAND [ARGS]...                                                                                
+                                                                                                                        
+ Hillclimbing on verifier-defined problems: a code-generation harness for model development with long-running agents.   
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --help  -h        Show this message and exit.                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ archive     Archive tree beside the progress chart, live — the Darwin Gödel                                          │
+│             Machine's two-panel figure for one search.                                                               │
+│ chart       Live hillclimb chart: best score so far vs tested candidates.                                            │
+│ climber     Climbers — the shareable bundle that decides HOW to hillclimb (policy, operators, prompts, tuner): list  │
+│             them, start your own, check one before spending budget on it                                             │
+│ connect     Connect the agents that run operators (claude, codex, pi) and the OpenRouter route that pays for them.   │
+│ demo        Try hillclimb in one command: agents climb the circle-packing problem.                                   │
+│ experiment  Compare setups: named arms of config overrides × repeats on a problem                                    │
+│ graph       Live knowledge graph (same screen as `hillclimb knowledge graph`).                                       │
+│ init        Create a hillclimb dir.                                                                                  │
+│ kill        SIGTERM a running engine; it can be resumed.                                                             │
+│ knowledge   Cross-search learning: cards distilled from finished searches                                            │
+│ paper       Distill PDF papers into knowledge claims that seed future searches                                       │
+│ problem     Ready-made verifier problems shipped with hillclimb.                                                     │
+│ prune       Prune a candidate and its whole subtree.                                                                 │
+│ ps          Every process hillclimb is responsible for on this machine.                                              │
+│ reset       Kill every engine of THIS hillclimb dir and delete the dir.                                              │
+│ resume      Resume a parked or interrupted search.                                                                   │
+│ run         Start a run on a problem or a run-spec YAML.                                                             │
+│ show        Everything known about one candidate.                                                                    │
+│ similarity  Live 3D similarity views of a search's candidates: `map` (pairwise, default) and `reference`.            │
+│ smoke       One real DRAFT call through the selected backend, end to end.                                            │
+│ status      Show the candidate tree of a search.                                                                     │
+│ stop        Gracefully stop a running engine.                                                                        │
+│ store       The record store behind the cross-run views (`store.backend` in config.yaml: files | sqlite)             │
+│ summit      Copy the best solution found so far next to your hillclimb/ folder.                                      │
+│ surface     Live 3D fitness surface of one search: candidates on the problem's terrain.                              │
+│ tree        Live exploration tree of one search: what was expanded, what was left.                                   │
+│ tree2       Live archive tree of one search, drawn like the Darwin Gödel Machine's.                                  │
+│ verify      Run a problem's verifier once, outside a search.                                                         │
+│ watch       Live TUI: runs, searches, candidates, and candidate details.                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

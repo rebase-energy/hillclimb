@@ -1,0 +1,13 @@
+                                                                                                                        
+ Usage: root store sync [OPTIONS]                                                                                       
+                                                                                                                        
+ Import the hillclimb folder's searches into the configured store.                                                      
+                                                                                                                        
+ Searches the store already holds are left alone, so this is safe to                                                    
+ repeat. Run it after switching `store.backend` to `sqlite` so history                                                  
+ written as files shows up in the chart and best-ever views.                                                            
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --help  -h        Show this message and exit.                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

@@ -1,0 +1,16 @@
+                                                                                                                        
+ Usage: root stop [OPTIONS] [SEARCH]                                                                                    
+                                                                                                                        
+ Gracefully stop a running engine.                                                                                      
+                                                                                                                        
+ It finishes the current operator call, then parks. Resume later with                                                   
+ `hillclimb resume`. `--all` stops every running search (e.g. the demo).                                                
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│   [search]      TEXT  [default: latest]                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --all             Stop every running search                                                                          │
+│ --help  -h        Show this message and exit.                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

@@ -1,0 +1,18 @@
+                                                                                                                        
+ Usage: root summit [OPTIONS] [PROBLEM]                                                                                 
+                                                                                                                        
+ Copy the best solution found so far next to your hillclimb/ folder.                                                    
+                                                                                                                        
+ Ranks every search of the problem, across all runs, by its selected                                                    
+ candidate and copies that search's solution.py plus its declared output                                                
+ artifacts into the destination. Run it at any point, even                                                              
+ mid-climb — you always get the best discovered so far.                                                                 
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│   [problem]      TEXT  Problem key; defaults to the only problem in the hillclimb dir                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --to            PATH  Destination folder (default: the folder holding hillclimb/)                                    │
+│ --help  -h            Show this message and exit.                                                                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

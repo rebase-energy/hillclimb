@@ -1,0 +1,17 @@
+                                                                                                                        
+ Usage: root prune [OPTIONS] SEARCH CANDIDATE_ID                                                                        
+                                                                                                                        
+ Prune a candidate and its whole subtree.                                                                               
+                                                                                                                        
+ The engine stops building on this lineage and it is excluded from                                                      
+ selection. Statuses and scores stay visible in status/tree output.                                                     
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ *    search            TEXT  [required]                                                                              │
+│ *    candidate_id      TEXT  [required]                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --reason          TEXT  Why this branch is being cut (recorded in the journal)                                       │
+│ --help    -h            Show this message and exit.                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

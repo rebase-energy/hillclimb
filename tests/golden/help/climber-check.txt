@@ -1,0 +1,24 @@
+                                                                                                                        
+ Usage: root climber check [OPTIONS]                                                                                    
+                                                                                                                        
+ Conformance check for a climber — the cheap pre-verifier.                                                              
+                                                                                                                        
+ Replays every recorded journal (plus an empty one) through the climber's                                               
+ policy with no agent or verifier: two fresh instances must propose the                                                 
+ same action at every budget point (the resume contract), every referenced                                              
+ candidate must exist, the policy must never write, and the climber's                                                   
+ prompts must lint clean. Exit 1 on any breach. `--smoke` follows up with                                               
+ a short `--backend dummy` search so the whole loop — prompts included —                                                
+ runs once before an agent hour is spent on it.                                                                         
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --climber               TEXT     Climber ref (default: config climber.ref)                                           │
+│ --problem               TEXT     Replay only this problem's recorded searches (default: every search)                │
+│ --set                   TEXT     Config override, dotted: --set climber.params.num_drafts=1                          │
+│ --limit                 INTEGER  Newest recorded searches to replay [default: 20]                                    │
+│ --smoke                          Then run a dummy-backend search on --problem (no LLM, real verifier)                │
+│ --smoke-budget          TEXT     Wall clock for the smoke search [default: 2m]                                       │
+│ --json                           Machine-readable output                                                             │
+│ --help          -h               Show this message and exit.                                                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

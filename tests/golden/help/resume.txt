@@ -1,0 +1,19 @@
+                                                                                                                        
+ Usage: root resume [OPTIONS] [SEARCH]                                                                                  
+                                                                                                                        
+ Resume a parked or interrupted search.                                                                                 
+                                                                                                                        
+ SEARCH is `<run-id>/<search-id>`, `<run-id>`, or `latest`. `--all` resumes                                             
+ everything resumable (the counterpart of `hillclimb stop --all`), each as                                              
+ its own detached engine — the pause/resume flow for changing code or env                                               
+ under a live project.                                                                                                  
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│   [search]      TEXT  [default: latest]                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --all               Resume every parked/stopped/crashed search, each detached                                        │
+│ --detach            Resume in a detached background engine instead of the foreground                                 │
+│ --help    -h        Show this message and exit.                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

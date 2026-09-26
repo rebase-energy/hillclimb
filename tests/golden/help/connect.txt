@@ -1,0 +1,16 @@
+                                                                                                                        
+ Usage: root connect [OPTIONS] COMMAND [ARGS]...                                                                        
+                                                                                                                        
+ Connect the agents that run operators (claude, codex, pi) and the OpenRouter route that pays for them.                 
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --json            The same rows as data                                                                              │
+│ --help  -h        Show this message and exit.                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ claude      Claude Code as the operator backend, billed to your Claude subscription.                                 │
+│ codex       The Codex CLI as the operator backend.                                                                   │
+│ openrouter  OpenRouter credits as the bill for codex or pi operators.                                                │
+│ pi          The pi coding agent as the operator backend — the one that can sample.                                   │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

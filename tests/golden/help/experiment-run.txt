@@ -1,0 +1,38 @@
+                                                                                                                        
+ Usage: root experiment run [OPTIONS] SPEC                                                                              
+                                                                                                                        
+ Run an experiment: every arm × every problem × N repeats.                                                              
+                                                                                                                        
+ Sequential (the default) runs jobs in a fair order — repeat by repeat,                                                 
+ arms round-robin inside — so shared state such as cross-search memory                                                  
+ is seen by every arm at the same point; use it whenever an arm touches                                                 
+ shared state. Parallel launches all jobs detached at once (machine                                                     
+ slots still cap concurrency) — fine for stateless comparisons such as                                                  
+ policy or model. Bounded parallel (--max-concurrent N, or the spec's                                                   
+ max_concurrent) keeps at most N alive so no search spends its wall                                                     
+ clock waiting for a machine slot; the launcher stays up until the last                                                 
+ child exits, then prints the report — run it under nohup or in tmux.                                                   
+ Unlike sequential it runs the whole matrix rather than stopping at the                                                 
+ first failure; its exit code is 1 if any child failed, else 2 if any                                                   
+ parked, else 0. Real agent runs — the repeat count is your cost dial.                                                  
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ *    spec      TEXT  Spec YAML path, or a name under hillclimb/experiments/ [required]                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --budget                              TEXT                  Per-search budget, e.g. 10m (overrides the spec)         │
+│ --repeats                             INTEGER               Override the spec's repeat count                         │
+│ --parallel            --sequential                          Launch every search detached at once, or one after       │
+│                                                             another (default: the spec's schedule)                   │
+│ --max-concurrent                      INTEGER RANGE [x>=1]  Parallel, but at most N searches alive at once: launch   │
+│                                                             detached in job order, wait on the children before       │
+│                                                             starting the next (overrides the spec's max_concurrent)  │
+│ --run-id                              TEXT                  Append the searches to this existing experiment run      │
+│                                                             instead of creating a new one                            │
+│ --first-repeat                        INTEGER RANGE [x>=1]  Number the repeats from K (with --run-id: add repeats    │
+│                                                             K.. to a finished run)                                   │
+│                                                             [default: 1]                                             │
+│ --dry-run                                                   Print the jobs, start nothing                            │
+│ --help            -h                                        Show this message and exit.                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

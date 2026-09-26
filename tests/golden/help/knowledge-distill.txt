@@ -1,0 +1,16 @@
+                                                                                                                        
+ Usage: root knowledge distill [OPTIONS] [SEARCH]                                                                       
+                                                                                                                        
+ Run the LLM claims pass on a finished search.                                                                          
+                                                                                                                        
+ Distills typed claims (entities, concepts) — or, with `--backfill`,                                                    
+ extracts them across existing cards.                                                                                   
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│   [search]      TEXT  Search ref (run-id/search-id), or `latest` [default: latest]                                   │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --backfill            Extract claims for every knowledge card that has none                                          │
+│ --help      -h        Show this message and exit.                                                                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

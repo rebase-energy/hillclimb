@@ -1,0 +1,19 @@
+                                                                                                                        
+ Usage: root surface [OPTIONS] [SEARCH]                                                                                 
+                                                                                                                        
+ Live 3D fitness surface of one search: candidates on the problem's terrain.                                            
+                                                                                                                        
+ Needs a problem that ships `landscape.py` (elevation(x, y) + grid(n)) and                                              
+ journals each candidate's position as extra numeric keys next to the                                                   
+ score (`surface_metrics` in problem.yaml, default x/y). Candidates are                                                 
+ coloured by their tree fate, the accepted lineage is draped along the                                                  
+ terrain, a white marker sits on the summit. Drag rotates, scroll zooms,                                                
+ n/p switch search, q quits.                                                                                            
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│   [search]      TEXT  latest (default), <run-id>, or <run-id>/<search-id>                                            │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --help  -h        Show this message and exit.                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

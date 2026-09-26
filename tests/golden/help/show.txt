@@ -1,0 +1,17 @@
+                                                                                                                        
+ Usage: root show [OPTIONS] [SEARCH] CANDIDATE                                                                          
+                                                                                                                        
+ Everything known about one candidate.                                                                                  
+                                                                                                                        
+ Metadata, scores, the evaluation breakdown (the same report the improve                                                
+ operator receives), the code diff vs its parent, notes, and execution                                                  
+ output.                                                                                                                
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│      [search]       TEXT  latest, <run-id>, or <run-id>/<search-id> [default: latest]                                │
+│ *    CANDIDATE      TEXT  Candidate id, e.g. c007 [required]                                                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --help  -h        Show this message and exit.                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

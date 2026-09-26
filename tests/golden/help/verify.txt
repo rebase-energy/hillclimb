@@ -1,0 +1,20 @@
+                                                                                                                        
+ Usage: root verify [OPTIONS] TARGET                                                                                    
+                                                                                                                        
+ Run a problem's verifier once, outside a search.                                                                       
+                                                                                                                        
+ The fastest way to check a new `verifier.sh`: it reports the score the                                                 
+ engine would climb on, and with `--repeat` how much that score moves                                                   
+ between identical runs — an improvement smaller than that spread is noise,                                             
+ not progress.                                                                                                          
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ *    target      TEXT  Problem folder/name to check [required]                                                       │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --solution          PATH     solution.py to score (default: the problem's baseline)                                  │
+│ --repeat    -n      INTEGER  Score it N times to see the noise [default: 1]                                          │
+│ --holdout                    Also score the hidden split                                                             │
+│ --help      -h               Show this message and exit.                                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

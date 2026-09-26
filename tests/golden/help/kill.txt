@@ -1,0 +1,17 @@
+                                                                                                                        
+ Usage: root kill [OPTIONS] [SEARCH]                                                                                    
+                                                                                                                        
+ SIGTERM a running engine; it can be resumed.                                                                           
+                                                                                                                        
+ State is finalized on the way out. For a graceful stop that lets the                                                   
+ current operator finish, use `hillclimb stop`. `--all` kills every                                                     
+ running search.                                                                                                        
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│   [search]      TEXT  [default: latest]                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --all             Kill every running search                                                                          │
+│ --help  -h        Show this message and exit.                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

@@ -1,0 +1,21 @@
+                                                                                                                        
+ Usage: root experiment report [OPTIONS] [EXPERIMENT]                                                                   
+                                                                                                                        
+ Compare the arms of an experiment.                                                                                     
+                                                                                                                        
+ On the selected candidate's holdout score (val when holdout was off):                                                  
+ per arm n/mean/median/spread, best-of-repeat wins, time to best and                                                    
+ tokens; then every arm against the control, with the gap judged against                                                
+ the noise floor (`hillclimb verify <problem> --repeat 5` measures it).                                                 
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│   [experiment]      TEXT  Experiment name or spec (default: every experiment)                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --problem              TEXT   Filter to one problem id                                                               │
+│ --control              TEXT   Arm to compare against (default: the first)                                            │
+│ --noise-floor          FLOAT  Gap below which arms are not different (default: the spec's)                           │
+│ --json                        Machine-readable: the summaries as JSON (a meta-verifier reads the gaps)               │
+│ --help         -h             Show this message and exit.                                                            │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

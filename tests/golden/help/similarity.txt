@@ -1,0 +1,14 @@
+                                                                                                                        
+ Usage: root similarity [OPTIONS] COMMAND [ARGS]...                                                                     
+                                                                                                                        
+ Live 3D similarity views of a search's candidates: `map` (pairwise, default) and `reference`.                          
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --help  -h        Show this message and exit.                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ map        Candidates embedded by pairwise distance: nearby means alike.                                             │
+│ reference  Candidates at their distance from one reference candidate.                                                │
+│ scores     Pairwise similarity matrices between solutions, one per score.                                            │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
