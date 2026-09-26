@@ -27,10 +27,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from hillclimb.chart import CYAN, MISS_RGB, LegendEntry, step_points
+from hillclimb.tui.chart import CYAN, MISS_RGB, LegendEntry, step_points
 from hillclimb.direction import better
-from hillclimb.tree import SearchTree, TreeNode
-from hillclimb.tree2 import LINEAGE_RGB, LINEAGE_WIDTH, best_lineage, node_number, score_range
+from hillclimb.tui.tree import SearchTree, TreeNode
+from hillclimb.tui.tree2 import LINEAGE_RGB, LINEAGE_WIDTH, best_lineage, node_number, score_range
 
 RGB = tuple[int, int, int]
 
@@ -147,7 +147,7 @@ def build_progress_plot(
     live tree while scrubbing) pins both axes; `cursor` draws the scrub
     position as a vertical guide; `selected` rings that candidate's dot;
     `hidden` names legend series left out."""
-    from hillclimb.theme import themed_plot
+    from hillclimb.tui.theme import themed_plot
 
     plot = themed_plot()
     if hasattr(type(plot), "legend_visible"):

@@ -9,8 +9,8 @@ from tests.factories import trial as mk_trial
 import random
 
 from hillclimb.candidate import Candidate
-from hillclimb.gantt import GanttLayout, GanttSpan, build_gantt, minute_to_col
-from hillclimb.ganttview import LANE_LABEL_W, render_gantt
+from hillclimb.tui.gantt import GanttLayout, GanttSpan, build_gantt, minute_to_col
+from hillclimb.tui.ganttview import LANE_LABEL_W, render_gantt
 
 ORIGIN = "2026-08-22T10:00:00+00:00"
 

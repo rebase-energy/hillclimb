@@ -10,7 +10,6 @@ import sys
 import time
 from contextlib import closing
 from datetime import datetime
-from itertools import zip_longest
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated
@@ -18,6 +17,13 @@ from typing import Annotated
 import typer
 import typer.core
 import typer.rich_utils
+
+from hillclimb.tui.banner import (  # noqa: F401 — re-exported: tests/test_cli.py and
+    BANNER_LINES,  # hillclimb-web/scripts/generate_wordmark.py read the art from here
+    LOGO_LINES,
+    WORDMARK_LINES,
+    print_banner,
+)
 
 from hillclimb.api import (
     child_launch_context,
@@ -110,41 +116,6 @@ app = typer.Typer(
     context_settings={"help_option_names": ["--help", "-h"]},
 )
 
-# Ridge-line mark + ANSI-shadow "HILLCLIMB", printed above the command list on a bare `hillclimb`
-# and on `--help`, the way `rebase` fronts the toolkit CLI. Same bold cyan as
-# the command and option columns below it, so the whole help screen reads as
-# one palette.
-BANNER_STYLE = "bold cyan"
-# Rising-trend arrow to the right of the wordmark, in the same ANSI-shadow
-# style as the letters: a climb, a small dip, then a climb into the arrowhead.
-# Diagonals step one column per row so adjacent cells share an edge, not just
-# a corner. The seventh row closes the shadow below the lowest step.
-LOGO_LINES = [
-    "        ██████╗",
-    "    ██╗ ╚═████║",
-    "   ████╗ ██╔██║",
-    "  ██╔═████╔╝╚═╝",
-    " ██╔╝ ╚██╔╝    ",
-    "██╔╝   ╚═╝     ",
-    "╚═╝            ",
-]
-WORDMARK_LINES = [
-    "██╗  ██╗ ██╗ ██╗      ██╗       ██████╗ ██╗      ██╗ ███╗   ███╗ ██████╗ ",
-    "██║  ██║ ██║ ██║      ██║      ██╔════╝ ██║      ██║ ████╗ ████║ ██╔══██╗",
-    "███████║ ██║ ██║      ██║      ██║      ██║      ██║ ██╔████╔██║ ██████╔╝",
-    "██╔══██║ ██║ ██║      ██║      ██║      ██║      ██║ ██║╚██╔╝██║ ██╔══██╗",
-    "██║  ██║ ██║ ███████╗ ███████╗ ╚██████╗ ███████╗ ██║ ██║ ╚═╝ ██║ ██████╔╝",
-    "╚═╝  ╚═╝ ╚═╝ ╚══════╝ ╚══════╝  ╚═════╝ ╚══════╝ ╚═╝ ╚═╝     ╚═╝ ╚═════╝ ",
-]
-WORDMARK_WIDTH = max(len(line) for line in WORDMARK_LINES)
-LOGO_WIDTH = max(len(line) for line in LOGO_LINES)
-BANNER_LINES = [
-    f"{word:<{WORDMARK_WIDTH}}  {logo:<{LOGO_WIDTH}}"
-    for word, logo in zip_longest(WORDMARK_LINES, LOGO_LINES, fillvalue="")
-]
-BANNER_WIDTH = max(len(line) for line in BANNER_LINES)
-
-
 _CONSOLE = None
 
 
@@ -189,23 +160,6 @@ def next_steps(rows) -> None:
     for index, (cmd, note) in enumerate(rows):
         lead = "[head]Next:[/]" if index == 0 else "     "
         say(f"{lead} [cmd]{_m(cmd):<{width}}[/]  [note]{_m(note)}[/]")
-
-
-def print_banner() -> None:
-    """Print the mark + wordmark; drop the mark, then the art, as the terminal narrows."""
-    from rich.console import Console
-
-    console = Console(highlight=False)
-    console.print()
-    if console.width >= BANNER_WIDTH:
-        lines = BANNER_LINES
-    elif console.width >= WORDMARK_WIDTH:
-        lines = WORDMARK_LINES
-    else:
-        lines = ["hillclimb"]
-    for line in lines:
-        console.print(line, style=BANNER_STYLE)
-    console.print()
 
 
 def load_config(*, raise_not_found: bool = False, **overrides) -> Config:
@@ -481,7 +435,7 @@ def intro(
     ),
 ):
     """Replay the first-run 3D intro animation."""
-    from hillclimb.intro import intro_marker_path, play_intro
+    from hillclimb.tui.intro import intro_marker_path, play_intro
 
     if reset:
         intro_marker_path().unlink(missing_ok=True)
@@ -1124,7 +1078,7 @@ def knowledge_graph(
         typer.echo(graph_stats(load_or_build_graph(knowledge_dir)))
         return
     try:
-        from hillclimb.graphview import GraphApp
+        from hillclimb.tui.graphview import GraphApp
     except ModuleNotFoundError as exc:
         raise typer.BadParameter(
             "`hillclimb knowledge graph` needs the TUI extra: pip install 'hillclimb[tui]'"
@@ -2715,7 +2669,7 @@ def show(
 
 def _watch_app():
     try:
-        from hillclimb.watch import WatchApp
+        from hillclimb.tui.watch import WatchApp
     except ModuleNotFoundError as exc:
         raise typer.BadParameter(
             "`hillclimb watch` needs the TUI extra: pip install 'hillclimb[tui]'"
@@ -2791,7 +2745,7 @@ def chart(
     esc=back to the table, q=quit.
     """
     try:
-        from hillclimb.chart import ChartApp
+        from hillclimb.tui.chart import ChartApp
     except ModuleNotFoundError as exc:
         raise typer.BadParameter(
             "`hillclimb chart` needs the TUI extra: pip install 'hillclimb[tui]'"
@@ -2814,7 +2768,7 @@ def tree(
     search, `?` keys.
     """
     try:
-        from hillclimb.treeview import TreeApp
+        from hillclimb.tui.treeview import TreeApp
     except ModuleNotFoundError as exc:
         raise typer.BadParameter(
             "`hillclimb tree` needs the TUI extra: pip install 'hillclimb[tui]'"
@@ -2839,7 +2793,7 @@ def tree2(
     through time, n/p switch search, `?` keys.
     """
     try:
-        from hillclimb.tree2view import Tree2App
+        from hillclimb.tui.tree2view import Tree2App
     except ModuleNotFoundError as exc:
         raise typer.BadParameter(
             "`hillclimb tree2` needs the TUI extra: pip install 'hillclimb[tui]'"
@@ -2865,7 +2819,7 @@ def archive(
     switch search, `?` keys.
     """
     try:
-        from hillclimb.archiveview import ArchiveApp
+        from hillclimb.tui.archiveview import ArchiveApp
     except ModuleNotFoundError as exc:
         raise typer.BadParameter(
             "`hillclimb archive` needs the TUI extra: pip install 'hillclimb[tui]'"
@@ -2888,7 +2842,7 @@ def surface(
     n/p switch search, q quits.
     """
     try:
-        from hillclimb.surfaceview import SurfaceApp, surface_unavailable
+        from hillclimb.tui.surfaceview import SurfaceApp, surface_unavailable
     except ModuleNotFoundError as exc:
         raise typer.BadParameter(
             "`hillclimb surface` needs the TUI extra: pip install 'hillclimb[tui]'"
@@ -3008,7 +2962,7 @@ def similarity_scores(
     in ~/.cache/hillclimb/similarity/, nothing is written into the run.
     """
     from hillclimb.policies import policy_base_dir
-    from hillclimb.similarity import dir_for
+    from hillclimb.tui.similarity import dir_for
     from hillclimb.similarity_scores import (
         SimilarityUnavailable,
         Solution,
@@ -3108,9 +3062,9 @@ def _format_similarity_matrix(matrix) -> str:
 
 def _open_similarity(search: str | None, single: bool, view: str, metric: str = "behavioral") -> None:
     try:
-        from hillclimb.similarity import build_run_similarity, build_similarity
-        from hillclimb.similarity_map import METRICS, build_map, build_run_map
-        from hillclimb.similarityview import SimilarityApp, run_inputs, search_inputs
+        from hillclimb.tui.similarity import build_run_similarity, build_similarity
+        from hillclimb.tui.similarity_map import METRICS, build_map, build_run_map
+        from hillclimb.tui.similarityview import SimilarityApp, run_inputs, search_inputs
     except ModuleNotFoundError as exc:
         raise typer.BadParameter(
             "`hillclimb similarity` needs the TUI extra: pip install 'hillclimb[tui]'"
@@ -3735,12 +3689,12 @@ def main(argv: list[str] | None = None) -> None:
     args = list(sys.argv[1:] if argv is None else argv)
     if "--skip-intro" in args:
         # Opt out of the first-run intro for good; `hillclimb intro` still plays it.
-        from hillclimb.intro import mark_intro_shown
+        from hillclimb.tui.intro import mark_intro_shown
 
         args = [arg for arg in args if arg != "--skip-intro"]
         mark_intro_shown()
     elif not args or args[0] != "intro":  # `hillclimb intro` plays it itself
-        from hillclimb.intro import maybe_play_intro
+        from hillclimb.tui.intro import maybe_play_intro
 
         maybe_play_intro()
     if not args or args in (["--help"], ["-h"]):

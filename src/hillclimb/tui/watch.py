@@ -29,7 +29,7 @@ from hillclimb.run import RunMeta, SearchMeta, run_display_name
 from hillclimb.run import search_ref as _search_ref
 from hillclimb.status import SearchStatus, live_remaining_s, live_spent_s
 from hillclimb.store import DataStore, FileDataStore, SearchRecord, key_for, open_store
-from hillclimb.theme import HILLCLIMB_CSS, apply_theme
+from hillclimb.tui.theme import HILLCLIMB_CSS, apply_theme
 
 STATE_STYLE = {
     "running": "bold green",
@@ -1281,8 +1281,8 @@ from textual.scrollbar import ScrollBar  # noqa: E402
 from textual.screen import ModalScreen, Screen  # noqa: E402
 from textual.widgets import DataTable, Footer, Label, RichLog, Static  # noqa: E402
 
-from hillclimb.header import HillclimbHeader, TimezoneMixin  # noqa: E402
-from hillclimb.keys import KEYS_BINDING, QUIT_BINDINGS, KeysMixin  # noqa: E402
+from hillclimb.tui.header import HillclimbHeader, TimezoneMixin  # noqa: E402
+from hillclimb.tui.keys import KEYS_BINDING, QUIT_BINDINGS, KeysMixin  # noqa: E402
 
 # one tick per second: the budget countdown and agent stream should read as live
 REFRESH_S = 1.0
@@ -2298,9 +2298,9 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         yield DetailDivider(" drag to resize candidates ", id="detail-divider")
         yield DataTable(id="search-candidates", cursor_type="row")
         # imported here: treeview imports back into watch (LiveScreen et al)
-        from hillclimb.ganttview import GanttPanel
-        from hillclimb.graphview import TimeScrubber
-        from hillclimb.treeview import TreePlotWidget
+        from hillclimb.tui.ganttview import GanttPanel
+        from hillclimb.tui.graphview import TimeScrubber
+        from hillclimb.tui.treeview import TreePlotWidget
 
         yield TreePlotWidget(id="search-tree")
         yield TimeScrubber(id="search-scrubber")
@@ -2476,8 +2476,8 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         super().on_screen_resume()
 
     def _render_tree(self) -> None:
-        from hillclimb.graphview import TimeScrubber
-        from hillclimb.tree import build_tree, candidates_until, tree_events
+        from hillclimb.tui.graphview import TimeScrubber
+        from hillclimb.tui.tree import build_tree, candidates_until, tree_events
 
         search_id = self._selected_search_id()
         if search_id is None:
@@ -2514,8 +2514,8 @@ class SearchesScreen(ResizableDetail, LiveScreen):
 
     def _render_gantt(self) -> None:
         from hillclimb.candidate import utcnow
-        from hillclimb.gantt import build_gantt
-        from hillclimb.ganttview import GanttPanel
+        from hillclimb.tui.gantt import build_gantt
+        from hillclimb.tui.ganttview import GanttPanel
 
         search_id = self._selected_search_id()
         if search_id is None:
@@ -2582,7 +2582,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
             return
         journal = Journal(self.store.journal(record.key))
         detail.clear()
-        from hillclimb.treeview import node_detail_width
+        from hillclimb.tui.treeview import node_detail_width
 
         # fit the dock: RichLog's default min_width (78) is unrelated to it
         width = node_detail_width(self.size.width)
@@ -2699,7 +2699,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
     def action_open_graph(self) -> None:
         # lazy so watch never pays for graphview at import time (and the
         # reverse import of the mouse helpers stays cycle-free)
-        from hillclimb.graphview import GraphScreen
+        from hillclimb.tui.graphview import GraphScreen
 
         self.app.push_screen(GraphScreen(self.config))
 
@@ -2845,7 +2845,7 @@ class RunsScreen(LiveScreen):
         push_chart(self.app, self.config, newest.ref)
 
     def action_open_graph(self) -> None:
-        from hillclimb.graphview import GraphScreen
+        from hillclimb.tui.graphview import GraphScreen
 
         self.app.push_screen(GraphScreen(self.config))
 
@@ -2854,7 +2854,7 @@ def push_chart(app: App, config: Config, search_ref: str) -> None:
     """Push the chart anchored on `search_ref` over the current screen; esc
     in the chart pops back. Imported lazily: chart imports LiveScreen from
     here."""
-    from hillclimb.chart import ChartScreen
+    from hillclimb.tui.chart import ChartScreen
 
     app.push_screen(ChartScreen(config, search_ref))
 

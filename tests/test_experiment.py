@@ -218,7 +218,7 @@ class TestCollect:
 
 
 def test_chart_labels_and_colours_experiment_curves_by_arm():
-    from hillclimb.chart import ARM_PALETTE, Curve, build_plot, curve_colors, curve_label
+    from hillclimb.tui.chart import ARM_PALETTE, Curve, build_plot, curve_colors, curve_label
     from hillclimb.store import SearchRecord
 
     def record(arm, repeat, search_id):

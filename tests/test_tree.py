@@ -11,10 +11,10 @@ import pytest
 from rich.style import Style
 
 from hillclimb.candidate import Candidate
-from hillclimb.chart import build_detail_plot, detail_layout
+from hillclimb.tui.chart import build_detail_plot, detail_layout
 from hillclimb.config import Config
 from hillclimb.journal import Journal
-from hillclimb.tree import (
+from hillclimb.tui.tree import (
     FATES,
     accepted_lineage,
     build_tree,
@@ -22,7 +22,7 @@ from hillclimb.tree import (
     minutes_since,
     tree_events,
 )
-from hillclimb.treeview import (
+from hillclimb.tui.treeview import (
     BEST_LABEL_STYLE,
     FATE_SHAPE,
     OPERATOR_RGB,
@@ -130,7 +130,7 @@ class TestTimeScrub:
         assert tree_events(forest())[:2] == ["2026-08-22T10:01:00+00:00", "2026-08-22T10:02:00+00:00"]
 
     def test_frame_pins_the_projection_of_a_scrubbed_tree(self):
-        from hillclimb.treeview import build_tree_plot
+        from hillclimb.tui.treeview import build_tree_plot
 
         live = build_tree(forest())
         past = build_tree(candidates_until(forest(), "2026-08-22T10:04:30+00:00"), layout=live)
@@ -210,7 +210,7 @@ class TestTreePlot:
         assert by_id["c003"].count == 1
 
     def test_legend_spans_and_hit_test(self):
-        from hillclimb.treeview import (
+        from hillclimb.tui.treeview import (
             LEGEND_COL, LEGEND_ENTRIES, LEGEND_ROW, LEGEND_WIDTH, filter_hidden, legend_entry_at,
         )
 
@@ -256,7 +256,7 @@ class TestTreePlot:
 
 class TestChartDetail:
     def test_new_best_summaries_become_short_collision_free_annotations(self):
-        from hillclimb.chart import (
+        from hillclimb.tui.chart import (
             Climb,
             ClimbEvent,
             annotation_spans,
@@ -286,7 +286,7 @@ class TestChartDetail:
         )
         assert len(spans) == 2
         by_row: dict[int, list[tuple[int, int]]] = {}
-        from hillclimb.theme import CYAN
+        from hillclimb.tui.theme import CYAN
 
         for row, column, text, style in spans:
             assert style.bgcolor is not None
@@ -325,7 +325,7 @@ class TestChartDetail:
         assert layout.curve.ys == [0.1, 0.5, 0.6, 0.6, 0.7, 0.8]
 
     def test_holdout_split_plots_incumbent_holdout_scores(self):
-        from hillclimb.chart import climb_from_searches, curve_from_candidates
+        from hillclimb.tui.chart import climb_from_searches, curve_from_candidates
 
         def scored(cid, val, holdout, t):
             candidate = cand(cid, "draft", t=t)
@@ -359,7 +359,7 @@ class TestChartDetail:
         """The baseline (and a seed) is the naive case the climb improves on:
         it takes x = 0, the first tested candidate x = 1, and the reference
         lines run from 0 so the floor is visibly on the chart."""
-        from hillclimb.chart import (
+        from hillclimb.tui.chart import (
             build_climb_plot, climb_from_searches, climb_plot_bounds, cost_series,
         )
 
@@ -383,7 +383,7 @@ class TestChartDetail:
             "add_line": lambda self, xs, ys, **kw: lines.append((xs, kw["name"])),
             "add_scatter": lambda self, *a, **kw: None,
         })()
-        monkeypatch.setattr("hillclimb.chart.themed_plot", lambda: plot)
+        monkeypatch.setattr("hillclimb.tui.chart.themed_plot", lambda: plot)
         build_climb_plot(climb, {"OpenEvolve": 0.6})
         assert lines[0] == ([0.0, 2.0], "OpenEvolve")
         assert climb_plot_bounds(climb, {"OpenEvolve": 0.6})[0] == -0.1
@@ -414,7 +414,7 @@ class TestChartDetail:
         assert plot.is_3d() is False
 
     def test_arbitrary_named_chart_baselines_are_horizontal(self, monkeypatch):
-        from hillclimb.chart import Climb, ClimbEvent, build_climb_plot, climb_legend, legend_text
+        from hillclimb.tui.chart import Climb, ClimbEvent, build_climb_plot, climb_legend, legend_text
 
         class PlotSpy:
             legend_visible = True  # plotui's in-canvas legend switch
@@ -430,7 +430,7 @@ class TestChartDetail:
                 self.scatters.append((args, kwargs))
 
         plot = PlotSpy()
-        monkeypatch.setattr("hillclimb.chart.themed_plot", lambda: plot)
+        monkeypatch.setattr("hillclimb.tui.chart.themed_plot", lambda: plot)
         climb = Climb(events=[ClimbEvent(1.0, 0.6, True, "r", "draft")], extent=1.0)
         baselines = {"baseline": 0.5, "OpenEvolve best": 0.7, "AlphaEvolve best": 0.8}
         assert build_climb_plot(climb, baselines) is plot
@@ -446,7 +446,7 @@ class TestChartDetail:
         # which is what the hover readout labels its rows with.
         assert plot.legend_visible is True
         outside = PlotSpy()
-        monkeypatch.setattr("hillclimb.chart.themed_plot", lambda: outside)
+        monkeypatch.setattr("hillclimb.tui.chart.themed_plot", lambda: outside)
         build_climb_plot(climb, baselines, show_legend=False)
         assert outside.legend_visible is False
         assert [options["name"] for _xs, _ys, options in outside.lines] == [
@@ -468,7 +468,7 @@ class TestChartDetail:
         assert wrapped == ["● attempt", "● best so far", "● new best"]
 
     def test_hidden_legend_entries_drop_their_traces(self, monkeypatch):
-        from hillclimb.chart import (
+        from hillclimb.tui.chart import (
             CHART_BASELINE_PALETTE, Climb, ClimbEvent, build_climb_plot, legend_text,
         )
 
@@ -484,7 +484,7 @@ class TestChartDetail:
                 self.scatters.append((ys, kwargs))
 
         plot = PlotSpy()
-        monkeypatch.setattr("hillclimb.chart.themed_plot", lambda: plot)
+        monkeypatch.setattr("hillclimb.tui.chart.themed_plot", lambda: plot)
         climb = Climb(
             events=[ClimbEvent(1.0, 0.6, True, "r", "draft"), ClimbEvent(2.0, 0.55, False, "r", "draft")],
             extent=2.0,
@@ -535,8 +535,8 @@ def tree_workspace(tmp_path, monkeypatch) -> tuple[Path, Config]:
 
 @pytest.mark.asyncio
 async def test_tree_app_mounts_selects_scrubs_and_opens(tree_workspace):
-    from hillclimb.treeview import TreeApp, TreePlotWidget, TreeKeys
-    from hillclimb.watch import CandidateScreen
+    from hillclimb.tui.treeview import TreeApp, TreePlotWidget, TreeKeys
+    from hillclimb.tui.watch import CandidateScreen
 
     _search_dir, config = tree_workspace
     app = TreeApp(config, "r1/circle-packing")
@@ -571,7 +571,7 @@ async def test_tree_app_mounts_selects_scrubs_and_opens(tree_workspace):
         assert app.screen.query(TreeKeys)
         # legend: `4` hides improve (most of the tree), again shows it; a click
         # on the legend line toggles too
-        from hillclimb.treeview import LEGEND_COL, LEGEND_ROW
+        from hillclimb.tui.treeview import LEGEND_COL, LEGEND_ROW
 
         await pilot.press("4")
         await pilot.pause()
@@ -592,7 +592,7 @@ async def test_tree_app_mounts_selects_scrubs_and_opens(tree_workspace):
 
 @pytest.mark.asyncio
 async def test_tree_app_drag_pans_and_switches_searches(tree_workspace):
-    from hillclimb.treeview import TreeApp, TreePlotWidget
+    from hillclimb.tui.treeview import TreeApp, TreePlotWidget
 
     _search_dir, config = tree_workspace
     # a second, later search with a smaller (3-node) tree: the one n/p moves to
@@ -654,7 +654,7 @@ async def test_tree_app_drag_pans_and_switches_searches(tree_workspace):
 
 @pytest.mark.asyncio
 async def test_tree_app_reports_a_missing_search(tmp_path, monkeypatch):
-    from hillclimb.treeview import TreeApp
+    from hillclimb.tui.treeview import TreeApp
 
     monkeypatch.setenv("PLOTUI_RENDER", "placeholder")
     config = Config()
@@ -669,7 +669,7 @@ async def test_tree_app_reports_a_missing_search(tmp_path, monkeypatch):
 async def test_chart_defaults_to_holdout_when_the_search_scores_one(tree_workspace):
     """Fair by default: a holdout-scored problem opens on the holdout view
     (the split its baselines live on); `h` toggles back to validation."""
-    from hillclimb.chart import ChartApp
+    from hillclimb.tui.chart import ChartApp
     from hillclimb.run import load_search_meta, write_search_meta
 
     search_dir, config = tree_workspace
@@ -695,7 +695,7 @@ async def test_chart_defaults_to_holdout_when_the_search_scores_one(tree_workspa
 async def test_chart_cycles_between_problems(tree_workspace, tmp_path, monkeypatch):
     """`p` re-anchors the chart on the folder's next problem and a refresh
     stays there; cycling wraps back to the first problem."""
-    from hillclimb.chart import ChartApp
+    from hillclimb.tui.chart import ChartApp
 
     _search_dir, config = tree_workspace  # r1/circle-packing
     make_run_with_search(config.paths.runs_dir, "r2", search_id="other-problem")
@@ -719,7 +719,7 @@ async def test_chart_cycles_between_problems(tree_workspace, tmp_path, monkeypat
 
 @pytest.mark.asyncio
 async def test_chart_detail_toggle(tree_workspace, monkeypatch):
-    from hillclimb.chart import ChartApp
+    from hillclimb.tui.chart import ChartApp
     from plotui.textual import PlotWidget
     from hillclimb.run import load_search_meta, write_search_meta
 

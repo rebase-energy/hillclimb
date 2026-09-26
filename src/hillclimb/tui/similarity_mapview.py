@@ -36,10 +36,10 @@ from textual.binding import Binding
 from textual.widgets import Footer, Label
 
 from hillclimb.config import Config
-from hillclimb.header import HillclimbHeader
+from hillclimb.tui.header import HillclimbHeader
 from hillclimb.journal import Journal
-from hillclimb.similarity_map import METRICS, MapNode, MapView, build_map, build_run_map
-from hillclimb.similarityview import (
+from hillclimb.tui.similarity_map import METRICS, MapNode, MapView, build_map, build_run_map
+from hillclimb.tui.similarityview import (
     BEST_RGB,
     BEST_SIZE,
     REFERENCE_RGB,
@@ -56,9 +56,9 @@ from hillclimb.similarityview import (
     run_state,
 )
 from hillclimb.store import SearchRecord
-from hillclimb.theme import themed_plot
-from hillclimb.treeview import FATE_SHAPE, dim_rgb
-from hillclimb.watch import STATE_STYLE
+from hillclimb.tui.theme import themed_plot
+from hillclimb.tui.treeview import FATE_SHAPE, dim_rgb
+from hillclimb.tui.watch import STATE_STYLE
 
 from plotui.textual import PlotWidget
 
@@ -388,7 +388,7 @@ class MapScreen(SimilarityBase):
         self.refresh_data()
 
     def action_open_reference(self) -> None:
-        from hillclimb.similarityview import SimilarityScreen
+        from hillclimb.tui.similarityview import SimilarityScreen
 
         self.app.switch_screen(SimilarityScreen(self.config, self.search))
 
@@ -516,7 +516,7 @@ class RunMapScreen(RunScopeMixin, MapScreen):
         self.problem_key = problem_key
 
     def action_open_reference(self) -> None:
-        from hillclimb.similarityview import RunSimilarityScreen
+        from hillclimb.tui.similarityview import RunSimilarityScreen
 
         self.app.switch_screen(RunSimilarityScreen(self.config, self.run_id, self.problem_key))
 

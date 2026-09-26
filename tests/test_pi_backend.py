@@ -287,7 +287,7 @@ def test_pi_missing_models_file_fails_before_spawn(tmp_path: Path):
 
 
 def test_pi_stream_is_visible_to_live_usage_and_transcript(tmp_path: Path, monkeypatch):
-    from hillclimb.watch import _read_stream_usage, parse_stream_line
+    from hillclimb.tui.watch import _read_stream_usage, parse_stream_line
 
     monkeypatch.setenv("STUB_EXPECT_SAMPLING", "absent")
     backend = PiCliBackend(pi_bin=make_stub(tmp_path, STUB_OK))

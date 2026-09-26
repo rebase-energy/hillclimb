@@ -43,7 +43,7 @@ from pathlib import Path
 import numpy as np
 
 from hillclimb.candidate import Candidate
-from hillclimb.similarity import (
+from hillclimb.tui.similarity import (
     CLIP,
     DEFAULT_ARTIFACTS,
     EPS,
@@ -66,7 +66,7 @@ from hillclimb.similarity import (
     structural_distance,
     submission_vector,
 )
-from hillclimb.tree import accepted_lineage, build_tree
+from hillclimb.tui.tree import accepted_lineage, build_tree
 
 METRICS = ("behavioral", "structural", "blend")
 DIM = 3

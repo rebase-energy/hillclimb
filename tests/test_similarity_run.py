@@ -14,7 +14,7 @@ from hillclimb.candidate import Candidate
 from hillclimb.journal import Journal
 from hillclimb.problem import load_problem
 from hillclimb.run import RunMeta, SearchMeta, write_run_meta, write_search_meta
-from hillclimb.similarity import (
+from hillclimb.tui.similarity import (
     FingerprintError,
     SearchInput,
     _FINGERPRINTS,
@@ -287,8 +287,8 @@ class TestRunView:
 
 class TestRendering:
     def test_run_plot_groups_by_arm_and_rank(self, tmp_path):
-        from hillclimb.chart import ARM_PALETTE
-        from hillclimb.similarityview import (
+        from hillclimb.tui.chart import ARM_PALETTE
+        from hillclimb.tui.similarityview import (
             BEST_RGB, REFERENCE_RGB, arm_colour, build_similarity_plot, rank_size, statusline,
         )
 
@@ -307,7 +307,7 @@ class TestRendering:
         assert REFERENCE_RGB != BEST_RGB
 
     def test_search_statusline_names_the_resolved_reference(self, tmp_path):
-        from hillclimb.similarityview import statusline
+        from hillclimb.tui.similarityview import statusline
 
         candidates = [cand("c000", "seed", score=0.5, t=0), cand("c001", parent="c000", score=0.7, t=1)]
         for cid in ("c000", "c001"):
@@ -354,7 +354,7 @@ class TestCliAutoDetect:
             def run(self):
                 pass
 
-        monkeypatch.setattr("hillclimb.similarityview.SimilarityApp", FakeApp)
+        monkeypatch.setattr("hillclimb.tui.similarityview.SimilarityApp", FakeApp)
         return launched
 
     def test_experiment_arm_opens_the_run_view(self, config, tmp_path, monkeypatch):

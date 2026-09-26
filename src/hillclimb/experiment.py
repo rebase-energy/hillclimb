@@ -239,7 +239,7 @@ def collect_results(
 ) -> list[ExperimentRow]:
     """One row per finished, experiment-tagged search (every experiment
     unless one is named). A runs dir is shorthand for its FileDataStore."""
-    from hillclimb.tree import accepted_lineage, minutes_since
+    from hillclimb.tui.tree import accepted_lineage, minutes_since
 
     if isinstance(store, Path):
         store = FileDataStore(store)

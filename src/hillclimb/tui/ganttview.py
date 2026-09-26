@@ -20,9 +20,9 @@ from rich.text import Text
 from textual import events
 from textual.widgets import Static
 
-from hillclimb.gantt import GanttLayout, GanttSpan, minute_to_col
-from hillclimb.tree import FAILED_STATUSES
-from hillclimb.treeview import OPERATOR_RGB, dim_rgb
+from hillclimb.tui.gantt import GanttLayout, GanttSpan, minute_to_col
+from hillclimb.tui.tree import FAILED_STATUSES
+from hillclimb.tui.treeview import OPERATOR_RGB, dim_rgb
 
 LANE_LABEL_W = 3  # "a1 " — keeps the track aligned across rows
 AGENT_DIM = 0.55  # the agent-phase stretch of a healthy bar

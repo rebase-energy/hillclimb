@@ -6,8 +6,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from hillclimb.similarity import build_similarity, clear_caches
-from hillclimb.similarity_map import (
+from hillclimb.tui.similarity import build_similarity, clear_caches
+from hillclimb.tui.similarity_map import (
     METRICS,
     MapView,
     blend_matrix,

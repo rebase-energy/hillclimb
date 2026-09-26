@@ -15,7 +15,7 @@ from hillclimb.store import FileDataStore, key_for
 from hillclimb.journal import Journal
 from hillclimb.run import RunMeta, SearchMeta, load_search_meta, write_run_meta, write_search_meta
 from hillclimb.status import SearchStatus, write_status
-from hillclimb.watch import (
+from hillclimb.tui.watch import (
     DETAIL_MIN_HEIGHT,
     DETAIL_STEP,
     WatchApp,
@@ -162,7 +162,7 @@ def test_run_row_sums_usage_across_searches(tmp_path: Path):
 
 
 def test_fmt_tokens():
-    from hillclimb.watch import _fmt_tokens
+    from hillclimb.tui.watch import _fmt_tokens
 
     assert _fmt_tokens(None) == "-"
     assert _fmt_tokens(0) == "-"
@@ -172,7 +172,7 @@ def test_fmt_tokens():
 
 
 def test_fmt_cost():
-    from hillclimb.watch import _fmt_cost
+    from hillclimb.tui.watch import _fmt_cost
 
     assert _fmt_cost(None) == "-"
     assert _fmt_cost(0.0) == "-"
@@ -203,7 +203,7 @@ def test_estimate_cost_usd_prices_each_token_kind():
 def test_stream_cost_live_estimate_then_final(tmp_path: Path):
     import json
 
-    from hillclimb.watch import _stream_cost_usd
+    from hillclimb.tui.watch import _stream_cost_usd
 
     ws = tmp_path / "cand"
     ws.mkdir()
@@ -232,7 +232,7 @@ def test_stream_cost_live_estimate_then_final(tmp_path: Path):
 def test_stream_cost_unknown_model_contributes_nothing(tmp_path: Path):
     import json
 
-    from hillclimb.watch import _stream_cost_usd
+    from hillclimb.tui.watch import _stream_cost_usd
 
     ws = tmp_path / "cand"
     ws.mkdir()
@@ -244,7 +244,7 @@ def test_stream_cost_unknown_model_contributes_nothing(tmp_path: Path):
 def test_stream_tokens_live_and_final(tmp_path: Path):
     import json
 
-    from hillclimb.watch import _stream_tokens
+    from hillclimb.tui.watch import _stream_tokens
 
     ws = tmp_path / "cand"
     ws.mkdir()
@@ -277,7 +277,7 @@ def test_search_row_counts_in_flight_tokens(tmp_path: Path):
     import json
 
     from hillclimb.status import CurrentCandidate, SearchStatus
-    from hillclimb.watch import _search_row
+    from hillclimb.tui.watch import _search_row
 
     runs_dir = tmp_path / "runs"
     make_run_with_search(
@@ -312,7 +312,7 @@ def test_search_row_counts_in_flight_tokens(tmp_path: Path):
 def test_search_row_shows_resolved_model_id(tmp_path: Path):
     """The model cell upgrades from the route alias to the fully-qualified
     id once a journaled candidate reports one (vendor prefix stripped)."""
-    from hillclimb.watch import _search_row
+    from hillclimb.tui.watch import _search_row
 
     import json
 
@@ -352,7 +352,7 @@ def test_display_model_strips_vendor_prefix_from_alias_too():
     works outside the candidate dirs) falls back to the configured alias —
     which must read like its resolved neighbours, not `claude-opus-5` next
     to `opus-5`."""
-    from hillclimb.watch import _display_model
+    from hillclimb.tui.watch import _display_model
 
     assert _display_model("claude-opus-5", None) == "opus-5"
     assert _display_model("claude-opus-5", "claude-opus-5") == "opus-5"
@@ -363,7 +363,7 @@ def test_display_model_strips_vendor_prefix_from_alias_too():
 
 def test_search_row_shows_requested_model_after_synthetic_error(tmp_path: Path):
     """A persisted Claude Code API-error marker is not a model identity."""
-    from hillclimb.watch import _search_row
+    from hillclimb.tui.watch import _search_row
 
     runs_dir = tmp_path / "runs"
     search_dir = make_run_with_search(runs_dir, "20260701-run")
@@ -413,7 +413,7 @@ def test_scan_searches_backend_lists_every_harness_a_route_used(tmp_path: Path):
 
 
 def test_sort_search_rows_best_first_within_each_problem():
-    from hillclimb.watch import SearchRow, sort_search_rows
+    from hillclimb.tui.watch import SearchRow, sort_search_rows
 
     def row(search_id: str, problem: str, score: float | None, higher: bool = True) -> SearchRow:
         return SearchRow(
@@ -431,7 +431,7 @@ def test_sort_search_rows_best_first_within_each_problem():
 
 
 def test_candidates_cell_is_red_on_any_crash_else_green(tmp_path: Path):
-    from hillclimb.watch import candidates_style
+    from hillclimb.tui.watch import candidates_style
 
     runs_dir = tmp_path / "runs"
     search_dir = make_run_with_search(runs_dir, "r")  # c002 is buggy
@@ -495,7 +495,7 @@ def test_candidate_rows_branch_guides(tmp_path: Path):
 
 
 def test_candidate_rows_show_pending_as_running_or_stale(tmp_path: Path):
-    from hillclimb.watch import display_status
+    from hillclimb.tui.watch import display_status
 
     search_dir = make_run_with_search(tmp_path / "runs", "r")
     journal = Journal(search_dir / "journal.jsonl")
@@ -605,7 +605,7 @@ def test_render_stream_line_shapes():
 
 
 def test_parse_stream_line_timestamps_kinds_and_noise():
-    from hillclimb.watch import parse_stream_line
+    from hillclimb.tui.watch import parse_stream_line
 
     stamped = json.dumps({"type": "assistant", "ts": "2026-08-23T05:33:01+00:00", "message": {"content": [
         {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}},
@@ -666,7 +666,7 @@ def test_running_candidate_detail_shows_backend_tokens_and_elapsed(tmp_path: Pat
 
 
 def test_path_link_is_short_label_with_file_uri(tmp_path: Path):
-    from hillclimb.watch import _path_label, _path_link
+    from hillclimb.tui.watch import _path_label, _path_link
 
     path = tmp_path / "runs" / "r1" / "searches" / "cp" / "candidates" / "c003"
     assert _path_label(path) == "runs/…/candidates/c003"
@@ -678,7 +678,7 @@ def test_path_link_is_short_label_with_file_uri(tmp_path: Path):
 
 
 def test_open_in_file_manager_uses_the_desktop_opener(tmp_path: Path, monkeypatch):
-    from hillclimb.watch import open_in_file_manager
+    from hillclimb.tui.watch import open_in_file_manager
 
     calls = []
     monkeypatch.setattr("subprocess.Popen", lambda cmd, **kw: calls.append(cmd))
@@ -690,7 +690,7 @@ def test_open_in_file_manager_uses_the_desktop_opener(tmp_path: Path, monkeypatc
 def test_scrollbars_are_whole_cell_and_one_wide():
     from textual.scrollbar import ScrollBar
 
-    from hillclimb.theme import WholeCellScrollBarRender
+    from hillclimb.tui.theme import WholeCellScrollBarRender
 
     assert ScrollBar.renderer is WholeCellScrollBarRender
     # a fractional position: the stock renderer would draw ▁/▃ partial cells
@@ -1183,7 +1183,7 @@ async def test_o_opens_the_selected_candidate_dir(tmp_path: Path, monkeypatch):
     search_dir, config = make_demo_search(tmp_path, "open-run")
     (search_dir / "candidates" / "c000").mkdir(parents=True, exist_ok=True)
     opened = []
-    monkeypatch.setattr("hillclimb.watch.open_in_file_manager", lambda path: opened.append(path))
+    monkeypatch.setattr("hillclimb.tui.watch.open_in_file_manager", lambda path: opened.append(path))
 
     app = WatchApp(config)
     async with app.run_test(size=(80, 20)) as pilot:
@@ -1387,7 +1387,7 @@ async def test_candidate_table_scrollbar_switches_resize_then_scroll_in_one_drag
 
 
 def test_search_duration_counts_up_with_the_budget_alongside():
-    from hillclimb.watch import _format_budget_total, _format_duration
+    from hillclimb.tui.watch import _format_budget_total, _format_duration
 
     assert _format_budget_total(600) == "10m"
     assert _format_budget_total(5400) == "1h 30m"
@@ -1402,7 +1402,7 @@ def test_search_duration_counts_up_with_the_budget_alongside():
 
 
 def test_budget_left_shows_seconds():
-    from hillclimb.watch import _format_budget_left
+    from hillclimb.tui.watch import _format_budget_left
 
     assert _format_budget_left(None) == "-"
     assert _format_budget_left(247.9) == "4m 07s"
@@ -1445,7 +1445,7 @@ def test_live_spent_s_keeps_counting_past_the_budget():
 
 @pytest.mark.asyncio
 async def test_searches_screen_inline_candidates_panel(tmp_path: Path):
-    from hillclimb.watch import DETAIL_STEP
+    from hillclimb.tui.watch import DETAIL_STEP
 
     _, config = make_demo_search(tmp_path, "panel-run")
 
@@ -1627,7 +1627,7 @@ async def test_detail_is_not_rewritten_when_nothing_changed(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_detail_opens_fitted_under_the_whole_table_and_maximize_hides_divider(tmp_path: Path):
-    from hillclimb.watch import DETAIL_CHROME_ROWS
+    from hillclimb.tui.watch import DETAIL_CHROME_ROWS
 
     _, config = make_demo_search(tmp_path, "fit-run")
 
@@ -1666,7 +1666,7 @@ async def test_header_clock_names_its_zone_and_choice_persists(tmp_path: Path, m
 
     from textual.widgets import Input
 
-    from hillclimb.header import HillclimbClock, TimezoneChoiceScreen, load_display_timezone
+    from hillclimb.tui.header import HillclimbClock, TimezoneChoiceScreen, load_display_timezone
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     _, config = make_demo_search(tmp_path, "tz-run")
@@ -1702,7 +1702,7 @@ async def test_searches_runline_says_run(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_ctrl_c_quits_and_question_mark_lists_every_key(tmp_path: Path):
-    from hillclimb.keys import KeysPanel
+    from hillclimb.tui.keys import KeysPanel
 
     _, config = make_demo_search(tmp_path, "keys-run")
     app = WatchApp(config)
@@ -1750,7 +1750,7 @@ def test_candidate_paths_fall_back_to_the_search_dir_when_recorded_elsewhere(tmp
     absolute paths: the detail, the token counts and the model all read the
     candidate dir under the search dir instead."""
     from hillclimb.status import CurrentCandidate
-    from hillclimb.watch import _search_row, resolve_candidate_dir
+    from hillclimb.tui.watch import _search_row, resolve_candidate_dir
 
     runs_dir = tmp_path / "runs"
     search_dir = make_run_with_search(runs_dir, "r")
@@ -1793,7 +1793,7 @@ def test_pending_candidate_detail_is_in_flight_only_while_the_search_lives(tmp_p
     from rich.console import Console
 
     from hillclimb.candidate import utcnow
-    from hillclimb.watch import candidate_in_flight
+    from hillclimb.tui.watch import candidate_in_flight
 
     search_dir = make_run_with_search(tmp_path / "runs", "r")
     journal = Journal(search_dir / "journal.jsonl")
@@ -1821,7 +1821,7 @@ def test_pending_candidate_detail_is_in_flight_only_while_the_search_lives(tmp_p
 
 
 def test_fresh_lines_grown_shifted_and_replaced():
-    from hillclimb.watch import fresh_lines
+    from hillclimb.tui.watch import fresh_lines
 
     seen = ["a", "b", "c", "d"]
     assert fresh_lines([], ["a", "b"]) == (["a", "b"], False)
@@ -1838,7 +1838,7 @@ def test_fresh_lines_grown_shifted_and_replaced():
 
 
 def test_complete_lines_waits_for_the_newline(tmp_path: Path):
-    from hillclimb.watch import complete_lines
+    from hillclimb.tui.watch import complete_lines
 
     path = tmp_path / "exec_stdout.log"
     assert complete_lines(path) is None
@@ -1858,7 +1858,7 @@ def _console_text(console) -> str:
 async def test_running_candidate_detail_has_a_following_console(tmp_path: Path):
     from hillclimb.candidate import utcnow
     from hillclimb.status import CurrentCandidate
-    from hillclimb.watch import ConsoleLog
+    from hillclimb.tui.watch import ConsoleLog
 
     runs_dir = tmp_path / "runs"
     search_dir = make_run_with_search(runs_dir, "r")

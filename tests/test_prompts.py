@@ -1,4 +1,3 @@
-from tests.factories import trial as mk_trial
 from hillclimb.operators.builtin import COMPLEXITY_CUES
 from hillclimb.prompts.render import render
 import pytest
@@ -96,27 +95,6 @@ def test_render_safe_with_braces():
 
 def test_all_complexity_cues_distinct():
     assert len(set(COMPLEXITY_CUES.values())) == 3
-
-
-def test_build_tree_marks_best_and_edges(tmp_path):
-    from hillclimb.journal import Journal
-    from hillclimb.candidate import Candidate
-    from hillclimb.viz import build_tree
-
-    journal = Journal(tmp_path / "j.jsonl")
-    journal.candidate_result(Candidate(candidate_id="c001", operator="draft", status="passing",
-                                       trials=[mk_trial(val_score=0.6)]))
-    journal.candidate_result(Candidate(candidate_id="c002", operator="debug", parent_id="c001", status="buggy"))
-    journal.candidate_result(Candidate(candidate_id="c003", operator="improve", parent_id="c001",
-                                       status="passing", trials=[mk_trial(val_score=0.8)],
-                                       summary="one change"))
-    graph = build_tree(journal, higher_is_better=True)
-    unq = lambda s: str(s).strip('"')
-    nodes = {unq(n.get_name()): n for n in graph.get_nodes()}
-    assert unq(nodes["c003"].get("fillcolor")) == "#fff59d"  # best = gold
-    assert unq(nodes["c002"].get("fillcolor")) == "#ffcdd2"  # buggy = red
-    edges = {(unq(e.get_source()), unq(e.get_destination())): e for e in graph.get_edges()}
-    assert unq(edges[("c001", "c002")].get("style")) == "dashed"  # debug edge
 
 
 # --- prompt overrides: <hillclimb dir>/prompts/<name>.md shadows the package ---

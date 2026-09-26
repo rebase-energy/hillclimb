@@ -136,14 +136,13 @@ _LOGO_CACHE: list[str] | None = None
 
 
 def _mini_logo() -> list[str]:
-    """The CLI banner (cli.BANNER_LINES) downscaled 2x2 into quadrant
+    """The CLI banner (tui.banner.BANNER_LINES) downscaled 2x2 into quadrant
     glyphs: every solid block cell is a pixel, the thin box-drawing shadow
     art is dropped — the wordmark and its rising-arrow mark land as a
-    4-row pixel logotype. cli is imported lazily: it pulls typer/rich, and
-    by the time the intro plays the CLI module is loaded anyway."""
+    4-row pixel logotype."""
     global _LOGO_CACHE
     if _LOGO_CACHE is None:
-        from hillclimb.cli import BANNER_LINES
+        from hillclimb.tui.banner import BANNER_LINES
 
         quads = " ▘▝▀▖▌▞▛▗▚▐▜▄▙▟█"
         grid = [[ch == "█" for ch in line] for line in BANNER_LINES]

@@ -536,7 +536,7 @@ def detail_layout(
     failed parent leaves its children rootless rather than inventing a y).
     `split="holdout"` places marks at holdout scores; candidates without one
     join the unscored count."""
-    from hillclimb.tree import build_tree
+    from hillclimb.tui.tree import build_tree
 
     curve = curve_from_candidates(
         candidates, label=label, state=state, higher_is_better=higher_is_better,
@@ -694,11 +694,11 @@ from textual.binding import Binding  # noqa: E402
 from textual.containers import Vertical  # noqa: E402
 from textual.widgets import DataTable, Footer, Label  # noqa: E402
 
-from hillclimb.header import HillclimbHeader, TimezoneMixin  # noqa: E402
-from hillclimb.keys import KEYS_BINDING, QUIT_BINDINGS  # noqa: E402
+from hillclimb.tui.header import HillclimbHeader, TimezoneMixin  # noqa: E402
+from hillclimb.tui.keys import KEYS_BINDING, QUIT_BINDINGS  # noqa: E402
 
-from hillclimb.theme import CYAN, HILLCLIMB_CSS, PLOT_BG, apply_theme, themed_plot  # noqa: E402
-from hillclimb.watch import (  # noqa: E402
+from hillclimb.tui.theme import CYAN, HILLCLIMB_CSS, PLOT_BG, apply_theme, themed_plot  # noqa: E402
+from hillclimb.tui.watch import (  # noqa: E402
     STATE_STYLE, LiveScreen, _fmt, _fmt_tokens, _restore_table, _snapshot_table, _state_summary,
 )
 
@@ -1016,7 +1016,7 @@ def build_detail_plot(
     scatter per operator so the legend names them; accepted candidates get
     a larger mark on top. `hidden` names legend entries toggled off — an
     operator takes its marks and its edges with it."""
-    from hillclimb.treeview import OPERATOR_RGB, dim_rgb
+    from hillclimb.tui.treeview import OPERATOR_RGB, dim_rgb
 
     plot = build_plot([layout.curve], baselines, show_legend=show_legend, hidden=hidden)
     for edge in layout.edges:
@@ -1094,7 +1094,7 @@ def climb_legend(
 def detail_legend(
     layout: DetailLayout, baselines: Mapping[str, float], cost: CostSeries | None = None
 ) -> list[LegendEntry]:
-    from hillclimb.treeview import OPERATOR_RGB
+    from hillclimb.tui.treeview import OPERATOR_RGB
 
     entries = plot_legend([layout.curve], baselines)
     for operator in dict.fromkeys(mark.operator for mark in layout.marks):

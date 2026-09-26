@@ -66,7 +66,7 @@ from pathlib import Path
 import numpy as np
 
 from hillclimb.candidate import Candidate
-from hillclimb.tree import build_tree
+from hillclimb.tui.tree import build_tree
 
 EPS = 1e-8
 CLIP = 10.0            # report mode: max scaled deviation per dimension
@@ -690,7 +690,7 @@ def build_similarity(
     """One search's candidates as distances from its reference — the origin
     it grew from (`baseline`: seed, else baseline, else earliest) or its
     `champion`. `fingerprint_path` is the problem's fingerprint.py, if any."""
-    from hillclimb.tree import accepted_lineage
+    from hillclimb.tui.tree import accepted_lineage
 
     if not candidates:
         return SimilarityView.none(reference, "no candidates yet")

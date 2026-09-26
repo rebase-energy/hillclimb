@@ -34,7 +34,7 @@ from rich.text import Text
 
 from hillclimb.config import Config
 from hillclimb.graph import GraphNode, KnowledgeGraph, fuzzy_match, graph_at
-from hillclimb.theme import HILLCLIMB_CSS, apply_theme, themed_plot
+from hillclimb.tui.theme import HILLCLIMB_CSS, apply_theme, themed_plot
 
 # --- pure data layer ---
 
@@ -341,7 +341,7 @@ def build_plot(vg: VisibleGraph, *, color_by: str = "type", selected: str | None
     """VisibleGraph -> a fresh plotui Plot plus the flat-index -> node-id list
     (a single Graph3d trace, so flat index == node order). Selection is set on
     the plot; camera state is the caller's to restore."""
-    from hillclimb.theme import themed_plot
+    from hillclimb.tui.theme import themed_plot
 
     ids = [n.id for n in vg.nodes]
     index_of = {node_id: i for i, node_id in enumerate(ids)}
@@ -619,9 +619,9 @@ from textual.widgets import (  # noqa: E402
 )
 from textual.widgets.option_list import Option  # noqa: E402
 
-from hillclimb.header import HillclimbHeader, TimezoneMixin  # noqa: E402
-from hillclimb.keys import KEYS_BINDING, QUIT_BINDINGS, KeysMixin, KeysPanel  # noqa: E402
-from hillclimb.watch import REFRESH_S, _mouse_event_x, _mouse_event_y  # noqa: E402
+from hillclimb.tui.header import HillclimbHeader, TimezoneMixin  # noqa: E402
+from hillclimb.tui.keys import KEYS_BINDING, QUIT_BINDINGS, KeysMixin, KeysPanel  # noqa: E402
+from hillclimb.tui.watch import REFRESH_S, _mouse_event_x, _mouse_event_y  # noqa: E402
 
 
 class GraphPlotWidget(PlotWidget):
@@ -1313,7 +1313,7 @@ class GraphScreen(KeysMixin, Screen):
             if search_dir is None:
                 self.notify("search artifacts no longer on disk", severity="warning")
                 return
-            from hillclimb.watch import CandidateScreen
+            from hillclimb.tui.watch import CandidateScreen
 
             self.app.push_screen(CandidateScreen(self.config, search_dir))
 

@@ -26,20 +26,20 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Footer, Label, RichLog
 
-from hillclimb.archive import (
+from hillclimb.tui.archive import (
     SERIES, build_progress_plot, cursor_number, legend_entry_at, legend_series, legend_spans,
     progress_points,
 )
-from hillclimb.chart import ChartPlotWidget
+from hillclimb.tui.chart import ChartPlotWidget
 from hillclimb.config import Config
-from hillclimb.graphview import TimeScrubber
-from hillclimb.header import HillclimbHeader, TimezoneMixin
-from hillclimb.theme import HILLCLIMB_CSS, apply_theme, themed_plot
-from hillclimb.tree import SearchTree
-from hillclimb.tree2 import LEGEND_ENTRIES as TREE_LEGEND
-from hillclimb.tree2view import Tree2Keys, Tree2PlotWidget, Tree2Screen
-from hillclimb.treeview import TreePlotWidget
-from hillclimb.watch import _mouse_event_x, _mouse_event_y
+from hillclimb.tui.graphview import TimeScrubber
+from hillclimb.tui.header import HillclimbHeader, TimezoneMixin
+from hillclimb.tui.theme import HILLCLIMB_CSS, apply_theme, themed_plot
+from hillclimb.tui.tree import SearchTree
+from hillclimb.tui.tree2 import LEGEND_ENTRIES as TREE_LEGEND
+from hillclimb.tui.tree2view import Tree2Keys, Tree2PlotWidget, Tree2Screen
+from hillclimb.tui.treeview import TreePlotWidget
+from hillclimb.tui.watch import _mouse_event_x, _mouse_event_y
 
 PROGRESS_SLOT = 1  # the chart's Kitty image-id slot; the tree has slot 0
 CHART_FIRST_KEY = len(TREE_LEGEND) + 1  # the tree's legend takes 1-5, the chart's series 6-9

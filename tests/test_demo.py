@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from hillclimb.candidate import Candidate
-from hillclimb.chart import climb_curve, climb_curves
+from hillclimb.tui.chart import climb_curve, climb_curves
 from hillclimb.cli import main as cli_main
 from hillclimb.demo import DEMO_PROBLEM_ID, install_demo_problem
 from hillclimb.journal import Journal
@@ -253,7 +253,7 @@ def test_stop_all_reaches_every_running_search(tmp_path, config, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_watch_candidates_opens_on_the_search(tmp_path, config):
-    from hillclimb.watch import CandidateScreen, WatchApp
+    from hillclimb.tui.watch import CandidateScreen, WatchApp
 
     search_dir = _search(config.paths.runs_dir, "r1", "demo-1", [("2026-08-22T10:01:00+00:00", 1.0)])
     app = WatchApp(config, search_dir=search_dir)
@@ -323,7 +323,7 @@ def test_create_search_records_problem_key_and_unique_ids(tmp_path, config):
 
 
 def test_chart_baselines_reload_current_problem_config(tmp_path, config):
-    from hillclimb.chart import chart_baselines
+    from hillclimb.tui.chart import chart_baselines
     from hillclimb.run import SearchMeta
 
     config.paths.problems_dir = tmp_path / "problems"
@@ -387,7 +387,7 @@ def test_budget_margin_scales_with_short_budgets():
 
 
 def test_step_points_hold_each_score_until_the_next():
-    from hillclimb.chart import step_points
+    from hillclimb.tui.chart import step_points
 
     assert step_points([], []) == ([], [])
     assert step_points([1.0], [2.0]) == ([1.0], [2.0])
@@ -404,7 +404,7 @@ def test_climb_folds_every_search_into_one_staircase(tmp_path):
     """Three parallel searches are one climb: `best` is judged against what
     any of them had landed so far, x counts candidates across searches, and
     the misses are kept as dots."""
-    from hillclimb.chart import climb_for_problem
+    from hillclimb.tui.chart import climb_for_problem
 
     runs = tmp_path / "runs"
     _search(runs, "r1", "demo", [
@@ -428,7 +428,7 @@ def test_climb_folds_every_search_into_one_staircase(tmp_path):
 
 
 def test_climb_respects_lower_is_better(tmp_path):
-    from hillclimb.chart import climb_for_problem
+    from hillclimb.tui.chart import climb_for_problem
 
     runs = tmp_path / "runs"
     _search(runs, "r1", "demo", [
@@ -440,7 +440,7 @@ def test_climb_respects_lower_is_better(tmp_path):
 
 
 def test_build_climb_plot_renders_steps_and_dots(tmp_path):
-    from hillclimb.chart import build_climb_plot, climb_for_problem
+    from hillclimb.tui.chart import build_climb_plot, climb_for_problem
 
     runs = tmp_path / "runs"
     _search(runs, "r1", "demo", [

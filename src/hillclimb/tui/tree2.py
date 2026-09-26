@@ -39,9 +39,9 @@ from __future__ import annotations
 
 import re
 
-from hillclimb.graphview import VNode
-from hillclimb.tree import SearchTree, TreeNode
-from hillclimb.treeview import COL_W, ROW_H
+from hillclimb.tui.graphview import VNode
+from hillclimb.tui.tree import SearchTree, TreeNode
+from hillclimb.tui.treeview import COL_W, ROW_H
 
 RGB = tuple[int, int, int]
 
@@ -328,7 +328,7 @@ def build_tree2_plot(
     times that (see `fit_radius`); face-on camera at zoom 1; plus the
     flat-index → node-id list. `frame` pins the view to another tree's
     extent and row height, as `build_tree_plot` does with its extent."""
-    from hillclimb.theme import themed_plot
+    from hillclimb.tui.theme import themed_plot
 
     ids = [n.id for n in tree.nodes]
     index_of = {node_id: i for i, node_id in enumerate(ids)}

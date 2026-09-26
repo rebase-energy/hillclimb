@@ -52,7 +52,7 @@ class TestQuery:
         nodes = [GraphNode(id="entity:lightgbm", type="library", label="lightgbm")]
         assert fuzzy_match(nodes, "light")[0].label == "lightgbm"
         # graphview still re-exports it for the TUI search box
-        from hillclimb.graphview import fuzzy_match as gv_fuzzy
+        from hillclimb.tui.graphview import fuzzy_match as gv_fuzzy
 
         assert gv_fuzzy is fuzzy_match
 

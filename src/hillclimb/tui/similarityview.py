@@ -36,12 +36,12 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Label
 
-from hillclimb.chart import ARM_PALETTE
+from hillclimb.tui.chart import ARM_PALETTE
 from hillclimb.config import Config
-from hillclimb.header import HillclimbHeader, TimezoneMixin
+from hillclimb.tui.header import HillclimbHeader, TimezoneMixin
 from hillclimb.journal import Journal
 from hillclimb.problem import ProblemSpec, load_problem
-from hillclimb.similarity import (
+from hillclimb.tui.similarity import (
     N_BINS,
     SearchInput,
     SimilarityView,
@@ -50,8 +50,8 @@ from hillclimb.similarity import (
     clear_caches,
 )
 from hillclimb.store import DataStore, SearchRecord, open_store, resolve_search
-from hillclimb.theme import HILLCLIMB_CSS, apply_theme, themed_plot
-from hillclimb.watch import STATE_STYLE, LiveScreen
+from hillclimb.tui.theme import HILLCLIMB_CSS, apply_theme, themed_plot
+from hillclimb.tui.watch import STATE_STYLE, LiveScreen
 
 from plotui.textual import PlotWidget
 
@@ -325,7 +325,7 @@ class SimilarityScreen(SimilarityBase):
         self.refresh_data()
 
     def action_open_map(self) -> None:
-        from hillclimb.similarity_mapview import MapScreen
+        from hillclimb.tui.similarity_mapview import MapScreen
 
         self.app.switch_screen(MapScreen(self.config, self.search))
 
@@ -439,7 +439,7 @@ class RunSimilarityScreen(RunScopeMixin, SimilarityScreen):
         self.refresh_data()
 
     def action_open_map(self) -> None:
-        from hillclimb.similarity_mapview import RunMapScreen
+        from hillclimb.tui.similarity_mapview import RunMapScreen
 
         self.app.switch_screen(RunMapScreen(self.config, self.run_id, self.problem_key))
 
@@ -491,7 +491,7 @@ class SimilarityApp(TimezoneMixin, App):
 
     def first_screen(self):
         if self.view == "map":
-            from hillclimb.similarity_mapview import MapScreen, RunMapScreen
+            from hillclimb.tui.similarity_mapview import MapScreen, RunMapScreen
 
             if self.run is not None:
                 return RunMapScreen(self.config, *self.run, metric=self.metric)

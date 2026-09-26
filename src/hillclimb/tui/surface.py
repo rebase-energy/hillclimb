@@ -27,7 +27,7 @@ from pathlib import Path
 import numpy as np
 
 from hillclimb.candidate import Candidate
-from hillclimb.tree import build_tree
+from hillclimb.tui.tree import build_tree
 
 GRID_N = 121        # terrain samples per axis for the rendered surface
 DRAPE_STEPS = 24    # segments per lineage hop when following the terrain

@@ -26,15 +26,15 @@ from textual.containers import Vertical
 from textual.widgets import Footer, Label, RichLog
 
 from hillclimb.config import Config
-from hillclimb.graphview import GraphKeys, TimeScrubber, VNode, place_labels_by_node
-from hillclimb.header import HillclimbHeader, TimezoneMixin
-from hillclimb.theme import HILLCLIMB_CSS, apply_theme
-from hillclimb.tree import SearchTree
-from hillclimb.tree2 import (
+from hillclimb.tui.graphview import GraphKeys, TimeScrubber, VNode, place_labels_by_node
+from hillclimb.tui.header import HillclimbHeader, TimezoneMixin
+from hillclimb.tui.theme import HILLCLIMB_CSS, apply_theme
+from hillclimb.tui.tree import SearchTree
+from hillclimb.tui.tree2 import (
     BEST_SIZE_SCALE, DEFAULT_RADIUS, LEGEND_ENTRIES, LEGEND_KEYS, build_tree2_plot, fit_radius, hidden_fates,
     label_nodes, legend_entries, legend_spans, lineage_nodes,
 )
-from hillclimb.treeview import TreePlotWidget, TreeScreen, filter_hidden
+from hillclimb.tui.treeview import TreePlotWidget, TreeScreen, filter_hidden
 
 
 class Tree2PlotWidget(TreePlotWidget):

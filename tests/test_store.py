@@ -15,7 +15,7 @@ import pytest
 from typer.testing import CliRunner
 
 from hillclimb.candidate import Candidate
-from hillclimb.chart import climb_curves
+from hillclimb.tui.chart import climb_curves
 from hillclimb.config import Config
 from hillclimb.control import ControlCommand
 from hillclimb.journal import FileJournal, Journal

@@ -25,13 +25,13 @@ from textual.binding import Binding
 from textual.widgets import Footer, Label
 
 from hillclimb.config import Config
-from hillclimb.header import HillclimbHeader, TimezoneMixin
+from hillclimb.tui.header import HillclimbHeader, TimezoneMixin
 from hillclimb.journal import Journal
 from hillclimb.problem import ProblemSpec, load_problem
 from hillclimb.store import DataStore, SearchRecord, open_store, resolve_search
-from hillclimb.surface import LandscapeError, SurfaceView, build_surface, load_landscape
-from hillclimb.theme import HILLCLIMB_CSS, apply_theme, themed_plot
-from hillclimb.watch import STATE_STYLE, LiveScreen
+from hillclimb.tui.surface import LandscapeError, SurfaceView, build_surface, load_landscape
+from hillclimb.tui.theme import HILLCLIMB_CSS, apply_theme, themed_plot
+from hillclimb.tui.watch import STATE_STYLE, LiveScreen
 
 from plotui.textual import PlotWidget
 

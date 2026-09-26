@@ -7,9 +7,9 @@ import pytest
 from typer.testing import CliRunner
 
 from hillclimb import cli
-from hillclimb.similarity import clear_caches
-from hillclimb.similarity_map import METRICS, build_map, build_run_map
-from hillclimb.similarity_mapview import (
+from hillclimb.tui.similarity import clear_caches
+from hillclimb.tui.similarity_map import METRICS, build_map, build_run_map
+from hillclimb.tui.similarity_mapview import (
     BEST_RGB,
     REFERENCE_RGB,
     MapPlotWidget,
@@ -24,7 +24,7 @@ from hillclimb.similarity_mapview import (
     prefix_view,
     statusline,
 )
-from hillclimb.similarityview import RunScopeMixin, SimilarityBase, SimilarityScreen
+from hillclimb.tui.similarityview import RunScopeMixin, SimilarityBase, SimilarityScreen
 from tests.test_similarity_map import make_search
 from tests.test_similarity_run import make_arm
 
@@ -51,7 +51,7 @@ class TestStyles:
         assert len(edge_colours(view, colours)) == len(view.edges)
 
     def test_run_scope_colours_by_arm(self, tmp_path):
-        from hillclimb.chart import ARM_PALETTE
+        from hillclimb.tui.chart import ARM_PALETTE
 
         run = build_run_map([
             make_arm(tmp_path, "p", "greedy"), make_arm(tmp_path, "p-2", "openevolve"),
@@ -140,7 +140,7 @@ class TestPlot:
 
 class TestScreens:
     def test_the_two_views_share_a_base_and_swap_keys(self):
-        from hillclimb.similarity_mapview import MapScreen, RunMapScreen
+        from hillclimb.tui.similarity_mapview import MapScreen, RunMapScreen
 
         assert issubclass(MapScreen, SimilarityBase) and issubclass(SimilarityScreen, SimilarityBase)
         assert not issubclass(MapScreen, SimilarityScreen)
@@ -152,7 +152,7 @@ class TestScreens:
         assert "c" not in map_keys
 
     def test_unknown_metric_is_rejected(self):
-        from hillclimb.similarity_mapview import MapScreen
+        from hillclimb.tui.similarity_mapview import MapScreen
 
         with pytest.raises(ValueError):
             MapScreen(config=None, metric="vibes")  # type: ignore[arg-type]
@@ -194,8 +194,8 @@ def _seeded_search(runs_dir, run_id: str, search_id: str, arm: str | None) -> No
 
 @pytest.mark.asyncio
 async def test_map_screen_mounts_swaps_and_replays(config):
-    from hillclimb.similarity_mapview import MapScreen, RunMapScreen
-    from hillclimb.similarityview import RunSimilarityScreen, SimilarityApp, SimilarityScreen
+    from hillclimb.tui.similarity_mapview import MapScreen, RunMapScreen
+    from hillclimb.tui.similarityview import RunSimilarityScreen, SimilarityApp, SimilarityScreen
 
     for search_id, arm in (("p", "greedy"), ("p-2", "gepa")):
         _seeded_search(config.paths.runs_dir, "r1", search_id, arm)

@@ -20,8 +20,8 @@ from __future__ import annotations
 from rich.style import Style
 
 from hillclimb.config import Config
-from hillclimb.graphview import LABEL_ZOOM, VNode
-from hillclimb.tree import FATES, SearchTree, TreeNode
+from hillclimb.tui.graphview import LABEL_ZOOM, VNode
+from hillclimb.tui.tree import FATES, SearchTree, TreeNode
 
 ZOOM_FACTOR = 1.25
 NODE_SIZE = 3.5
@@ -107,7 +107,7 @@ def build_tree_plot(tree: SearchTree, *, selected: str | None = None, frame: Sea
     pan are the caller's to restore. `frame` pins the view to another tree's
     extent (the live tree, while scrubbing), so drawing a subset of its
     nodes does not re-centre the picture."""
-    from hillclimb.theme import themed_plot
+    from hillclimb.tui.theme import themed_plot
 
     ids = [n.id for n in tree.nodes]
     index_of = {node_id: i for i, node_id in enumerate(ids)}
@@ -224,7 +224,7 @@ def statusline(
     """The line above the canvas: where we are and how the exploration went.
     `position` is `(index, total)` among the store's searches, so the n/p
     cycling has a readout."""
-    from hillclimb.watch import STATE_STYLE
+    from hillclimb.tui.watch import STATE_STYLE
 
     parts = [f"[bold]{ref}[/] [{STATE_STYLE.get(state, '')}]{state}[/]"]
     if position is not None and position[1] > 1:
@@ -248,13 +248,13 @@ from textual.containers import Vertical  # noqa: E402
 from textual.message import Message  # noqa: E402
 from textual.widgets import Footer, Label, RichLog  # noqa: E402
 
-from hillclimb.graphview import GraphKeys, TimeScrubber, place_labels_by_node  # noqa: E402
-from hillclimb.header import HillclimbHeader, TimezoneMixin  # noqa: E402
+from hillclimb.tui.graphview import GraphKeys, TimeScrubber, place_labels_by_node  # noqa: E402
+from hillclimb.tui.header import HillclimbHeader, TimezoneMixin  # noqa: E402
 from hillclimb.journal import Journal  # noqa: E402
 from hillclimb.store import DataStore, SearchRecord, open_store, resolve_search  # noqa: E402
-from hillclimb.theme import HILLCLIMB_CSS, apply_theme, themed_plot  # noqa: E402
-from hillclimb.tree import build_tree, candidates_until, tree_events  # noqa: E402
-from hillclimb.watch import (  # noqa: E402
+from hillclimb.tui.theme import HILLCLIMB_CSS, apply_theme, themed_plot  # noqa: E402
+from hillclimb.tui.tree import build_tree, candidates_until, tree_events  # noqa: E402
+from hillclimb.tui.watch import (  # noqa: E402
     LiveScreen, candidate_detail_renderables, _mouse_event_x, _mouse_event_y,
 )
 
@@ -670,7 +670,7 @@ class TreeScreen(LiveScreen):
         # RichLog's default min_width is 78, which forces horizontal scroll
         width = node_detail_width(self.size.width)
         detail.styles.width = width
-        from hillclimb.watch import StreamPanel
+        from hillclimb.tui.watch import StreamPanel
 
         for renderable in candidate_detail_renderables(self._record, self._journal, node_id):
             if isinstance(renderable, StreamPanel):  # one row per entry; overflow scrolls
@@ -750,7 +750,7 @@ class TreeScreen(LiveScreen):
     def _open_candidate(self, node_id: str) -> None:
         if self._record is None:
             return
-        from hillclimb.watch import CandidateScreen
+        from hillclimb.tui.watch import CandidateScreen
 
         self.app.push_screen(CandidateScreen(self.config, self._record.search_dir, open_candidate_id=node_id))
 
