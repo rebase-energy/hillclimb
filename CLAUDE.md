@@ -80,13 +80,13 @@ shim).
   verifier with `hillclimb verify <problem> --repeat 5` (the spread it prints
   is the noise floor — improvements below it are not real)
 - Noisy metrics: a trial's score is the MEDIAN of its replicates;
-  `search.n_replicates` + `noise_k`/`min_improvement` set an accept band so
+  `evaluation.n_replicates` + `noise_k`/`min_improvement` set an accept band so
   the search cannot climb noise (the floor is the within-trial replicate
   spread — spread across parameter sets is signal), and `replicate_mode:
   serial` is mandatory when the metric measures the machine
   (time/throughput/memory) — parallel replicates measure each other. Seeds
   are never tuned. `n_trials`/`trial_mode` are accepted as legacy spellings
-- Concurrency: `search.parallel_operators` per search, `search.machine_max_operators`
+- Concurrency: `concurrency.parallel_operators` per search, `concurrency.machine_max_operators`
   across the machine (flock slots in `~/.cache/hillclimb/agent-slots/`, default
   `min(8, cores-2)`); verifier and agent envs are single-threaded
   (`executor.SINGLE_THREAD_ENV`, parent values win). `hillclimb ps` lists the
@@ -148,7 +148,7 @@ shim).
   copy, merged in `_commit_tune` under the state lock, re-journaled (replay
   keeps the last record; `tune_started`/`tune_discarded` audit lines), holdout
   only for a trial that became the candidate's best. WHICH values come from
-  the tuner seam (`search.tuner: random | optuna`, `search.tuner_params`,
+  the tuner seam (`climber.tuner: random | optuna`, `climber.tuner_params`,
   extra `hillclimb[optuna]`): `ask(space, history, higher_is_better, seed)`
   is a pure function of the candidate's trials + pending sets, so no study
   state survives a call and resume is free. Children of a tunable parent
@@ -208,7 +208,7 @@ shim).
   (`render(..., _override=dir)`), and `lint_prompts()` refuses harness-owned
   templates (`contract_*`, the clauses, the knowledge passes) and unknown
   tokens. `sha256` = `tree_sha256(root)` (no `__pycache__`/dotfiles) or the
-  one file's hash. Until the config split, `search.policy` IS the climber
+  one file's hash. `climber.ref` (config; `--climber` on the CLI) IS the climber
   ref: `search_strategy.search_climber/build_loop/build_operators/
   holdout_timing` are the glue (`_user_params` lays only what the user
   actually set over the manifest's params)
@@ -226,7 +226,7 @@ shim).
   `SearchMeta._from_v2` (a before-validator) maps `policy*` → `climber*` and
   drops `templates_*`; `_load_meta` accepts `READABLE_SCHEMA_VERSIONS = (2, 3)`
   and hides anything else. `search_strategy.build_tuner` wires the
-  manifest's tuner (user's `search.tuner` wins) into the Harness
+  manifest's tuner (user's `climber.tuner` wins) into the Harness
 - Harness + loop (`harness/core.py`, `loop.py`): `Harness` is the fixed core
   (candidate dirs, agent calls, trials, the journal's single writer, `best/`,
   accept band, budgets, control queue, crash recovery, holdout) and knows no
@@ -301,12 +301,12 @@ shim).
   operator) and `journal.drafts()`/`debug_chain()`, `debug_depth` and the
   dummy backend key on ROLE, never on the operator's name; the registry
   (`operators.get_operator/operator_names/role_of/register_operator`) is the
-  vocabulary `policy check` and the pi route preflight derive from.
+  vocabulary `climber check` and the pi route preflight derive from.
   `baseline`/`seed`/`tune` stay harness-native (no prompt). Inspiration files
   are named by `sdk.inspiration_filename(i)`, never a literal
 - Search policies (`policies/`): `greedy` (default) and `openevolve`
   (OpenEvolve's MAP-Elites database as the what-next brain; optional extra,
-  `search.policy_params` pass through to its `DatabaseConfig`). A policy
+  `climber.params` pass through to its `DatabaseConfig`). A policy
   owns only `propose`/`observe` and is holdout-blind: `PolicyInput` wraps
   whatever journal it is given in `journal.PolicyJournal` (snapshot of
   `Candidate.holdout_blind()` copies — no holdout fields, no `is_selected`,
@@ -325,8 +325,8 @@ shim).
   Until a climber manifest carries params, `policies.ConfigBackedParams(config)`
   (harness-side glue, a live Mapping: `search.policy_params` over the old
   `search.num_drafts` / `search.max_debug_depth` / `ensemble.*` blocks) is
-  what `build_loop`, `policy check` and `SearchRig` hand the policy.
-  File policies: `search.policy` ending in `.py` is loaded from that path
+  what `build_loop`, `climber check` and `SearchRig` hand the policy.
+  File policies: a `climber.ref` ending in `.py` is loaded from that path
   (`policies.load_policy_file`; relative to the folder holding the
   hillclimb dir via `policy_base_dir(config)`, the `runs_dir` anchor); the
   file exposes `POLICY` (class or `(params, *, complexity_start)` factory)
@@ -334,7 +334,7 @@ shim).
   the path as written, `policy_sha256` its hash (`create_search` fails
   before allocating a dir if the file is unreadable; `resume` warns on a
   changed hash). Arm/display names use `policy_label` (the file stem).
-  `hillclimb policy check` (`policy_check.py`, pure: no agent, verifier or
+  `hillclimb climber check` (`policy_check.py`, pure: no agent, verifier or
   writes) is the cheap pre-verifier for an edited process: replays the
   store's recorded journals plus an empty one through the policy and
   reports contract breaches (stall on empty journal, replay/idempotence
