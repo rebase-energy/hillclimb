@@ -619,7 +619,7 @@ def verify(
             f"an improvement smaller than ~{2 * mad:.3g} cannot be told from noise. "
             "To stop the search climbing it:"
         )
-        typer.echo(f"  search:\n    n_replicates: {max(3, repeat)}\n    noise_k: 2")
+        typer.echo(f"  evaluation:\n    n_replicates: {max(3, repeat)}\n    noise_k: 2")
         typer.echo(
             "  add `replicate_mode: serial` if this metric measures the machine "
             "(time, throughput, memory) — parallel trials would measure each other"

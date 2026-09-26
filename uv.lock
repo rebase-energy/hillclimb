@@ -454,7 +454,7 @@ wheels = [
 
 [[package]]
 name = "hillclimb"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "networkx" },
@@ -1053,7 +1053,7 @@ wheels = [
 
 [[package]]
 name = "plotui"
-version = "0.5.0"
+version = "0.6.0"
 source = { editable = "../plotui" }
 
 [package.metadata]

@@ -1,0 +1,110 @@
+# Commands
+
+Every `hillclimb` command, the live TUIs, and the local demo suite.
+
+## Live TUIs
+
+Open them in a second terminal while searches climb:
+
+```bash
+hillclimb watch candidates   # one search's candidates: drafting, debugging, improving
+hillclimb watch              # all the searches side by side
+hillclimb chart              # the hillclimb: best score so far across every search, every candidate a dot
+                             # (several charts in the folder: a table first — enter opens one, esc comes back)
+hillclimb graph              # the knowledge graph growing as searches finish
+hillclimb tree               # one search's exploration tree: expanded vs discontinued lineages
+hillclimb chart --detail     # the curve with that tree drawn on it (every scored candidate, parent edges)
+```
+
+`hillclimb watch` is the one to keep open beside your agent: runs → searches →
+candidate trees, with an on-demand candidate detail panel for notes, scores,
+lineage, output, and the timestamped operator stream when present. A
+candidate still in flight gets a live console under its overview: the
+agent's stream, then the verifier's stdout/stderr, appended as they are
+written (`tail -f` style — it follows the end until you scroll up, and `f`
+follows again). Drag the divider, use `+` / `-` to resize the detail
+panel, or `m` to maximize it.
+
+## Commands
+
+Search-addressing commands take `<run-id>/<search-id>`, a bare `<run-id>` (when
+the run has a single search), or `latest` (the default).
+
+| command | what it does |
+|---|---|
+| `problem list` | the bundled starter problems, with the best known value and who found it |
+| `problem get <problem>` | copy a bundled problem into `hillclimb/problems/` (creates the `hillclimb/` dir if needed) and list its files (`fetch` is a deprecated alias) |
+| `demo [--budget 10m] [--parallel-searches 3] [--parallel-operators 3]` | `problem get` + `run --parallel-searches` in one command |
+| `init [dir]` | create the `hillclimb/` dir (config, problems/, specs/, runs/) with an example problem |
+| `connect` | which agents this machine can run operators with, and who pays — each credential read through the same environment an operator gets |
+| `connect <claude\|codex\|pi\|openrouter> [--auth ...] [--model ...] [--no-probe] [--default]` | run that agent's login, stage the credentials searches read, ping the route with one tool-free call, pin `backend`/`backend_auth` in config.yaml |
+| `verify <problem> [--repeat N] [--holdout] [--solution FILE]` | run a problem's verifier once, outside a search; `--repeat` measures the noise floor |
+| `run <target> [--name ...] [--budget 2h] [--backend ...] [--model ...] [--climber REF]` | start a run for one problem or a suite YAML |
+| `run <problem> --parallel-searches N --parallel-operators M` | N independent searches (detached engines, one run) each running M agents at once |
+| `run <problem> --climber A --climber B [--arm-set ARM:KEY=VALUE]` | a mixed fleet: one search per climber, each tagged as an arm |
+| `resume [search] [--all] [--detach]` | continue a parked / stopped / crashed search |
+| `status [search]` | search state + candidate tree (text) |
+| `watch` | live TUI over runs, searches, and candidates |
+| `chart` | live chart: best score so far by tested-candidate count across the problem's searches as a staircase, every scored candidate a dot (one line per arm in an experiment) |
+| `similarity map [search] [--single] [--metric M]` | live 3D map: every candidate embedded by pairwise distance (behavioral by default; `m` cycles structural and blend), so nearby dots are alike — lineage edges, a gold best-so-far trail, hover reads distances, click dims everything outside a lineage, `space` replays the search growing; an experiment arm opens its whole run, coloured by arm; a bare `similarity` is this view |
+| `similarity reference [search] [--single]` | live 3D cube: each candidate at behavioral / structural / lineage distance from the search's seed (or baseline; `c` toggles the champion); an experiment arm opens its whole run, coloured by arm, `n`/`p` stepping through the run's problems; a problem's `fingerprint.py` defines the behavioral axis; `v` swaps between the two views |
+| `graph` | the knowledge-graph TUI (same screen as `knowledge graph`) |
+| `show [search] <candidate-id>` | everything about one candidate: scores, evaluation breakdown, diff vs parent, output |
+| `ps` | every process hillclimb owns on this machine: engines with their agents and verifiers nested; `orphan` marks engines whose hillclimb dir was deleted |
+| `stop [search] [--all]` | graceful stop: finish current operator, then park; `--all` also reaps orphaned engines when no hillclimb dir is found |
+| `kill [search] [--all]` | SIGTERM the engine now (state finalized, resumable) |
+| `reset` | kill every engine of THIS hillclimb dir and delete the dir — never another folder's |
+| `prune <search> <candidate-id> [--reason ...]` | cut a candidate and its subtree from the search |
+| `tree [search]` | live 3D exploration tree of one search: colour is the operator, silhouette the fate (expanded / discontinued / best / failed); `j`/`k` scrub through time |
+| `tree2 [search]` | the same tree drawn like the Darwin Gödel Machine's archive: the candidate number inside each circle, fill = score (viridis, bright = best; hollow = no working solution), ring = what the search did with it (white expanded — the spine the policy walked / none a scored, scored and left / red failed), star = best, bold white path = the best's lineage; circles are sized to the zoom so they never overlap, numbers appear as they grow; the legend toggles each stage, the best and the lineage (`1`-`5` or click) |
+| `archive [search]` | the `tree2` archive tree on the left and the progress chart on the right — every scored candidate at (candidate number, score), the best-so-far staircase, and the lineage of the final best as a thick line, the same parent chain drawn bold in the tree; `j`/`k` scrub both panels together, click a node to ring its dot on the chart; the chart's legend sits in the corner the climb leaves empty and toggles its series (`6`-`9` or click), the hover readout keeps off it |
+| `surface [search]` | live 3D fitness surface: the search's candidates on the problem's terrain (needs a `landscape.py` in the problem; `problems/fitness-landscape/` is the reference) |
+| `summit [problem] [--to DIR]` | copy the best solution found so far across every run of a problem next to your `hillclimb/` folder; works mid-climb |
+| `smoke [problem]` | one real agent call end-to-end (auth / contract check) |
+| `climber list` | the climbers `run --climber` accepts: the bundled ones and every one under `hillclimb/climbers/` |
+| `climber new <name> [--from REF]` | copy a climber (manifest, policy source, prompts) into `hillclimb/climbers/<name>/` for editing |
+| `climber check [--climber REF] [--set k=v] [--problem P] [--smoke] [--json]` | conformance check for a climber over the store's recorded journals; `--smoke` adds a dummy-backend search |
+| `store searches [--problem KEY]` / `store sync` | list what the record store holds / import the folder's searches into the configured store |
+| `knowledge graph [--stats]` | interactive knowledge-graph TUI (or a text summary) |
+| `knowledge rebuild` | force-rebuild the derived `knowledge/graph.json` index |
+| `knowledge distill [search] [--backfill]` | run the LLM claims pass on a search / all cards |
+| `knowledge backfill` | distill cards from every finished search that lacks one |
+| `knowledge live [run]` | the live cards concurrent searches in a run are sharing |
+| `paper add <pdf> [--problem <target>]` / `paper list` | distill a PDF into knowledge claims that seed future searches (one agent pass per paper, content-hash cached) |
+| `knowledge consolidate [--dry-run]` | sleep phase: generalize claims + rewrite playbooks |
+| `knowledge query "<terms>" [--json]` | read-only memory lookup (also available to agents) |
+| `knowledge show <target>` | the prior-experience section a new search would get |
+| `run <problem> --set key=value … [--experiment E --arm A]` | any config setting, dotted; tag the search as an experiment arm |
+| `experiment run <spec> [--repeats N] [--budget B] [--parallel] [--max-concurrent N] [--run-id R --first-repeat K] [--dry-run]` | every arm × problem × repeat of a spec; `--max-concurrent` bounds how many run at once, `--run-id` appends repeats to a finished run |
+| `experiment report [spec] [--problem X] [--control A] [--noise-floor F] [--json]` | compare the arms on holdout; `--json` gives a meta-verifier the gaps and verdicts as data |
+
+Exit code `2` from `run`/`resume` means the search parked or was stopped — resume it.
+
+`hillclimb stop --all` ends a demo (the best solutions stay in `runs/`);
+`hillclimb reset` ends it AND deletes this folder's `hillclimb/` dir — only
+engines pinned to that dir are killed, never another folder's. 3 searches x 3
+operators is 9 agents, capped machine-wide by
+`concurrency.machine_max_operators`; each search's engine log is under
+`hillclimb/runs/<run-id>/logs/`.
+
+## Local optimization demo suite
+
+These problems are small, local, and require no download, so they are good for
+exercising parallel searches in `hillclimb watch`:
+
+| problem | objective |
+|---|---|
+| `circle-packing` | maximize total radius for 26 circles in a unit square |
+| `heilbronn-11` | maximize the smallest triangle area among 11 points |
+| `tsp-200` | minimize a 200-city Euclidean TSP tour |
+| `labs-60` | minimize length-60 binary autocorrelation energy |
+
+Start the suite, then open the TUI:
+
+```bash
+uv run hillclimb run problems/demo-suite.yaml --name "Optimization demo" --budget 10m
+uv run hillclimb watch
+```
+
+`hillclimb demo` is the one-command version: `problem get` + three
+parallel detached searches on circle-packing.
