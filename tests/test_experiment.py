@@ -254,7 +254,7 @@ class TestCli:
         hillclimb_dir = tmp_path / "hillclimb"
         spec = write_spec(hillclimb_dir / "experiments" / "ab.yaml", "problems: [p]\nrepeats: 1\narms:\n  a: {search.policy: greedy}\n  b: {learning.enabled: false, search.policy_params: {k: 1}}\n")
         config.hillclimb_dir = hillclimb_dir
-        monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
+        monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config)
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
         result = runner.invoke(app, ["experiment", "run", "ab", "--dry-run"])
@@ -298,7 +298,7 @@ class TestCli:
             "arms:\n  a: {search.policy: greedy}\n  b: {learning.enabled: false}\n",
         )
         config.hillclimb_dir = hillclimb_dir
-        monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
+        monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config)
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
         result = runner.invoke(app, ["experiment", "run", "ab", "--dry-run"])
@@ -332,7 +332,7 @@ class TestCli:
             "problems: [p]\nseed_from: seeds/nope.py\narms:\n  a: {}\n  b: {}\n",
         )
         config.hillclimb_dir = hillclimb_dir
-        monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
+        monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config)
         result = CliRunner().invoke(app, ["experiment", "run", "ab", "--dry-run"])
         assert result.exit_code != 0
         assert "seed_from not found" in result.output
@@ -355,7 +355,7 @@ class TestCli:
         assert resolved_seed(absolute) == seed.resolve()
 
     def test_run_set_and_arm_flags_reach_the_search(self, config, tmp_path, monkeypatch):
-        from hillclimb.cli import _run_problem
+        from hillclimb.cli.run import _run_problem
         from hillclimb.harness.run import load_search_meta
         from tests.test_cli import write_problem
 
@@ -367,7 +367,7 @@ class TestCli:
             seen["config"] = config_arg
             seen["search_dir"] = search_dir
 
-        monkeypatch.setattr("hillclimb.cli._execute", fake_execute)
+        monkeypatch.setattr("hillclimb.cli.run._execute", fake_execute)
         _run_problem(
             str(problem), config, budget="1m", experiment="ab", arm="b", repeat=1,
             arm_overrides=parse_set_overrides(["learning.enabled=false", "search.policy_params={k: 1}"]),
@@ -398,8 +398,8 @@ class TestBoundedLaunch:
         hillclimb_dir = tmp_path / "hillclimb"
         spec = write_spec(hillclimb_dir / "experiments" / "ab.yaml", spec_text)
         config.hillclimb_dir = hillclimb_dir
-        monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
-        monkeypatch.setattr("hillclimb.cli._REAP_POLL_S", 0)
+        monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config)
+        monkeypatch.setattr("hillclimb.cli.experiment._REAP_POLL_S", 0)
         monkeypatch.chdir(tmp_path)
         return spec
 

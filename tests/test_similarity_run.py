@@ -364,7 +364,7 @@ class TestCliAutoDetect:
 
         for search_id, arm in (("p", "greedy"), ("p-2", "gepa")):
             _experiment_search(config.paths.runs_dir, "r1", search_id, arm, seed=True)
-        monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
+        monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config)
         launched = self._capture(monkeypatch)
         result = CliRunner().invoke(app, ["similarity", "r1/p"])
         assert result.exit_code == 0, result.output
@@ -390,7 +390,7 @@ class TestCliAutoDetect:
 
         for search_id, arm in (("p", "greedy"), ("p-2", "gepa")):
             _experiment_search(config.paths.runs_dir, "r1", search_id, arm, seed=False)
-        monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
+        monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config)
         launched = self._capture(monkeypatch)
         for argv in (["similarity", "r1/p-2"], ["similarity", "reference", "r1/p-2"]):
             result = CliRunner().invoke(app, argv)

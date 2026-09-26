@@ -113,7 +113,7 @@ def test_climb_curves_groups_by_problem_oldest_first(tmp_path):
 
 
 def test_demo_preflight_names_the_missing_tool(monkeypatch):
-    from hillclimb.cli import _demo_preflight
+    from hillclimb.cli.run import _demo_preflight
     import typer
 
     monkeypatch.setattr("shutil.which", lambda name: None if name == "claude" else "/usr/bin/x")
@@ -135,8 +135,7 @@ def test_demo_launches_parallel_detached_searches(tmp_path, monkeypatch):
         launched.append((cmd, kwargs))
         return FakeProc()
 
-    monkeypatch.setattr("hillclimb.cli._demo_preflight", lambda backend: None)
-    monkeypatch.setattr("hillclimb.cli.ensure_runtime_venv", lambda *a, **k: Path("/py"))
+    monkeypatch.setattr("hillclimb.cli.run._demo_preflight", lambda backend: None)
     monkeypatch.setattr("subprocess.Popen", fake_popen)
     with pytest.raises(SystemExit) as exc:
         cli_main([
@@ -215,7 +214,6 @@ def test_run_parallel_searches_spawns_detached_engines(tmp_path, monkeypatch):
     class FakeProc:
         pid = 4242
 
-    monkeypatch.setattr("hillclimb.cli.ensure_runtime_venv", lambda *a, **k: Path("/py"))
     monkeypatch.setattr("subprocess.Popen", lambda cmd, **kw: launched.append(cmd) or FakeProc())
     with pytest.raises(SystemExit) as exc:
         cli_main([
@@ -243,7 +241,7 @@ def test_stop_all_reaches_every_running_search(tmp_path, config, monkeypatch):
     b = _search(runs, "r2", "demo-2", [])
     for s in (a, b):
         write_status(s, SearchStatus(search_id="p", state="running", pid=os.getpid()))
-    monkeypatch.setattr("hillclimb.cli.load_config", lambda **kw: config)
+    monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config)
     with pytest.raises(SystemExit) as exc:
         cli_main(["stop", "--all"])
     assert exc.value.code == 0
@@ -470,7 +468,7 @@ def test_problem_get_asks_before_creating_a_hillclimb_dir(tmp_path, monkeypatch)
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
     monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
-    monkeypatch.setattr(cli, "_stdin_is_tty", lambda: True)
+    monkeypatch.setattr("hillclimb.cli.problem._stdin_is_tty", lambda: True)
     result = CliRunner().invoke(cli.app, ["problem", "get", "golomb-20"], input="n\n")
     assert result.exit_code == 1 and "hillclimb init" in result.output
     assert not (tmp_path / "hillclimb").exists()
