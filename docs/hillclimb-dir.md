@@ -105,7 +105,7 @@ by hand.
 `run.yaml`, `search.yaml`, `journal.jsonl`, `status.json` and `control/` are
 the *file backend's* representation of a search's records. The engine, the
 CLI and the TUIs all read and write those records through one abstraction —
-the **DataStore** (`src/hillclimb/store.py`) — and `hillclimb/config.yaml`
+the **DataStore** (`src/hillclimb/harness/store.py`) — and `hillclimb/config.yaml`
 picks the backend:
 
 ```yaml

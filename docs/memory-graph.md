@@ -3,13 +3,13 @@
 Status: **implemented** (2026-07-10, branch `memory-graph`). This document is
 the design rationale; the shipped surface is:
 
-- `claims.py` — Claim/Entity/Concept schemas, the post-search distill pass
+- `modules/memory/claims.py` — Claim/Entity/Concept schemas, the post-search distill pass
   (`prompts/distill.md`, routing key `distill`, default haiku), registries
   `knowledge/entities.yaml` + `knowledge/concepts.yaml`, `render_claims`.
-- `graph.py` — `build_graph` (deterministic fold), `graph_at(t)`,
+- `modules/memory/graph.py` — `build_graph` (deterministic fold), `graph_at(t)`,
   supersession rules, pinned networkx layout, `load_or_build_graph`,
   `retrieve_claims` (graph-walk retrieval).
-- `graphview.py` — the interactive TUI screen (`g` in watch,
+- `tui/graphview.py` — the interactive TUI screen (`g` in watch,
   `hillclimb knowledge graph`): a true-3D scene rendered by plotui
   (Rust rasterizer → Kitty pixel graphics: kitty/Ghostty via placeholders,
   iTerm2 ≥ 3.5/WezTerm via direct placement, a support notice elsewhere;
@@ -43,7 +43,7 @@ cards — cards stay immutable once written.
   `SearchMeta.learning_enabled` and compares arms on the selected
   candidate's holdout (val fallback) with per-pair winners and a win-rate
   verdict. This is the measuring stick everything below answers to.
-- **Consolidation + playbooks** (`consolidate.py`, manual
+- **Consolidation + playbooks** (`modules/memory/consolidate.py`, manual
   `hillclimb knowledge consolidate`): mechanically lifts claims asserted in
   2+ families up the concept hierarchy (evidence union, mean of MEASURED
   confidences, deterministic ids, `generalizes` edges in the graph), then
@@ -52,7 +52,7 @@ cards — cards stay immutable once written.
   inject a matching playbook INSTEAD of the raw claims block
   (`learning.playbooks`), and credit flows to the playbook's
   `source_claims`, keeping the loop closed through the rewrite.
-- **Skill library** (`skills.py`): scored non-baseline winners are harvested
+- **Skill library** (`modules/memory/skills.py`): scored non-baseline winners are harvested
   verbatim into `knowledge/skills/<family>--<run-ref>/` (2 best per family,
   direction-aware). The next search's FIRST draft gets the best match
   (same-family by score, else concept-sibling by recency) as
@@ -69,7 +69,7 @@ cards — cards stay immutable once written.
 Claims answer for their advice. When a search's draft prompt carries
 distilled claims, the injected claim ids are recorded
 (`search_dir/injected_claims.json`, unioned across resumes); when the search
-finishes, all of them share one outcome reward (`credit.py`): **1.0** if the
+finishes, all of them share one outcome reward (`modules/memory/credit.py`): **1.0** if the
 search beat the best previously recorded score on the same problem (first
 search on a problem: beat its own baseline candidate), **0.25** scored but
 no record, **0.0** nothing scored — the routing bandit's scale. Each search
@@ -94,7 +94,7 @@ watch TUI.
 
 ## Where we are
 
-Knowledge today (`src/hillclimb/knowledge.py`, cards under
+Knowledge today (`src/hillclimb/modules/memory/knowledge.py`, cards under
 `hillclimb/knowledge/<family>/`) is purely statistical: operator stats, top
 approaches with libraries, failure modes. Retrieval is "most recent N cards by
 problem family" rendered as a prose block into operator prompts. There is no

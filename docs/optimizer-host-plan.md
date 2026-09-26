@@ -1,5 +1,8 @@
 # The optimizer-host abstraction
 
+*Paths as written at the time: `search_strategy.py`, `policy.py`, `evaluation.py` and friends moved in the 2026-09 package-layout refactor — see `docs/package-layout-plan.md`.*
+
+
 This document is the architecture plan that generalizes what
 `docs/gepa-integration-plan.md` builds for GEPA into hillclimb's durable
 integration contract. It is a design brief, not an implementation task list:
