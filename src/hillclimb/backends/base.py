@@ -39,6 +39,11 @@ class OperatorResult(BaseModel):
     quota_start: dict | None = None
     quota_end: dict | None = None
     duration_s: float = 0.0
+    # CPU seconds the agent process tree burned on this machine — the
+    # agent itself plus every tool it ran (tests, scripts); the model's own
+    # inference happens elsewhere and is what `total_tokens` measures. None
+    # where the platform cannot say.
+    cpu_s: float | None = None
     raw_output_path: str | None = None
     # rate_limited | out_of_credits | aborted | timeout | error — None when ok
     error_kind: str | None = None

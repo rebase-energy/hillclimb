@@ -1058,6 +1058,7 @@ class Harness:
             quota_start=result.quota_start,
             quota_end=result.quota_end,
             agent_duration_s=result.duration_s,
+            cpu_s=result.cpu_s,
             error_kind=result.error_kind,
         )
 

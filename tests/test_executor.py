@@ -244,12 +244,13 @@ def test_cpu_captured(executor, tmp_path):
 
 def test_killed_child_reports_cpu(executor, tmp_path):
     """The kill path reaps through wait4 too: a timed-out run still reports
-    cpu_s and keeps the negative-signal returncode. Only the direct child's
-    CPU survives a SIGKILL — its unreaped grandchildren (here the solution
-    process the verifier wrapper spawned) are the documented loss."""
+    cpu_s and keeps the negative-signal returncode — and the CPU of the
+    grandchildren the kill orphans (here the solution process the verifier
+    wrapper spawned, spinning until the deadline) is sampled before the
+    kill, so it counts."""
     result = run_script(executor, tmp_path, "while True:\n    pass", timeout=2)
     assert result.timed_out
     assert not result.ok
     assert result.returncode is not None and result.returncode < 0
     assert result.cpu_s is not None
-    assert result.cpu_s >= 0.0
+    assert result.cpu_s >= 0.5

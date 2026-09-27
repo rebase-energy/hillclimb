@@ -63,7 +63,7 @@ set -euo pipefail
 "$HILLCLIMB_PYTHON" "$HILLCLIMB_SOLUTION"   # writes ./submission.csv
 
 rm -f "$HILLCLIMB_RESULT"                   # only the scorer may score
-exec "$HILLCLIMB_PYTHON" problem/verify.py  # writes $HILLCLIMB_RESULT
+"$HILLCLIMB_PYTHON" problem/verify.py       # writes $HILLCLIMB_RESULT
 ```
 
 | | |

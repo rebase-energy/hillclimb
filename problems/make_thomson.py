@@ -137,7 +137,7 @@ set -euo pipefail
 # trust boundary: only the scorer may report a score, so anything the
 # solution left behind is discarded before the scorer runs
 rm -f "$HILLCLIMB_RESULT"
-exec "$HILLCLIMB_PYTHON" problem/verify.py
+"$HILLCLIMB_PYTHON" problem/verify.py
 """
 
 

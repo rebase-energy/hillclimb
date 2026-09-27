@@ -105,7 +105,13 @@ places they are imported.
 - Concurrency: `concurrency.parallel_operators` per search, `concurrency.machine_max_operators`
   across the machine (flock slots in `~/.cache/hillclimb/agent-slots/`, default
   `min(8, cores-2)`); verifier and agent envs are single-threaded
-  (`executor.SINGLE_THREAD_ENV`, parent values win). `hillclimb ps` lists the
+  (`executor.SINGLE_THREAD_ENV`, parent values win). CPU accounting:
+  `harness/procs.py` (`Reaper`) reaps every child the harness spawns — verifier
+  runs and agent calls — through `os.wait4`, sampling live descendants with `ps`
+  before a group kill; `OperatorResult.cpu_s` → `BackendInfo.cpu_s` is the agent
+  call's local CPU and the chart's cost fold adds it to the trials'. Starter
+  verifiers call their scorer plainly, never `exec` it (macOS drops the shell's
+  child CPU at an exec; `tests/test_verifier_scripts.py`). `hillclimb ps` lists the
   engine process trees; `stop --all` reaps engines whose hillclimb dir was deleted; `reset` kills only the engines pinned to this folder's hillclimb dir, then deletes the dir
 - Operator backends: `claude-code`, `codex`, `pi` and `dummy`. Pi supports
   `routing.<op>.sampling` (numeric provider fields), with action → operator →

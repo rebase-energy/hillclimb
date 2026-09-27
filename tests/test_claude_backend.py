@@ -259,3 +259,17 @@ def test_error_result_keeps_usage(tmp_path: Path):
     assert result.total_tokens == 800
     assert result.cost_usd == 0.05
     assert result.num_turns == 2
+
+
+def test_agent_cpu_is_reported(tmp_path: Path):
+    """The call's CPU — the agent process and what it ran — rides along on
+    the result, read at reaping through wait4."""
+    burning = STUB_OK.replace(
+        "sys.stdin.read()\n",
+        "sys.stdin.read()\nimport time\nt = time.process_time()\nwhile time.process_time() - t < 0.3: pass\n",
+        1,
+    )
+    backend = ClaudeCodeBackend(claude_bin=make_stub(tmp_path, burning))
+    result = backend.invoke(make_request(tmp_path))
+    assert result.ok
+    assert result.cpu_s is not None and result.cpu_s >= 0.2

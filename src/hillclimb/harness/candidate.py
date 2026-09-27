@@ -51,6 +51,9 @@ class BackendInfo(BaseModel):
     quota_start: dict | None = None
     quota_end: dict | None = None
     agent_duration_s: float | None = None
+    # local CPU seconds of the agent call (see OperatorResult.cpu_s); None
+    # on journals predating the field
+    cpu_s: float | None = None
     error_kind: str | None = None
 
 

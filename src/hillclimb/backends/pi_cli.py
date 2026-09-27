@@ -23,10 +23,10 @@ from hillclimb.backends.claude_code import (
     PID_FILE,
     RATE_LIMIT_MARKERS,
     STREAM_FILE,
-    _kill_group,
     usage_total_tokens,
 )
 from hillclimb.harness.pricing import cost_usd
+from hillclimb.harness.procs import Reaper
 
 
 SAMPLING_EXTENSION = Path(__file__).with_name("pi_ext") / "hillclimb-sampling.ts"
@@ -324,6 +324,7 @@ class PiCliBackend:
         aborted = False
         spawn_error = ""
         proc: subprocess.Popen | None = None
+        reaper: Reaper | None = None
         reader: _PiStreamReader | None = None
 
         try:
@@ -352,6 +353,7 @@ class PiCliBackend:
                 except OSError as exc:
                     spawn_error = str(exc)
                 if proc is not None:
+                    reaper = Reaper(proc)  # reaps through wait4: the call's CPU rides along
                     pid_path.write_text(str(proc.pid))
                     reader = _PiStreamReader(proc.stdout, stream_path, request.model)
                     reader.start()
@@ -361,22 +363,19 @@ class PiCliBackend:
                     except BrokenPipeError:
                         pass
                     deadline = time.monotonic() + request.timeout_s
-                    while proc.poll() is None:
-                        try:
-                            proc.wait(timeout=1.0)
-                        except subprocess.TimeoutExpired:
-                            if self.abort is not None and self.abort.is_set():
-                                aborted = True
-                                _kill_group(proc)
-                                break
-                            if time.monotonic() >= deadline:
-                                timed_out = True
-                                _kill_group(proc)
-                                break
+                    while reaper.wait(timeout=1.0) is None:
+                        if self.abort is not None and self.abort.is_set():
+                            aborted = True
+                            reaper.kill_group()
+                            break
+                        if time.monotonic() >= deadline:
+                            timed_out = True
+                            reaper.kill_group()
+                            break
         finally:
             pid_path.unlink(missing_ok=True)
-            if proc is not None and proc.poll() is None:
-                _kill_group(proc)
+            if reaper is not None and reaper.poll() is None:
+                reaper.kill_group()
             if reader is not None:
                 reader.join(timeout=5)
 
@@ -393,7 +392,11 @@ class PiCliBackend:
                 }
             )
         )
-        common: dict = {"duration_s": duration, "raw_output_path": str(raw_path)}
+        common: dict = {
+            "duration_s": duration,
+            "raw_output_path": str(raw_path),
+            "cpu_s": reaper.cpu_s if reaper is not None else None,
+        }
         if reader is not None:
             token_usage = {key: value for key, value in reader.usage.items() if value}
             reported_cost = reader.cost_usd

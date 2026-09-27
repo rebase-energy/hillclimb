@@ -22,10 +22,10 @@ from hillclimb.backends.claude_code import (
     PID_FILE,
     RATE_LIMIT_MARKERS,
     STREAM_FILE,
-    _kill_group,
     usage_total_tokens,
 )
 from hillclimb.harness.candidate import utcnow
+from hillclimb.harness.procs import Reaper
 from hillclimb.harness.pricing import cost_usd
 
 
@@ -316,6 +316,7 @@ class CodexCliBackend:
         spawn_error = ""
         reader: _CodexStreamReader | None = None
         proc: subprocess.Popen | None = None
+        reaper: Reaper | None = None
 
         try:
             child_env = codex_env(self.auth)
@@ -344,6 +345,7 @@ class CodexCliBackend:
                     except OSError as exc:
                         spawn_error = str(exc)
                     if proc is not None:
+                        reaper = Reaper(proc)  # reaps through wait4: the call's CPU rides along
                         pid_path.write_text(str(proc.pid))
                         reader = _CodexStreamReader(proc.stdout, stream_path, request.model)
                         reader.start()
@@ -355,31 +357,28 @@ class CodexCliBackend:
                         deadline = time.monotonic() + request.timeout_s
                         startup_deadline = min(deadline, time.monotonic() + 15)
                         while (
-                            proc.poll() is None
+                            reaper.poll() is None
                             and not reader.started.wait(timeout=0.1)
                             and time.monotonic() < startup_deadline
                         ):
                             if self.abort is not None and self.abort.is_set():
                                 aborted = True
-                                _kill_group(proc)
+                                reaper.kill_group()
                                 break
-                if proc is not None:
-                    while proc.poll() is None:
-                        try:
-                            proc.wait(timeout=1.0)
-                        except subprocess.TimeoutExpired:
-                            if self.abort is not None and self.abort.is_set():
-                                aborted = True
-                                _kill_group(proc)
-                                break
-                            if time.monotonic() >= deadline:
-                                timed_out = True
-                                _kill_group(proc)
-                                break
+                if reaper is not None:
+                    while reaper.wait(timeout=1.0) is None:
+                        if self.abort is not None and self.abort.is_set():
+                            aborted = True
+                            reaper.kill_group()
+                            break
+                        if time.monotonic() >= deadline:
+                            timed_out = True
+                            reaper.kill_group()
+                            break
         finally:
             pid_path.unlink(missing_ok=True)
-            if proc is not None and proc.poll() is None:
-                _kill_group(proc)
+            if reaper is not None and reaper.poll() is None:
+                reaper.kill_group()
             if reader is not None:
                 reader.join(timeout=5)
 
@@ -396,7 +395,11 @@ class CodexCliBackend:
             )
         )
 
-        common = {"duration_s": duration, "raw_output_path": str(raw_path)}
+        common = {
+            "duration_s": duration,
+            "raw_output_path": str(raw_path),
+            "cpu_s": reaper.cpu_s if reaper is not None else None,
+        }
         if spawn_error:
             return OperatorResult(
                 ok=False,

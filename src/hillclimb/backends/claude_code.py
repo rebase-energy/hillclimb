@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 import os
-import signal
 import subprocess
 import threading
 import time
 from pathlib import Path
 
+from hillclimb.harness.procs import Reaper
 from hillclimb.harness import quota
 from hillclimb.harness.candidate import utcnow
 from hillclimb.backends.base import OperatorRequest, OperatorResult
@@ -119,14 +119,6 @@ class _StreamReader(threading.Thread):
                         str(message.get("result", ""))
                     ):
                         self.rate_limited = True
-
-
-def _kill_group(proc: subprocess.Popen) -> None:
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
-    proc.wait()
 
 
 # what counts as a token in the claude stream: the one definition the
@@ -245,6 +237,7 @@ class ClaudeCodeBackend:
         aborted = False
         reader: _StreamReader | None = None
         proc: subprocess.Popen | None = None
+        reaper: Reaper | None = None
         try:
             with stderr_path.open("w") as stderr_sink:
                 proc = subprocess.Popen(
@@ -257,6 +250,7 @@ class ClaudeCodeBackend:
                     env=subscription_env(self.auth),
                     start_new_session=True,  # own process group → killable as a unit
                 )
+                reaper = Reaper(proc)  # reaps through wait4: the call's CPU rides along
                 pid_path.write_text(str(proc.pid))
                 reader = _StreamReader(proc.stdout, stream_path)
                 reader.start()
@@ -266,23 +260,20 @@ class ClaudeCodeBackend:
                 except BrokenPipeError:
                     pass  # process died instantly; returncode tells the story
                 deadline = time.monotonic() + request.timeout_s
-                while proc.poll() is None:
-                    try:
-                        proc.wait(timeout=1.0)
-                    except subprocess.TimeoutExpired:
-                        if self.abort is not None and self.abort.is_set():
-                            aborted = True
-                            _kill_group(proc)
-                            break
-                        if time.monotonic() >= deadline:
-                            timed_out = True
-                            _kill_group(proc)
-                            break
+                while reaper.wait(timeout=1.0) is None:
+                    if self.abort is not None and self.abort.is_set():
+                        aborted = True
+                        reaper.kill_group()
+                        break
+                    if time.monotonic() >= deadline:
+                        timed_out = True
+                        reaper.kill_group()
+                        break
         finally:
             pid_path.unlink(missing_ok=True)
-            if proc is not None and proc.poll() is None:
+            if reaper is not None and reaper.poll() is None:
                 # e.g. StopRequested raised by a signal handler while in wait()
-                _kill_group(proc)
+                reaper.kill_group()
             if reader is not None:
                 reader.join(timeout=5)
 
@@ -310,6 +301,7 @@ class ClaudeCodeBackend:
             "quota_start": quota_start,
             "quota_end": quota.snapshot() if self.auth != "api-key" else None,
             "model_id": reader.model_id if reader else None,
+            "cpu_s": reaper.cpu_s if reaper is not None else None,
         }
         if aborted:
             return OperatorResult(

@@ -39,7 +39,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import signal
 import subprocess
 import threading
 import time
@@ -47,6 +46,8 @@ from pathlib import Path
 from typing import IO, NamedTuple, Protocol
 
 from pydantic import BaseModel
+
+from hillclimb.harness.procs import Reaper
 
 RESULT_FILE = "eval_result.json"
 
@@ -292,32 +293,6 @@ class RunResult(NamedTuple):
     cpu_s: float | None
 
 
-def _reap(proc: subprocess.Popen) -> float | None:
-    """Blocking reap of the direct child via os.wait4, returning its CPU
-    seconds. Sets proc.returncode by hand so subprocess never re-waitpids a
-    pid the kernel has already recycled."""
-    if not hasattr(os, "wait4") or proc.returncode is not None:
-        proc.wait()
-        return None
-    try:
-        _pid, status, ru = os.wait4(proc.pid, 0)
-    except ChildProcessError:  # someone else reaped it — cpu time is gone
-        proc.wait()
-        return None
-    proc.returncode = os.waitstatus_to_exitcode(status)
-    return ru.ru_utime + ru.ru_stime
-
-
-def _kill_group(proc: subprocess.Popen) -> float | None:
-    """SIGKILL the whole process group, then reap the direct child. Returns
-    its CPU seconds (None where unavailable)."""
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    return _reap(proc)
-
-
 def run_logged(
     cmd: list[str],
     candidate_dir: Path,
@@ -330,12 +305,10 @@ def run_logged(
     """Run cmd in its own process group with logs redirected; kill the whole
     group on timeout or abort so stray workers don't linger.
 
-    The child is reaped with os.wait4 so its CPU time (user+system) rides
-    along in the result. Per-pid wait4 — not RUSAGE_CHILDREN deltas, which
-    are process-wide and would mix the concurrent trials and operators this
-    engine runs. Grandchildren count only when the child reaps them; the
-    orphans of a killed group are lost. Platforms without os.wait4 (Windows)
-    fall back to a plain wait and report cpu_s=None.
+    The child is reaped through `procs.Reaper`, so its CPU time (user+system,
+    with everything it waited for and — at a kill — the descendants the kill
+    orphans) rides along in the result; cpu_s is None where the platform
+    cannot say.
     """
     proc = subprocess.Popen(
         cmd,
@@ -345,29 +318,14 @@ def run_logged(
         env=env,
         start_new_session=True,
     )
+    reaper = Reaper(proc)
     deadline = time.monotonic() + timeout_s
-    if not hasattr(os, "wait4"):
-        while True:
-            try:
-                proc.wait(timeout=1.0)
-                return RunResult(proc.returncode, False, None)
-            except subprocess.TimeoutExpired:
-                if (abort is not None and abort.is_set()) or time.monotonic() >= deadline:
-                    _kill_group(proc)
-                    return RunResult(proc.returncode, True, None)
     while True:
-        try:
-            pid, status, ru = os.wait4(proc.pid, os.WNOHANG)
-        except ChildProcessError:  # reaped elsewhere — exit status and cpu lost
-            proc.wait()
-            return RunResult(proc.returncode, False, None)
-        if pid == proc.pid:
-            proc.returncode = os.waitstatus_to_exitcode(status)
-            return RunResult(proc.returncode, False, ru.ru_utime + ru.ru_stime)
+        if reaper.wait(timeout=0.2) is not None:
+            return RunResult(proc.returncode, False, reaper.cpu_s)
         if (abort is not None and abort.is_set()) or time.monotonic() >= deadline:
-            cpu = _kill_group(proc)
-            return RunResult(proc.returncode, True, cpu)
-        time.sleep(0.2)
+            reaper.kill_group()
+            return RunResult(proc.returncode, True, reaper.cpu_s)
 
 
 class CommandExecutor:
