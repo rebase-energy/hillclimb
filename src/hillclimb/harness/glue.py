@@ -92,6 +92,30 @@ def build_operators(config: Config, search_dir=None) -> OperatorSet:
     return OperatorSet(entries)
 
 
+def build_graph_module(config: Config, search_dir=None, log=None):
+    """The climber's graph module (`graph:` in its manifest), unless the user
+    named one (`climber.graph`: a registry name, a .py file relative to the
+    folder holding the hillclimb dir, or module:Class). Outside a search —
+    `hillclimb knowledge …`, the graph TUI — there is no search_dir and the
+    manifest is `climber.ref`'s; a climber that will not load there falls
+    back to the built-in module, so reading memory never depends on it."""
+    from hillclimb.climber import ClimberLoadError
+    from hillclimb.modules.memory.base import DEFAULT_GRAPH
+    from hillclimb.modules.memory.graphs import get_graph
+    from hillclimb.modules.policies import policy_base_dir
+
+    if config.climber.graph is not None:  # the user named one: it wins
+        return get_graph(config.climber.graph, base_dir=policy_base_dir(config))
+    try:
+        return search_climber(config, search_dir).graph_module()
+    except ClimberLoadError as exc:
+        if search_dir is not None:
+            raise
+        if log is not None:
+            log(f"graph: {exc}; using {DEFAULT_GRAPH}")
+        return get_graph(DEFAULT_GRAPH)
+
+
 def effective_memory(config: Config, search_dir=None) -> str:
     """`files` or `none`: the user's `climber.memory`, else the
     manifest's — and always `none` when learning is switched off."""

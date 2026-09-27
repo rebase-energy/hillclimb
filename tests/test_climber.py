@@ -164,6 +164,10 @@ def test_identity_is_the_tree_and_ignores_caches(tmp_path):
         ("policy: greedy\n", "name a file"),
         ("policy: operators.py\n", "exactly one policy class"),
         ("policy: policy.py\noperators: [operators.py:Nope]\n", "defines no Nope"),
+        ("policy: policy.py\ngraph: nope.py\n", "nope.py is not a file inside the climber's directory"),
+        ("policy: policy.py\ngraph: operators.py\n", "exactly one GraphModule subclass"),
+        ("policy: policy.py\ngraph: operators.py:Cross\n", "`graph: operators.py:Cross` is not a GraphModule subclass"),
+        ("policy: policy.py\ngraph: nowhere.mod:X\n", "`graph: nowhere.mod:X` cannot be imported"),
     ],
 )
 def test_a_bad_manifest_names_the_file_and_the_fix(tmp_path, manifest, message):
@@ -172,6 +176,7 @@ def test_a_bad_manifest_names_the_file_and_the_fix(tmp_path, manifest, message):
         climber = load_climber(str(root))
         climber.build_loop()
         climber.operator_set()
+        climber.graph_module()
     assert "bad" in str(exc.value)
 
 
@@ -357,3 +362,38 @@ def test_a_search_snapshot_with_the_old_memory_spelling_still_resumes(task, conf
     assert load_snapshot(search_dir, name="greedy").manifest.memory == "files"
     assert effective_memory(config, search_dir) == "files"
     assert tree_sha256(search_dir / "climber") == before  # resume never rewrites the snapshot
+
+
+GRAPH_PY = """
+from hillclimb.sdk import GraphModule, GraphNode, KnowledgeGraph
+
+
+class Notes(GraphModule):
+    name = "notes"
+
+    def build(self, knowledge_dir, previous=None):
+        return KnowledgeGraph(nodes=[GraphNode(id="note:a", type="note", label="a")])
+"""
+
+
+def test_a_climber_brings_its_own_graph_module(task, config, tmp_path):
+    """`graph:` names the module that indexes the memory: the built-in by
+    name, or a file in the climber dir — which the snapshot then carries."""
+    from hillclimb import api
+    from hillclimb.climber import load_snapshot
+    from hillclimb.harness.run import RunMeta
+
+    assert load_climber("greedy").graph_module().name == "knowledge-graph"  # the default
+    root = write_climber(tmp_path / "mine", manifest="policy: policy.py\ngraph: graph.py\n")
+    (root / "graph.py").write_text(GRAPH_PY)
+    module = load_climber(str(root)).graph_module()
+    assert module.name == "notes" and module.key.startswith("graph.py#")
+    assert [n.id for n in module.build(tmp_path).nodes] == ["note:a"]
+    explicit = write_climber(tmp_path / "explicit", manifest="policy: policy.py\ngraph: knowledge-graph\n")
+    assert load_climber(str(explicit)).graph_module().name == "knowledge-graph"
+
+    config.climber.ref = str(root)
+    run_dir = api.create_run(config, RunMeta(run_id="r1", name="r1", kind="problem", target="t", problem_ids=[task.problem_id]))
+    search_dir = api.create_search(config, task, run_dir, "r1", 600)
+    assert (search_dir / "climber" / "graph.py").is_file()
+    assert load_snapshot(search_dir, name="mine").graph_module().name == "notes"

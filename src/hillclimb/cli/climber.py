@@ -218,9 +218,12 @@ def climber_check(
         raise typer.BadParameter(f"climber file not found: {source}")
     try:
         loaded = load_climber(name, base_dir)
-    except ClimberLoadError as exc:
+        loaded.graph_module()  # `graph:` must resolve too, before an agent hour is spent
+    except (ClimberLoadError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(2) from exc
+    if loaded.root is not None and "memory: knowledge-graph" in (loaded.root / "climber.yaml").read_text():
+        typer.echo("note: `memory: knowledge-graph` is now `memory: files` (the old spelling still loads)", err=True)
     if loaded.is_loop:
         typer.echo(
             f"{name} brings its own SearchLoop; "

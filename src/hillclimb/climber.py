@@ -42,7 +42,7 @@ from hillclimb._moved import modernize
 from hillclimb.harness.loop import PolicyLoop, SearchLoop
 from hillclimb.modules.operators import Operator
 from hillclimb.modules.operators.builtin import BUILTIN_OPERATORS
-from hillclimb.modules.memory.base import MemoryKind
+from hillclimb.modules.memory.base import DEFAULT_GRAPH, GraphModule, MemoryKind
 
 MANIFEST = "climber.yaml"
 BUNDLED_DIR = Path(__file__).parent / "climbers"
@@ -72,6 +72,9 @@ class ClimberManifest(BaseModel):
     # optionally with params: `- draft: {retrieval: true}`
     operators: list[str | dict[str, dict[str, Any]]] = Field(default_factory=lambda: list(DEFAULT_OPERATORS))
     memory: MemoryKind = "files"  # `knowledge-graph` (pre-0.4) still loads
+    # the graph module over the memory: a registry name (`knowledge-graph`),
+    # `file.py[:Class]` in the climber dir, or `module:Class`
+    graph: str = DEFAULT_GRAPH
     tuner: str = "random"
     tuner_params: dict[str, Any] = Field(default_factory=dict)
     similarity: list[str] = Field(default_factory=list)
@@ -191,6 +194,27 @@ class Climber:
             entries.setdefault(extra.name, (extra, {}))  # a one-file climber's own operators
         return OperatorSet(entries)
 
+    def graph_module(self) -> GraphModule:
+        """The climber's graph module (`graph:`): the built-in by registry
+        name, a file in the climber's directory (so it travels with the
+        snapshot), or an importable class — keyed so that an edited file is
+        a different builder and graph.json is rebuilt."""
+        from hillclimb.modules.memory.graphs import get_graph, graph_key, registered_graphs
+
+        ref = self.manifest.graph
+        if ref in registered_graphs():
+            return get_graph(ref)
+        target = self._resolve(ref, "graph")
+        if not (inspect.isclass(target) and issubclass(target, GraphModule)):
+            raise ClimberLoadError(f"{self.source}: `graph: {ref}` is not a GraphModule subclass")
+        module = target()
+        file_name = ref.partition(":")[0] if (ref.endswith(".py") or ".py:" in ref) else None
+        path = None if file_name is None else (self.source if self.root is None else self.root / file_name)
+        module.key = graph_key(ref, path)
+        if not module.name:
+            module.name = Path(file_name).stem if file_name else target.__name__  # type: ignore[misc]
+        return module
+
     def lint_prompts(self) -> list[str]:
         """Problems with the climber's prompts dir (empty when clean): a
         harness-owned template shadowed, or a token nothing fills."""
@@ -217,7 +241,7 @@ class Climber:
                 if target is None:
                     raise ClimberLoadError(f"{self.source}: `{key}: {ref}` — {file_name} defines no {attr}")
                 return target
-            base = SearchLoop if key == "loop" else None
+            base = SearchLoop if key == "loop" else GraphModule if key == "graph" else None
             return _only_class(module, key, self.source, base)
         if ":" in ref:
             module_name, _, attr = modernize(ref).partition(":")  # a ref recorded before a move
@@ -373,6 +397,7 @@ def tree_sha256(root: Path) -> str:
 
 # --- helpers ---
 
+GRAPH_ATTR = "KNOWLEDGE_GRAPH"  # names a file's graph module explicitly (graphs.GRAPH_ATTR)
 POLICY_ATTR = "POLICY"
 
 
@@ -388,13 +413,16 @@ def _classes(module: types.ModuleType, base: type) -> list[type]:
 
 
 def _only_class(module: types.ModuleType, key: str, source: Path, base: type | None):
-    """The one policy (duck-typed: propose + observe), or the one SearchLoop,
-    a file defines; `POLICY = <class or factory>` names it explicitly."""
+    """The one policy (duck-typed: propose + observe), the one SearchLoop,
+    or the one GraphModule a file defines; `POLICY = <class or factory>` /
+    `KNOWLEDGE_GRAPH = <class>` names it explicitly."""
     explicit = getattr(module, POLICY_ATTR, None)
     if key == "policy" and explicit is not None:
         if not callable(explicit):
             raise ClimberLoadError(f"{POLICY_ATTR} in {source} is not a class or factory: {explicit!r}")
         return explicit
+    if key == "graph" and getattr(module, GRAPH_ATTR, None) is not None:
+        return getattr(module, GRAPH_ATTR)
     if base is not None:
         found = _classes(module, base)
     else:
@@ -404,10 +432,11 @@ def _only_class(module: types.ModuleType, key: str, source: Path, base: type | N
             and callable(getattr(obj, "propose", None)) and callable(getattr(obj, "observe", None))
         ]
     if len(found) != 1:
-        kind = "SearchLoop subclass" if base is not None else "policy class (propose + observe)"
+        kind = f"{base.__name__} subclass" if base is not None else "policy class (propose + observe)"
         raise ClimberLoadError(
             f"{source} must define exactly one {kind} (found {[c.__name__ for c in found]})"
             + (f" or set {POLICY_ATTR} = <class or factory>" if key == "policy" else "")
+            + (f" or set {GRAPH_ATTR} = <class>" if key == "graph" else "")
         )
     return found[0]
 

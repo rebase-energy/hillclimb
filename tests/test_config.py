@@ -304,3 +304,21 @@ def test_the_users_operator_overlay_reaches_the_operators():
     config.climber.memory = None
     config.learning.enabled = False
     assert effective_memory(config) == "none"
+
+
+def test_the_users_graph_module_wins_and_reading_memory_survives_a_broken_climber(tmp_path):
+    from hillclimb.harness.glue import build_graph_module
+
+    config = Config()
+    assert build_graph_module(config).name == "knowledge-graph"  # the manifest's default
+    config.climber.graph = "hillclimb.modules.memory.graph:KnowledgeGraphBuilder"
+    assert build_graph_module(config).key == "hillclimb.modules.memory.graph:KnowledgeGraphBuilder"
+    config.climber.graph = "nope"
+    with pytest.raises(ValueError, match="unknown graph module 'nope' \\(available: knowledge-graph"):
+        build_graph_module(config)
+    # outside a search, a climber that will not load falls back to the built-in
+    config = Config()
+    config.climber.ref = str(tmp_path / "missing.py")
+    notes = []
+    assert build_graph_module(config, log=notes.append).name == "knowledge-graph"
+    assert notes and "using knowledge-graph" in notes[0]

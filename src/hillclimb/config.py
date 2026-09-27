@@ -109,7 +109,7 @@ class ClimberConfig(BaseModel):
     climber.yaml, or one .py file — relative paths resolve from the folder
     holding the hillclimb dir. The rest are the manifest keys that are always
     the user's to change without copying the climber: its `params`, its
-    operators' params, its tuner, its memory."""
+    operators' params, its tuner, its memory, its graph module."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -120,6 +120,7 @@ class ClimberConfig(BaseModel):
     tuner: str | None = None  # None = the manifest's (random | optuna)
     tuner_params: dict = Field(default_factory=dict)
     memory: MemoryKind | None = None  # None = the manifest's; `knowledge-graph` still loads
+    graph: str | None = None  # None = the manifest's (a registry name, a .py file, or module:Class)
 
     @model_validator(mode="before")
     @classmethod
