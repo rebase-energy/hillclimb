@@ -385,14 +385,16 @@ class TestChartDetail:
         })()
         monkeypatch.setattr("hillclimb.tui.chart.themed_plot", lambda: plot)
         build_climb_plot(climb, {"OpenEvolve": 0.6})
-        assert lines[0] == ([0.0, 2.0], "OpenEvolve")
-        assert climb_plot_bounds(climb, {"OpenEvolve": 0.6})[0] == -0.1
+        # sampled at every slot, so the readout lists it beside any candidate
+        assert lines[0] == ([0.0, 1.0, 2.0], "OpenEvolve")
+        # the axis is flush with the floor: no room left of 0, 5% past the end
+        assert climb_plot_bounds(climb, {"OpenEvolve": 0.6})[:2] == (0.0, 2.1)
 
         # a placeholder floor never scored leaves the chart starting at 1
         unscored = [cand("c000", "baseline", t=0)] + candidates[1:]
         without = climb_from_searches([("s", unscored, None)])
         assert [e.x for e in without.events] == [1.0, 2.0] and without.origin == 1.0
-        assert climb_plot_bounds(without, {"OpenEvolve": 0.6})[0] == 0.95
+        assert climb_plot_bounds(without, {"OpenEvolve": 0.6})[:2] == (1.0, 2.05)
 
         # every search's floor lands at 0 when several searches fold into one climb
         twice = climb_from_searches([("a", candidates, None), ("b", [
@@ -454,12 +456,21 @@ class TestChartDetail:
         ]
         assert [options["name"] for _args, options in outside.scatters] == ["new best"]
         entries = climb_legend(climb, baselines)
+        # the search's own series first, then the references as a group
         assert [entry[0] for entry in entries] == [
-            "baseline", "OpenEvolve best", "AlphaEvolve best", "new best",
+            "new best", "baseline", "OpenEvolve best", "AlphaEvolve best",
         ]
-        # each entry carries its trace's glyph: reference lines and dots
+        # each entry carries its trace's glyph: reference lines and dots; the
+        # references open their own row under a dim heading
         rendered_legend = legend_text(entries).plain
         assert "─ baseline" in rendered_legend and "● new best" in rendered_legend
+        assert rendered_legend.splitlines() == [
+            "● new best",
+            "Benchmarks: ─ baseline   ─ OpenEvolve best   ─ AlphaEvolve best",
+        ]
+        # the hotkeys run on across the group, in legend order
+        numbered = legend_text(entries, interactive=True).plain
+        assert "1 ● new best" in numbered and "2 ─ baseline" in numbered
         wrapped = legend_text([
             ("attempt", (1, 2, 3)),
             ("best so far", (4, 5, 6)),

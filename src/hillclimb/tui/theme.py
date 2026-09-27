@@ -64,6 +64,27 @@ ScrollBar.renderer = WholeCellScrollBarRender
 HILLCLIMB_CSS = """
 Screen { background: $background; }
 
+/* Notifications wear the site's panel, not Textual's stock toast: the
+   plot readout's frame (a rounded rule in the neutral border grey on the
+   surface lift), hugging the message, no green bar. Only a warning or an
+   error colours the frame — status colours are read as meaning. */
+Toast {
+    width: auto;
+    max-width: 60%;
+    padding: 0 1;
+    margin-top: 1;
+    background: $surface;
+    color: $foreground;
+    border: round #2B3237;
+}
+Toast .toast--title { color: $primary; text-style: bold; }
+Toast.-information { border: round #2B3237; }
+Toast.-information .toast--title { color: $primary; }
+Toast.-warning { border: round $warning; }
+Toast.-warning .toast--title { color: $warning; }
+Toast.-error { border: round $error; }
+Toast.-error .toast--title { color: $error; }
+
 /* scrollbars: one cell wide, a crisp thumb on an invisible track */
 * {
     scrollbar-size-vertical: 1;
@@ -120,10 +141,21 @@ CYAN = (46, 230, 230)           # #2ee6e6 — --cyan
 
 def themed_plot():
     """A plotui Plot with the site's chrome. Falls back to plotui's own
-    palette on a build that predates `set_chrome`."""
+    palette on a build that predates `set_chrome`.
+
+    The canvas is painted opaque in PLOT_BG rather than left transparent:
+    the bands a screen draws around the plot (the chart's legend and axis
+    label) use the same colour, and only an opaque image guarantees the two
+    match — iTerm2 composites inline images over the window background, not
+    over the cells, so a transparent plot shows the terminal's own colour
+    beside a band Textual painted. A plotui without `canvas` keeps floating."""
     from plotui import Plot
 
     plot = Plot()
     if hasattr(plot, "set_chrome"):
-        plot.set_chrome(bg=PLOT_BG, frame=PLOT_FRAME, grid=PLOT_GRID, ink=PLOT_INK, ink_bright=PLOT_INK_BRIGHT)
+        chrome = dict(bg=PLOT_BG, frame=PLOT_FRAME, grid=PLOT_GRID, ink=PLOT_INK, ink_bright=PLOT_INK_BRIGHT)
+        try:
+            plot.set_chrome(canvas=PLOT_BG, **chrome)
+        except TypeError:  # predates the opaque canvas
+            plot.set_chrome(**chrome)
     return plot

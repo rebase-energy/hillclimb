@@ -309,6 +309,31 @@ def curves_origin(xs: list[float]) -> float:
     return 0.0 if any(x == 0.0 for x in xs) else 1.0
 
 
+def x_extent(origin: float, extent: float) -> tuple[float, float]:
+    """The candidate axis as drawn: flush with `origin` on the left — the
+    chart starts AT the floor or the first candidate, with no room to the
+    left of it — and plotui's usual 5% of the span past the last slot on the
+    right, so the newest mark never sits on the frame."""
+    right = max(origin + 1.0, extent)
+    return origin, right + (right - origin) * 0.05
+
+
+def _pin_x_extent(
+    plot: Plot, origin: float, extent: float, *, higher_is_better: bool = True
+) -> None:
+    """Apply `x_extent` to a plot that supports an explicit x range; an older
+    plotui keeps its padded autoscale. The hover readout names the x
+    coordinate `candidate` and ranks its rows best-first in the metric's
+    direction — hovering reads as the leaderboard of the climb against its
+    references (an older plotui says `x` and keeps trace order)."""
+    if hasattr(plot, "set_x_range"):
+        plot.set_x_range(x_extent(origin, extent))
+    if hasattr(plot, "set_readout_x_label"):
+        plot.set_readout_x_label("candidate")
+    if hasattr(plot, "set_readout_order"):
+        plot.set_readout_order("descending" if higher_is_better else "ascending")
+
+
 def step_points(xs: list[float], ys: list[float], extent: float | None = None) -> tuple[list[float], list[float]]:
     """Expand (x, y) samples into the points of a step plot: hold each y until
     the next x, rise there, and run flat to `extent` (or the last x). A
@@ -714,6 +739,16 @@ class ChartPlotWidget(PlotWidget):
     monochrome filter expects composited segments to carry a Style, so give
     only otherwise-unstyled segments a neutral one. This is invisible in a
     real colour terminal and keeps NO_COLOR/headless rendering valid.
+
+    The cells under the image carry no background of their own: the image
+    is placed below cell backgrounds (in both modes) so the annotation tags
+    can mask it, and a painted cell would hide the plot under it. iTerm2
+    extends each row's LAST cell background across the right window margin,
+    so a row of default-background cells paints that margin in the
+    profile's colour — a lighter stripe beside the opaque PLOT_BG canvas.
+    In direct mode (iTerm2) the last cell of each row therefore gets
+    PLOT_BG as an explicit background: it hides one column of blank canvas
+    at the plot's right edge and makes the margin match.
     """
 
     def __init__(
@@ -798,14 +833,27 @@ class ChartPlotWidget(PlotWidget):
         from textual.strip import Strip
 
         strip = super().render_line(y)
-        return Strip(
-            [
-                segment if segment.style is not None
-                else Segment(segment.text, Style(), segment.control)
-                for segment in strip
-            ],
-            strip.cell_length,
-        )
+        segments = [
+            segment if segment.style is not None
+            else Segment(segment.text, Style(), segment.control)
+            for segment in strip
+        ]
+        if self._mode == "direct":
+            from rich.color import Color
+
+            edge = Style(bgcolor=Color.from_rgb(*PLOT_BG))
+            for index in range(len(segments) - 1, -1, -1):
+                segment = segments[index]
+                if segment.control or not segment.text:
+                    continue
+                if segment.text.endswith(" ") and segment.style == Style():
+                    # split the row's last blank cell off with the edge style
+                    segments[index : index + 1] = [
+                        Segment(segment.text[:-1], segment.style),
+                        Segment(" ", edge),
+                    ]
+                break
+        return Strip(segments, strip.cell_length)
 
 
 def curve_colors(curves: list[Curve]) -> list[tuple[int, int, int] | None]:
@@ -838,17 +886,20 @@ def _add_chart_baselines(
 ) -> None:
     """Add arbitrary named horizontal score references behind the data,
     from `origin` (the axis's left edge: 0 with a scored floor, else 1) to
-    the climb's extent.
+    the climb's extent — sampled at every candidate slot, not just the two
+    ends, so the hover readout lists each reference beside whichever
+    candidate the crosshair is on.
 
     `hidden` entries are skipped but keep their palette slot, so toggling one
     off never recolours the others out from under the legend."""
     right = max(origin + 1.0, extent)
+    xs = [origin + step for step in range(int(right - origin) + 1)]
     for index, (label, value) in enumerate(baselines.items()):
         if label in hidden:
             continue
         plot.add_line(
-            [origin, right],
-            [value, value],
+            xs,
+            [value] * len(xs),
             color=CHART_BASELINE_PALETTE[index % len(CHART_BASELINE_PALETTE)],
             width=1.0,
             name=label,
@@ -861,6 +912,7 @@ def build_plot(
     *,
     show_legend: bool = True,
     hidden: frozenset[str] | set[str] = frozenset(),
+    higher_is_better: bool = True,
 ) -> Plot:
     """One step line per curve — the experiment view, where each arm is a
     series of its own, and the base of the detail overlay. `hidden` names
@@ -869,6 +921,7 @@ def build_plot(
     _hide_plot_legend(plot, show_legend)
     extent = max((max(c.xs, default=0.0) for c in curves), default=0.0)
     origin = curves_origin([x for c in curves for x in c.xs[:1]])
+    _pin_x_extent(plot, origin, extent, higher_is_better=higher_is_better)
     _add_chart_baselines(
         plot, baselines or {}, extent, origin=origin, show_legend=show_legend, hidden=hidden,
     )
@@ -970,6 +1023,7 @@ def build_climb_plot(
     show_legend: bool = True,
     hidden: frozenset[str] | set[str] = frozenset(),
     cost: CostSeries | None = None,
+    higher_is_better: bool = True,
 ) -> Plot:
     """The website's figure: the staircase in cyan, a bright dot where a
     candidate set a new best, a dim one where it scored but did not.
@@ -977,6 +1031,7 @@ def build_climb_plot(
     `cost` overlays the cumulative token/CPU lines on right-hand axes."""
     plot = themed_plot()
     _hide_plot_legend(plot, show_legend)
+    _pin_x_extent(plot, climb.origin, climb.extent, higher_is_better=higher_is_better)
     _add_chart_baselines(
         plot, baselines or {}, climb.extent, origin=climb.origin,
         show_legend=show_legend, hidden=hidden,
@@ -1010,6 +1065,7 @@ def build_detail_plot(
     show_legend: bool = True,
     hidden: frozenset[str] | set[str] = frozenset(),
     cost: CostSeries | None = None,
+    higher_is_better: bool = True,
 ) -> Plot:
     """The curve as in build_plot, then the tree: one thin line per edge
     (dim, the child's operator colour; bold on the accepted lineage) and a
@@ -1018,7 +1074,10 @@ def build_detail_plot(
     operator takes its marks and its edges with it."""
     from hillclimb.tui.treeview import OPERATOR_RGB, dim_rgb
 
-    plot = build_plot([layout.curve], baselines, show_legend=show_legend, hidden=hidden)
+    plot = build_plot(
+        [layout.curve], baselines, show_legend=show_legend, hidden=hidden,
+        higher_is_better=higher_is_better,
+    )
     for edge in layout.edges:
         if edge.operator in hidden:
             continue
@@ -1053,19 +1112,32 @@ def build_detail_plot(
 # (label, colour, glyph) — the glyph mirrors the trace's mark, the way the
 # knowledge graph's legend echoes each node type's marker: "─" for a line
 # trace, "●" for a scatter. legend_text tolerates the old two-field shape.
-LegendEntry = tuple[str, tuple[int, int, int], str]
+# (label, colour, glyph) — or with a fourth element, the heading of the
+# group the entry belongs to: `legend_text` starts that group on a row of
+# its own under the heading, so the reference lines read as one block
+# apart from the search's own series.
+LegendEntry = tuple[str, tuple[int, int, int], str] | tuple[str, tuple[int, int, int], str, str]
+
+BENCHMARKS_GROUP = "Benchmarks"
 
 
 def _baseline_legend(baselines: Mapping[str, float]) -> list[LegendEntry]:
     return [
-        (label, CHART_BASELINE_PALETTE[index % len(CHART_BASELINE_PALETTE)], "─")
+        (label, CHART_BASELINE_PALETTE[index % len(CHART_BASELINE_PALETTE)], "─", BENCHMARKS_GROUP)
         for index, label in enumerate(baselines)
     ]
 
 
-def plot_legend(curves: list[Curve], baselines: Mapping[str, float]) -> list[LegendEntry]:
-    """Legend for an experiment/detail base plot, in trace order."""
-    entries = _baseline_legend(baselines)
+def _with_benchmarks(own: list[LegendEntry], baselines: Mapping[str, float]) -> list[LegendEntry]:
+    """The search's own series first, the published references after them
+    as their own group — what was climbed, then what it is measured against."""
+    return [*own, *_baseline_legend(baselines)]
+
+
+def _curve_legend(curves: list[Curve], baselines: Mapping[str, float]) -> list[LegendEntry]:
+    entries: list[LegendEntry] = []
+    # the reference lines are added to the plot first, so plotui's palette
+    # slot for an uncoloured trace counts on from them
     trace_index = len(baselines)
     for curve, color in zip(curves, curve_colors(curves)):
         if not curve.xs:
@@ -1077,10 +1149,16 @@ def plot_legend(curves: list[Curve], baselines: Mapping[str, float]) -> list[Leg
     return entries
 
 
+def plot_legend(curves: list[Curve], baselines: Mapping[str, float]) -> list[LegendEntry]:
+    """Legend for an experiment/detail base plot: the curves, then the
+    references."""
+    return _with_benchmarks(_curve_legend(curves, baselines), baselines)
+
+
 def climb_legend(
     climb: Climb, baselines: Mapping[str, float], cost: CostSeries | None = None
 ) -> list[LegendEntry]:
-    entries = _baseline_legend(baselines)
+    entries: list[LegendEntry] = []
     if any(not event.best for event in climb.events):
         entries.append(("attempt", MISS_RGB, "●"))
     if len(climb.staircase()[0]) > 1:
@@ -1088,7 +1166,7 @@ def climb_legend(
     if any(event.best for event in climb.events):
         entries.append(("new best", CYAN, "●"))
     entries.extend(_cost_legend(cost))
-    return entries
+    return _with_benchmarks(entries, baselines)
 
 
 def detail_legend(
@@ -1096,13 +1174,13 @@ def detail_legend(
 ) -> list[LegendEntry]:
     from hillclimb.tui.treeview import OPERATOR_RGB
 
-    entries = plot_legend([layout.curve], baselines)
+    entries = _curve_legend([layout.curve], baselines)
     for operator in dict.fromkeys(mark.operator for mark in layout.marks):
         entries.append((operator, OPERATOR_RGB.get(operator, (160, 160, 160)), "●"))
     if any(mark.on_path for mark in layout.marks):
         entries.append(("accepted", (255, 255, 255), "●"))
     entries.extend(_cost_legend(cost))
-    return entries
+    return _with_benchmarks(entries, baselines)
 
 
 @dataclass(frozen=True)
@@ -1156,25 +1234,17 @@ def climb_plot_bounds(
     climb: Climb,
     baselines: Mapping[str, float],
 ) -> tuple[float, float, float, float]:
-    """The same 5%-padded data bounds plotui derives from chart traces."""
-    xs = [event.x for event in climb.events]
+    """The data bounds as plotui draws them: x pinned by `x_extent` (flush
+    with the origin, 5% past the last slot), y the 5%-padded autoscale."""
     ys = [event.y for event in climb.events]
     if baselines:
-        origin = climb.origin
-        right = max(origin + 1.0, climb.extent)
-        xs.extend((origin, right))
         ys.extend(float(value) for value in baselines.values())
-    if not xs or not ys:
+    if not climb.events and not ys:
         return (-1.0, 1.0, -1.0, 1.0)
-
-    def padded(lo: float, hi: float) -> tuple[float, float]:
-        span = hi - lo
-        pad = span * 0.05 if span > 0 else 1.0
-        return lo - pad, hi + pad
-
-    xlo, xhi = padded(min(xs), max(xs))
-    ylo, yhi = padded(min(ys), max(ys))
-    return xlo, xhi, ylo, yhi
+    xlo, xhi = x_extent(climb.origin, climb.extent)
+    lo, hi = min(ys), max(ys)
+    pad = (hi - lo) * 0.05 if hi > lo else 1.0
+    return xlo, xhi, lo - pad, hi + pad
 
 
 def annotation_spans(
@@ -1270,15 +1340,29 @@ def legend_text(
     entry in `hidden` loses its glyph and goes dim and struck through, so the
     legend itself shows what the chart is not drawing. `interactive` turns
     every entry into a click target that toggles its series
-    (`screen.toggle_series`) and adds the 1-9 hotkey prefix."""
+    (`screen.toggle_series`) and adds the 1-9 hotkey prefix. An entry with a
+    group heading (its fourth element) opens that group on a row of its own,
+    the heading first in dim ink; the hotkey numbering runs on across it."""
     from rich.cells import cell_len
     from rich.style import Style
     from rich.text import Text
 
     text = Text(no_wrap=width is not None, overflow="crop" if width is not None else None)
     line_width = 0
+    group: str | None = None
+    after_heading = False
     for index, (label, (red, green, blue), *rest) in enumerate(entries):
         glyph = rest[0] if rest else "●"
+        entry_group = rest[1] if len(rest) > 1 else None
+        if entry_group != group:
+            group = entry_group
+            if group is not None:
+                if line_width:
+                    text.append("\n")
+                heading = f"{group}: "
+                text.append(heading, style=Style.parse("dim"))
+                line_width = cell_len(heading)
+                after_heading = True
         off = label in hidden
         meta = {"@click": f"screen.toggle_series({label!r})"} if interactive else None
         item = Text()
@@ -1289,7 +1373,8 @@ def legend_text(
         else:
             item.append(f"{glyph} {label}", style=Style.parse(f"rgb({red},{green},{blue})") + Style(meta=meta))
         item_width = cell_len(item.plain)
-        separator_width = 3 if line_width else 0
+        separator_width = 0 if after_heading or not line_width else 3
+        after_heading = False
         if width is not None and line_width and line_width + separator_width + item_width > width:
             text.append("\n")
             line_width = 0
@@ -1337,6 +1422,11 @@ class ChartLegend(Label):
 
 
 class ChartScreen(LiveScreen):
+    # The legend entries are click targets; a double click on one must
+    # toggle its series, not paint Textual's text selection across the
+    # legend band. The terminal's own modifier still selects text.
+    ALLOW_SELECT = False
+
     BINDINGS = [
         Binding("d", "toggle_detail", "detail", tooltip="overlay the exploration tree"),
         Binding(
@@ -1513,16 +1603,13 @@ class ChartScreen(LiveScreen):
             # fair by default: a holdout-scored problem opens on the holdout
             # view, the split its reference baselines live on (`h` toggles)
             self.holdout = bool(anchor.holdout_enabled)
-        # The website's climb head, word for word, so both renderings of the
-        # figure introduce it the same way.
-        direction = "higher" if anchor.higher_is_better else "lower"
+        # The problem alone heads the line: the metric sentence the website
+        # opens its chart with ("best <metric> so far (higher is better)")
+        # pushed the live numbers off a normal-width terminal, and the
+        # legend and axis already say what the figure is. Only the holdout
+        # view keeps a marker, since that changes which score is plotted.
         split = "holdout" if self.holdout else "val"
-        parts = [
-            f"[bold]{anchor.problem_key}[/] — holdout {anchor.metric} of the best-so-far "
-            f"candidate ({direction} is better)"
-            if self.holdout
-            else f"[bold]{anchor.problem_key}[/] — best {anchor.metric} so far ({direction} is better)"
-        ]
+        parts = [f"[bold]{anchor.problem_key}[/]" + (" · holdout" if self.holdout else "")]
         baselines = chart_baselines(self.config, anchor)
         layout: DetailLayout | None = None
         cost: CostSeries | None = None
@@ -1600,12 +1687,14 @@ class ChartScreen(LiveScreen):
             annotation_bounds = None
             if layout is not None:
                 plot = build_detail_plot(
-                    layout, baselines, show_legend=False, hidden=hidden, cost=overlay
+                    layout, baselines, show_legend=False, hidden=hidden, cost=overlay,
+                    higher_is_better=bool(anchor.higher_is_better),
                 )
                 entries = detail_legend(layout, baselines, overlay)
             elif climb is not None:
                 plot = build_climb_plot(
-                    climb, baselines, show_legend=False, hidden=hidden, cost=overlay
+                    climb, baselines, show_legend=False, hidden=hidden, cost=overlay,
+                    higher_is_better=bool(anchor.higher_is_better),
                 )
                 entries = climb_legend(climb, baselines, overlay)
                 # The labels annotate the new-best dots; they hide with them.
@@ -1613,7 +1702,10 @@ class ChartScreen(LiveScreen):
                     annotations = improvement_annotations(climb)
                     annotation_bounds = climb_plot_bounds(climb, baselines)
             else:
-                plot = build_plot(curves, baselines, show_legend=False, hidden=hidden)
+                plot = build_plot(
+                    curves, baselines, show_legend=False, hidden=hidden,
+                    higher_is_better=bool(anchor.higher_is_better),
+                )
                 entries = plot_legend(curves, baselines)
             # each visible cost series adds a tick-label column (~7 cells) on
             # the right, shifting the true plot rect the annotations map into
