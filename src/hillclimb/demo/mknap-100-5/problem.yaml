@@ -1,0 +1,11 @@
+problem_id: mknap-100-5
+metric: total-value
+higher_is_better: true
+description: description.md
+data_dir: data
+# valid-by-construction floor: best/ always holds something
+baseline_files: {submission.csv: sample_submission.csv}
+chart_baselines:
+  "best known (Chu & Beasley 1998)": 24381
+time_budget_s: 900
+allow_network: false
