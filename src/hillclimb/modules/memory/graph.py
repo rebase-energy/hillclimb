@@ -14,6 +14,11 @@ seeded, with previously placed nodes pinned so the map stays spatially stable
 as knowledge grows) and cached in the index; viewers only read them. Without
 networkx installed (engine-only installs) positions stay None and viewers
 fall back to a deterministic placement.
+
+This is the built-in graph module (registry name `knowledge-graph`, the
+default `graph:` of every climber): `KnowledgeGraphBuilder` at the bottom
+wraps `build_graph` in the contract that `modules/memory/base.py` holds, so
+a climber may bring its own.
 """
 
 from __future__ import annotations
@@ -21,9 +26,15 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field
-
 from hillclimb.harness.candidate import utcnow
+from hillclimb.modules.memory.base import (  # the models live with the contract; re-exported here
+    DEFAULT_GRAPH,
+    GRAPH_SCHEMA_VERSION,
+    GraphEdge,
+    GraphModule,
+    GraphNode,
+    KnowledgeGraph,
+)
 from hillclimb.modules.memory.claims import (
     Claim,
     claim_key,
@@ -33,9 +44,6 @@ from hillclimb.modules.memory.claims import (
     slugify,
 )
 
-# v2: nodes gained pos3 (3D spring layout for the plotui viewer). The version
-# check in load_graph makes stale v1 graph.json rebuild on first load.
-GRAPH_SCHEMA_VERSION = 2
 GRAPH_FILENAME = "graph.json"
 LAYOUT_SEED = 42
 
@@ -59,40 +67,6 @@ EDGE_KINDS = (
 
 # concept nodes are timeless: first_seen="" sorts before every ISO timestamp,
 # so they are visible at any scrubbed time
-
-
-class GraphNode(BaseModel):
-    id: str
-    type: str
-    label: str = ""
-    concepts: list[str] = Field(default_factory=list)
-    pos: tuple[float, float] | None = None
-    # 3D twin of pos, used by the plotui graph viewer. pos stays 2D for
-    # external consumers of graph.json (hillclimb-go renders from it).
-    pos3: tuple[float, float, float] | None = None
-    first_seen: str = ""
-    superseded_at: str | None = None
-    data: dict = Field(default_factory=dict)
-
-
-class GraphEdge(BaseModel):
-    src: str
-    dst: str
-    type: str
-    first_seen: str = ""
-    superseded_at: str | None = None
-    weight: float = 1.0
-
-
-class KnowledgeGraph(BaseModel):
-    schema_version: int = GRAPH_SCHEMA_VERSION
-    built_at: str = Field(default_factory=utcnow)
-    events: list[str] = Field(default_factory=list)  # sorted search-finish times
-    nodes: list[GraphNode] = Field(default_factory=list)
-    edges: list[GraphEdge] = Field(default_factory=list)
-
-    def node_map(self) -> dict[str, GraphNode]:
-        return {node.id: node for node in self.nodes}
 
 
 def graph_path(knowledge_dir: Path) -> Path:
@@ -468,7 +442,7 @@ def graph_at(graph: KnowledgeGraph, t: str | None) -> KnowledgeGraph:
         and e.first_seen <= t and (e.superseded_at is None or e.superseded_at > t)
     ]
     return KnowledgeGraph(
-        schema_version=graph.schema_version, built_at=graph.built_at,
+        schema_version=graph.schema_version, builder=graph.builder, built_at=graph.built_at,
         events=[event for event in graph.events if event <= t],
         nodes=nodes, edges=edges,
     )
