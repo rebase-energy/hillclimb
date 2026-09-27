@@ -265,25 +265,36 @@ def write_concept_playbook(
     ))
 
 
-def consolidate(knowledge_dir: Path, config: Config, log, *, dry_run: bool = False) -> dict:
-    """The full sleep phase. Returns a summary dict for the CLI."""
+def consolidate(knowledge_dir: Path, config: Config, log, *, dry_run: bool = False, graph_module=None) -> dict:
+    """The full sleep phase. Returns a summary dict for the CLI. Walks the
+    graph the climber's module builds (`graph_module`; None resolves it from
+    the config) by the claim-node convention — a graph without claim nodes
+    consolidates to nothing."""
     from hillclimb.modules.memory.graph import load_or_build_graph, rebuild_graph
 
-    graph = load_or_build_graph(knowledge_dir)
-    generalized = generalize_claims(graph)
-    if generalized and not dry_run:
-        save_consolidated_claims(knowledge_dir, load_consolidated_claims(knowledge_dir) + generalized)
-        graph = rebuild_graph(knowledge_dir)  # generalized claims join the graph
-    concepts = _playbook_concepts(graph)
+    if graph_module is None:
+        from hillclimb.harness.glue import build_graph_module
+
+        graph_module = build_graph_module(config, log=log)
+    graph = load_or_build_graph(knowledge_dir, module=graph_module)
     playbooks_written: list[str] = []
-    if not dry_run:
-        for concept, nodes in sorted(concepts.items()):
-            path = write_concept_playbook(knowledge_dir, graph, concept, nodes, config, log)
-            if path is not None:
-                playbooks_written.append(str(path))
-                log(f"consolidate: playbook for {concept} -> {path}")
-        if playbooks_written:
-            rebuild_graph(knowledge_dir)
+    if not any(node.type == "claim" and node.superseded_at is None for node in graph.nodes):
+        log(f"consolidate: graph module {graph_module.key or graph_module.name} yielded no claim nodes; nothing to generalize")
+        generalized, concepts = [], {}
+    else:
+        generalized = generalize_claims(graph)
+        if generalized and not dry_run:
+            save_consolidated_claims(knowledge_dir, load_consolidated_claims(knowledge_dir) + generalized)
+            graph = rebuild_graph(knowledge_dir, module=graph_module)  # generalized claims join the graph
+        concepts = _playbook_concepts(graph)
+        if not dry_run:
+            for concept, nodes in sorted(concepts.items()):
+                path = write_concept_playbook(knowledge_dir, graph, concept, nodes, config, log)
+                if path is not None:
+                    playbooks_written.append(str(path))
+                    log(f"consolidate: playbook for {concept} -> {path}")
+            if playbooks_written:
+                rebuild_graph(knowledge_dir, module=graph_module)
     return {
         "generalized": [c.claim_id for c in generalized],
         "playbook_concepts": sorted(concepts),

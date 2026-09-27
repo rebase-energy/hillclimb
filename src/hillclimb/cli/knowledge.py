@@ -220,6 +220,19 @@ def knowledge_distill(
     typer.echo(f"{len(card.claims)} claim(s) -> {path}")
 
 
+def _graph_module(config):
+    """The graph module these commands read and rebuild through: the user's
+    `climber.graph`, else the climber's `graph:` (the built-in when the
+    climber itself will not load). A bad `climber.graph` is exit 2."""
+    from hillclimb.harness.glue import build_graph_module
+
+    try:
+        return build_graph_module(config, log=lambda message: typer.echo(message, err=True))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+
+
 @knowledge_app.command("query")
 def knowledge_query(
     terms: str = typer.Argument(..., help="Keywords, e.g. 'gradient boosting' or a technique slug"),
@@ -235,18 +248,15 @@ def knowledge_query(
     import json as _json
 
     from hillclimb.api import resolve_knowledge_dir
-    from hillclimb.modules.memory.graph import (
-        load_or_build_graph,
-        query_graph,
-        render_query_hits,
-    )
+    from hillclimb.modules.memory.graph import load_or_build_graph, render_query_hits
 
     config = common.load_config()
     knowledge_dir = resolve_knowledge_dir(config)
     if knowledge_dir is None:
         typer.echo("learning is disabled or no hillclimb/knowledge dir resolvable", err=True)
         raise typer.Exit(1)
-    hits = query_graph(load_or_build_graph(knowledge_dir), terms, family=family, limit=limit)
+    module = _graph_module(config)
+    hits = module.query(load_or_build_graph(knowledge_dir, module=module), terms, family=family, limit=limit)
     if as_json:
         typer.echo(_json.dumps(hits, indent=1))
     else:
@@ -299,8 +309,9 @@ def knowledge_rebuild():
     if knowledge_dir is None:
         typer.echo("learning is disabled or no hillclimb/knowledge dir resolvable", err=True)
         raise typer.Exit(1)
-    graph = rebuild_graph(knowledge_dir)
-    typer.echo(f"rebuilt {graph_path(knowledge_dir)}")
+    module = _graph_module(config)
+    graph = rebuild_graph(knowledge_dir, module=module)
+    typer.echo(f"rebuilt {graph_path(knowledge_dir)} ({module.name})")
     typer.echo(graph_stats(graph))
 
 
@@ -357,7 +368,7 @@ def paper_add(
         if record is not None:
             ingested += 1
     if ingested:
-        rebuild_graph(knowledge_dir)
+        rebuild_graph(knowledge_dir, module=_graph_module(config))
         typer.echo("knowledge graph rebuilt")
     if ingested < len(pdfs):
         raise typer.Exit(1)
@@ -400,7 +411,8 @@ def knowledge_graph(
         typer.echo("learning is disabled or no hillclimb/knowledge dir resolvable", err=True)
         raise typer.Exit(1)
     if stats:
-        typer.echo(graph_stats(load_or_build_graph(knowledge_dir)))
+        module = _graph_module(config)
+        typer.echo(graph_stats(load_or_build_graph(knowledge_dir, module=module)))
         return
     try:
         from hillclimb.tui.graphview import GraphApp

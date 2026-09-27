@@ -388,11 +388,14 @@ def resolve_knowledge_dir(config: Config) -> Path | None:
 
 
 def build_knowledge_context(
-    config: Config, problem: ProblemSpec, target: str, log: Log
+    config: Config, problem: ProblemSpec, target: str, log: Log, *, search_dir: Path | None = None
 ) -> tuple[str | None, int, list[str]]:
     """(prior-experience prompt section, draft-complexity offset, injected
     claim ids) from the hillclimb dir's knowledge cards. The claim ids feed credit
-    assignment: whoever gets quoted in the prompt answers for the outcome."""
+    assignment: whoever gets quoted in the prompt answers for the outcome.
+    The claims come through the climber's graph module (`search_dir` finds
+    the snapshot's), so a climber that indexes memory differently is shown
+    what it asked for."""
     from hillclimb.modules.memory.knowledge import (
         complexity_offset,
         load_cards,
@@ -419,8 +422,9 @@ def build_knowledge_context(
         # flows to the claims the playbook was built from.
         # Best effort — the cards block above never depends on the graph.
         try:
+            from hillclimb.harness.glue import build_graph_module
             from hillclimb.modules.memory.claims import problem_concepts, render_claims
-            from hillclimb.modules.memory.graph import load_or_build_graph, node_to_claim, retrieve_claims
+            from hillclimb.modules.memory.graph import load_or_build_graph, node_to_claim
 
             kind = problem.runtime
             concepts = problem_concepts(kind, problem.metric_name)
@@ -437,8 +441,9 @@ def build_knowledge_context(
                 text = f"{text}\n\n{render_playbooks(playbooks)}"
                 claim_ids = sorted({cid for p in playbooks for cid in p.source_claims})
             else:
-                nodes = retrieve_claims(
-                    load_or_build_graph(knowledge_dir),
+                module = build_graph_module(config, search_dir, log=log)
+                nodes = module.retrieve(
+                    load_or_build_graph(knowledge_dir, module=module),
                     family=family,
                     problem_id=problem.problem_id,
                     concepts=concepts,
@@ -576,9 +581,10 @@ def _distill_knowledge(
             # keep the derived graph index fresh; cheap at this scale and
             # best-effort like everything else here
             try:
+                from hillclimb.harness.glue import build_graph_module
                 from hillclimb.modules.memory.graph import rebuild_graph
 
-                rebuild_graph(knowledge_dir)
+                rebuild_graph(knowledge_dir, module=build_graph_module(config, search_dir, log=log))
             except Exception as exc:  # noqa: BLE001
                 log(f"learning: graph rebuild failed (card unaffected): {exc}")
     except Exception as exc:  # noqa: BLE001
@@ -713,7 +719,7 @@ def execute_search(
     abort = threading.Event()
     _kc, _offset = (None, 0)
     if knowledge_context is None:
-        _kc, _offset, _claim_ids = build_knowledge_context(config, problem, target, log)
+        _kc, _offset, _claim_ids = build_knowledge_context(config, problem, target, log, search_dir=search_dir)
         if _claim_ids:
             from hillclimb.modules.memory.credit import record_injected_claims
 

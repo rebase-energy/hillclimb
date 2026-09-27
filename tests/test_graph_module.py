@@ -7,8 +7,11 @@ import json
 import os
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
+from hillclimb.config import Config
 
 from hillclimb.modules.memory.base import GraphModule, GraphNode, KnowledgeGraph
 from hillclimb.modules.memory.graph import (
@@ -144,3 +147,84 @@ class TestCache:
         pytest.importorskip("networkx")
         graph = load_or_build_graph(knowledge_dir, module=Notes())
         assert all(n.pos is not None and n.pos3 is not None for n in graph.nodes)
+
+
+class Claimy(GraphModule):
+    """A graph of its own shape that still hands the harness claim nodes."""
+
+    name = "claimy"
+    key = "claimy"
+
+    def build(self, knowledge_dir, previous=None):
+        return KnowledgeGraph(nodes=[GraphNode(
+            id="claim:custom", type="claim", label="custom helps", first_seen="2026-01-01T00:00:00+00:00",
+            data={"subject": "custom", "relation": "helps", "object": "", "confidence": 0.9,
+                  "evidence": ["c001"], "scope": {"family": "spaceship-titanic"}},
+        )])
+
+    def retrieve(self, graph, *, family, problem_id, concepts, limit=8):
+        return [n for n in graph.nodes if n.type == "claim"]
+
+    def query(self, graph, terms, *, family="", limit=5):
+        return [{"id": n.id, "type": n.type, "label": n.label} for n in graph.nodes]
+
+
+PROBLEM = SimpleNamespace(problem_id="spaceship-titanic", metric_name="accuracy", higher_is_better=True, runtime="csv")
+
+
+class TestSeam:
+    """Every consumer asks the climber's module — retrieval, the query
+    command, consolidation, the graph screen."""
+
+    def test_retrieval_is_whatever_the_module_returns(self, knowledge_dir, monkeypatch):  # noqa: F811
+        import hillclimb.harness.glue as glue
+        from hillclimb.api import build_knowledge_context
+
+        config = Config()
+        config.learning.dir = knowledge_dir
+        monkeypatch.setattr(glue, "build_graph_module", lambda *a, **k: Claimy())
+        text, _, injected = build_knowledge_context(config, PROBLEM, "", lambda m: None)
+        assert injected == ["custom"] and "custom helps" in text
+        monkeypatch.setattr(glue, "build_graph_module", lambda *a, **k: Notes())
+        text, _, injected = build_knowledge_context(config, PROBLEM, "", lambda m: None)
+        assert injected == [] and "Distilled claims" not in (text or "")  # a graph without claims injects nothing
+
+    def test_knowledge_query_answers_through_the_module(self, knowledge_dir, monkeypatch, capsys):  # noqa: F811
+        import hillclimb.harness.glue as glue
+        from hillclimb.cli import common
+        from hillclimb.cli.knowledge import knowledge_query
+
+        config = Config()
+        config.learning.dir = knowledge_dir
+        monkeypatch.setattr(common, "load_config", lambda *a, **k: config)
+        monkeypatch.setattr(glue, "build_graph_module", lambda *a, **k: Claimy())
+        knowledge_query("custom", family="", limit=5, as_json=True)
+        assert json.loads(capsys.readouterr().out)[0]["id"] == "claim:custom"
+        monkeypatch.setattr(glue, "build_graph_module", lambda *a, **k: Notes())
+        knowledge_query("zzz", family="", limit=5, as_json=False)
+        assert "no matches" in capsys.readouterr().out
+
+    def test_consolidate_is_a_no_op_on_a_graph_without_claims(self, knowledge_dir):  # noqa: F811
+        from hillclimb.modules.memory.consolidate import consolidate
+
+        notes: list[str] = []
+        summary = consolidate(knowledge_dir, Config(), notes.append, graph_module=Notes())
+        assert summary["generalized"] == [] and summary["playbooks_written"] == []
+        assert any("yielded no claim nodes" in n for n in notes)
+
+
+@pytest.mark.asyncio
+async def test_the_graph_screen_shows_a_climbers_own_graph(knowledge_dir, tmp_path, monkeypatch):  # noqa: F811
+    import hillclimb.harness.glue as glue
+    from hillclimb.tui.graphview import GraphApp, GraphPlotWidget
+
+    monkeypatch.setenv("PLOTUI_RENDER", "placeholder")
+    monkeypatch.setattr(glue, "build_graph_module", lambda *a, **k: Notes())
+    config = Config()
+    config.learning.dir = knowledge_dir
+    config.paths.runs_dir = tmp_path / "runs"
+    app = GraphApp(config)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        canvas = app.screen.query_one("#graph-canvas", GraphPlotWidget)
+        assert canvas._ids and app.screen._graph.builder == "notes"  # an unknown node type still draws

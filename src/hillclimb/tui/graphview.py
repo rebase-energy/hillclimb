@@ -1096,6 +1096,7 @@ class GraphScreen(KeysMixin, Screen):
         self.config = config
         self._graph: KnowledgeGraph | None = None
         self._graph_mtime = 0.0
+        self._graph_module = None  # resolved once, from the config's climber
         self._filters: frozenset[str] | None = None
         self._hidden_types: frozenset[str] = frozenset()
         self._fine_timeline = False  # False: per finished search; True: per graph change
@@ -1138,7 +1139,17 @@ class GraphScreen(KeysMixin, Screen):
         mtime = path.stat().st_mtime if path.exists() else -1.0
         if self._graph is not None and mtime == self._graph_mtime:
             return
-        self._graph = load_or_build_graph(knowledge_dir)
+        if self._graph_module is None:
+            from hillclimb.harness.glue import build_graph_module
+
+            try:
+                self._graph_module = build_graph_module(
+                    self.config, log=lambda message: self.notify(message, severity="warning")
+                )
+            except ValueError as exc:  # a bad `climber.graph` in config
+                self.notify(str(exc), severity="error")
+                return
+        self._graph = load_or_build_graph(knowledge_dir, module=self._graph_module)
         self._graph_mtime = path.stat().st_mtime if path.exists() else -1.0
         self.query_one("#concept-sidebar", ConceptSidebar).set_concepts(
             [n.label for n in self._graph.nodes if n.type == "concept"]
