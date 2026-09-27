@@ -1,6 +1,6 @@
 # The hillclimb dir
 
-Where hillclimb keeps its config, problems, specs, climbers and runs, how a run is laid out on disk, and which process may write to it.
+Where hillclimb keeps its config, problems, climbers and runs, how a run is laid out on disk (its own spec included), what git tracks, and which process may write to it.
 
 ## The hillclimb dir
 
@@ -12,8 +12,7 @@ my-project/
 └── hillclimb/
     ├── config.yaml     # defaults, and the marker that makes this the hillclimb dir
     ├── problems/       # problem definitions
-    ├── specs/          # committed run specs (versioned run parameters)
-    └── runs/           # search artifacts (gitignored by init)
+    └── runs/           # one folder per run: its spec, its records, its artifacts
 ```
 
 `hillclimb climber new <name>` adds `hillclimb/climbers/<name>/` beside them
@@ -33,30 +32,45 @@ requirements change), the emflow problem cache, and the cross-search agent
 semaphore. Checkouts predating this layout left `.runtime-venv*/` and `cache/` in the
 project dir — safe to delete.
 
-### Run specs: versioned run parameters
+### Every run carries its spec
 
-The canonical way to run is a committed spec file, so the repo fully describes
-its searches (`git log` explains every run). Entries carry per-search
-parameters; CLI flags override them for ad-hoc experiments:
-
-```yaml
-# hillclimb/specs/gefcom.yaml
-problems:
-  - target: emflow://gefcom2014:solar
-    model: opus
-    budget: 2h
-    parallel_operators: 3
-  - target: emflow://gefcom2014:wind
-    budget: 1h
-```
+Each run writes `runs/<run-id>/spec.yaml` next to `run.yaml`: one `problems:`
+entry per search it launched, with every parameter the launch resolved to —
+target, budget, agent, model, climber, parallelism, replicates, the seed
+(as an absolute path) and any `--set` overrides. It is generated from what
+actually ran, whether the run came from the CLI, a spec file, a fleet or an
+experiment (the header names the file it was launched from). So the recipe
+lives with the record and the artifacts, git explains every run, and
 
 ```bash
-uv run hillclimb run hillclimb/specs/gefcom.yaml            # exactly as committed
-uv run hillclimb run hillclimb/specs/gefcom.yaml --model sonnet   # ad-hoc override
+uv run hillclimb run hillclimb/runs/<run-id>/spec.yaml          # exactly as it ran
+uv run hillclimb run hillclimb/runs/<run-id>/spec.yaml --model sonnet   # ad-hoc override
 ```
 
-A spec with a single top-level `target:` (plus the same parameter keys) runs
-one search. `run.yaml` records which spec launched the run.
+runs it again. The same format is a run spec you can write by hand and commit
+anywhere in the repo: a `problems:` list of targets (strings) or per-entry
+parameter dicts — `target`, `name`, `budget` (`2h` / `30m` / seconds),
+`agent`, `model`, `climber`, `parallel_agents`, `n_replicates`,
+`seed_from` (relative to the spec file) and `set` (a list of `key=value`
+overrides) — or the single-search form with a top-level `target:` plus the
+same keys. CLI flags override a spec's values.
+
+### What git tracks
+
+`hillclimb init` adds rules to the folder's `.gitignore` so that the *record*
+of every run is committed and its *bulk* is not:
+
+- committed: `run.yaml`, `spec.yaml`, each search's `search.yaml`,
+  `journal.jsonl`, `status.json`, `knowledge_card.yaml`, the `climber/`
+  snapshot, and `best/solution.py` + `best/params.json` — enough for `git log`
+  to explain every run and for `hillclimb chart` to work on a fresh clone;
+- ignored: `candidates/` (agent streams, replicate outputs, runtime data),
+  the run's `logs/`, the `control/` queue, the rest of `best/` (a submission
+  can be large), `store.sqlite`, the derived `knowledge/graph.json`, and
+  `hillclimb/.env` (keys, never).
+
+A `.gitignore` that already ignores `hillclimb/runs/` as a whole keeps doing
+so; delete that line to get the finer rules.
 
 ### The budget is a gate, not a wall
 
@@ -79,6 +93,7 @@ candidates.
 runs/
 └── <run-id>/                        # one hillclimb invocation
     ├── run.yaml                     # run metadata (schema_version: 3)
+    ├── spec.yaml                    # the run's own spec: rerun it with `hillclimb run <this file>`
     ├── logs/                        # per-search engine logs (suite runs)
     └── searches/<search-id>/        # <problem-id>, then <problem-id>-2, -3 for more on one problem
         ├── search.yaml              # immutable search config (schema_version: 3)
@@ -106,7 +121,7 @@ by hand.
 the *file backend's* representation of a search's records. The engine, the
 CLI and the TUIs all read and write those records through one abstraction —
 the **DataStore** (`src/hillclimb/harness/store.py`) — and `hillclimb/config.yaml`
-picks the backend:
+picks the agent:
 
 ```yaml
 store:
@@ -119,7 +134,7 @@ With `sqlite`, a search dir holds only what has to be files (`candidates/`,
 `best/`, logs) and everything else lives in the database — cross-run views
 (the chart, `store searches`, experiments) query it instead of walking run dirs,
 and N concurrent engines (the demo) write it safely. The single-writer rule
-is unchanged: the engine owns a search's records whichever backend holds
+is unchanged: the engine owns a search's records whichever agent holds
 them; `stop`/`prune` go through the store's command queue.
 
 `hillclimb store sync` imports the folder's searches into the configured
@@ -127,7 +142,7 @@ store (skipping ones it already has) — run it once after switching to
 `sqlite` so earlier history shows up. `hillclimb store searches
 [--problem KEY]` lists what the store holds.
 
-A new backend implements the `DataStore` protocol: run/search metadata
+A new agent implements the `DataStore` protocol: run/search metadata
 (upsert), the journal (append-only, returned in append order — policies
 replay it), one status record per search, and a consume-once command queue.
 Candidate working dirs, `best/`, agent streams/logs, problems, knowledge YAML

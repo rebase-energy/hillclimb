@@ -12,11 +12,11 @@ import time
 import pytest
 
 import hillclimb.harness.pricing as pricing
-from hillclimb.backends.base import OperatorRequest
-from hillclimb.backends.pi_cli import PiCliBackend, pi_env
-from hillclimb.backends.base import OperatorResult
+from hillclimb.agents.base import OperatorRequest
+from hillclimb.agents.pi_cli import PiCliAgent, pi_env
+from hillclimb.agents.base import OperatorResult
 from hillclimb.config import Config
-from hillclimb.harness.routing import BackendPool, Router
+from hillclimb.harness.routing import AgentPool, Router
 
 
 CATALOGUE = {
@@ -144,13 +144,13 @@ def test_pi_success_maps_stream_usage_cost_model_and_session(tmp_path: Path, mon
         "STUB_EXPECT_SAMPLING",
         json.dumps(sampling, sort_keys=True, separators=(",", ":")),
     )
-    backend = PiCliBackend(
+    agent = PiCliAgent(
         pi_bin=make_stub(tmp_path, STUB_OK), auth="openrouter"
     )
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
     request = make_request(tmp_path, sampling=sampling)
 
-    result = backend.invoke(request)
+    result = agent.invoke(request)
 
     assert result.ok
     assert result.session_id == "pi-session-123"
@@ -172,7 +172,7 @@ def test_pi_success_maps_stream_usage_cost_model_and_session(tmp_path: Path, mon
         "turn_end",
     ]
     cmd = raw_command(request)
-    assert cmd[:4] == [backend.pi_bin, "-p", "--mode", "json"]
+    assert cmd[:4] == [agent.pi_bin, "-p", "--mode", "json"]
     assert cmd[cmd.index("--model") + 1] == request.model.removeprefix("openrouter/")
     assert cmd[cmd.index("--provider") + 1] == "openrouter"
     assert cmd[cmd.index("--session-dir") + 1] == str(
@@ -185,17 +185,17 @@ def test_pi_success_maps_stream_usage_cost_model_and_session(tmp_path: Path, mon
 def test_pi_sampling_is_absent_when_route_has_none(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("HILLCLIMB_SAMPLING", '{"temperature":99}')
     monkeypatch.setenv("STUB_EXPECT_SAMPLING", "absent")
-    backend = PiCliBackend(pi_bin=make_stub(tmp_path, STUB_OK))
+    agent = PiCliAgent(pi_bin=make_stub(tmp_path, STUB_OK))
 
-    assert backend.invoke(make_request(tmp_path)).ok
+    assert agent.invoke(make_request(tmp_path)).ok
 
 
 def test_pi_resume_and_preflight_arguments(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("STUB_EXPECT_SAMPLING", "absent")
-    backend = PiCliBackend(pi_bin=make_stub(tmp_path, STUB_OK))
+    agent = PiCliAgent(pi_bin=make_stub(tmp_path, STUB_OK))
     request = make_request(tmp_path, resume="pi-parent")
 
-    assert backend.invoke(request).ok
+    assert agent.invoke(request).ok
     cmd = raw_command(request)
     assert cmd[cmd.index("--fork") + 1] == "pi-parent"
 
@@ -203,15 +203,15 @@ def test_pi_resume_and_preflight_arguments(tmp_path: Path, monkeypatch):
     preflight = request.model_copy(
         update={"candidate_dir": preflight_dir, "resume_session_id": None}
     )
-    assert backend.preflight(preflight).ok
+    assert agent.preflight(preflight).ok
     preflight_cmd = raw_command(preflight)
     assert "--no-tools" in preflight_cmd
     assert "--tools" not in preflight_cmd
 
 
 def test_pi_reads_error_stop_reason_even_on_exit_zero(tmp_path: Path):
-    backend = PiCliBackend(pi_bin=make_stub(tmp_path, STUB_ERROR))
-    result = backend.invoke(make_request(tmp_path))
+    agent = PiCliAgent(pi_bin=make_stub(tmp_path, STUB_ERROR))
+    result = agent.invoke(make_request(tmp_path))
 
     assert not result.ok
     assert result.error_kind == "error"
@@ -227,18 +227,18 @@ def test_pi_reads_error_stop_reason_even_on_exit_zero(tmp_path: Path):
     ],
 )
 def test_pi_classifies_provider_errors(tmp_path: Path, message: str, kind: str):
-    backend = PiCliBackend(pi_bin=make_stub(tmp_path, error_stub(message)))
-    result = backend.invoke(make_request(tmp_path))
+    agent = PiCliAgent(pi_bin=make_stub(tmp_path, error_stub(message)))
+    result = agent.invoke(make_request(tmp_path))
     assert not result.ok
     assert result.error_kind == kind
 
 
 def test_pi_openrouter_zero_cost_falls_back_to_catalogue(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
-    backend = PiCliBackend(
+    agent = PiCliAgent(
         pi_bin=make_stub(tmp_path, STUB_ZERO_COST), auth="openrouter"
     )
-    result = backend.invoke(make_request(tmp_path))
+    result = agent.invoke(make_request(tmp_path))
 
     assert result.ok
     assert result.cost_usd == pytest.approx(100e-6 + 25 * 2e-6)
@@ -246,8 +246,8 @@ def test_pi_openrouter_zero_cost_falls_back_to_catalogue(tmp_path: Path, monkeyp
 
 def test_pi_openrouter_requires_key_before_spawn(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    backend = PiCliBackend(pi_bin="/nonexistent/pi", auth="openrouter")
-    result = backend.invoke(make_request(tmp_path))
+    agent = PiCliAgent(pi_bin="/nonexistent/pi", auth="openrouter")
+    result = agent.invoke(make_request(tmp_path))
     assert not result.ok
     assert result.error_kind == "error"
     assert "OPENROUTER_API_KEY" in result.error_message
@@ -278,10 +278,10 @@ def test_pi_home_isolated_auth_copy_settings_and_models(tmp_path: Path, monkeypa
 
 
 def test_pi_missing_models_file_fails_before_spawn(tmp_path: Path):
-    backend = PiCliBackend(
+    agent = PiCliAgent(
         pi_bin="/nonexistent/pi", models_file=tmp_path / "missing.json"
     )
-    result = backend.invoke(make_request(tmp_path))
+    result = agent.invoke(make_request(tmp_path))
     assert not result.ok
     assert "pi.models_file does not exist" in result.error_message
 
@@ -290,9 +290,9 @@ def test_pi_stream_is_visible_to_live_usage_and_transcript(tmp_path: Path, monke
     from hillclimb.tui.watch import _read_stream_usage, parse_stream_line
 
     monkeypatch.setenv("STUB_EXPECT_SAMPLING", "absent")
-    backend = PiCliBackend(pi_bin=make_stub(tmp_path, STUB_OK))
+    agent = PiCliAgent(pi_bin=make_stub(tmp_path, STUB_OK))
     request = make_request(tmp_path)
-    assert backend.invoke(request).ok
+    assert agent.invoke(request).ok
 
     usage = _read_stream_usage(request.candidate_dir)
     assert sum(item["output_tokens"] for item in usage.per_turn.values()) == 25
@@ -321,40 +321,40 @@ def test_preflight_deduplicates_model_sampling_routes(tmp_path: Path):
     from hillclimb.api import _preflight_pi_routes
 
     config = Config(
-        backend="pi",
+        agent="pi",
         model="openrouter/deepseek/deepseek-v3.2",
         routing={
             "default": {"sampling": {"temperature": 0.2}},
             "improve": {"sampling": {"temperature": 0.9}},
         },
     )
-    backend = _PreflightPi()
-    pool = BackendPool()
-    pool.seed("pi", "subscription", backend)
+    agent = _PreflightPi()
+    pool = AgentPool()
+    pool.seed("pi", "subscription", agent)
 
     _preflight_pi_routes(config, tmp_path, Router(config), pool, lambda *_: None)
 
-    assert len(backend.requests) == 2
-    assert {request.sampling["temperature"] for request in backend.requests} == {0.2, 0.9}
-    assert all(request.prompt == "Reply with exactly pong." for request in backend.requests)
+    assert len(agent.requests) == 2
+    assert {request.sampling["temperature"] for request in agent.requests} == {0.2, 0.9}
+    assert all(request.prompt == "Reply with exactly pong." for request in agent.requests)
 
 
 def test_preflight_surfaces_provider_rejection(tmp_path: Path):
     from hillclimb.api import _preflight_pi_routes
 
     config = Config(
-        backend="pi",
+        agent="pi",
         routing={"default": {"sampling": {"temperature": 0.9}}},
     )
-    backend = _PreflightPi(
+    agent = _PreflightPi(
         OperatorResult(
             ok=False,
             error_kind="error",
             error_message="temperature is deprecated for this model",
         )
     )
-    pool = BackendPool()
-    pool.seed("pi", "subscription", backend)
+    pool = AgentPool()
+    pool.seed("pi", "subscription", agent)
 
     with pytest.raises(RuntimeError, match="temperature is deprecated"):
         _preflight_pi_routes(config, tmp_path, Router(config), pool, lambda *_: None)
@@ -363,13 +363,13 @@ def test_preflight_surfaces_provider_rejection(tmp_path: Path):
 def test_preflight_checks_every_pool_model_and_auth(tmp_path):
     from hillclimb.api import _preflight_pi_routes
 
-    config = Config(backend="pi", model="a", routing={
+    config = Config(agent="pi", model="a", routing={
         "default": {"models": ["a", "b"], "sampling": {"temperature": 0.4}},
         "draft": {"model": "c"},
-        "debug": {"backend_auth": "api-key"},
+        "debug": {"agent_auth": "api-key"},
     })
     subscribed, billed = _PreflightPi(), _PreflightPi()
-    pool = BackendPool()
+    pool = AgentPool()
     pool.seed("pi", "subscription", subscribed)
     pool.seed("pi", "api-key", billed)
     _preflight_pi_routes(config, tmp_path, Router(config), pool, lambda *_: None)
@@ -383,13 +383,13 @@ def test_search_preflight_failure_finalizes_before_evaluation(tmp_path, monkeypa
     from hillclimb.harness.dirs import create_run_dir
     from hillclimb.harness.store import key_for, open_store
 
-    config.backend = "pi"
+    config.agent = "pi"
     config.learning.enabled = False
     config.learning.skills = False
     run_dir = create_run_dir(config.paths.runs_dir, "preflight-test")
     search_dir = create_search(config, task, run_dir, "preflight-test", 60)
-    backend = PiCliBackend(pi_bin=make_stub(tmp_path, STUB_ERROR))
-    monkeypatch.setattr("hillclimb.api.get_backend", lambda *args, **kwargs: backend)
+    agent = PiCliAgent(pi_bin=make_stub(tmp_path, STUB_ERROR))
+    monkeypatch.setattr("hillclimb.api.get_agent", lambda *args, **kwargs: agent)
 
     def unexpected_evaluation(*args, **kwargs):
         pytest.fail("provider rejection must happen before any evaluation")
@@ -407,13 +407,13 @@ def test_search_preflight_failure_finalizes_before_evaluation(tmp_path, monkeypa
 def test_timeout_and_abort_keep_usage_and_clean_pid(tmp_path, abort_call):
     body = STUB_OK + '\nimport time\nsys.stdout.flush()\ntime.sleep(30)\n'
     abort = threading.Event()
-    backend = PiCliBackend(pi_bin=make_stub(tmp_path, body), abort=abort)
+    agent = PiCliAgent(pi_bin=make_stub(tmp_path, body), abort=abort)
     request = make_request(tmp_path).model_copy(update={"timeout_s": 1 if not abort_call else 30})
     timer = threading.Timer(0.5, abort.set)
     if abort_call:
         timer.start()
     try:
-        result = backend.invoke(request)
+        result = agent.invoke(request)
     finally:
         timer.cancel()
     assert not result.ok
@@ -425,7 +425,7 @@ def test_timeout_and_abort_keep_usage_and_clean_pid(tmp_path, abort_call):
 
 def test_retry_success_clears_old_error_and_sums_usage(tmp_path):
     from io import StringIO
-    from hillclimb.backends.pi_cli import _PiStreamReader
+    from hillclimb.agents.pi_cli import _PiStreamReader
 
     reader = _PiStreamReader(StringIO(), tmp_path / "stream", "m")
     for reason, error in [("error", "429 rate limit"), ("stop", "")]:
@@ -440,7 +440,7 @@ def test_retry_success_clears_old_error_and_sums_usage(tmp_path):
 
 
 def test_different_local_provider_files_cannot_replace_each_other(tmp_path):
-    from hillclimb.backends.pi_cli import pi_home
+    from hillclimb.agents.pi_cli import pi_home
 
     paths = []
     for provider in ["one", "two"]:
@@ -462,5 +462,5 @@ def test_pi_auth_modes_and_missing_binary(tmp_path, monkeypatch):
     assert pi_env("api-key")["ANTHROPIC_API_KEY"] == "test-anthropic"
     routed = pi_env("openrouter")
     assert "ANTHROPIC_API_KEY" not in routed and "OPENAI_API_KEY" not in routed
-    result = PiCliBackend(pi_bin="/nonexistent/pi").invoke(make_request(tmp_path))
+    result = PiCliAgent(pi_bin="/nonexistent/pi").invoke(make_request(tmp_path))
     assert not result.ok and "could not start pi CLI" in result.error_message

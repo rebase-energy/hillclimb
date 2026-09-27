@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb.harness.candidate import BackendInfo, Candidate
+from hillclimb.harness.candidate import AgentInfo, Candidate
 from hillclimb.config import Config
 from hillclimb.harness.control import read_commands
 from hillclimb.harness.store import FileDataStore, key_for
@@ -66,7 +66,7 @@ def make_run_with_search(
             run_id=run_id,
             problem="/tmp/problem",
             problem_id=search_id,
-            backend="claude-code",
+            agent="claude-code",
             model="sonnet",
             metric="score",
             higher_is_better=True,
@@ -76,10 +76,10 @@ def make_run_with_search(
     journal = Journal(search_dir / "journal.jsonl")
     journal.candidate_result(make_candidate("c000", operator="baseline", status="passing"))
     c001 = make_candidate("c001", operator="draft", status="passing", val_score=0.7)
-    c001.backend = BackendInfo(name="claude-code", total_tokens=240_000, cost_usd=0.5)
+    c001.agent = AgentInfo(name="claude-code", total_tokens=240_000, cost_usd=0.5)
     journal.candidate_result(c001)
     c002 = make_candidate("c002", operator="improve", parent_id="c001", status="buggy", pruned=True)
-    c002.backend = BackendInfo(name="claude-code", total_tokens=1_000_000, cost_usd=1.75)
+    c002.agent = AgentInfo(name="claude-code", total_tokens=1_000_000, cost_usd=1.75)
     journal.candidate_result(c002)
     if status is not None:
         write_status(search_dir, status)
@@ -143,7 +143,7 @@ def test_scan_runs_and_searches_with_status(tmp_path: Path):
     assert len(search_rows) == 1
     assert search_rows[0].problem == "circle-packing"
     assert search_rows[0].policy == "greedy"  # the default optimizer
-    assert search_rows[0].backend == "claude-code"
+    assert search_rows[0].agent == "claude-code"
     assert search_rows[0].candidates == "3 (2 passing)"
     assert search_rows[0].buggy == 1  # c002 crashed: the cell goes red
     assert search_rows[0].tokens == "1.24M"  # 240k + 1.0M, summed across candidates
@@ -182,7 +182,7 @@ def test_fmt_cost():
 
 
 def test_estimate_cost_usd_prices_each_token_kind():
-    from hillclimb.backends.claude_code import estimate_cost_usd
+    from hillclimb.agents.claude_code import estimate_cost_usd
 
     usage = {
         "input_tokens": 1_000_000, "output_tokens": 1_000_000,
@@ -340,7 +340,7 @@ def test_search_row_shows_resolved_model_id(tmp_path: Path):
 
     journal = Journal(search_dir / "journal.jsonl")
     c003 = make_candidate("c003", operator="draft", status="passing")
-    c003.backend = BackendInfo(name="claude-code", model="sonnet",
+    c003.agent = AgentInfo(name="claude-code", model="sonnet",
                                model_id="claude-sonnet-4-5-20250929")
     journal.candidate_result(c003)
     row = _search_row(store, store.search(key_for(search_dir)))
@@ -368,7 +368,7 @@ def test_search_row_shows_requested_model_after_synthetic_error(tmp_path: Path):
     runs_dir = tmp_path / "runs"
     search_dir = make_run_with_search(runs_dir, "20260701-run")
     failed = make_candidate("c003", operator="draft", status="abandoned")
-    failed.backend = BackendInfo(
+    failed.agent = AgentInfo(
         name="claude-code",
         model="claude-opus-5",
         model_id="<synthetic>",
@@ -399,17 +399,17 @@ def test_scan_searches_shows_the_policy_and_the_arm_when_it_differs(tmp_path: Pa
     assert (row.problem, row.policy) == ("circle-packing [opus]", "greedy")
 
 
-def test_scan_searches_backend_lists_every_harness_a_route_used(tmp_path: Path):
+def test_scan_searches_agent_lists_every_harness_a_route_used(tmp_path: Path):
     """The configured harness first, then any other one a per-operator
-    route authored a candidate in (candidates without a backend name,
+    route authored a candidate in (candidates without a agent name,
     such as the baseline, add nothing)."""
     runs_dir = tmp_path / "runs"
     search_dir = make_run_with_search(runs_dir, "routed-run")
     journal = Journal(search_dir / "journal.jsonl")
     c003 = make_candidate("c003", operator="improve", parent_id="c001", status="passing", val_score=0.8)
-    c003.backend = BackendInfo(name="codex", model="gpt-5")
+    c003.agent = AgentInfo(name="codex", model="gpt-5")
     journal.candidate_result(c003)
-    assert scan_searches(runs_dir, "routed-run")[0].backend == "claude-code+codex"
+    assert scan_searches(runs_dir, "routed-run")[0].agent == "claude-code+codex"
 
 
 def test_sort_search_rows_best_first_within_each_problem():
@@ -417,7 +417,7 @@ def test_sort_search_rows_best_first_within_each_problem():
 
     def row(search_id: str, problem: str, score: float | None, higher: bool = True) -> SearchRow:
         return SearchRow(
-            search_id=search_id, problem=problem, policy="greedy", backend="dummy", model="m",
+            search_id=search_id, problem=problem, policy="greedy", agent="dummy", model="m",
             tokens="-", spend="-", state="done", candidates="-", best_val="-", selected="-",
             duration="-", best_score=score, higher_is_better=higher,
         )
@@ -479,6 +479,38 @@ def test_candidate_rows_tree_order_and_pruned(tmp_path: Path):
     assert rows[0].guide == "" and rows[1].guide == ""  # roots stay flush
     assert "PRUNED" in rows[2].marks
     assert "strike" in rows[2].style
+
+
+def test_candidate_rows_star_the_current_selection(tmp_path: Path):
+    """With the metric's direction the search's current selection wears a
+    star and is the only SELECTED row — records keep `is_selected` from the
+    moment they landed, so history alone would mark several."""
+    from hillclimb.tui.watch import BEST_STAR
+
+    search_dir = make_run_with_search(tmp_path / "runs", "r")
+    journal = Journal(search_dir / "journal.jsonl")
+    c003 = make_candidate("c003", operator="improve", parent_id="c001", status="passing", val_score=0.9)
+    c003.is_selected = True
+    journal.candidate_result(c003)
+    c001 = journal.candidates["c001"]
+    c001.is_selected = True  # selected when it landed, never cleared
+    journal.candidate_result(c001)
+
+    rows = candidate_rows(Journal(search_dir / "journal.jsonl"), higher_is_better=True)
+    starred = [r.candidate_id for r in rows if r.label.endswith(BEST_STAR)]
+    assert starred == ["c003"]
+    # a child row keeps the star through the cell styling (the guide is
+    # restyled dim, the id and star keep the row's style)
+    from hillclimb.tui.watch import _styled_candidate_cells
+
+    (c003_row,) = [r for r in rows if r.candidate_id == "c003"]
+    assert c003_row.guide  # c003 is a child of c001
+    assert str(_styled_candidate_cells(c003_row, holdout=False)[0]) == c003_row.label
+    assert [r.candidate_id for r in rows if "SELECTED" in r.marks] == ["c003"]
+    # without the direction the rows fall back to the records' own flags
+    rows = candidate_rows(Journal(search_dir / "journal.jsonl"))
+    assert not any(BEST_STAR in r.label for r in rows)
+    assert {r.candidate_id for r in rows if "SELECTED" in r.marks} == {"c001", "c003"}
 
 
 def test_candidate_rows_branch_guides(tmp_path: Path):
@@ -635,10 +667,10 @@ def test_parse_stream_line_timestamps_kinds_and_noise():
     assert parse_stream_line(multi).text == '→ Bash(python3 -c " import re x = 1 ")'
 
 
-def test_running_candidate_detail_shows_backend_tokens_and_elapsed(tmp_path: Path):
+def test_running_candidate_detail_shows_agent_tokens_and_elapsed(tmp_path: Path):
     from rich.console import Console
 
-    from hillclimb.harness.candidate import BackendInfo, Candidate, utcnow
+    from hillclimb.harness.candidate import AgentInfo, Candidate, utcnow
 
     search_dir = make_run_with_search(tmp_path / "runs", "r")
     journal = Journal(search_dir / "journal.jsonl")
@@ -650,7 +682,7 @@ def test_running_candidate_detail_shows_backend_tokens_and_elapsed(tmp_path: Pat
     journal.candidate_created(
         Candidate(
             candidate_id="c009", operator="draft", status="running", candidate_dir=str(candidate_dir),
-            backend=BackendInfo(name="claude-code", model="sonnet"), created_at=utcnow(),
+            agent=AgentInfo(name="claude-code", model="sonnet"), created_at=utcnow(),
         )
     )
     journal = Journal(search_dir / "journal.jsonl")
@@ -1464,7 +1496,8 @@ async def test_searches_screen_inline_candidates_panel(tmp_path: Path):
         assert screen._panel_search_id == "circle-packing"
         assert str(panel.styles.display) == "block"
         assert panel.row_count == 3
-        assert [str(panel.get_cell_at((i, 0))).strip() for i in range(3)] == ["c000", "c001", "└─ c002"]
+        # c001 is the search's current selection: it wears the star
+        assert [str(panel.get_cell_at((i, 0))).strip() for i in range(3)] == ["c000", "c001 ★", "└─ c002"]
 
         screen._set_detail_height(DETAIL_MIN_HEIGHT_FOR_TESTS)  # leave room to grow
         await pilot.pause()
@@ -1711,13 +1744,13 @@ async def test_ctrl_c_quits_and_question_mark_lists_every_key(tmp_path: Path):
         await pilot.pause()
         screen = app.screen
         footer_keys = [b.key for b in screen.BINDINGS if b.show]
-        assert footer_keys == ["enter", "escape", "question_mark", "q"]  # lean footer
+        assert footer_keys == ["enter", "escape,b", "question_mark", "q"]  # lean footer; esc/b is one way back
         assert not screen.query(KeysPanel)
         await pilot.press("question_mark")
         await pilot.pause()
         rows = dict(screen.query_one(KeysPanel).rows())
         assert rows["o"] == "full candidate view" and rows["m"] == "maximize panel"
-        assert rows["g"] == "knowledge graph" and rows["esc"] == "back"
+        assert rows["g"] == "knowledge graph" and rows["esc/b"] == "back"
         assert rows["drag divider"] == "resize panel"
         assert rows["t"] == "tree panel"  # the screen key shadows the app-level time zone here
         assert screen.query_one("#searches").size.width < 120  # split, not overlay
@@ -1762,7 +1795,7 @@ def test_candidate_paths_fall_back_to_the_search_dir_when_recorded_elsewhere(tmp
     journal = Journal(search_dir / "journal.jsonl")
     journal.candidate_created(
         make_candidate("c003", operator="draft", status="pending", candidate_dir=foreign,
-                       backend=BackendInfo(name="claude-code", model="sonnet"))
+                       agent=AgentInfo(name="claude-code", model="sonnet"))
     )
     write_status(search_dir, _running_status("circle-packing", "r", [
         CurrentCandidate(candidate_id="c003", operator="draft", phase="agent", candidate_dir=foreign)]))
@@ -1799,7 +1832,7 @@ def test_pending_candidate_detail_is_in_flight_only_while_the_search_lives(tmp_p
     journal = Journal(search_dir / "journal.jsonl")
     journal.candidate_created(
         make_candidate("c003", operator="draft", status="pending", created_at=utcnow(),
-                       backend=BackendInfo(name="claude-code", model="sonnet"))
+                       agent=AgentInfo(name="claude-code", model="sonnet"))
     )
     journal = Journal(search_dir / "journal.jsonl")
     assert candidate_in_flight(journal.candidates["c003"], live=True)
@@ -1869,7 +1902,7 @@ async def test_running_candidate_detail_has_a_following_console(tmp_path: Path):
     journal = Journal(search_dir / "journal.jsonl")
     journal.candidate_created(
         make_candidate("c003", operator="draft", status="pending", created_at=utcnow(),
-                       candidate_dir=str(live), backend=BackendInfo(name="claude-code", model="sonnet"))
+                       candidate_dir=str(live), agent=AgentInfo(name="claude-code", model="sonnet"))
     )
     current = CurrentCandidate(candidate_id="c003", operator="draft", phase="agent", candidate_dir=str(live))
     write_status(search_dir, _running_status("circle-packing", "r", [current]))

@@ -6,7 +6,7 @@ from tests.factories import trial as mk_trial
 
 import yaml
 
-from hillclimb.backends.fake import FakeBackend
+from hillclimb.agents.fake import FakeAgent
 from hillclimb.harness.candidate import Candidate
 from hillclimb.modules.memory.claims import (
     Claim,
@@ -175,9 +175,9 @@ class TestDistillPass:
             scored("c002", "improve", 0.80, "HGB tuned", str(ws)),
         ])
         card = self._card(journal)
-        backend = FakeBackend()
-        backend.queue(operator="distill", files={"claims.yaml": CLAIMS_YAML})
-        monkeypatch.setattr("hillclimb.api.get_backend", lambda *a, **k: backend)
+        agent = FakeAgent()
+        agent.queue(operator="distill", files={"claims.yaml": CLAIMS_YAML})
+        monkeypatch.setattr("hillclimb.api.get_agent", lambda *a, **k: agent)
 
         knowledge_dir = tmp_path / "knowledge"
         search_dir = tmp_path / "search"
@@ -188,7 +188,7 @@ class TestDistillPass:
         )
         assert [c.subject for c in claims] == ["histgradientboosting", "feature-scaling"]
         # the distill request carried the digest and the solution excerpt
-        request = backend.requests[0]
+        request = agent.requests[0]
         assert request.operator == "distill"
         assert request.model == "haiku"  # default distill route
         assert "HGB tuned" in request.prompt
@@ -204,22 +204,22 @@ class TestDistillPass:
     def test_distill_route_override(self, tmp_path, monkeypatch):
         journal = make_journal(tmp_path, [scored("c001", "draft", 0.7)])
         card = self._card(journal)
-        backend = FakeBackend()
-        backend.queue(operator="distill", files={"claims.yaml": "claims: []"})
-        monkeypatch.setattr("hillclimb.api.get_backend", lambda *a, **k: backend)
+        agent = FakeAgent()
+        agent.queue(operator="distill", files={"claims.yaml": "claims: []"})
+        monkeypatch.setattr("hillclimb.api.get_agent", lambda *a, **k: agent)
         config = Config.model_validate({"routing": {"distill": {"model": "opus"}}})
         distill_claims(
             journal, problem=FakeProblem(), card=card, search_dir=tmp_path / "s",
             knowledge_dir=tmp_path / "k", config=config, log=lambda m: None,
         )
-        assert backend.requests[0].model == "opus"
+        assert agent.requests[0].model == "opus"
 
     def test_failed_agent_yields_no_claims(self, tmp_path, monkeypatch):
         journal = make_journal(tmp_path, [scored("c001", "draft", 0.7)])
         card = self._card(journal)
-        backend = FakeBackend()
-        backend.queue(operator="distill", result={"ok": False, "error_kind": "timeout"})
-        monkeypatch.setattr("hillclimb.api.get_backend", lambda *a, **k: backend)
+        agent = FakeAgent()
+        agent.queue(operator="distill", result={"ok": False, "error_kind": "timeout"})
+        monkeypatch.setattr("hillclimb.api.get_agent", lambda *a, **k: agent)
         claims = distill_claims(
             journal, problem=FakeProblem(), card=card, search_dir=tmp_path / "s",
             knowledge_dir=tmp_path / "k", config=Config(), log=lambda m: None,
@@ -229,12 +229,12 @@ class TestDistillPass:
     def test_unregistered_subject_dropped(self, tmp_path, monkeypatch):
         journal = make_journal(tmp_path, [scored("c001", "draft", 0.7)])
         card = self._card(journal)
-        backend = FakeBackend()
+        agent = FakeAgent()
         # claim about a subject never declared in entities -> dropped
-        backend.queue(operator="distill", files={"claims.yaml": (
+        agent.queue(operator="distill", files={"claims.yaml": (
             "claims:\n  - subject: phantom\n    relation: helps\nentities: []\n"
         )})
-        monkeypatch.setattr("hillclimb.api.get_backend", lambda *a, **k: backend)
+        monkeypatch.setattr("hillclimb.api.get_agent", lambda *a, **k: agent)
         claims = distill_claims(
             journal, problem=FakeProblem(), card=card, search_dir=tmp_path / "s",
             knowledge_dir=tmp_path / "k", config=Config(), log=lambda m: None,
@@ -243,15 +243,15 @@ class TestDistillPass:
 
     def test_backfill_from_card(self, tmp_path, monkeypatch):
         card = KnowledgeCard(problem_id="p", family="p", metric="rmse", run_ref="r1/s1")
-        backend = FakeBackend()
-        backend.queue(operator="distill", files={"claims.yaml": CLAIMS_YAML})
-        monkeypatch.setattr("hillclimb.api.get_backend", lambda *a, **k: backend)
+        agent = FakeAgent()
+        agent.queue(operator="distill", files={"claims.yaml": CLAIMS_YAML})
+        monkeypatch.setattr("hillclimb.api.get_agent", lambda *a, **k: agent)
         claims = distill_claims_from_card(
             card, work_dir=tmp_path / "w", knowledge_dir=tmp_path / "k",
             config=Config(), log=lambda m: None,
         )
         assert len(claims) == 2
-        assert "card data only" in backend.requests[0].prompt
+        assert "card data only" in agent.requests[0].prompt
 
 
 class TestCardIntegration:

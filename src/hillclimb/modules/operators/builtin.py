@@ -76,7 +76,7 @@ class DraftOperator(Operator):
 
 class DebugOperator(Operator):
     """A fix of a candidate that failed. The chain's earlier failed fixes ride
-    in the prompt; where the backend can, the target's agent session is
+    in the prompt; where the agent can, the target's agent session is
     continued as well."""
 
     name = "debug"

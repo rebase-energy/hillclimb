@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from hillclimb.backends.claude_code import (
+from hillclimb.agents.claude_code import (
     estimate_cost_usd,
     is_concrete_model_id,
     usage_total_tokens,
@@ -83,7 +83,7 @@ class SearchRow:
     search_id: str
     problem: str
     policy: str  # the optimizer driving the search: greedy, openevolve, gepa, …
-    backend: str  # the agent harness the operators run in: claude-code, codex, …
+    agent: str  # the agent harness the operators run in: claude-code, codex, …
     model: str
     tokens: str  # summed agent tokens across the search's candidates
     spend: str  # summed agent cost in USD, climbing while operators stream
@@ -299,13 +299,13 @@ def _state_summary(states: list[str]) -> str:
     return states[0]
 
 
-def _display_backend(default: str, journal: Journal) -> str:
-    """The backend cell: the search's configured agent harness, plus any
+def _display_agent(default: str, journal: Journal) -> str:
+    """The agent cell: the search's configured agent harness, plus any
     other harness a per-operator route actually authored a candidate in
     (`routing:` can send, say, the drafts to codex), in order of first use."""
     names = [default]
     for candidate in journal.candidates.values():
-        name = candidate.backend.name
+        name = candidate.agent.name
         if name and name not in names:
             names.append(name)
     return "+".join(names)
@@ -364,10 +364,10 @@ def _resolved_model_id(journal: Journal, status: SearchStatus | None, search_dir
     """
     resolved = None
     for candidate in journal.candidates.values():
-        if is_concrete_model_id(candidate.backend.model_id):
-            resolved = candidate.backend.model_id
-        elif candidate.backend.model_id == "<synthetic>" and candidate.backend.model:
-            resolved = candidate.backend.model
+        if is_concrete_model_id(candidate.agent.model_id):
+            resolved = candidate.agent.model_id
+        elif candidate.agent.model_id == "<synthetic>" and candidate.agent.model:
+            resolved = candidate.agent.model
     if resolved is None and status is not None:
         for current in status.current:
             resolved = _stream_model_id(resolve_candidate_dir(search_dir, current.candidate_id, current.candidate_dir))
@@ -384,8 +384,8 @@ def _search_row(store: DataStore, record: SearchRecord) -> SearchRow:
     n_failing = sum(1 for c in journal.candidates.values() if c.status == "failing")
     n_buggy = sum(1 for c in journal.candidates.values() if c.status == "buggy")
     n_abandoned = sum(1 for c in journal.candidates.values() if c.status == "abandoned")
-    tokens = sum(c.backend.total_tokens or 0 for c in journal.candidates.values())
-    spend = sum(c.backend.cost_usd or 0.0 for c in journal.candidates.values())
+    tokens = sum(c.agent.total_tokens or 0 for c in journal.candidates.values())
+    spend = sum(c.agent.cost_usd or 0.0 for c in journal.candidates.values())
     if status is not None:
         # in-flight operators are not in the journal yet: read their live
         # streams so the count climbs while the tokens are being burned
@@ -415,8 +415,14 @@ def _search_row(store: DataStore, record: SearchRecord) -> SearchRow:
             if meta.arm and meta.arm != policy_label(meta.climber)
             else meta.problem_id
         ),
-        policy=policy_label(meta.climber),
-        backend=_display_backend(meta.backend, journal),
+        # the role is the problem's doing (a meta-problem runs its climber
+        # as an improver); a solver is the norm and goes unlabelled
+        policy=(
+            f"{policy_label(meta.climber)} (improver)"
+            if meta.role == "improver"
+            else policy_label(meta.climber)
+        ),
+        agent=_display_agent(meta.agent, journal),
         model=_display_model(meta.model, _resolved_model_id(journal, status, search_dir)),
         tokens=_fmt_tokens(tokens),
         spend=_fmt_cost(spend),
@@ -489,8 +495,8 @@ def _run_row(store: DataStore, meta: RunMeta) -> RunRow:
     for record, state in zip(records, states):
         journal = Journal(store.journal(record.key))
         candidate_total += len(journal.candidates)
-        token_total += sum(c.backend.total_tokens or 0 for c in journal.candidates.values())
-        spend_total += sum(c.backend.cost_usd or 0.0 for c in journal.candidates.values())
+        token_total += sum(c.agent.total_tokens or 0 for c in journal.candidates.values())
+        spend_total += sum(c.agent.cost_usd or 0.0 for c in journal.candidates.values())
         status = store.read_status(record.key)
         if status is None:
             continue
@@ -577,8 +583,10 @@ def _styled_candidate_cells(row: CandidateRow, holdout: bool) -> list[Text]:
 
     cells = [Text(v, style=row.style) for v in _candidate_cells(row, holdout)]
     if row.guide:
+        # the label is guide + id (+ the star of the current selection);
+        # only the guide is restyled, the rest keeps the row's style
         label = Text(row.guide, style="dim")
-        label.append(row.candidate_id, style=row.style)
+        label.append(row.label[len(row.guide):], style=row.style)
         cells[0] = label
     return cells
 
@@ -593,11 +601,26 @@ def _set_candidate_columns(table, holdout: bool) -> None:
     table._holdout_layout = holdout
 
 
-def candidate_rows(journal: Journal, live: bool = True) -> list[CandidateRow]:
+BEST_STAR = " ★"  # after the id of the search's current selection
+
+
+def candidate_rows(
+    journal: Journal, live: bool = True, higher_is_better: bool | None = None
+) -> list[CandidateRow]:
+    """One row per candidate in tree order. With `higher_is_better` the
+    search's CURRENT selection (`journal.selected_candidate`) wears a star
+    after its id and is the only row marked SELECTED — a journal record's
+    `is_selected` says a candidate was selected when it landed and stays
+    on it, so several would otherwise claim the mark."""
+    current = (
+        journal.selected_candidate(higher_is_better) if higher_is_better is not None else None
+    )
     rows = []
     for candidate, guide in _tree_order(journal):
+        is_current = current is not None and candidate.candidate_id == current.candidate_id
+        selected = is_current if current is not None else candidate.is_selected
         marks = []
-        if candidate.is_selected and not candidate.pruned:
+        if selected and not candidate.pruned:
             marks.append("SELECTED")
         if candidate.is_best:
             marks.append("best-val")
@@ -605,12 +628,12 @@ def candidate_rows(journal: Journal, live: bool = True) -> list[CandidateRow]:
             marks.append("PRUNED")
         shown = display_status(candidate.status, live)
         style = "dim strike" if candidate.pruned else STATUS_STYLE.get(shown, "")
-        if candidate.is_selected and not candidate.pruned:
+        if selected and not candidate.pruned:
             style = "bold gold1"
         rows.append(
             CandidateRow(
                 candidate_id=candidate.candidate_id,
-                label=guide + candidate.candidate_id,
+                label=guide + candidate.candidate_id + (BEST_STAR if is_current else ""),
                 guide=guide,
                 operator=candidate.operator
                 + (f"/{candidate.complexity}" if candidate.complexity else ""),
@@ -945,16 +968,16 @@ def candidate_detail_lines(record: SearchRecord, journal: Journal, candidate_id:
             )
     else:
         lines.append("Trial: (not executed)")
-    if candidate.backend.name or candidate.backend.session_id or candidate.backend.error_kind:
-        cost = f"${candidate.backend.cost_usd:.2f}" if candidate.backend.cost_usd is not None else "-"
+    if candidate.agent.name or candidate.agent.session_id or candidate.agent.error_kind:
+        cost = f"${candidate.agent.cost_usd:.2f}" if candidate.agent.cost_usd is not None else "-"
         lines.append(
-            "Backend: "
-            f"{candidate.backend.name or '-'}  "
-            f"session={candidate.backend.session_id or '-'}  "
-            f"turns={candidate.backend.num_turns if candidate.backend.num_turns is not None else '-'}  "
-            f"tokens={_fmt_tokens(candidate.backend.total_tokens)}  "
+            "Agent: "
+            f"{candidate.agent.name or '-'}  "
+            f"session={candidate.agent.session_id or '-'}  "
+            f"turns={candidate.agent.num_turns if candidate.agent.num_turns is not None else '-'}  "
+            f"tokens={_fmt_tokens(candidate.agent.total_tokens)}  "
             f"cost={cost}  "
-            f"error={candidate.backend.error_kind or '-'}"
+            f"error={candidate.agent.error_kind or '-'}"
         )
 
     if children:
@@ -1132,15 +1155,15 @@ def candidate_detail_renderables(
             )
     else:
         overview.add_row("trial", Text("(not executed)", style="dim"), "", "")
-    backend = candidate.backend
+    agent = candidate.agent
     if candidate_in_flight(candidate, live):
-        # in flight: what is known now, refreshed every tick — the backend
+        # in flight: what is known now, refreshed every tick — the agent
         # and model from the route, tokens from the live stream, a clock
         # counting up since the candidate was created
-        model = f"  model={backend.model}" if backend.model else ""
+        model = f"  model={agent.model}" if agent.model else ""
         overview.add_row(
-            "backend",
-            Text(f"{backend.name or '-'}{model}"),
+            "agent",
+            Text(f"{agent.name or '-'}{model}"),
             "elapsed",
             Text(_elapsed_since(candidate.created_at), style="cyan"),
         )
@@ -1150,25 +1173,25 @@ def candidate_detail_renderables(
             "",
             "",
         )
-    elif backend.name or backend.session_id or backend.error_kind:
-        cost = f"${backend.cost_usd:.2f}" if backend.cost_usd is not None else "-"
-        agent_s = f"{backend.agent_duration_s:.0f}s" if backend.agent_duration_s is not None else "-"
-        shown = backend.model_id if is_concrete_model_id(backend.model_id) else backend.model
+    elif agent.name or agent.session_id or agent.error_kind:
+        cost = f"${agent.cost_usd:.2f}" if agent.cost_usd is not None else "-"
+        agent_s = f"{agent.agent_duration_s:.0f}s" if agent.agent_duration_s is not None else "-"
+        shown = agent.model_id if is_concrete_model_id(agent.model_id) else agent.model
         model = f"  model={shown}" if shown else ""
         overview.add_row(
-            "backend",
-            Text(f"{backend.name or '-'}{model}  session={backend.session_id or '-'}"),
+            "agent",
+            Text(f"{agent.name or '-'}{model}  session={agent.session_id or '-'}"),
             "agent time",
-            Text(agent_s, style="cyan" if backend.agent_duration_s is not None else "dim"),
+            Text(agent_s, style="cyan" if agent.agent_duration_s is not None else "dim"),
         )
         overview.add_row(
             "tokens",
             Text(
-                f"{_fmt_tokens(backend.total_tokens)}  "
-                f"turns={backend.num_turns if backend.num_turns is not None else '-'}  cost={cost}"
+                f"{_fmt_tokens(agent.total_tokens)}  "
+                f"turns={agent.num_turns if agent.num_turns is not None else '-'}  cost={cost}"
             ),
             "error",
-            Text(backend.error_kind or "-", style="red" if backend.error_kind else "dim"),
+            Text(agent.error_kind or "-", style="red" if agent.error_kind else "dim"),
         )
 
     # where the operator's agent actually ran; a link to the full dir
@@ -1282,7 +1305,7 @@ from textual.screen import ModalScreen, Screen  # noqa: E402
 from textual.widgets import DataTable, Footer, Label, RichLog, Static  # noqa: E402
 
 from hillclimb.tui.header import HillclimbHeader, TimezoneMixin  # noqa: E402
-from hillclimb.tui.keys import KEYS_BINDING, QUIT_BINDINGS, KeysMixin  # noqa: E402
+from hillclimb.tui.keys import KEYS_BINDING, QUIT_BINDINGS, KeysMixin, back_binding  # noqa: E402
 
 # one tick per second: the budget countdown and agent stream should read as live
 REFRESH_S = 1.0
@@ -1893,8 +1916,7 @@ class CandidateScreen(ResizableDetail, LiveScreen):
 
     BINDINGS = [
         Binding("enter", "open_detail", "details", priority=True),
-        Binding("escape", "close_detail_or_back", "back"),
-        Binding("b", "close_detail_or_back", "back", show=False),
+        back_binding("close_detail_or_back"),
         Binding("+", "grow_detail", "larger detail", show=False),
         Binding("-", "shrink_detail", "smaller detail", show=False),
         Binding("m", "toggle_maximize_detail", "maximize detail", show=False),
@@ -1973,7 +1995,7 @@ class CandidateScreen(ResizableDetail, LiveScreen):
         if record is None:  # search gone (deleted run): keep the screen coherent
             meta = SearchMeta(
                 search_id=self.key[1], run_id=self.key[0], problem=self.key[1], problem_id=self.key[1],
-                backend="?", model="?", metric="score",
+                agent="?", model="?", metric="score",
             )
             record = SearchRecord(meta=meta, run_name=self.key[0], state="unknown", search_dir=self.search_dir)
         return record
@@ -2004,7 +2026,9 @@ class CandidateScreen(ResizableDetail, LiveScreen):
         _set_candidate_columns(table, holdout)
         snapshot = _snapshot_table(table)
         table.clear()
-        for row in candidate_rows(journal, live=state == "running"):
+        for row in candidate_rows(
+            journal, live=state == "running", higher_is_better=bool(record.meta.higher_is_better)
+        ):
             table.add_row(*_styled_candidate_cells(row, holdout), key=row.candidate_id)
         _restore_table(table, snapshot)
 
@@ -2237,8 +2261,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
 
     BINDINGS = [
         Binding("enter", "open_search", "candidates", priority=True),
-        Binding("escape", "close_panel_or_back", "back"),
-        Binding("b", "close_panel_or_back", "back", show=False),
+        back_binding("close_panel_or_back"),
         Binding("o", "open_search_screen", "full candidate view", show=False),
         Binding("+", "grow_detail", "larger panel", show=False),
         Binding("-", "shrink_detail", "smaller panel", show=False),
@@ -2317,7 +2340,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
             "search",
             "problem",
             "policy",
-            "backend",
+            "agent",
             "model",
             "tokens",
             "spend",
@@ -2349,7 +2372,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
             state = Text(row.state, style=STATE_STYLE.get(row.state, ""))
             candidates = Text(row.candidates, style=candidates_style(row))
             table.add_row(
-                row.search_id, row.problem, row.policy, row.backend, row.model, row.tokens, row.spend,
+                row.search_id, row.problem, row.policy, row.agent, row.model, row.tokens, row.spend,
                 state, candidates, row.best_val, row.selected, row.duration, key=row.search_id,
             )
         _restore_table(table, snapshot)
@@ -2375,7 +2398,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         live = record.state == "running"
         holdout = _shows_holdout(record, journal)
         _set_candidate_columns(panel, holdout)
-        for row in candidate_rows(journal, live=live):
+        for row in candidate_rows(journal, live=live, higher_is_better=bool(record.meta.higher_is_better)):
             panel.add_row(*_styled_candidate_cells(row, holdout), key=row.candidate_id)
         _restore_table(panel, snapshot)
 

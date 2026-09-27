@@ -51,7 +51,7 @@ DEFAULT_OPERATORS = tuple(cls.name for cls in BUILTIN_OPERATORS)
 # contract and the harness's own passes, the same for every climber
 HARNESS_TEMPLATE_PREFIXES = ("contract_",)
 HARNESS_TEMPLATES = frozenset(
-    {"holdout_clause", "report_clause", "params_cue", "tools_cue", "distill", "consolidate", "paper"}
+    {"holdout_clause", "report_clause", "params_cue", "params_cue_climber", "tools_cue", "distill", "consolidate", "paper"}
 )
 
 
@@ -88,7 +88,7 @@ class ClimberManifest(BaseModel):
     def _reserved(cls, data):
         if isinstance(data, dict) and "routing" in data:
             raise ValueError(
-                "`routing` is reserved: which backend and model run is the user's "
+                "`routing` is reserved: which agent and model run is the user's "
                 "choice (config.yaml `routing:`), never a climber's"
             )
         return data

@@ -13,6 +13,7 @@ from hillclimb.project import (
     find_hillclimb_dir,
     MARKER_FILE,
     user_config_path,
+    user_env_path,
     HillclimbDirNotFound,
 )
 from hillclimb.modules.memory.base import MemoryKind
@@ -29,7 +30,7 @@ class BudgetConfig(BaseModel):
     # and journals them abandoned
     deadline: Literal["graceful", "hard"] = "graceful"
     # hard agent-spend ceiling; the search parks (resumable) when cumulative
-    # backend cost reaches it. 0 = no ceiling.
+    # agent cost reaches it. 0 = no ceiling.
     max_cost_usd: float = 0.0
     # The budget is the USER's, in every dimension — a climber sees what is
     # left (BudgetView) and never sets it. Both end the search like the clock
@@ -42,7 +43,7 @@ class BudgetConfig(BaseModel):
     max_tokens: int = 0
 
 
-def default_machine_max_operators() -> int:
+def default_machine_max_agents() -> int:
     """min(8, cores - 2): each operator is an API-bound agent plus, at worst,
     one single-threaded solution process, so this keeps a laptop responsive
     however many searches are launched."""
@@ -70,10 +71,15 @@ LEGACY_SETTINGS = {
     "operators.draft_retrieval": "climber.operators.draft.retrieval",
     "operators.improve_ablation": "climber.operators.improve.ablation",
     "operators.knowledge_tool": "learning.tool",
-    "search.parallel_operators": "concurrency.parallel_operators",
-    "search.parallel_agents": "concurrency.parallel_operators",
-    "search.machine_max_operators": "concurrency.machine_max_operators",
-    "search.machine_max_agents": "concurrency.machine_max_operators",
+    "search.parallel_agents": "concurrency.parallel_agents",
+    "search.parallel_operators": "concurrency.parallel_agents",
+    "concurrency.parallel_operators": "concurrency.parallel_agents",
+    "search.machine_max_agents": "concurrency.machine_max_agents",
+    "search.machine_max_operators": "concurrency.machine_max_agents",
+    "concurrency.machine_max_operators": "concurrency.machine_max_agents",
+    # the coding agent used to be called the backend
+    "backend": "agent",
+    "backend_auth": "agent_auth",
     "search.n_replicates": "evaluation.n_replicates",
     "search.n_trials": "evaluation.n_replicates",
     "search.replicate_mode": "evaluation.replicate_mode",
@@ -88,6 +94,28 @@ REMOVED_SETTINGS = {
         "edit mine/prompts/, then run with `--climber mine`"
     ),
 }
+
+
+# The coding agent used to be called the backend, and the agents run in
+# parallel used to be counted as operators: keys in either spelling load.
+RENAMED_KEYS = {
+    "backend": "agent",
+    "backend_auth": "agent_auth",
+    "parallel_operators": "parallel_agents",
+    "machine_max_operators": "machine_max_agents",
+}
+
+
+def renamed_keys(data):
+    """A mapping with the old spellings moved to the new (new wins on a clash)."""
+    if not isinstance(data, dict) or not any(k in data for k in RENAMED_KEYS):
+        return data
+    data = dict(data)
+    for old, new in RENAMED_KEYS.items():
+        if old in data:
+            value = data.pop(old)
+            data.setdefault(new, value)
+    return data
 
 
 def current_setting(key: str) -> str:
@@ -152,27 +180,37 @@ class EvaluationConfig(BaseModel):
 class ConcurrencyConfig(BaseModel):
     """How much runs at once (the `concurrency:` block)."""
 
-    parallel_operators: int = 1  # attempts in flight per search; 1 = serial (default)
-    # Machine-wide cap on concurrent operators across every search on this
-    # machine (flock slots in ~/.cache/hillclimb/agent-slots/). Operators
-    # beyond it wait (`waiting-slot` in watch). 0 = off; None = default_machine_max_operators().
-    machine_max_operators: int | None = None
+    @model_validator(mode="before")
+    @classmethod
+    def _renamed(cls, data):
+        return renamed_keys(data)
 
-    def effective_machine_max_operators(self) -> int:
-        if self.machine_max_operators is None:
-            return default_machine_max_operators()
-        return self.machine_max_operators
+    parallel_agents: int = 1  # attempts in flight per search; 1 = serial (default)
+    # Machine-wide cap on concurrent agents across every search on this
+    # machine (flock slots in ~/.cache/hillclimb/agent-slots/). Operators
+    # beyond it wait (`waiting-slot` in watch). 0 = off; None = default_machine_max_agents().
+    machine_max_agents: int | None = None
+
+    def effective_machine_max_agents(self) -> int:
+        if self.machine_max_agents is None:
+            return default_machine_max_agents()
+        return self.machine_max_agents
 
 
 class RouteConfig(BaseModel):
-    """Per-operator backend/model override (the `routing:` config block).
-    None fields inherit the global `backend`/`model`/`backend_auth` scalars."""
+    """Per-operator agent/model override (the `routing:` config block).
+    None fields inherit the global `agent`/`model`/`agent_auth` scalars."""
 
     model_config = ConfigDict(extra="forbid")
 
-    backend: str | None = None
+    @model_validator(mode="before")
+    @classmethod
+    def _renamed(cls, data):
+        return renamed_keys(data)
+
+    agent: str | None = None
     model: str | None = None
-    backend_auth: str | None = None
+    agent_auth: str | None = None
     sampling: dict[str, int | float] | None = None
     # model POOL: when set (2+ entries), a UCB1 bandit picks the model per
     # call, rewarded by whether the candidate improved on its parent
@@ -313,7 +351,7 @@ class SimilarityConfig(BaseModel):
 
 
 class PiConfig(BaseModel):
-    """pi backend settings shared by routed pi instances."""
+    """pi agent settings shared by routed pi instances."""
 
     models_file: Path | None = None
 
@@ -347,12 +385,12 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return merged
 
 
-BACKEND_AUTHS = ("subscription", "api-key", "openrouter")
+AGENT_AUTHS = ("subscription", "api-key", "openrouter")
 
 
 class Config(BaseModel):
-    backend: str = "claude-code"
-    backend_auth: str = "subscription"  # one of BACKEND_AUTHS
+    agent: str = "claude-code"
+    agent_auth: str = "subscription"  # one of AGENT_AUTHS
     model: str = "sonnet"
     # per-operator routing; keys: draft | debug | improve | ensemble |
     # distill | default. Missing keys (or an absent block) fall back to the
@@ -374,6 +412,11 @@ class Config(BaseModel):
     # Resolved at load time; None for embedders that construct Config()
     # directly and set absolute paths themselves (e.g. the hosted container).
     hillclimb_dir: Path | None = Field(default=None, exclude=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _renamed_scalars(cls, data):
+        return renamed_keys(data)
 
     @model_validator(mode="before")
     @classmethod
@@ -409,56 +452,56 @@ class Config(BaseModel):
         return data
 
     @model_validator(mode="after")
-    def _check_backend_auth(self):
-        """Reject auth/sampling combinations a backend would silently ignore.
+    def _check_agent_auth(self):
+        """Reject auth/sampling combinations a agent would silently ignore.
 
         `openrouter` is implemented by codex and pi. Sampling is implemented
         only by pi's explicitly loaded provider-payload extension.
         """
         default_route = self.routing.get("default")
 
-        def effective_backend(name: str, route: RouteConfig) -> str:
-            if route.backend:
-                return route.backend
-            if name != "default" and default_route and default_route.backend:
-                return default_route.backend
-            return self.backend
+        def effective_agent(name: str, route: RouteConfig) -> str:
+            if route.agent:
+                return route.agent
+            if name != "default" and default_route and default_route.agent:
+                return default_route.agent
+            return self.agent
 
         def effective_auth(name: str, route: RouteConfig) -> str:
-            if route.backend_auth:
-                return route.backend_auth
-            if name != "default" and default_route and default_route.backend_auth:
-                return default_route.backend_auth
-            return self.backend_auth
+            if route.agent_auth:
+                return route.agent_auth
+            if name != "default" and default_route and default_route.agent_auth:
+                return default_route.agent_auth
+            return self.agent_auth
 
-        layers = [("backend_auth", self.backend, self.backend_auth)]
+        layers = [("agent_auth", self.agent, self.agent_auth)]
         for name, route in self.routing.items():
             layers.append(
                 (
                     f"routing.{name}",
-                    effective_backend(name, route),
+                    effective_agent(name, route),
                     effective_auth(name, route),
                 )
             )
-        for where, backend, auth in layers:
-            if auth not in BACKEND_AUTHS:
+        for where, agent, auth in layers:
+            if auth not in AGENT_AUTHS:
                 raise ValueError(
-                    f"{where}: unknown backend_auth {auth!r} "
-                    f"(one of {', '.join(BACKEND_AUTHS)})"
+                    f"{where}: unknown agent_auth {auth!r} "
+                    f"(one of {', '.join(AGENT_AUTHS)})"
                 )
-            if auth == "openrouter" and backend not in {"codex", "pi"}:
+            if auth == "openrouter" and agent not in {"codex", "pi"}:
                 raise ValueError(
-                    f"{where}: backend_auth: openrouter needs backend: codex or pi, "
-                    f"not {backend!r}"
+                    f"{where}: agent_auth: openrouter needs agent: codex or pi, "
+                    f"not {agent!r}"
                 )
         for name, route in self.routing.items():
-            backend = effective_backend(name, route)
+            agent = effective_agent(name, route)
             sampling = route.sampling
             if sampling is None and default_route is not None:
                 sampling = default_route.sampling
-            if sampling and backend != "pi":
+            if sampling and agent != "pi":
                 raise ValueError(
-                    f"routing.{name}: sampling needs backend: pi, not {backend!r}"
+                    f"routing.{name}: sampling needs agent: pi, not {agent!r}"
                 )
         return self
 
@@ -501,6 +544,11 @@ class Config(BaseModel):
                     if env_file.exists():
                         _load_dotenv(env_file)
                         break
+            # The user-level .env last: `_load_dotenv` never overrides, so
+            # the shell wins over the folder's file, which wins over this
+            # one — the same order as the config files.
+            if user_env_path().exists():
+                _load_dotenv(user_env_path())
         for key, value in overrides.items():
             if value is None:
                 continue

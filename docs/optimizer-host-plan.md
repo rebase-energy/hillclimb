@@ -19,7 +19,7 @@ projects want to own:
 
 - the verifier contract (a problem *is* its verifier, holdout privacy,
   median-of-trials noise handling);
-- agent execution infrastructure (routed backends, machine slots, budgets,
+- agent execution infrastructure (routed agents, machine slots, budgets,
   cost accounting, resume);
 - the append-only record and the TUIs that render it (`watch`, `tree`,
   `chart`, `surface`, `similarity`);
@@ -72,7 +72,7 @@ pure function of journal state, it is a policy.
 Engines never touch these subsystems directly; a thin per-engine adapter
 consumes them through one facade object (working name `OptimizerHost`,
 `src/hillclimb/host.py`), constructed by `execute_search` from the objects it
-already creates: journal, executor, budget, status, router, backend pool,
+already creates: journal, executor, budget, status, router, agent pool,
 slots, abort event, command drain.
 
 ### 1. `evaluate(source, *, context) -> EvalResult`
@@ -121,7 +121,7 @@ host service so every engine inherits it.
 The agentic mutation service, generalizing the GEPA plan's phase-3 proposer:
 scratch dir under `SEARCH_DIR/<engine>/proposals/`, parent source plus
 inspiration candidates' sources materialized, normal problem/data links, one
-`OperatorRequest` through `Router.resolve(<engine>)` and `BackendPool`,
+`OperatorRequest` through `Router.resolve(<engine>)` and `AgentPool`,
 slot-gated and cost-accounted, edited components read back and validated
 (non-empty, inside the scratch dir, actually changed).
 
@@ -135,7 +135,7 @@ Two commitments the survey forces:
   `propose` entirely and use `complete` instead. The host never insists on
   owning mutation.
 
-Returned `Proposal` carries the new source dict plus `BackendInfo`
+Returned `Proposal` carries the new source dict plus `AgentInfo`
 (model/cost/tokens/session) so the eventual candidate's accounting survives
 journal replay.
 
@@ -155,8 +155,8 @@ are journaled as a new `event: "llm_call"` audit line (replay already skips
 unknown event kinds — `Journal._replay` keeps only `CANDIDATE_EVENTS`), and
 their cost feeds `total_cost_usd()` and the status record.
 
-Implementation is a thin wrapper over a completion-capable backend; it does
-NOT reuse the agentic `OperatorBackend` path (no candidate dir, no turns).
+Implementation is a thin wrapper over a completion-capable agent; it does
+NOT reuse the agentic `Agent` path (no candidate dir, no turns).
 
 ### 4. Control plane
 
@@ -230,7 +230,7 @@ journal appends, status writes, and id allocation happen under the searcher
 state lock (the same discipline `SearchPolicy` already documents). GEPA's
 MVP being serial is a config constraint (`EngineTraits.supports_parallel =
 False`), never an architectural assumption — AlphaEvolve-class engines are
-aggressively parallel and the slot/`parallel_operators` infrastructure
+aggressively parallel and the slot/`parallel_agents` infrastructure
 already exists to meter them.
 
 ## Phasing

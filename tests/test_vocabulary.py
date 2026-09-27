@@ -66,7 +66,7 @@ def test_legacy_lower_is_better_key_loads_inverted():
     from hillclimb.harness.report import compact_report
 
     meta = SearchMeta.model_validate(
-        {"search_id": "s", "run_id": "r", "problem": "p", "problem_id": "p", "backend": "dummy",
+        {"search_id": "s", "run_id": "r", "problem": "p", "problem_id": "p", "agent": "dummy",
          "model": "m", "metric": "rmse", "lower_is_better": True}
     )
     assert meta.higher_is_better is False

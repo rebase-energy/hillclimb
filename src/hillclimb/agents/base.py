@@ -20,8 +20,8 @@ class OperatorRequest(BaseModel):
 class OperatorResult(BaseModel):
     ok: bool
     session_id: str | None = None
-    # fully-qualified model the backend actually ran (e.g.
-    # "claude-sonnet-4-5-20250929"); None when the backend only knows the alias
+    # fully-qualified model the agent actually ran (e.g.
+    # "claude-sonnet-4-5-20250929"); None when the agent only knows the alias
     model_id: str | None = None
     cost_usd: float | None = None
     num_turns: int | None = None
@@ -50,7 +50,7 @@ class OperatorResult(BaseModel):
     error_message: str = ""
 
 
-class OperatorBackend(Protocol):
+class Agent(Protocol):
     name: str
 
     def invoke(self, request: OperatorRequest) -> OperatorResult: ...

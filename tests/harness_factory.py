@@ -10,7 +10,7 @@ from hillclimb.harness.journal import Journal
 from tests.conftest import local_executor
 
 
-def make_harness(task, config, backend, *, name: str = "test-search", **kwargs):
+def make_harness(task, config, agent, *, name: str = "test-search", **kwargs):
     """-> (harness, journal, search_dir)"""
     search_dir = create_search_dir(config.paths.runs_dir, name)
     journal = Journal(search_dir / "journal.jsonl")
@@ -19,7 +19,7 @@ def make_harness(task, config, backend, *, name: str = "test-search", **kwargs):
         problem=task,
         config=config,
         journal=journal,
-        backend=backend,
+        agent=agent,
         executor=local_executor(),
         search_dir=search_dir,
         log=lambda *_: None,

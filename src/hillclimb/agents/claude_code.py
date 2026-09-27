@@ -10,7 +10,7 @@ from pathlib import Path
 from hillclimb.harness.procs import Reaper
 from hillclimb.harness import quota
 from hillclimb.harness.candidate import utcnow
-from hillclimb.backends.base import OperatorRequest, OperatorResult
+from hillclimb.agents.base import OperatorRequest, OperatorResult
 
 
 def subscription_env(auth: str = "subscription") -> dict[str, str]:
@@ -189,7 +189,7 @@ def _observed_usage(reader: "_StreamReader | None", payload: dict) -> dict[str, 
     return {key: count for key, count in usage.items() if count}
 
 
-class ClaudeCodeBackend:
+class ClaudeCodeAgent:
     """One operator call = one headless Claude Code invocation, cwd-scoped to
     the node candidate_dir. Auth comes from the interactive `claude` login (Max
     subscription) or CLAUDE_CODE_OAUTH_TOKEN in the environment.

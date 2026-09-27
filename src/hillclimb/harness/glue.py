@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 
 class ParkedSearch(Exception):
-    """Raised when the backend hits a rate limit; the search can be resumed."""
+    """Raised when the agent hits a rate limit; the search can be resumed."""
 
 
 class StopRequested(Exception):
@@ -70,7 +70,7 @@ def build_loop(config: Config, *, complexity_start: int = 0, log=print, search_d
     return search_climber(config, search_dir).build_loop(
         params=config.climber.params,  # the user's overlay on the manifest's params
         complexity_start=complexity_start,
-        parallelism=max(1, config.concurrency.parallel_operators),
+        parallelism=max(1, config.concurrency.parallel_agents),
         log=log,
     )
 

@@ -8,7 +8,7 @@ from tests.factories import trial as mk_trial
 import json
 from math import isclose
 
-from hillclimb.harness.candidate import BackendInfo, Candidate
+from hillclimb.harness.candidate import AgentInfo, Candidate
 from hillclimb.harness.dirs import create_candidate_dir, create_search_dir
 from hillclimb.harness.evaluation import (
     CandidateEvaluator,
@@ -209,7 +209,7 @@ def test_holdout_threshold_is_kth_best(tmp_path, config):
 
 def test_eval_result_projects_a_terminal_candidate():
     candidate = scored("c007", 0.5, 0.6, 0.7)
-    candidate.backend = BackendInfo(name="claude-code", cost_usd=1.25)
+    candidate.agent = AgentInfo(name="claude-code", cost_usd=1.25)
     for replicate, x in zip(candidate.trials[0].replicates, (1.0, 3.0, 2.0)):
         replicate.metrics = {"x": x}
 

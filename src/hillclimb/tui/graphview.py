@@ -620,7 +620,7 @@ from textual.widgets import (  # noqa: E402
 from textual.widgets.option_list import Option  # noqa: E402
 
 from hillclimb.tui.header import HillclimbHeader, TimezoneMixin  # noqa: E402
-from hillclimb.tui.keys import KEYS_BINDING, QUIT_BINDINGS, KeysMixin, KeysPanel  # noqa: E402
+from hillclimb.tui.keys import KEYS_BINDING, QUIT_BINDINGS, KeysMixin, KeysPanel, back_binding  # noqa: E402
 from hillclimb.tui.watch import REFRESH_S, _mouse_event_x, _mouse_event_y  # noqa: E402
 
 
@@ -1059,8 +1059,7 @@ class GraphScreen(KeysMixin, Screen):
     # binding regardless of `show`.
     BINDING_GROUP_TITLE = "graph"
     BINDINGS = [
-        Binding("escape", "dismiss_or_back", "back"),
-        Binding("b", "dismiss_or_back", "back", show=False),
+        back_binding("dismiss_or_back"),
         Binding("enter", "activate", "open", show=False, priority=True),
         Binding("+,=", "zoom_in", "zoom in", show=False),
         Binding("-", "zoom_out", "zoom out", show=False),

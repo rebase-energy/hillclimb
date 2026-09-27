@@ -28,6 +28,7 @@ from textual.widgets import Footer, Label, RichLog
 from hillclimb.config import Config
 from hillclimb.tui.graphview import GraphKeys, TimeScrubber, VNode, place_labels_by_node
 from hillclimb.tui.header import HillclimbHeader, TimezoneMixin
+from hillclimb.tui.keys import back_binding
 from hillclimb.tui.theme import HILLCLIMB_CSS, apply_theme
 from hillclimb.tui.tree import SearchTree
 from hillclimb.tui.tree2 import (
@@ -133,12 +134,12 @@ class Tree2Screen(TreeScreen, inherit_bindings=False):
 
     BINDING_GROUP_TITLE = "tree2"
     BINDINGS = [
-        Binding("escape", "dismiss_or_back", "back"),
+        back_binding("dismiss_or_back"),
         Binding("enter", "activate", "open", show=False, priority=True),
         Binding("+,=", "zoom_in", "zoom in", show=False),
         Binding("-", "zoom_out", "zoom out", show=False),
         Binding("f,0", "fit", "fit", show=False, tooltip="frame the whole tree"),
-        Binding("b", "select_best", "best", tooltip="select the current best"),
+        Binding("asterisk", "select_best", "best", key_display="*", tooltip="select the current best"),
         Binding("l", "toggle_lineage", "lineage", tooltip="show / hide the best's lineage"),
         Binding("n", "next_search", "next search", tooltip="the next search in the store"),
         Binding("p", "prev_search", "prev search", show=False, tooltip="the previous search"),

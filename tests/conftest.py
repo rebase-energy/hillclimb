@@ -20,8 +20,17 @@ def local_executor() -> CommandExecutor:
 
 
 @pytest.fixture(autouse=True)
+def _user_level_isolated(tmp_path: Path, monkeypatch):
+    """The user level — `~/.config/hillclimb/` (config.yaml, .env, the intro
+    marker) — is where `connect` writes by default. Point it at the test's
+    tmp dir for EVERY test, so a test that runs a command can never edit the
+    developer's real files (one did, once)."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+
+@pytest.fixture(autouse=True)
 def _quota_off(monkeypatch):
-    """Real backends snapshot subscription quota around every call — tests
+    """Real agents snapshot subscription quota around every call — tests
     must never reach the network or the developer's keychain for it."""
     monkeypatch.setenv("HILLCLIMB_QUOTA", "off")
 

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import threading
 
-from hillclimb.backends.base import OperatorRequest, OperatorResult
+from hillclimb.agents.base import OperatorRequest, OperatorResult
 
 
-class FakeBackend:
-    """Test-only backend: replays a queue of scripted responses and records
+class FakeAgent:
+    """Test-only agent: replays a queue of scripted responses and records
     every request so tests can assert on prompts and call order.
 
     Thread-safe. Responses queued with `operator=` are matched to requests of
@@ -40,7 +40,7 @@ class FakeBackend:
             if response.get("operator") in (None, request.operator):
                 return self.responses.pop(index)
         raise AssertionError(
-            f"FakeBackend queue exhausted (no response for operator {request.operator!r})"
+            f"FakeAgent queue exhausted (no response for operator {request.operator!r})"
         )
 
     def invoke(self, request: OperatorRequest) -> OperatorResult:
@@ -58,11 +58,11 @@ class FakeBackend:
         return OperatorResult(**{"ok": True, **response.get("result", {})})
 
 
-class GateBackend(FakeBackend):
-    """FakeBackend whose invokes block until released — the workhorse for
+class GateAgent(FakeAgent):
+    """FakeAgent whose invokes block until released — the workhorse for
     concurrency tests. Each invoke registers an Event in `gates` (indexed by
     arrival order) and waits on it; `release(i)` lets call i proceed.
-    Honors an abort event like the real backend."""
+    Honors an abort event like the real agent."""
 
     def __init__(self, responses: list[dict] | None = None, abort: threading.Event | None = None):
         super().__init__(responses)

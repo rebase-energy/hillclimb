@@ -24,7 +24,7 @@ agent, verifier or venv, and reports every contract breach it can see:
 
 Pure by construction: nothing here writes. `check_policy` is the library
 entry; `hillclimb climber check` wraps it over the store's journals and can
-follow up with a dummy-backend smoke search.
+follow up with a dummy-agent smoke search.
 """
 
 from __future__ import annotations
@@ -319,7 +319,7 @@ def check_policy(
 
 
 class _NullBackend:
-    """An empty, write-rejecting journal backend for the synthetic case."""
+    """An empty, write-rejecting journal agent for the synthetic case."""
 
     path = None
 

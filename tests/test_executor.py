@@ -122,7 +122,7 @@ def test_scrubbed_env_extra_overrides(monkeypatch):
 def test_claude_oauth_token_scrubbed_but_kept_for_agent(monkeypatch):
     """Hosted subscription auth: the claude agent process must see
     CLAUDE_CODE_OAUTH_TOKEN, agent-authored code must not."""
-    from hillclimb.backends.claude_code import subscription_env
+    from hillclimb.agents.claude_code import subscription_env
 
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-oauth")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant")
@@ -211,7 +211,7 @@ def test_pythonpath_reaches_verifier_env(tmp_path):
 
 
 def test_solution_and_agent_envs_are_single_threaded(monkeypatch):
-    from hillclimb.backends.claude_code import subscription_env
+    from hillclimb.agents.claude_code import subscription_env
     from hillclimb.harness.executor import SINGLE_THREAD_ENV
 
     monkeypatch.delenv("OMP_NUM_THREADS", raising=False)

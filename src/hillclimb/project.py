@@ -75,3 +75,9 @@ def user_config_path() -> Path:
     xdg = os.environ.get("XDG_CONFIG_HOME")
     base = Path(xdg).expanduser() if xdg else Path.home() / ".config"
     return base / "hillclimb" / "config.yaml"
+
+
+def user_env_path() -> Path:
+    """The user-level `.env` beside the user config: provider keys that
+    apply to every folder, read under a folder's own `.env`."""
+    return user_config_path().with_name(".env")

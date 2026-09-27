@@ -1,7 +1,7 @@
                                                                                                                         
  Usage: root connect claude [OPTIONS]                                                                                   
                                                                                                                         
- Claude Code as the operator backend, billed to your Claude subscription.                                               
+ Claude Code as the operator agent, billed to your Claude subscription.                                                 
                                                                                                                         
  The login is Claude Code's own (`claude auth login`); hillclimb only                                                   
  checks it the way an operator will — with `ANTHROPIC_API_KEY` stripped,                                                
@@ -13,10 +13,11 @@
 │ --model                        TEXT  Model to ping with (default: the configured one)                                │
 │ --probe        --no-probe            Make one tool-free agent call to prove the route works [default: probe]         │
 │ --login        --no-login            Run `claude auth login` when logged out [default: login]                        │
-│ --default      --no-default          Write this backend into config.yaml. Default: only when no backend is pinned    │
-│                                      there yet                                                                       │
-│ --user                               Write the defaults to ~/.config/hillclimb/config.yaml instead of the hillclimb  │
-│                                      dir                                                                             │
+│ --default      --no-default          Pin this agent as the default. Default: only when none is pinned there yet      │
+│ --local        --user                Where the defaults (and an OpenRouter key) go: --user (the default) is          │
+│                                      ~/.config/hillclimb/, every folder on this machine; --local is this folder's    │
+│                                      hillclimb dir, overriding the user level for it alone                           │
+│                                      [default: user]                                                                 │
 │ --help     -h                        Show this message and exit.                                                     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 

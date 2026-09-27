@@ -5,12 +5,13 @@ PlotSpy the way test_tree.py drives build_climb_plot.
 """
 
 from tests.factories import trial as mk_trial
-from hillclimb.harness.candidate import BackendInfo, Candidate
+from hillclimb.harness.candidate import AgentInfo, Candidate
 from hillclimb.tui.chart import (
     Climb,
     ClimbEvent,
     COST_CPU_LABEL,
     COST_TOKENS_LABEL,
+    COST_WALL_LABEL,
     build_climb_plot,
     climb_from_searches,
     climb_legend,
@@ -37,7 +38,7 @@ def cand(
         )]
     return Candidate(
         candidate_id=cid, operator="draft", status=status, pruned=pruned,
-        backend=BackendInfo(total_tokens=tokens),
+        agent=AgentInfo(total_tokens=tokens),
         trials=trials,
         created_at=f"2026-08-22T10:{t:02d}:00+00:00",
         finished_at=f"2026-08-22T10:{t + 1:02d}:00+00:00",
@@ -134,12 +135,14 @@ class TestCostOverlay:
         plot = PlotSpy()
         monkeypatch.setattr("hillclimb.tui.chart.themed_plot", lambda: plot)
         build_climb_plot(one_step_climb(), cost=sample_cost())
-        by_axis = {kw.get("axis"): (xs, ys, kw) for xs, ys, kw in plot.lines if "axis" in kw}
-        assert set(by_axis) == {"y2", "y3"}
-        assert by_axis["y2"][2]["name"] == COST_TOKENS_LABEL
-        assert by_axis["y2"][1] == [100.0, 300.0]
-        assert by_axis["y3"][2]["name"] == COST_CPU_LABEL
-        assert by_axis["y3"][1] == [1.0, 3.0]
+        by_name = {kw["name"]: (xs, ys, kw["axis"]) for xs, ys, kw in plot.lines if "axis" in kw}
+        assert by_name[COST_TOKENS_LABEL][2] == "y2"
+        assert by_name[COST_TOKENS_LABEL][1] == [100.0 / 1e6, 300.0 / 1e6]  # tokens plot in millions
+        assert by_name[COST_CPU_LABEL][2] == "y3"
+        assert by_name[COST_CPU_LABEL][1] == [1.0, 3.0]
+        # wall clock shares the minutes axis with cpu time
+        assert by_name[COST_WALL_LABEL][2] == "y3"
+        assert by_name[COST_WALL_LABEL][1] == [0.0, 1.0]  # the first landing is minute zero
 
     def test_no_cost_means_no_overlay(self, monkeypatch):
         plot = PlotSpy()
@@ -152,10 +155,75 @@ class TestCostOverlay:
         monkeypatch.setattr("hillclimb.tui.chart.themed_plot", lambda: plot)
         build_climb_plot(one_step_climb(), cost=sample_cost(), hidden={COST_TOKENS_LABEL})
         axes = [kw["axis"] for _xs, _ys, kw in plot.lines if "axis" in kw]
-        assert axes == ["y3"]  # tokens hidden: no y2 line, so no y2 column
+        assert axes == ["y3", "y3"]  # tokens hidden: no y2 line, so no y2 column
 
     def test_legend_gains_cost_entries(self):
         entries = climb_legend(one_step_climb(), {}, sample_cost())
-        assert [entry[0] for entry in entries][-2:] == [COST_TOKENS_LABEL, COST_CPU_LABEL]
+        assert [entry[0] for entry in entries][-3:] == [COST_TOKENS_LABEL, COST_CPU_LABEL, COST_WALL_LABEL]
         # without the overlay the legend is unchanged
         assert COST_TOKENS_LABEL not in [e[0] for e in climb_legend(one_step_climb(), {})]
+
+    def test_cost_entries_are_their_own_legend_row_after_the_benchmarks(self):
+        """The overlay's series sit on a third row under a `Cost:` heading,
+        after the search's own series and the benchmarks — never read as
+        more scores; the hotkeys run on across the rows."""
+        from hillclimb.tui.chart import legend_text
+
+        entries = climb_legend(one_step_climb(), {"OpenEvolve": 0.7}, sample_cost())
+        lines = legend_text(entries).plain.splitlines()
+        assert lines == [
+            "● new best",
+            "Benchmarks: ─ OpenEvolve",
+            f"Cost: ─ {COST_TOKENS_LABEL}   ─ {COST_CPU_LABEL}   ─ {COST_WALL_LABEL}",
+        ]
+        numbered = legend_text(entries, interactive=True).plain
+        assert "2 ─ OpenEvolve" in numbered and f"3 ─ {COST_TOKENS_LABEL}" in numbered
+        # no benchmarks: the cost row still opens its own row
+        assert legend_text(climb_legend(one_step_climb(), {}, sample_cost())).plain.splitlines()[1].startswith("Cost: ")
+
+
+class TestWallClockAndEvaluations:
+    def test_wall_clock_runs_from_the_climb_start_and_evaluations_follow_the_budget_rule(self):
+        """Wall clock at a slot is its landing minus the earliest search
+        start (else the first landing); evaluations count every trial but
+        the floor's first, as the budget does."""
+        from hillclimb.tui.chart import _candidate_evaluations
+
+        candidates = [
+            cand("c001", score=0.5, tokens=10, cpu=6.0, t=2),   # lands 10:03
+            cand("c002", score=0.7, tokens=10, cpu=6.0, t=5),   # lands 10:06
+        ]
+        series = cost_series([("s", candidates, "2026-08-22T10:00:00+00:00")])
+        assert series.wall_min == [3.0, 6.0]
+        assert series.total_wall_min == 6.0
+        assert series.evaluations == 2
+        # no start on record: the first landing is minute zero
+        unstamped = cost_series([("s", candidates, None)])
+        assert unstamped.wall_min == [0.0, 3.0]
+        floor = Candidate(candidate_id="c000", operator="baseline", status="passing",
+                          trials=[mk_trial(val_score=0.1), mk_trial(val_score=0.1)])
+        assert _candidate_evaluations(floor) == 1  # the floor's first trial is free
+        assert _candidate_evaluations(cand("c003", score=0.5, t=0)) == 1
+
+    def test_overlay_puts_both_clocks_on_the_minutes_axis(self, monkeypatch):
+        from hillclimb.tui.chart import COST_WALL_LABEL, add_cost_overlay
+
+        plot = PlotSpy()
+        units = {}
+        plot.set_axis_unit = lambda axis, unit: units.__setitem__(axis, unit)
+        monkeypatch.setattr("hillclimb.tui.chart._plot_supports_axis", lambda: True)
+        candidates = [cand("c001", score=0.5, tokens=10, cpu=6.0, t=2), cand("c002", score=0.7, tokens=10, cpu=6.0, t=5)]
+        add_cost_overlay(plot, cost_series([("s", candidates, "2026-08-22T10:00:00+00:00")]))
+        on_y3 = [kw["name"] for _xs, _ys, kw in plot.lines if kw.get("axis") == "y3"]
+        assert on_y3 == [COST_CPU_LABEL, COST_WALL_LABEL]
+        assert units == {"y2": "M", "y3": " min"}
+
+
+def test_agent_cpu_is_part_of_the_cost():
+    """A candidate's CPU is the agent call's plus its verifier trials'."""
+    from hillclimb.harness.candidate import AgentInfo
+
+    candidate = cand("c001", score=0.5, tokens=10, cpu=30.0, t=0)
+    candidate.agent = AgentInfo(total_tokens=10, cpu_s=90.0)
+    series = cost_series([("s", [candidate], None)])
+    assert series.cpu_min == [2.0]  # 90 s agent + 30 s verifier

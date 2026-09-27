@@ -7,10 +7,10 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from hillclimb.backends.base import OperatorBackend, OperatorRequest, OperatorResult
+from hillclimb.agents.base import Agent, OperatorRequest, OperatorResult
 from hillclimb.harness.baseline import write_baseline
 from hillclimb.harness.budget import BudgetManager, Spend, journal_spend
-from hillclimb.harness.candidate import BackendInfo, Candidate, source_hash, utcnow
+from hillclimb.harness.candidate import AgentInfo, Candidate, source_hash, utcnow
 from hillclimb.config import Config
 from hillclimb.harness.control import ControlCommand, apply_prune, drain_commands_dir, resync_best
 from hillclimb.harness import evaluation
@@ -32,7 +32,7 @@ from hillclimb.modules.operators import (
     inspiration_filename,
 )
 from hillclimb.prompts.render import render
-from hillclimb.harness.routing import BackendPool, ResolvedRoute, Router
+from hillclimb.harness.routing import AgentPool, ResolvedRoute, Router
 from hillclimb.harness.run import SEARCHES_DIRNAME
 from hillclimb.harness.glue import ParkedSearch, StopRequested
 from hillclimb.harness.slots import MachineSlots
@@ -53,7 +53,7 @@ class Job:
     request: OperatorRequest | None  # None for the agent-less seed candidate
     candidate_dir: Path
     ensemble_inputs: "list[Candidate] | None" = None
-    backend: OperatorBackend | None = None  # routed instance; None = harness default
+    agent: Agent | None = None  # routed instance; None = harness default
     # tune jobs: an extra trial on an EXISTING candidate — `candidate` is a
     # deep copy the worker may mutate, the live object is only touched in
     # _commit_tune under the state lock
@@ -126,7 +126,7 @@ class Harness:
         problem: ProblemSpec,
         config: Config,
         journal: Journal,
-        backend: OperatorBackend,
+        agent: Agent,
         executor: Executor,
         budget: BudgetManager,
         search_dir: Path,
@@ -141,7 +141,7 @@ class Harness:
         reference_solution: Path | None = None,
         reference_note: str = "",
         router: Router | None = None,
-        backends: BackendPool | None = None,
+        agents: AgentPool | None = None,
         drain_commands: Callable[[], list[ControlCommand]] | None = None,
         tuner: Tuner | None = None,
         operators: OperatorSet | None = None,
@@ -158,7 +158,7 @@ class Harness:
         self.problem = problem
         self.config = config
         self.journal = journal
-        self.backend = backend
+        self.agent = agent
         self.executor = executor
         self.budget = budget
         self.search_dir = search_dir
@@ -185,8 +185,8 @@ class Harness:
 
             tuner = RandomTuner(config.climber.tuner_params)
         self.tuner = tuner  # which params a `tune` action tries; WHEN is the policy's call
-        self.router = router  # None: everything routes to `backend` + config.model
-        self.backends = backends
+        self.router = router  # None: everything routes to `agent` + config.model
+        self.agents = agents
         self._consecutive_failures = 0
         # Concurrency contract: the Journal and everything below is touched
         # only by the scheduler (the thread running run()/run_operator),
@@ -274,7 +274,7 @@ class Harness:
 
     @property
     def parallelism(self) -> int:
-        return max(1, self.config.concurrency.parallel_operators)
+        return max(1, self.config.concurrency.parallel_agents)
 
     def view(self) -> PolicyInput:
         return self._view()
@@ -554,14 +554,20 @@ class Harness:
         )
 
     def _submit(self, pool: ThreadPoolExecutor, job: Job) -> None:
+        # `[m:ss left]` heads every line that starts work: the log's clock
+        # gutter (the CLI aligns on it); the rest is one short clause
         if job.kind == "tune":
+            values = " ".join(
+                f"{name}={value:.4g}" if isinstance(value, float) else f"{name}={value}"
+                for name, value in (job.params or {}).items()
+            )
             self.log(
-                f"[{self.budget.remaining_str()} left] tune {job.candidate.candidate_id} "
-                f"t{job.trial_index} {job.params}"
+                f"[{self.budget.clock_str()} left] tune {job.candidate.candidate_id} "
+                f"t{job.trial_index} {values}".rstrip()
             )
         else:
             self.log(
-                f"[{self.budget.remaining_str()} left] {job.candidate.operator}"
+                f"[{self.budget.clock_str()} left] {job.candidate.operator}"
                 + (f" -> {job.candidate.parent_id}" if job.candidate.parent_id else "")
                 + f" ({job.candidate.candidate_id})"
             )
@@ -611,9 +617,9 @@ class Harness:
 
     def total_cost_usd(self) -> float:
         return sum(
-            c.backend.cost_usd or 0.0
+            c.agent.cost_usd or 0.0
             for c in self.journal.candidates.values()
-            if c.backend is not None
+            if c.agent is not None
         )
 
     def _check_cost_ceiling(self) -> None:
@@ -827,7 +833,7 @@ class Harness:
     def _prepare(self, action: Action) -> Job:
         """Scheduler-side setup: id, candidate_dir, prompt, journal `created`.
         The operator says what the attempt needs (`Preparation`); everything
-        that touches disk, the journal or a backend happens here."""
+        that touches disk, the journal or a agent happens here."""
         operator = action.operator
         target = self.journal.candidates.get(action.target_id) if action.target_id else None
         ensemble_inputs = (
@@ -901,8 +907,8 @@ class Harness:
         route = self._resolve_route(action)
         # known before the call starts, so a running candidate's detail view
         # can say who is writing it; the result fills in the rest
-        candidate.backend = BackendInfo(
-            name=route.backend, model=route.model, sampling=route.sampling
+        candidate.agent = AgentInfo(
+            name=route.agent, model=route.model, sampling=route.sampling
         )
         self.journal.candidate_created(candidate)
 
@@ -917,11 +923,11 @@ class Harness:
             sampling=route.sampling,
             role=op.role,
             resume_session_id=(
-                target.backend.session_id
+                target.agent.session_id
                 if prep.fork_session
-                and route.backend == "pi"
+                and route.agent == "pi"
                 and target is not None
-                and target.backend.name == "pi"
+                and target.agent.name == "pi"
                 else None
             ),
         )
@@ -945,9 +951,9 @@ class Harness:
                 if prep.require_change and parent_solution is not None and parent_solution.exists()
                 else None
             ),
-            backend=(
-                self.backends.get(route.backend, route.backend_auth)
-                if self.backends is not None
+            agent=(
+                self.agents.get(route.agent, route.agent_auth)
+                if self.agents is not None
                 else None
             ),
         )
@@ -1014,9 +1020,9 @@ class Harness:
         if self.router is not None:
             return self.router.resolve(action.operator, action.route)
         return ResolvedRoute(
-            backend=self.config.backend,
+            agent=self.config.agent,
             model=self.config.model,
-            backend_auth=self.config.backend_auth,
+            agent_auth=self.config.agent_auth,
         )
 
     def _execute_job(self, job: Job) -> OutcomeMsg:
@@ -1028,7 +1034,7 @@ class Harness:
         candidate = job.candidate
         if job.request is None:  # inject / seed: there is no agent to call
             return self._evaluate_job(job, None)
-        backend = job.backend if job.backend is not None else self.backend
+        agent = job.agent if job.agent is not None else self.agent
 
         slot = None
         if self.slots is not None:
@@ -1041,12 +1047,12 @@ class Harness:
                 return OutcomeMsg(job=job, kind="aborted")
             self._set_phase(candidate.candidate_id, "agent")
         try:
-            result = backend.invoke(job.request)
+            result = agent.invoke(job.request)
         finally:
             if slot is not None:
                 slot.release()
-        candidate.backend = BackendInfo(
-            name=backend.name,
+        candidate.agent = AgentInfo(
+            name=agent.name,
             model=job.request.model,
             sampling=job.request.sampling,
             model_id=result.model_id,
@@ -1415,7 +1421,7 @@ class Harness:
             candidate, parent, self.problem.higher_is_better, band=self.accept_band()
         )
         if reward is not None:
-            self.router.observe(candidate.operator, candidate.backend.model, reward)
+            self.router.observe(candidate.operator, candidate.agent.model, reward)
 
     def _set_phase(self, candidate_id: str, phase: str) -> None:
         if self.status is not None:
@@ -1437,7 +1443,7 @@ class Harness:
             self.config.holdout.selection,
             self.problem.output_artifacts,
         )
-        scores = f"val_score={selected.val_score}"
+        scores = f"val={selected.val_score:.5g}" if selected.val_score is not None else "val=none"
         if selected.holdout_score is not None:
             scores += f" holdout={selected.holdout_score:.5g}"
         self.log(f"  new selection: {selected.candidate_id} {scores}")
@@ -1492,16 +1498,17 @@ class Harness:
             else "Assume no internet access at execution time."
         )
         contract_template = self.problem.contract_template
+        import sys as _sys
+
         tools_clause = ""
         if self.config.learning.tool and self.config.learning.enabled:
-            import sys as _sys
-
             # the engine's own interpreter — the agent's PATH may lack uv
             tools_clause = render(
                 "tools_cue", knowledge_cli=f"{_sys.executable} -m hillclimb.cli"
             ).rstrip()
         contract = render(
             contract_template,
+            engine_python=_sys.executable,  # the climber contract's cheap check runs on it
             metric_name=self.problem.metric_name,
             exec_timeout_min=self.config.budget.exec_timeout_s // 60,
             runtime_pkgs=self._runtime_pkgs(),
@@ -1634,7 +1641,10 @@ class Harness:
                 + "\n".join(f"    {line}" for line in described.splitlines())
                 + "\n"
             )
-        return render("params_cue", shim_note=shim_note, inherited=inherited_note).rstrip("\n") + "\n"
+        # a climber's knobs are its policy's params (the inner runs get them
+        # as `climber.params`), not values a script reads through spaces
+        cue = "params_cue_climber" if self.problem.solution_kind == "climber" else "params_cue"
+        return render(cue, shim_note=shim_note, inherited=inherited_note).rstrip("\n") + "\n"
 
     def _verifier_clause(self) -> str:
         """How the agent's script is expected to surface its score, for the

@@ -10,6 +10,7 @@ import typer
 
 from hillclimb.cli import common
 from hillclimb.cli._app import HillclimbGroup, app
+from hillclimb.cli.common import _m, fail, say, warn
 from hillclimb.config import Config
 from hillclimb.harness.journal import Journal
 from hillclimb.harness.store import key_for, open_store
@@ -85,9 +86,12 @@ def climber_list(as_json: bool = typer.Option(False, "--json", help="Machine-rea
     width = max(len(row["ref"]) for row in rows)
     for row in rows:
         mark = "*" if row["default"] else " "
-        typer.echo(f"{mark} {row['ref']:<{width}}  {row['origin']:<7} {row['kind']:<6} {row['description']}")
-    typer.echo("\n* = config climber.ref.  Run one:        hillclimb run <problem> --climber <ref>")
-    typer.echo("                          Start your own: hillclimb climber new <name> --from greedy")
+        say(
+            f"{mark} [path]{_m(row['ref']):<{width}}[/]  {_m(row['origin']):<7} {_m(row['kind']):<6} "
+            f"[note]{_m(row['description'])}[/]"
+        )
+    say("\n[note]* = config climber.ref.[/]  Run one:        [cmd]hillclimb run <problem> --climber <ref>[/]")
+    say("                          Start your own: [cmd]hillclimb climber new <name> --from greedy[/]")
 
 
 _COPIED_MODULE_KEYS = ("policy", "loop")
@@ -162,12 +166,12 @@ def climber_new(
     except ClimberLoadError as exc:  # never leave a broken copy behind
         shutil.rmtree(target) if target.is_dir() else target.unlink()
         raise typer.BadParameter(f"the copy does not load: {exc}") from exc
-    typer.echo(f"Created {ref} from {from_}")
+    say(f"[head]Created[/] [path]{_m(ref)}[/] from [path]{_m(from_)}[/]")
     files = sorted(p for p in target.rglob("*") if p.is_file()) if target.is_dir() else [target]
     for path in files:
-        typer.echo(f"  {path.relative_to(target if target.is_dir() else target.parent)}")
-    typer.echo(f"Next: edit it, then   hillclimb climber check --climber {ref}")
-    typer.echo(f"      and climb with   hillclimb run <problem> --climber {ref}")
+        say(f"  [path]{_m(path.relative_to(target if target.is_dir() else target.parent))}[/]")
+    say(f"[head]Next:[/] edit it, then   [cmd]hillclimb climber check --climber {_m(ref)}[/]")
+    say(f"      and climb with   [cmd]hillclimb run <problem> --climber {_m(ref)}[/]")
 
 
 @climber_app.command("check")
@@ -184,7 +188,7 @@ def climber_check(
     ),
     limit: int = typer.Option(20, "--limit", help="Newest recorded searches to replay"),
     smoke: bool = typer.Option(
-        False, "--smoke", help="Then run a dummy-backend search on --problem (no LLM, real verifier)"
+        False, "--smoke", help="Then run a dummy-agent search on --problem (no LLM, real verifier)"
     ),
     smoke_budget: str = typer.Option("2m", "--smoke-budget", help="Wall clock for the smoke search"),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
@@ -196,13 +200,13 @@ def climber_check(
     same action at every budget point (the resume contract), every referenced
     candidate must exist, the policy must never write, and the climber's
     prompts must lint clean. Exit 1 on any breach. `--smoke` follows up with
-    a short `--backend dummy` search so the whole loop — prompts included —
+    a short `--agent dummy` search so the whole loop — prompts included —
     runs once before an agent hour is spent on it.
     """
     if ctx.parent is not None and ctx.parent.info_name == "policy":
-        typer.echo("note: `hillclimb policy check` is now `hillclimb climber check`", err=True)
+        warn("note: `hillclimb policy check` is now `hillclimb climber check`")
     if policy:
-        typer.echo("note: `--policy` is now `--climber` (same values)", err=True)
+        warn("note: `--policy` is now `--climber` (same values)")
     from hillclimb.api import run_search
     from hillclimb.climber import ClimberLoadError, load_climber
     from hillclimb.modules.policies import policy_base_dir, policy_path
@@ -220,15 +224,14 @@ def climber_check(
         loaded = load_climber(name, base_dir)
         loaded.graph_module()  # `graph:` must resolve too, before an agent hour is spent
     except (ClimberLoadError, ValueError) as exc:
-        typer.echo(str(exc), err=True)
+        fail(_m(exc))
         raise typer.Exit(2) from exc
     if loaded.root is not None and "memory: knowledge-graph" in (loaded.root / "climber.yaml").read_text():
-        typer.echo("note: `memory: knowledge-graph` is now `memory: files` (the old spelling still loads)", err=True)
+        warn("note: `memory: knowledge-graph` is now `memory: files` (the old spelling still loads)")
     if loaded.is_loop:
-        typer.echo(
-            f"{name} brings its own SearchLoop; "
-            "the conformance check covers climbers built on a SearchPolicy",
-            err=True,
+        fail(
+            f"{_m(name)} brings its own SearchLoop; "
+            "the conformance check covers climbers built on a SearchPolicy"
         )
         raise typer.Exit(2)
 
@@ -264,7 +267,7 @@ def climber_check(
     if smoke and report.ok:
         if not problem:
             raise typer.BadParameter("--smoke needs --problem")
-        smoke_config = common.load_config(backend="dummy")
+        smoke_config = common.load_config(agent="dummy")
         smoke_config.apply_overrides(common._parse_set(set_ or []))
         smoke_config.climber.ref = name
         smoke_config.learning.enabled = False
@@ -273,7 +276,7 @@ def climber_check(
             budget_s=common.parse_budget(smoke_budget),
             name="climber-check",
             config=smoke_config,
-            log=(lambda *_: None) if as_json else typer.echo,
+            log=(lambda *_: None) if as_json else common.engine_log,
         )
         with closing(open_store(smoke_config)) as store:
             journal = Journal(store.journal(key_for(outcome.search_dir)))
@@ -293,15 +296,15 @@ def climber_check(
         typer.echo(json.dumps(payload, indent=2, default=str))
     else:
         typer.echo(report.render())
-        typer.echo(f"resolved params: {json.dumps(resolved_params, default=str)}")
-        typer.echo(f"replayed {len(cases)} recorded journal(s)")
+        say(f"[head]resolved params:[/] {_m(json.dumps(resolved_params, default=str))}")
+        say(f"[head]replayed[/] {len(cases)} recorded journal(s)")
         if smoke_result is not None:
-            typer.echo(
-                f"smoke {smoke_result['search']}: {smoke_result['state']}, "
+            say(
+                f"[head]smoke [path]{_m(smoke_result['search'])}[/]:[/] {_m(smoke_result['state'])}, "
                 f"{smoke_result['candidates']} candidate(s), {smoke_result['scored']} scored, "
-                f"best={smoke_result['best']}"
+                f"best={_m(smoke_result['best'])}"
             )
         elif smoke:
-            typer.echo("smoke skipped: fix the breaches above first")
+            warn("smoke skipped: fix the breaches above first")
     if not report.ok or (smoke_result is not None and smoke_result["state"] != "done"):
         raise typer.Exit(1)

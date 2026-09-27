@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb.backends.fake import FakeBackend
+from hillclimb.agents.fake import FakeAgent
 from hillclimb.harness.budget import BudgetManager
 from hillclimb.harness.control import ControlCommand, write_command
 from tests.conftest import executor_for, local_executor
@@ -19,14 +19,14 @@ from hillclimb.harness.dirs import create_search_dir
 from tests.conftest import CRASH_SCRIPT, ok_script
 
 
-def make_searcher(task, config, backend, max_candidates=10, budget_s=3600):
+def make_searcher(task, config, agent, max_candidates=10, budget_s=3600):
     search_dir = create_search_dir(config.paths.runs_dir, "test-run")
     journal = Journal(search_dir / "journal.jsonl")
     searcher = SearchRig(
         problem=task,
         config=config,
         journal=journal,
-        backend=backend,
+        agent=agent,
         executor=executor_for(task),
         budget=BudgetManager(budget_s, stop_margin_s=1),
         search_dir=search_dir,
@@ -37,18 +37,18 @@ def make_searcher(task, config, backend, max_candidates=10, budget_s=3600):
 
 
 def test_happy_path_draft_then_improve(task, config):
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.6), notes="draft one\n")
-    backend.queue(script=ok_script(0.7), notes="draft two\n")
-    backend.queue(script=ok_script(0.5), notes="draft three\n")
-    backend.queue(script=ok_script(0.8), notes="improve best\n")
-    searcher, journal, search_dir = make_searcher(task, config, backend, max_candidates=5)
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.6), notes="draft one\n")
+    agent.queue(script=ok_script(0.7), notes="draft two\n")
+    agent.queue(script=ok_script(0.5), notes="draft three\n")
+    agent.queue(script=ok_script(0.8), notes="improve best\n")
+    searcher, journal, search_dir = make_searcher(task, config, agent, max_candidates=5)
 
     best = searcher.run()
 
     assert best is not None
     assert best.val_score == 0.8
-    operators = [r.operator for r in backend.requests]
+    operators = [r.operator for r in agent.requests]
     assert operators == ["draft", "draft", "draft", "improve"]
     # improve targets the best draft (c002, score 0.7)
     improve_node = journal.get(best.candidate_id)
@@ -59,51 +59,51 @@ def test_happy_path_draft_then_improve(task, config):
 
 
 def test_complexity_schedule(task, config):
-    backend = FakeBackend()
+    agent = FakeAgent()
     for score in (0.1, 0.2, 0.3):
-        backend.queue(script=ok_script(score), notes="d\n")
-    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=4)
+        agent.queue(script=ok_script(score), notes="d\n")
+    searcher, journal, _ = make_searcher(task, config, agent, max_candidates=4)
     searcher.run()
     drafts = journal.drafts()
     assert [d.complexity for d in drafts] == ["minimal", "moderate", "advanced"]
-    assert "MINIMAL" in backend.requests[0].prompt
-    assert "MODERATE" in backend.requests[1].prompt
-    assert "ADVANCED" in backend.requests[2].prompt
+    assert "MINIMAL" in agent.requests[0].prompt
+    assert "MODERATE" in agent.requests[1].prompt
+    assert "ADVANCED" in agent.requests[2].prompt
 
 
 def test_debug_path(task, config):
-    backend = FakeBackend()
-    backend.queue(script=CRASH_SCRIPT, notes="buggy draft\n")
-    backend.queue(script=ok_script(0.6), notes="fixed\n")
-    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=3)
+    agent = FakeAgent()
+    agent.queue(script=CRASH_SCRIPT, notes="buggy draft\n")
+    agent.queue(script=ok_script(0.6), notes="fixed\n")
+    searcher, journal, _ = make_searcher(task, config, agent, max_candidates=3)
     searcher.run()
 
-    assert backend.requests[1].operator == "debug"
-    assert "boom" in backend.requests[1].prompt  # stderr tail injected
+    assert agent.requests[1].operator == "debug"
+    assert "boom" in agent.requests[1].prompt  # stderr tail injected
     debug_node = journal.get("c002")
     assert debug_node.parent_id == "c001"
     assert debug_node.status == "passing"
 
 
 def test_debug_depth_cap_then_redraft(task, config):
-    backend = FakeBackend()
-    backend.queue(script=CRASH_SCRIPT, notes="buggy draft\n")
+    agent = FakeAgent()
+    agent.queue(script=CRASH_SCRIPT, notes="buggy draft\n")
     for i in range(3):
-        backend.queue(script=CRASH_SCRIPT, notes=f"failed fix {i}\n")
-    backend.queue(script=ok_script(0.6), notes="fresh draft\n")
-    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=6)
+        agent.queue(script=CRASH_SCRIPT, notes=f"failed fix {i}\n")
+    agent.queue(script=ok_script(0.6), notes="fresh draft\n")
+    searcher, journal, _ = make_searcher(task, config, agent, max_candidates=6)
     searcher.run()
 
-    operators = [r.operator for r in backend.requests]
+    operators = [r.operator for r in agent.requests]
     assert operators == ["draft", "debug", "debug", "debug", "draft"]
 
 
 def test_rate_limit_parks_run(task, config):
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.6), notes="draft\n")
-    backend.queue(script=None, result={"ok": False, "error_kind": "rate_limited",
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.6), notes="draft\n")
+    agent.queue(script=None, result={"ok": False, "error_kind": "rate_limited",
                                        "error_message": "usage limit reached"})
-    searcher, journal, search_dir = make_searcher(task, config, backend, max_candidates=5)
+    searcher, journal, search_dir = make_searcher(task, config, agent, max_candidates=5)
 
     with pytest.raises(ParkedSearch):
         searcher.run()
@@ -111,12 +111,12 @@ def test_rate_limit_parks_run(task, config):
     assert len(parked) == 1
 
     # resume: fresh searcher over the same journal continues, ignoring the parked node
-    backend2 = FakeBackend()
-    backend2.queue(script=ok_script(0.7), notes="draft after resume\n")
-    backend2.queue(script=ok_script(0.9), notes="another\n")
+    agent2 = FakeAgent()
+    agent2.queue(script=ok_script(0.7), notes="draft after resume\n")
+    agent2.queue(script=ok_script(0.9), notes="another\n")
     search_dir2_journal = Journal(search_dir / "journal.jsonl")
     searcher2 = SearchRig(
-        problem=task, config=config, journal=search_dir2_journal, backend=backend2,
+        problem=task, config=config, journal=search_dir2_journal, agent=agent2,
         executor=local_executor(),
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir, max_candidates=len(search_dir2_journal.candidates) + 2, log=lambda *_: None,
@@ -126,21 +126,21 @@ def test_rate_limit_parks_run(task, config):
 
 
 def test_contract_violation_no_solution(task, config):
-    backend = FakeBackend()
-    backend.queue(script=None, notes="")  # agent "succeeds" but writes nothing
-    backend.queue(script=ok_script(0.5), notes="ok draft\n")
-    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=3)
+    agent = FakeAgent()
+    agent.queue(script=None, notes="")  # agent "succeeds" but writes nothing
+    agent.queue(script=ok_script(0.5), notes="ok draft\n")
+    searcher, journal, _ = make_searcher(task, config, agent, max_candidates=3)
     searcher.run()
     assert journal.get("c001").status == "abandoned"
     assert journal.get("c002").status == "passing"
 
 
 def test_prompt_contents(task, config):
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.6), notes="tfidf baseline\n")
-    searcher, _, _ = make_searcher(task, config, backend, max_candidates=2)
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.6), notes="tfidf baseline\n")
+    searcher, _, _ = make_searcher(task, config, agent, max_candidates=2)
     searcher.run()
-    prompt = backend.requests[0].prompt
+    prompt = agent.requests[0].prompt
     assert "Predict target from feature." in prompt
     assert "val_score: <float>" in prompt
     assert "accuracy" in prompt
@@ -149,12 +149,12 @@ def test_prompt_contents(task, config):
 
 
 def test_agent_failure_abandons_and_parks_after_three(task, config):
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.6), notes="draft\n")
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.6), notes="draft\n")
     for _ in range(3):
-        backend.queue(script=None, result={"ok": False, "error_kind": "error",
+        agent.queue(script=None, result={"ok": False, "error_kind": "error",
                                            "error_message": "ConnectionRefused"})
-    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=10)
+    searcher, journal, _ = make_searcher(task, config, agent, max_candidates=10)
     with pytest.raises(ParkedSearch):
         searcher.run()
     abandoned = [n for n in journal.candidates.values() if n.status == "abandoned"]
@@ -164,31 +164,31 @@ def test_agent_failure_abandons_and_parks_after_three(task, config):
 
 
 def test_agent_failure_counter_resets_on_success(task, config):
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.6), notes="draft\n")
-    backend.queue(script=None, result={"ok": False, "error_kind": "error", "error_message": "x"})
-    backend.queue(script=ok_script(0.7), notes="draft two\n")
-    backend.queue(script=None, result={"ok": False, "error_kind": "error", "error_message": "x"})
-    backend.queue(script=ok_script(0.8), notes="draft three\n")
-    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=6)
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.6), notes="draft\n")
+    agent.queue(script=None, result={"ok": False, "error_kind": "error", "error_message": "x"})
+    agent.queue(script=ok_script(0.7), notes="draft two\n")
+    agent.queue(script=None, result={"ok": False, "error_kind": "error", "error_message": "x"})
+    agent.queue(script=ok_script(0.8), notes="draft three\n")
+    searcher, journal, _ = make_searcher(task, config, agent, max_candidates=6)
     best = searcher.run()  # must NOT raise ParkedSearch
     assert best.val_score == 0.8
 
 
 def test_stop_command_stops_before_any_operator(task, config):
-    backend = FakeBackend()  # empty queue: any invoke would raise
-    searcher, journal, search_dir = make_searcher(task, config, backend, max_candidates=5)
+    agent = FakeAgent()  # empty queue: any invoke would raise
+    searcher, journal, search_dir = make_searcher(task, config, agent, max_candidates=5)
     write_command(search_dir, ControlCommand(action="stop", source="cli"))
 
     with pytest.raises(StopRequested):
         searcher.run()
-    assert backend.requests == []
+    assert agent.requests == []
     assert journal.get("c000").operator == "baseline"  # baseline still written
     assert '"event": "control"' in (search_dir / "journal.jsonl").read_text()
 
 
 def test_stop_is_graceful_current_operator_finishes(task, config):
-    class StopDroppingBackend(FakeBackend):
+    class StopDroppingAgent(FakeAgent):
         def __init__(self, search_dir):
             super().__init__()
             self.search_dir = search_dir
@@ -198,11 +198,11 @@ def test_stop_is_graceful_current_operator_finishes(task, config):
             return super().invoke(request)
 
     search_dir_probe = create_search_dir(config.paths.runs_dir, "graceful-run")
-    backend = StopDroppingBackend(search_dir_probe)
-    backend.queue(script=ok_script(0.6), notes="draft\n")
+    agent = StopDroppingAgent(search_dir_probe)
+    agent.queue(script=ok_script(0.6), notes="draft\n")
     journal = Journal(search_dir_probe / "journal.jsonl")
     searcher = SearchRig(
-        problem=task, config=config, journal=journal, backend=backend,
+        problem=task, config=config, journal=journal, agent=agent,
         executor=local_executor(),
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir_probe, max_candidates=5, log=lambda *_: None,
@@ -215,9 +215,9 @@ def test_stop_is_graceful_current_operator_finishes(task, config):
 
 
 def test_prune_buggy_tip_redirects_to_draft(task, config):
-    backend = FakeBackend()
-    backend.queue(script=CRASH_SCRIPT, notes="buggy draft\n")
-    searcher, journal, search_dir = make_searcher(task, config, backend, max_candidates=5)
+    agent = FakeAgent()
+    agent.queue(script=CRASH_SCRIPT, notes="buggy draft\n")
+    searcher, journal, search_dir = make_searcher(task, config, agent, max_candidates=5)
     searcher.run_operator("draft", None)  # first node: c000 (no baseline written here)
     assert searcher.decide()[0] == "debug"  # would keep debugging
 
@@ -229,11 +229,11 @@ def test_prune_buggy_tip_redirects_to_draft(task, config):
 
 
 def test_prune_scored_branch_makes_engine_redraft(task, config):
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.6), notes="a\n")
-    backend.queue(script=ok_script(0.7), notes="b\n")
-    backend.queue(script=ok_script(0.5), notes="c\n")
-    searcher, journal, search_dir = make_searcher(task, config, backend, max_candidates=10)
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.6), notes="a\n")
+    agent.queue(script=ok_script(0.7), notes="b\n")
+    agent.queue(script=ok_script(0.5), notes="c\n")
+    searcher, journal, search_dir = make_searcher(task, config, agent, max_candidates=10)
     for _ in range(3):
         searcher.run_operator("draft", None)  # c000..c002, best/selected = c001 (0.7)
     assert searcher.decide()[0] == "improve"  # 3 scored branches → improve best
@@ -248,8 +248,8 @@ def test_prune_scored_branch_makes_engine_redraft(task, config):
 
 
 def test_prune_unknown_node_is_rejected_not_fatal(task, config):
-    backend = FakeBackend()
-    searcher, journal, search_dir = make_searcher(task, config, backend, max_candidates=5)
+    agent = FakeAgent()
+    searcher, journal, search_dir = make_searcher(task, config, agent, max_candidates=5)
     write_command(search_dir, ControlCommand(action="prune", candidate_id="c999", source="cli"))
     searcher._process_control()  # must not raise
     assert all(not n.pruned for n in journal.candidates.values())
@@ -283,7 +283,7 @@ class FileHoldoutScorer:
         return float(path.read_text()), None, 0.01
 
 
-def make_holdout_searcher(task, config, backend, tmp_path, max_candidates=10):
+def make_holdout_searcher(task, config, agent, tmp_path, max_candidates=10):
     search_dir = create_search_dir(config.paths.runs_dir, "test-run")
     journal = Journal(search_dir / "journal.jsonl")
     task = task.model_copy(update={"holdout_cmd": task.verifier_cmd + ["--holdout"]})
@@ -294,7 +294,7 @@ def make_holdout_searcher(task, config, backend, tmp_path, max_candidates=10):
         holdout_scorer=FileHoldoutScorer(), journal=journal,
     )
     searcher = SearchRig(
-        problem=task, config=config, journal=journal, backend=backend,
+        problem=task, config=config, journal=journal, agent=agent,
         executor=evaluator.executor,
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir, max_candidates=max_candidates, log=lambda *_: None,
@@ -306,11 +306,11 @@ def make_holdout_searcher(task, config, backend, tmp_path, max_candidates=10):
 def test_selection_by_holdout_not_val(task, config):
     """The leaf-classification scenario: highest val_score but bad holdout
     must NOT be selected; selection = argmax holdout."""
-    backend = FakeBackend()
-    backend.queue(script=holdout_script(0.70), notes="honest draft\n")
-    backend.queue(script=holdout_script(0.99, holdout=0.0), notes="overfit draft\n")
-    backend.queue(script=holdout_script(0.80), notes="honest draft 2\n")
-    searcher, journal, search_dir = make_holdout_searcher(task, config, backend, None, max_candidates=4)
+    agent = FakeAgent()
+    agent.queue(script=holdout_script(0.70), notes="honest draft\n")
+    agent.queue(script=holdout_script(0.99, holdout=0.0), notes="overfit draft\n")
+    agent.queue(script=holdout_script(0.80), notes="honest draft 2\n")
+    searcher, journal, search_dir = make_holdout_searcher(task, config, agent, None, max_candidates=4)
     selected = searcher.run()
 
     overfit = journal.get("c002")
@@ -327,10 +327,10 @@ def test_selection_by_holdout_not_val(task, config):
 
 
 def test_failed_holdout_evaluation_is_buggy(task, config):
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.9), notes="wrote no holdout preds\n")
-    backend.queue(script=holdout_script(0.6), notes="compliant\n")
-    searcher, journal, _ = make_holdout_searcher(task, config, backend, None, max_candidates=3)
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.9), notes="wrote no holdout preds\n")
+    agent.queue(script=holdout_script(0.6), notes="compliant\n")
+    searcher, journal, _ = make_holdout_searcher(task, config, agent, None, max_candidates=3)
     searcher.run()
     bad = journal.get("c001")
     assert bad.status == "buggy"
@@ -338,37 +338,37 @@ def test_failed_holdout_evaluation_is_buggy(task, config):
     # an errored holdout still burned its cpu — recorded despite the failure
     assert bad.last_trial.holdout_cpu_s == 0.01
     # and the debug prompt explains it
-    assert any("holdout_predictions.csv" in r.prompt for r in backend.requests if r.operator == "debug")
+    assert any("holdout_predictions.csv" in r.prompt for r in agent.requests if r.operator == "debug")
 
 
 def test_holdout_prompt_warns_about_the_hidden_split(task, config):
-    backend = FakeBackend()
-    backend.queue(script=holdout_script(0.7), notes="d\n")
-    searcher, _, _ = make_holdout_searcher(task, config, backend, None, max_candidates=2)
+    agent = FakeAgent()
+    agent.queue(script=holdout_script(0.7), notes="d\n")
+    searcher, _, _ = make_holdout_searcher(task, config, agent, None, max_candidates=2)
     searcher.run()
-    prompt = backend.requests[0].prompt
+    prompt = agent.requests[0].prompt
     assert "Hidden holdout" in prompt
     assert "never see" in prompt
     assert "{{" not in prompt
 
 
 def test_no_holdout_falls_back_to_val_selection(task, config):
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.6), notes="a\n")
-    backend.queue(script=ok_script(0.9), notes="b\n")
-    backend.queue(script=ok_script(0.7), notes="c\n")
-    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=4)
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.6), notes="a\n")
+    agent.queue(script=ok_script(0.9), notes="b\n")
+    agent.queue(script=ok_script(0.7), notes="c\n")
+    searcher, journal, _ = make_searcher(task, config, agent, max_candidates=4)
     selected = searcher.run()
     assert selected.val_score == 0.9
     assert journal.selected_candidate(True).candidate_id == selected.candidate_id
 
 
-def make_ensemble_searcher(task, config, backend, spent_frac=0.0, max_candidates=12):
+def make_ensemble_searcher(task, config, agent, spent_frac=0.0, max_candidates=12):
     """Searcher with controllable budget position (spent_frac of total)."""
     search_dir = create_search_dir(config.paths.runs_dir, "test-run")
     journal = Journal(search_dir / "journal.jsonl")
     searcher = SearchRig(
-        problem=task, config=config, journal=journal, backend=backend,
+        problem=task, config=config, journal=journal, agent=agent,
         executor=local_executor(),
         budget=BudgetManager(1000, stop_margin_s=1, spent_s=1000 * spent_frac),
         search_dir=search_dir, max_candidates=max_candidates, log=lambda *_: None,
@@ -381,13 +381,13 @@ def distinct_script(val: float) -> str:
 
 
 def test_ensemble_triggers_in_reserve_window(task, config):
-    backend = FakeBackend()
-    backend.queue(script=distinct_script(0.6), notes="draft a\n")
-    backend.queue(script=distinct_script(0.7), notes="draft b\n")
-    backend.queue(script=distinct_script(0.5), notes="draft c\n")
-    backend.queue(script=distinct_script(0.9), notes="blended\n")
+    agent = FakeAgent()
+    agent.queue(script=distinct_script(0.6), notes="draft a\n")
+    agent.queue(script=distinct_script(0.7), notes="draft b\n")
+    agent.queue(script=distinct_script(0.5), notes="draft c\n")
+    agent.queue(script=distinct_script(0.9), notes="blended\n")
     # 85% spent -> inside the 20% reserve window from the start
-    searcher, journal, search_dir = make_ensemble_searcher(task, config, backend, spent_frac=0.85)
+    searcher, journal, search_dir = make_ensemble_searcher(task, config, agent, spent_frac=0.85)
     # not yet: fewer than 2 scored candidates
     assert searcher.decide() == ("draft", None)
     searcher.run_operator("draft", None)
@@ -403,30 +403,30 @@ def test_ensemble_triggers_in_reserve_window(task, config):
     ws = Path(node.candidate_dir)
     assert (ws / "candidate_1.py").exists() and (ws / "candidate_2.py").exists()
     # prompt contains the table and the instruction
-    prompt = backend.requests[-1].prompt
+    prompt = agent.requests[-1].prompt
     assert "candidate_1.py" in prompt and "at least two" in prompt
     # no further ensemble once one succeeded
     assert searcher._should_ensemble() is False
 
 
 def test_ensemble_not_triggered_outside_window_or_disabled(task, config):
-    backend = FakeBackend()
-    backend.queue(script=distinct_script(0.6), notes="a\n")
-    backend.queue(script=distinct_script(0.7), notes="b\n")
-    searcher, _, _ = make_ensemble_searcher(task, config, backend, spent_frac=0.0)
+    agent = FakeAgent()
+    agent.queue(script=distinct_script(0.6), notes="a\n")
+    agent.queue(script=distinct_script(0.7), notes="b\n")
+    searcher, _, _ = make_ensemble_searcher(task, config, agent, spent_frac=0.0)
     searcher.run_operator("draft", None)
     searcher.run_operator("draft", None)
     assert searcher._should_ensemble() is False  # plenty of budget left
     config.climber.params["ensemble"] = False
-    searcher2, _, _ = make_ensemble_searcher(task, config, backend, spent_frac=0.9)
+    searcher2, _, _ = make_ensemble_searcher(task, config, agent, spent_frac=0.9)
     assert searcher2._should_ensemble() is False
 
 
 def test_ensemble_candidates_dedupe_identical_scripts(task, config):
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.6), notes="a\n")
-    backend.queue(script=ok_script(0.6), notes="identical twin\n")
-    searcher, _, _ = make_ensemble_searcher(task, config, backend, spent_frac=0.85)
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.6), notes="a\n")
+    agent.queue(script=ok_script(0.6), notes="identical twin\n")
+    searcher, _, _ = make_ensemble_searcher(task, config, agent, spent_frac=0.85)
     searcher.run_operator("draft", None)
     searcher.run_operator("draft", None)
     assert len(searcher._ensemble_candidates()) == 1  # deduped
@@ -434,12 +434,12 @@ def test_ensemble_candidates_dedupe_identical_scripts(task, config):
 
 
 def test_buggy_ensemble_gets_debugged_and_counts_as_success(task, config):
-    backend = FakeBackend()
-    backend.queue(script=distinct_script(0.6), notes="a\n")
-    backend.queue(script=distinct_script(0.7), notes="b\n")
-    backend.queue(script=CRASH_SCRIPT, notes="broken blend\n")
-    backend.queue(script=distinct_script(0.9), notes="fixed blend\n")
-    searcher, journal, _ = make_ensemble_searcher(task, config, backend, spent_frac=0.85)
+    agent = FakeAgent()
+    agent.queue(script=distinct_script(0.6), notes="a\n")
+    agent.queue(script=distinct_script(0.7), notes="b\n")
+    agent.queue(script=CRASH_SCRIPT, notes="broken blend\n")
+    agent.queue(script=distinct_script(0.9), notes="fixed blend\n")
+    searcher, journal, _ = make_ensemble_searcher(task, config, agent, spent_frac=0.85)
     searcher.run_operator("draft", None)
     searcher.run_operator("draft", None)
     op, tgt = searcher.decide()
@@ -461,8 +461,8 @@ def test_trial_killed_at_the_budget_wall_is_abandoned_not_buggy(task, config):
     from hillclimb.harness.candidate import Candidate
     from hillclimb.harness.core import Job, OutcomeMsg
 
-    backend = FakeBackend()
-    searcher, journal, search_dir = make_searcher(task, config, backend, max_candidates=3)
+    agent = FakeAgent()
+    searcher, journal, search_dir = make_searcher(task, config, agent, max_candidates=3)
 
     def cut(cid: str, clamped: bool) -> Candidate:
         cand = Candidate(candidate_id=cid, operator="draft", candidate_dir=str(search_dir), summary="softmin homotopy")
@@ -498,10 +498,10 @@ def test_stale_pending_node_recovered_on_resume(task, config):
     journal.candidate_created(Candidate(candidate_id="c001", operator="draft", candidate_dir=str(search_dir)))
     assert journal.get("c001").status == "pending"
 
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.5), notes="post-crash draft\n")
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.5), notes="post-crash draft\n")
     searcher = SearchRig(
-        problem=task, config=config, journal=journal, backend=backend,
+        problem=task, config=config, journal=journal, agent=agent,
         executor=local_executor(),
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir, max_candidates=2, log=lambda *_: None,
@@ -545,18 +545,18 @@ def report_script(score, split="validation", zones=None, body="json-report"):
 
 def test_trial_report_pickup_and_improve_injection(task, config):
     config.climber.params["num_drafts"] = 1
-    backend = FakeBackend()
-    backend.queue(script=report_script(0.6), notes="draft\n")
-    backend.queue(script=ok_script(0.7), notes="improve\n")
-    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=3)
+    agent = FakeAgent()
+    agent.queue(script=report_script(0.6), notes="draft\n")
+    agent.queue(script=ok_script(0.7), notes="improve\n")
+    searcher, journal, _ = make_searcher(task, config, agent, max_candidates=3)
     searcher.run()
 
     draft = journal.get("c001")
     assert draft.trials[0].report is not None
     assert draft.trials[0].report["version"] == 1
     assert draft.trials[0].report["overall"]["score"] == 0.6
-    assert backend.requests[1].operator == "improve"
-    prompt = backend.requests[1].prompt
+    assert agent.requests[1].operator == "improve"
+    prompt = agent.requests[1].prompt
     assert "# Evaluation breakdown (validation split)" in prompt
     assert "z2" in prompt  # worst zone surfaced to the operator
     assert "{{evaluation_report}}" not in prompt
@@ -566,9 +566,9 @@ def test_holdout_split_report_never_lands_on_trial(task, config):
     """Leakage guard: a holdout-split eval_result.json must not reach the
     journal (and therefore can never reach a prompt)."""
     config.climber.params["num_drafts"] = 1
-    backend = FakeBackend()
-    backend.queue(script=report_script(0.6, split="holdout"), notes="draft\n")
-    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=2)
+    agent = FakeAgent()
+    agent.queue(script=report_script(0.6, split="holdout"), notes="draft\n")
+    searcher, journal, _ = make_searcher(task, config, agent, max_candidates=2)
     searcher.run()
     draft = journal.get("c001")
     assert draft.status == "passing"
@@ -577,9 +577,9 @@ def test_holdout_split_report_never_lands_on_trial(task, config):
 
 def test_malformed_eval_result_ignored(task, config):
     config.climber.params["num_drafts"] = 1
-    backend = FakeBackend()
-    backend.queue(script=report_script(0.6, body="malformed"), notes="draft\n")
-    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=2)
+    agent = FakeAgent()
+    agent.queue(script=report_script(0.6, body="malformed"), notes="draft\n")
+    searcher, journal, _ = make_searcher(task, config, agent, max_candidates=2)
     searcher.run()
     draft = journal.get("c001")
     assert draft.status == "passing"
@@ -591,34 +591,34 @@ def test_report_injection_gated_by_config(task, config):
     arms journal identical data."""
     config.climber.params["num_drafts"] = 1
     config.report.enabled = False
-    backend = FakeBackend()
-    backend.queue(script=report_script(0.6), notes="draft\n")
-    backend.queue(script=ok_script(0.7), notes="improve\n")
-    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=3)
+    agent = FakeAgent()
+    agent.queue(script=report_script(0.6), notes="draft\n")
+    agent.queue(script=ok_script(0.7), notes="improve\n")
+    searcher, journal, _ = make_searcher(task, config, agent, max_candidates=3)
     searcher.run()
     assert journal.get("c001").trials[0].report is not None  # still recorded
-    assert "Evaluation breakdown" not in backend.requests[1].prompt
+    assert "Evaluation breakdown" not in agent.requests[1].prompt
 
 
 def test_improve_prompt_carries_delta_vs_parent(task, config):
     """Second-generation improve: the target and its parent both have
     reports, so the prompt shows where the score moved."""
     config.climber.params["num_drafts"] = 1
-    backend = FakeBackend()
-    backend.queue(script=report_script(0.6), notes="draft\n")
-    backend.queue(
+    agent = FakeAgent()
+    agent.queue(script=report_script(0.6), notes="draft\n")
+    agent.queue(
         script=report_script(0.7, zones=[
             {"zone": "z1", "score": 0.6, "n_origins": 1, "n_scored": 2},
             {"zone": "z2", "score": 0.7, "n_origins": 1, "n_scored": 2},
         ]),
         notes="improve one\n",
     )
-    backend.queue(script=ok_script(0.8), notes="improve two\n")
-    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=4)
+    agent.queue(script=ok_script(0.8), notes="improve two\n")
+    searcher, journal, _ = make_searcher(task, config, agent, max_candidates=4)
     searcher.run()
 
-    assert [r.operator for r in backend.requests] == ["draft", "improve", "improve"]
-    prompt = backend.requests[2].prompt  # targets c002 (best), parent c001
+    assert [r.operator for r in agent.requests] == ["draft", "improve", "improve"]
+    prompt = agent.requests[2].prompt  # targets c002 (best), parent c001
     assert "Where this solution moved vs its parent (c001)" in prompt
     # accuracy is higher-is-better: z1 0.4->0.6 improved, z2 0.8->0.7 regressed
     assert "improved z1" in prompt
@@ -672,10 +672,10 @@ def test_verifier_report_is_trusted_and_overrides_agent_file(task, config):
     exactly like its val_score line."""
     task = add_verifier(task)
     config.climber.params["num_drafts"] = 1
-    backend = FakeBackend()
-    backend.queue(script=AGENT_FAKED_REPORT, notes="draft\n")
-    backend.queue(script=ok_script(0.7), notes="improve\n")
-    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=3)
+    agent = FakeAgent()
+    agent.queue(script=AGENT_FAKED_REPORT, notes="draft\n")
+    agent.queue(script=ok_script(0.7), notes="improve\n")
+    searcher, journal, _ = make_searcher(task, config, agent, max_candidates=3)
     searcher.run()
 
     draft = journal.get("c001")
@@ -683,7 +683,7 @@ def test_verifier_report_is_trusted_and_overrides_agent_file(task, config):
     report = draft.trials[0].report
     assert report["source"] == "evaluator"
     assert report["overall"]["score"] == 0.66  # not the agent's faked 0.99
-    prompt = backend.requests[1].prompt
+    prompt = agent.requests[1].prompt
     assert "Per class" in prompt  # segment_label flows through
     assert "cat" in prompt
     assert "Self-reported" not in prompt
@@ -694,9 +694,9 @@ def test_verifier_without_report_discards_agent_file(task, config):
     the agent's file must not survive as a fake evaluator report."""
     task = add_verifier(task, script='import json, os\njson.dump({"score": 0.66}, open(os.environ["HILLCLIMB_RESULT"], "w"))\n')
     config.climber.params["num_drafts"] = 1
-    backend = FakeBackend()
-    backend.queue(script=AGENT_FAKED_REPORT, notes="draft\n")
-    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=2)
+    agent = FakeAgent()
+    agent.queue(script=AGENT_FAKED_REPORT, notes="draft\n")
+    searcher, journal, _ = make_searcher(task, config, agent, max_candidates=2)
     searcher.run()
     assert journal.get("c001").trials[0].report is None
 
@@ -708,9 +708,9 @@ def test_bare_number_result_has_no_report_and_does_not_crash(task, config):
         task, script='import os\nopen(os.environ["HILLCLIMB_RESULT"], "w").write("12.5")\n'
     )
     config.climber.params["num_drafts"] = 1
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.9), notes="draft\n")
-    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=2)
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.9), notes="draft\n")
+    searcher, journal, _ = make_searcher(task, config, agent, max_candidates=2)
     searcher.run()
     draft = journal.get("c001")
     assert draft.status == "passing"
@@ -722,22 +722,22 @@ def test_agent_report_labelled_self_reported(task, config):
     """Tier 2: verifier-less problems store the agent's own report, stamped
     source=agent and rendered with the self-reported caveat."""
     config.climber.params["num_drafts"] = 1
-    backend = FakeBackend()
-    backend.queue(script=report_script(0.6), notes="draft\n")
-    backend.queue(script=ok_script(0.7), notes="improve\n")
-    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=3)
+    agent = FakeAgent()
+    agent.queue(script=report_script(0.6), notes="draft\n")
+    agent.queue(script=ok_script(0.7), notes="improve\n")
+    searcher, journal, _ = make_searcher(task, config, agent, max_candidates=3)
     searcher.run()
     assert journal.get("c001").trials[0].report["source"] == "agent"
-    assert "Self-reported" in backend.requests[1].prompt
+    assert "Self-reported" in agent.requests[1].prompt
 
 
 def test_report_clause_only_where_the_agent_reports_its_own_score(task, config):
-    searcher, _, _ = make_searcher(task, config, FakeBackend())
+    searcher, _, _ = make_searcher(task, config, FakeAgent())
     clause_prompt = searcher.build_prompt("draft", None, "minimal")
     assert "eval_result.json" in clause_prompt  # Tier-2 invitation present
     assert "{{report_clause}}" not in clause_prompt
 
-    verifier_searcher, _, _ = make_searcher(add_verifier(task), config, FakeBackend())
+    verifier_searcher, _, _ = make_searcher(add_verifier(task), config, FakeAgent())
     verifier_prompt = verifier_searcher.build_prompt("draft", None, "minimal")
     assert "eval_result.json" not in verifier_prompt  # the verifier owns it
     assert "{{report_clause}}" not in verifier_prompt
@@ -764,7 +764,7 @@ print(f"val_score: {score}")
 """
 
 
-def make_evaluator_searcher(config, tmp_path, backend, evaluate_py=EVALUATOR_EVALUATE, **searcher_kwargs):
+def make_evaluator_searcher(config, tmp_path, agent, evaluate_py=EVALUATOR_EVALUATE, **searcher_kwargs):
     from hillclimb.harness.executor import CommandExecutor
     from hillclimb.problem import ProblemSpec
 
@@ -789,7 +789,7 @@ def make_evaluator_searcher(config, tmp_path, backend, evaluate_py=EVALUATOR_EVA
         problem=problem,
         config=config,
         journal=journal,
-        backend=backend,
+        agent=agent,
         executor=CommandExecutor(Path(sys.executable), problem.verifier_cmd),
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir,
@@ -801,11 +801,11 @@ def make_evaluator_searcher(config, tmp_path, backend, evaluate_py=EVALUATOR_EVA
 
 def test_evaluator_kind_full_loop(config, tmp_path):
     config.climber.params["num_drafts"] = 1
-    backend = FakeBackend()
-    backend.queue(script="def answer():\n    return 0.6\n", notes="first answer\n")
-    backend.queue(script="def answer():\n    return 0.7\n", notes="better answer\n")
+    agent = FakeAgent()
+    agent.queue(script="def answer():\n    return 0.6\n", notes="first answer\n")
+    agent.queue(script="def answer():\n    return 0.7\n", notes="better answer\n")
     searcher, journal, search_dir = make_evaluator_searcher(
-        config, tmp_path, backend, max_candidates=3
+        config, tmp_path, agent, max_candidates=3
     )
     best = searcher.run()
 
@@ -816,12 +816,12 @@ def test_evaluator_kind_full_loop(config, tmp_path):
     assert draft.report["source"] == "evaluator"  # trusted by kind
     assert best.val_score == 0.7
 
-    draft_prompt = backend.requests[0].prompt
+    draft_prompt = agent.requests[0].prompt
     assert "./problem/evaluate.py" in draft_prompt  # display form, not the argv
     assert "`answer() -> float`" in draft_prompt  # problem-supplied contract
     assert "submission.csv" not in draft_prompt
     assert "{{" not in draft_prompt
-    improve_prompt = backend.requests[1].prompt
+    improve_prompt = agent.requests[1].prompt
     assert "# Evaluation breakdown (validation split)" in improve_prompt
     assert "hard" in improve_prompt  # worst zone surfaced
     assert "Self-reported" not in improve_prompt  # evaluator trust
@@ -832,19 +832,19 @@ def test_evaluator_missing_result_json_wording(config, tmp_path):
     violation — the debug prompt must name the missing artifact, not
     submission.csv."""
     config.climber.params["num_drafts"] = 1
-    backend = FakeBackend()
-    backend.queue(script="def answer():\n    return 0.5\n", notes="draft\n")
-    backend.queue(script="def answer():\n    return 0.5\n", notes="fix attempt\n")
+    agent = FakeAgent()
+    agent.queue(script="def answer():\n    return 0.5\n", notes="draft\n")
+    agent.queue(script="def answer():\n    return 0.5\n", notes="fix attempt\n")
     searcher, journal, _ = make_evaluator_searcher(
-        config, tmp_path, backend,
+        config, tmp_path, agent,
         evaluate_py='import sys, os\nsys.path.insert(0, os.getcwd())\n'
                     'import solution\nprint(f"val_score: {solution.answer()}")\n',
         max_candidates=3,
     )
     searcher.run()
     assert journal.get("c001").status == "buggy"
-    assert backend.requests[1].operator == "debug"
-    debug_prompt = backend.requests[1].prompt
+    assert agent.requests[1].operator == "debug"
+    debug_prompt = agent.requests[1].prompt
     assert "the verifier reported no score" in debug_prompt
     assert "submission.csv" not in debug_prompt
 
@@ -852,9 +852,9 @@ def test_evaluator_missing_result_json_wording(config, tmp_path):
 def test_evaluator_multi_trial_seeds(config, tmp_path):
     config.climber.params["num_drafts"] = 1
     config.evaluation.n_replicates = 2
-    backend = FakeBackend()
-    backend.queue(script="def answer():\n    return 0.6\n", notes="draft\n")
-    searcher, journal, _ = make_evaluator_searcher(config, tmp_path, backend, max_candidates=2)
+    agent = FakeAgent()
+    agent.queue(script="def answer():\n    return 0.6\n", notes="draft\n")
+    searcher, journal, _ = make_evaluator_searcher(config, tmp_path, agent, max_candidates=2)
     searcher.run()
     draft = journal.get("c001")
     replicates = draft.trials[0].replicates

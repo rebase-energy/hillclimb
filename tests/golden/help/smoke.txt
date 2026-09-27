@@ -1,7 +1,7 @@
                                                                                                                         
  Usage: root smoke [OPTIONS] [TARGET]                                                                                   
                                                                                                                         
- One real DRAFT call through the selected backend, end to end.                                                          
+ One real DRAFT call through the selected agent, end to end.                                                            
                                                                                                                         
  Executes the result and reports — verifies auth, JSON field names, and                                                 
  the filesystem contract.                                                                                               
@@ -10,8 +10,9 @@
 │   [target]      TEXT  [default: circle-packing]                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ --model            TEXT                                                                                              │
-│ --backend          TEXT  Operator backend: claude-code | codex | pi | dummy                                          │
-│ --help     -h            Show this message and exit.                                                                 │
+│ --model                    TEXT                                                                                      │
+│ --agent,--backend          TEXT  The coding agent that runs the operators: claude-code | codex | pi | dummy          │
+│                                  (--backend is the old spelling)                                                     │
+│ --help             -h            Show this message and exit.                                                         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 

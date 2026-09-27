@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from hillclimb.harness.candidate import Candidate
-from hillclimb.backends.fake import FakeBackend
+from hillclimb.agents.fake import FakeAgent
 from hillclimb.harness.budget import BudgetManager
 from hillclimb.harness.control import apply_prune, resync_best
 from hillclimb.harness.dirs import create_candidate_dir, create_search_dir
@@ -114,14 +114,14 @@ def test_greedy_runner_preserves_json_artifact(tmp_path, task, config):
     )
     config.climber.params["num_drafts"] = 1
     config.climber.params["ensemble"] = False
-    backend = FakeBackend()
-    backend.queue(script=json_solution(0.8), notes="json draft\n")
+    agent = FakeAgent()
+    agent.queue(script=json_solution(0.8), notes="json draft\n")
     search_dir = create_search_dir(tmp_path / "runs" / "greedy", "s")
     searcher = SearchRig(
         problem=problem,
         config=config,
         journal=Journal(search_dir / "journal.jsonl"),
-        backend=backend,
+        agent=agent,
         executor=CommandExecutor(Path(sys.executable), problem.verifier_cmd),
         budget=BudgetManager(3600),
         search_dir=search_dir,
@@ -140,11 +140,11 @@ def test_gepa_runner_preserves_json_artifact(tmp_path, task, config):
         update={"baseline_text": json_solution(0.1)}
     )
     config.climber.ref = "gepa"
-    backend = FakeBackend()
-    backend.queue(script=json_solution(0.8), notes="json improvement\n")
+    agent = FakeAgent()
+    agent.queue(script=json_solution(0.8), notes="json improvement\n")
     search_dir = create_search_dir(tmp_path / "runs" / "gepa", "s")
     searcher = make_gepa(
-        problem, config, tmp_path, backend=backend, driver=FakeGEPADriver(steps=1),
+        problem, config, tmp_path, agent=agent, driver=FakeGEPADriver(steps=1),
         seed_score=None, search_dir=search_dir,  # seeded by the problem's own baseline solution
     )
 

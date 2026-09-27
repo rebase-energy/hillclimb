@@ -102,7 +102,7 @@ def test_package_inits_under_harness_and_modules_import_nothing():
 
 # the flat top level is the public surface and nothing else
 FLAT = {"__init__", "_moved", "api", "benchmark_providers", "climber", "config",
-        "connect", "experiment", "problem", "project", "spaces"}
+        "connect", "experiment", "meta", "problem", "project", "spaces"}
 
 
 def test_top_level_is_only_the_public_surface():
@@ -113,7 +113,7 @@ def test_top_level_is_only_the_public_surface():
 # --- the cli package ---
 
 CLI = SRC / "cli"
-CLI_BY_NAME_FROM_COMMON = {"say", "_m", "legend", "next_steps"}  # pure output; nothing patches them
+CLI_BY_NAME_FROM_COMMON = {"say", "warn", "fail", "_m", "legend", "next_steps"}  # pure output; nothing patches them
 
 
 def test_cli_modules_use_absolute_imports_and_reach_common_through_the_module():

@@ -10,7 +10,7 @@ import pytest
 
 gepa = pytest.importorskip("gepa")
 
-from hillclimb.backends.fake import FakeBackend  # noqa: E402
+from hillclimb.agents.fake import FakeAgent  # noqa: E402
 from hillclimb.integrations.gepa.driver import CoreOptimizeDriver  # noqa: E402
 from hillclimb.integrations.gepa.operator import OPERATOR_NAME  # noqa: E402
 from tests.conftest import ok_script  # noqa: E402
@@ -55,15 +55,15 @@ def test_adapter_contract_shape():
 @pytest.mark.slow
 def test_full_stack_with_real_gepa_loop(task, config, tmp_path):
     """GepaLoop -> CoreOptimizeDriver -> real gepa.optimize, with the
-    fake backend as the mutation agent and the real executor as the
+    fake agent as the mutation agent and the real executor as the
     verifier. Deterministic, no network."""
     config.climber.ref = "gepa"
     config.climber.params = {"max_metric_calls": 6, "seed": 0}
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.6))
-    backend.queue(script=ok_script(0.7))
-    backend.queue(script=ok_script(0.8))
-    search = make_gepa(task, config, tmp_path, backend=backend, driver=CoreOptimizeDriver())
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.6))
+    agent.queue(script=ok_script(0.7))
+    agent.queue(script=ok_script(0.8))
+    search = make_gepa(task, config, tmp_path, agent=agent, driver=CoreOptimizeDriver())
     selected = search.run()
 
     assert selected is not None

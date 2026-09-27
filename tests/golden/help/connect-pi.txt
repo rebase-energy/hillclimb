@@ -1,7 +1,7 @@
                                                                                                                         
  Usage: root connect pi [OPTIONS]                                                                                       
                                                                                                                         
- The pi coding agent as the operator backend — the one that can sample.                                                 
+ The pi coding agent as the operator agent — the one that can sample.                                                   
                                                                                                                         
  pi logs in inside its own TUI, so this imports what that login wrote                                                   
  (`~/.pi/agent/auth.json`) into pi's isolated hillclimb home, together                                                  
@@ -11,10 +11,11 @@
 │ --auth                         TEXT  Who pays: subscription (default) | api-key | openrouter                         │
 │ --model                        TEXT  Model to ping with (default: the configured one)                                │
 │ --probe        --no-probe            Make one tool-free agent call to prove the route works [default: probe]         │
-│ --default      --no-default          Write this backend into config.yaml. Default: only when no backend is pinned    │
-│                                      there yet                                                                       │
-│ --user                               Write the defaults to ~/.config/hillclimb/config.yaml instead of the hillclimb  │
-│                                      dir                                                                             │
+│ --default      --no-default          Pin this agent as the default. Default: only when none is pinned there yet      │
+│ --local        --user                Where the defaults (and an OpenRouter key) go: --user (the default) is          │
+│                                      ~/.config/hillclimb/, every folder on this machine; --local is this folder's    │
+│                                      hillclimb dir, overriding the user level for it alone                           │
+│                                      [default: user]                                                                 │
 │ --help     -h                        Show this message and exit.                                                     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 

@@ -19,14 +19,14 @@ pip install hillclimb
 hillclimb connect claude       # logs in; operator calls bill your Claude subscription
 ```
 
-`connect codex` and `connect pi` do the same for the other backends. No agent
-yet? Add `--backend dummy` to any `run` below: it climbs with no LLM at all.
+`connect codex` and `connect pi` do the same for the other agents. No agent
+yet? Add `--agent dummy` to any `run` below: it climbs with no LLM at all.
 
 **2. Make a hillclimb dir, get a problem, read it.**
 
 ```bash
 hillclimb init                         # hillclimb/ here: config.yaml, problems/, runs/
-hillclimb problem list                 # the bundled starter problems, with the best known value
+hillclimb problem list                 # the bundled example problems, with the best known value
 hillclimb problem get heilbronn-11
 ```
 
@@ -41,7 +41,7 @@ verifier *is* the problem. Everything the agents will be told is in
 hillclimb verify heilbronn-11 --repeat 3
 ```
 
-Scores the problem's floor three times and prints the spread. Starter
+Scores the problem's floor three times and prints the spread. Example
 problems are exact, so the spread is 0 and any improvement is real. On a
 noisy problem of your own, this number is the noise floor the search must beat.
 
@@ -51,10 +51,11 @@ noisy problem of your own, this number is the noise floor the search must beat.
 hillclimb run heilbronn-11 --budget 10m
 ```
 
-One search in the foreground: a baseline, then drafts, debugs and improves,
-each scored as it lands. Ctrl-C stops it; the best solution so far is kept.
+The search starts as a detached engine and the terminal comes straight back
+with the run id: a baseline, then drafts, debugs and improves, each scored as it
+lands. (`--no-detach` keeps it in this terminal; Ctrl-C then stops it.)
 
-**5. Watch it, in a second terminal.**
+**5. Watch it.**
 
 ```bash
 hillclimb watch      # every agent, what it is doing, its candidate's score
@@ -73,7 +74,7 @@ hillclimb stop --all
 
 **7. Next.**
 
-- **Your own problem.** Copy a starter and edit `verify.py`, or `hillclimb init`
+- **Your own problem.** Copy an example problem and edit `verify.py`, or `hillclimb init`
   for a blank scaffold. See [docs/problems.md](docs/problems.md).
 - **Another climber.** `hillclimb run heilbronn-11 --climber openevolve`.
   `hillclimb climber list` shows the bundled ones; `hillclimb climber new mine
@@ -83,7 +84,7 @@ hillclimb stop --all
   openevolve --parallel-searches 2`, then `hillclimb experiment report <run-id>`.
   See [docs/experiments.md](docs/experiments.md).
 
-## Starter problems
+## Example problems
 
 Construction problems in one shape: the submission is a small CSV of numbers,
 the verifier checks the constraints and computes the score exactly, there is
@@ -103,6 +104,7 @@ saturate the large one.
 | Kissing configuration in dimension 11 | `kissing-11` | number of points, maximize |
 | Golomb rulers | `golomb-20`, `golomb-27` | ruler length, minimize |
 | Travelling salesman on a fixed instance | `tsp-200` | tour length, minimize |
+| Multidimensional knapsack (Chu & Beasley instances) | `mknap-100-5`, `mknap-250-10` | total value, maximize |
 
 `hillclimb problem list` prints the catalog with the best known value and
 who found it. Problems that need data, a hidden split or a provider (Kaggle
@@ -131,14 +133,14 @@ is spent on it.
 | `src/hillclimb/climbers/` | The bundled climbers, `greedy`, `openevolve` and `gepa`, each a `climber.yaml` naming its modules and prompts. `hillclimb climber new` copies one for you to edit. |
 | `src/hillclimb/tui/` | Every terminal view (`watch`, `chart`, `tree`, `archive`, `surface`, `similarity`, `graph`) and the layout it draws. Reads the store, imported by nothing else. |
 | `src/hillclimb/cli/` | The `hillclimb` command, one module per command group. |
-| `src/hillclimb/backends/` | The agents that write code: Claude Code, Codex, pi, and the dummy and fake backends for tests. |
+| `src/hillclimb/agents/` | The agents that write code: Claude Code, Codex, pi, and the dummy and fake agents for tests. |
 | `src/hillclimb/integrations/` | Problem providers and libraries that bring their own loop: emflow, MLE-bench, Einstein Arena, GEPA. |
 | `src/hillclimb/prompts/` | The operator prompt templates. A climber may shadow them by name. |
 | `src/hillclimb/runtime/` | The managed venv the verifier and the solution run in, and the shim that makes `hillclimb.spaces` importable there. |
-| `src/hillclimb/demo/` | The starter problems as package data, so `hillclimb problem get` works from a bare install. |
+| `src/hillclimb/demo/` | The example problems as package data, so `hillclimb problem get` works from a bare install. |
 | `src/hillclimb/spaces.py` | The output-format contract a problem's `interface.py` is written in, and the `params.json` contract. Stdlib only, byte-copied into runtime venvs. |
 | `src/hillclimb/{api,config,problem,climber,experiment,connect}.py` | The public surface: run a search, the config schema, load a problem or a climber, experiments, and connecting an agent. |
-| `problems/` | The starter problems' source of truth, one `make_<family>.py` generator per family; the bundled copies under `demo/` are stamped from here. |
+| `problems/` | The example problems' source of truth, one `make_<family>.py` generator per family; the bundled copies under `demo/` are stamped from here. |
 | `hillclimb/` | This repo's own hillclimb dir: `config.yaml`, `experiments/` (specs and seeds), `knowledge/` (the graph, cards, credit, playbooks). |
 | `tests/` | The suite (`uv run pytest`). `test_layout.py` pins which package may import which, `test_sdk_imports.py` that climber code imports only the sdk, `golden/` the prompt bytes and every `--help` screen. |
 | `docs/` | The topic docs linked below, and the dated design plans. |

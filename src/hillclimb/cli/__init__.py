@@ -29,6 +29,7 @@ from hillclimb.cli import (  # noqa: F401 — importing a module registers its c
     control,
     experiment,
     knowledge,
+    meta,
     problem,
     run,
     store,
@@ -47,7 +48,7 @@ def intro(
 
     if reset:
         intro_marker_path().unlink(missing_ok=True)
-        typer.echo("Intro re-armed: it plays on the next hillclimb command.")
+        common.say("[head]Intro re-armed:[/] it plays on the next [cmd]hillclimb[/] command.")
         return
     play_intro()
 

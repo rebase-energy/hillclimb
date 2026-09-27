@@ -12,7 +12,7 @@ import typer
 from hillclimb.api import build_executor, build_holdout_scorer, build_unit_test_runner
 from hillclimb.cli import common
 from hillclimb.cli._app import HillclimbGroup, app
-from hillclimb.cli.common import _m, legend, next_steps, say
+from hillclimb.cli.common import _m, fail, legend, next_steps, say, warn
 from hillclimb.config import Config
 from hillclimb.harness.journal import Journal
 from hillclimb.harness.store import SearchRecord, open_store
@@ -28,17 +28,6 @@ problem_app = typer.Typer(
 app.add_typer(problem_app, name="problem")
 
 
-def _compact_duration(seconds: int) -> str:
-    """A problem budget in its shortest exact CLI spelling."""
-    if seconds <= 0:
-        return "-"
-    if seconds % 3600 == 0:
-        return f"{seconds // 3600}h"
-    if seconds % 60 == 0:
-        return f"{seconds // 60}m"
-    return f"{seconds}s"
-
-
 @problem_app.command("list")
 def problem_list():
     """List every problem bundled with hillclimb."""
@@ -50,35 +39,36 @@ def problem_list():
     for problem_id in BUNDLED_PROBLEM_IDS:  # ladder order, as declared
         resource = demo_problem_resource(problem_id) / "problem.yaml"
         metadata = yaml.safe_load(resource.read_text()) or {}
+        higher = bool(metadata.get("higher_is_better", True))
+        value, who = _best_known(metadata.get("chart_baselines") or {}, higher)
+        # no budget column: the problem's `time_budget_s` is only the default
+        # `--budget`, the user's to set, and the clock is one of several budget
+        # dimensions — a listing that showed it would read as the problem's size
         rows.append((
-            problem_id,
-            str(metadata.get("metric", "-")),
-            "maximize" if metadata.get("higher_is_better", True) else "minimize",
-            _compact_duration(int(metadata.get("time_budget_s", 0))),
-            _best_known(metadata.get("chart_baselines") or {}, bool(metadata.get("higher_is_better", True))),
+            _m(problem_id),
+            _m(metadata.get("metric", "-")),
+            "maximize" if higher else "minimize",
+            _m(value),
+            f"[note]{_m(who)}[/]" if who else "",
         ))
-
-    headers = ("problem", "metric", "direction", "budget", "best known")
-    widths = [
-        max(len(header), *(len(row[index]) for row in rows))
-        for index, header in enumerate(headers)
-    ]
-    typer.echo("  ".join(f"{header:<{widths[index]}}" for index, header in enumerate(headers)).rstrip())
-    for row in rows:
-        typer.echo("  ".join(f"{cell:<{widths[index]}}" for index, cell in enumerate(row)).rstrip())
-    typer.echo("\nGet one with: hillclimb problem get <problem>")
+    say()
+    common.table(
+        [("problem", "path"), ("metric", None), ("direction", None), ("best known", None), ("", None)],
+        rows,
+    )
+    say("\nGet one with: [cmd]hillclimb problem get <problem>[/]")
 
 
-def _best_known(chart_baselines: dict, higher_is_better: bool) -> str:
-    """The frontier a chart draws, as `value who`: the best of the declared
+def _best_known(chart_baselines: dict, higher_is_better: bool) -> tuple[str, str]:
+    """The frontier a chart draws, as `(value, who)`: the best of the declared
     reference lines in the metric's direction (never the problem's own floor)."""
     lines = {label: value for label, value in chart_baselines.items() if label != "baseline"}
     if not lines:
-        return "-"
+        return "-", ""
     label, value = (max if higher_is_better else min)(lines.items(), key=lambda item: item[1])
     if label.startswith("best known"):  # "best known (who)" -> "who"
         label = label[len("best known"):].strip(" ()")
-    return f"{value:.6g}  {label}".rstrip()
+    return f"{value:.6g}", label
 
 
 @problem_app.command("get")
@@ -99,7 +89,7 @@ def problem_get(
 
     if problem not in BUNDLED_PROBLEM_IDS:
         available = ", ".join(BUNDLED_PROBLEM_IDS)
-        typer.echo(f"error: no bundled problem {problem!r} (available: {available})", err=True)
+        fail(f"error: no bundled problem {_m(repr(problem))} [note](available: {_m(available)})[/]")
         raise typer.Exit(1)
     if find_hillclimb_dir() is None:
         say(f"[head]No hillclimb dir here.[/] {_m(problem)} needs one: a [path]hillclimb/[/] folder holding")
@@ -128,7 +118,7 @@ def fetch(
     ),
 ):
     """Deprecated spelling of `hillclimb problem get`."""
-    typer.echo("note: `hillclimb fetch` is now `hillclimb problem get`", err=True)
+    warn("note: `hillclimb fetch` is now `hillclimb problem get`")
     problem_get(problem)
 
 
@@ -157,7 +147,8 @@ def init(
 ):
     """Create a hillclimb dir.
 
-    A hillclimb/ folder holding config, problems, run specs, and runs.
+    A hillclimb/ folder holding config, problems, and runs — plus the
+    gitignore rules that commit the record of every run and not its bulk.
     """
     from hillclimb.project import MARKER_DIR, MARKER_FILE, find_hillclimb_dir
 
@@ -165,19 +156,18 @@ def init(
     existing = find_hillclimb_dir(root)
     if existing is not None and not force:
         where = "This already has" if existing.parent == root else f"{existing.parent} already has"
-        typer.echo(
-            f"{where} a hillclimb dir ({existing / MARKER_FILE} exists). "
-            "Next: hillclimb verify example — or --force to nest another one here.",
-            err=True,
-        )
+        fail(f"{_m(where)} a hillclimb dir [note]({_m(existing / MARKER_FILE)} exists)[/].")
+        next_steps([
+            ("hillclimb verify example", "use it"),
+            ("hillclimb init --force", "nest another one here"),
+        ])
         raise typer.Exit(1)
     folder = common.scaffold_hillclimb_dir(root)
     say(f"[head]Initialized hillclimb dir[/] at [path]{_m(folder)}[/]")
     legend([
         (f"{MARKER_DIR}/{MARKER_FILE}", "config (edit defaults here)"),
         (f"{MARKER_DIR}/problems/", "problem definitions (example/ is a working one)"),
-        (f"{MARKER_DIR}/specs/", "committed run specs"),
-        (f"{MARKER_DIR}/runs/", "search artifacts (gitignored)"),
+        (f"{MARKER_DIR}/runs/", "one folder per run (records committed, artifacts gitignored)"),
     ])
     next_steps([
         ("hillclimb connect", "which agent runs the operators, and who pays"),
@@ -216,10 +206,7 @@ def verify(
         # sample_submission.csv), so the "solution" has nothing to do
         source = "# the problem's declared floor: its baseline_files, scored as they are\n"
     if source is None:
-        typer.echo(
-            f"{problem.problem_id} ships no baseline — pass --solution <file> to score one",
-            err=True,
-        )
+        fail(f"{_m(problem.problem_id)} ships no baseline — pass [cmd]--solution <file>[/] to score one")
         raise typer.Exit(1)
     scores: list[float] = []
     with tempfile.TemporaryDirectory(prefix="hillclimb-verify-") as tmp:
@@ -249,34 +236,30 @@ def verify(
                 reason = "timed out" if result.timed_out else f"exit {result.returncode}"
                 if result.val_score is None and not result.timed_out:
                     reason += "; no score in eval_result.json"
-                typer.echo(f"  run {index}: FAILED ({reason})", err=True)
-                typer.echo(f"  logs: {result.stdout_path}", err=True)
+                fail(f"  run {index}: FAILED ({_m(reason)})")
+                say(f"  logs: [path]{_m(result.stdout_path)}[/]", err=True)
                 raise typer.Exit(1)
             scores.append(result.val_score)
             say(f"  run {index}: {_m(problem.metric_name)} = [head]{result.val_score:.6g}[/]")
             if index == 0 and test_runner is not None:
                 remaining = config.budget.exec_timeout_s - result.duration_s
                 if remaining <= 0:
-                    typer.echo("  unit tests: BUGGY (no execution time remaining)", err=True)
+                    fail("  unit tests: BUGGY (no execution time remaining)")
                     raise typer.Exit(1)
                 test_result = test_runner.run(script, candidate_dir, remaining)
                 if test_result.timed_out:
-                    typer.echo("  unit tests: BUGGY (timed out)", err=True)
+                    fail("  unit tests: BUGGY (timed out)")
                     raise typer.Exit(1)
                 if test_result.returncode is None or test_result.returncode < 0:
-                    typer.echo(
-                        f"  unit tests: BUGGY (crashed with {test_result.returncode})",
-                        err=True,
-                    )
+                    fail(f"  unit tests: BUGGY (crashed with {_m(test_result.returncode)})")
                     raise typer.Exit(1)
                 if not test_result.passed:
-                    typer.echo(
-                        f"  unit tests: FAILING (exit {test_result.returncode}); "
-                        f"logs: {candidate_dir / 'tests_stdout.log'}",
-                        err=True,
+                    fail(
+                        f"  unit tests: FAILING (exit {_m(test_result.returncode)}); "
+                        f"logs: {_m(candidate_dir / 'tests_stdout.log')}"
                     )
                     raise typer.Exit(1)
-                typer.echo("  unit tests: PASSING")
+                say("  unit tests: [ok]PASSING[/]")
             if index == 0 and problem.interface_path:
                 # authoring lint: the baseline the verifier just accepted must
                 # also satisfy the declared interface — the two drifting apart
@@ -289,16 +272,19 @@ def verify(
                 ) else []
                 if violations:
                     for violation in violations:
-                        typer.echo(f"  interface: {violation}", err=True)
+                        fail(f"  interface: {_m(violation)}")
                     raise typer.Exit(1)
                 say("  interface: [ok]OK[/]")
             if holdout:
                 scorer = build_holdout_scorer(config, problem, root)
                 if scorer is None:
-                    typer.echo("  holdout: not configured for this problem")
+                    say("  holdout: [note]not configured for this problem[/]")
                 else:
                     value, error, _cpu = scorer.score(candidate_dir)
-                    typer.echo(f"  holdout: {error if error else format(value, '.6g')}")
+                    if error:
+                        say(f"  holdout: [bad]{_m(error)}[/]")
+                    else:
+                        say(f"  holdout: [head]{value:.6g}[/]")
     if len(scores) > 1:
         centre = statistics.median(scores)
         mad = statistics.median([abs(value - centre) for value in scores])
@@ -310,14 +296,14 @@ def verify(
         if mad == 0:
             say("[ok]deterministic across runs — any improvement is real[/]")
             return
-        typer.echo(
-            f"an improvement smaller than ~{2 * mad:.3g} cannot be told from noise. "
+        say(
+            f"[warn]an improvement smaller than ~{2 * mad:.3g} cannot be told from noise.[/] "
             "To stop the search climbing it:"
         )
-        typer.echo(f"  evaluation:\n    n_replicates: {max(3, repeat)}\n    noise_k: 2")
-        typer.echo(
-            "  add `replicate_mode: serial` if this metric measures the machine "
-            "(time, throughput, memory) — parallel trials would measure each other"
+        say(f"[path]  evaluation:\n    n_replicates: {max(3, repeat)}\n    noise_k: 2[/]")
+        say(
+            "[note]  add `replicate_mode: serial` if this metric measures the machine "
+            "(time, throughput, memory) — parallel trials would measure each other[/]"
         )
 
 
@@ -394,10 +380,10 @@ def summit(
     dest.mkdir(parents=True, exist_ok=True)
     record, candidate, copied = _summit(config, problem, dest)
     key = record.meta.problem_key or record.meta.problem_id
-    typer.echo(
-        f"summit of {key}: {record.meta.metric} {candidate.val_score:.6g} — "
-        f"{candidate.candidate_id} ({candidate.operator}) from {record.ref}"
+    say(
+        f"[head]summit of {_m(key)}[/]: {_m(record.meta.metric)} [head]{candidate.val_score:.6g}[/] — "
+        f"[path]{_m(candidate.candidate_id)}[/] [note]({_m(candidate.operator)})[/] from [path]{_m(record.ref)}[/]"
     )
     for name in copied:
         verb = "refreshed" if name in already_there else "wrote"
-        typer.echo(f"  {verb} {dest / name}")
+        say(f"  {verb} [path]{_m(dest / name)}[/]")

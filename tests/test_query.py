@@ -63,7 +63,7 @@ class TestToolsClause:
         import sys
         from pathlib import Path
 
-        from hillclimb.backends.fake import FakeBackend
+        from hillclimb.agents.fake import FakeAgent
         from hillclimb.harness.budget import BudgetManager
         from hillclimb.harness.journal import Journal
         from tests.harness_factory import SearchRig
@@ -73,7 +73,7 @@ class TestToolsClause:
             problem=task,
             config=config,
             journal=Journal(tmp_path / "journal.jsonl"),
-            backend=FakeBackend(),
+            agent=FakeAgent(),
             executor=None,
             budget=BudgetManager(600),
             search_dir=tmp_path,

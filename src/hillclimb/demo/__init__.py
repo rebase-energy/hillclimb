@@ -12,7 +12,7 @@ from pathlib import Path
 
 DEMO_PROBLEM_ID = "circle-packing"
 
-# The starter catalog, in ladder order: construction problems in one shape —
+# The example catalog, in ladder order: construction problems in one shape —
 # a small CSV of numbers, an exact verifier, no data, no holdout, no noise —
 # each family from the instance a ten-minute run climbs to the one an hour
 # does not saturate. Every family is stamped by a generator in problems/
@@ -29,8 +29,9 @@ STARTER_PROBLEM_IDS = (
     "kissing-11",
     "golomb-20", "golomb-27",
     "tsp-200",
+    "mknap-100-5", "mknap-250-10",
 )
-# bundled beyond the starter set: a data + holdout example
+# bundled beyond the example set: a data + holdout example
 BUNDLED_PROBLEM_IDS = (*STARTER_PROBLEM_IDS, "knapsack")
 
 

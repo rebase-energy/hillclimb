@@ -4,7 +4,7 @@ Running the test suite and the one real agent call that checks the stream contra
 
 ```bash
 uv sync                  # editable install; the `tui` extra builds plotui and needs a Rust toolchain
-uv run pytest            # test suite (fake backends, no agent calls)
+uv run pytest            # test suite (fake agents, no agent calls)
 uv run hillclimb smoke   # one real claude call: verifies auth + stream contract
 ```
 
@@ -23,7 +23,7 @@ src/hillclimb/
   sdk/       the one import a climber needs
   api.py config.py problem.py project.py benchmark_providers.py climber.py experiment.py connect.py
              the public surface; spaces.py stays here because the runtime shim byte-copies it
-  demo/ backends/ integrations/ prompts/ runtime/ climbers/
+  demo/ agents/ integrations/ prompts/ runtime/ climbers/
 ```
 
 The import directions — harness and modules never import the tui or the cli, the tui

@@ -19,7 +19,7 @@ from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import hillclimb.backends.openrouter as openrouter
+import hillclimb.agents.openrouter as openrouter
 from hillclimb.modules.similarity.base import SimilarityScore, SimilarityUnavailable, Solution
 from hillclimb.modules.similarity.compute import DiskCache
 

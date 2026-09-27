@@ -18,21 +18,21 @@ hillclimb --install-completion   # writes into your shell config; restart the sh
 ## Supported agents
 
 Operators are headless coding-agent processes, one per operator call, behind
-the backend seam in `src/hillclimb/backends/`:
+the agent seam in `src/hillclimb/agents/`:
 
-| backend | what it is |
+| agent | what it is |
 |---|---|
-| `claude-code` | Claude Code in headless mode — the production backend; bills your Claude subscription |
-| `codex` | Codex CLI in non-interactive mode; uses your Codex login by default |
-| `codex` + `backend_auth: openrouter` | the same Codex CLI pointed at OpenRouter: cheap open models billed to OpenRouter credits, no subscription touched |
+| `claude-code` | Claude Code in headless mode — the production agent; bills your Claude subscription |
+| `codex` | Codex CLI in non-interactive mode; uses your Codex login by default. hillclimb's `model` defaults to `sonnet`, a Claude alias codex refuses, so for any Claude alias the agent omits `--model` and the Codex CLI's own default model answers (the journal says `codex-default`); set `model:` to a codex id to pin one |
+| `codex` + `agent_auth: openrouter` | the same Codex CLI pointed at OpenRouter: cheap open models billed to OpenRouter credits, no subscription touched |
 | `pi` | pi coding agent in JSON mode; subscription login, API keys, OpenRouter or custom local providers, with per-operator sampling |
 | `dummy` | no model calls: a scripted operator for exercising the engine, TUIs and run layout |
 | `fake` | deterministic canned operator for the test suite |
 
-Other agents (OpenCode, …) plug in at the same seam: a backend
-implements the `OperatorBackend` protocol in `backends/base.py` — take a prompt plus a
+Other agents (OpenCode, …) plug in at the same seam: a agent
+implements the `Agent` protocol in `agents/base.py` — take a prompt plus a
 working directory, return the agent's JSON result — and is selected with
-`--backend <name>`.
+`--agent <name>`.
 
 ## Connecting an agent
 
@@ -48,32 +48,50 @@ $ hillclimb connect
 Every credential is read **through the same environment an operator gets**, so
 what the table says is what a search will find — an `ANTHROPIC_API_KEY` left in
 your shell, which would quietly rebill a "subscription" search to the API, shows
-up here rather than on an invoice. `●` is the backend this config runs by
+up here rather than on an invoice. `●` is the agent this config runs by
 default.
+
+The state column has three words for an agent: `logged-out` (its own login is
+missing — the fix is that agent's login), `logged-in` (the login works, but
+`hillclimb connect <target>` has not completed on this machine — or its cache
+was wiped — so the fix is `connect`), and `ready` (logged in *and* connected:
+the ping passed and what a search reads is staged). The OpenRouter route says
+`no-key` / `key-set` / `ready` the same way. Only `ready` means a search gets
+through its first operator call without `connect` first.
 
 `hillclimb connect claude` (or `codex`, `pi`, `openrouter`) sets one up: it runs
 that agent's own login, stages the credential in the isolated per-auth home
 searches read (`~/.cache/hillclimb/codex-home/…`, `pi-home/…`), pings the route
 with one tool-free agent call — which is where a model the account cannot use
-fails, in seconds instead of mid-search — and pins `backend`/`backend_auth` in
-`config.yaml`. It leaves a config that already pins a backend alone unless you
-pass `--default`. `--no-probe` skips the ping, `--auth api-key|openrouter`
-picks a different bill, `--user` writes the defaults to
-`~/.config/hillclimb/config.yaml`.
+fails, in seconds instead of mid-search — and pins `agent`/`agent_auth` in
+`~/.config/hillclimb/config.yaml`: the user level, every folder on the machine,
+so `connect` works before `hillclimb init`. A folder's own `config.yaml`
+overrides it, and `--local` writes there instead — the override for that folder
+alone. It leaves a config that already pins a agent alone unless you pass
+`--default`. `--no-probe` skips the ping, `--auth api-key|openrouter` picks a
+different bill.
 
 `hillclimb connect openrouter` is the one credential hillclimb stores itself:
-the key is validated against OpenRouter (one unbilled call) and written to the
-`.env` beside `config.yaml` that `hillclimb init` gitignores — never into
-`config.yaml`, where it could be journaled. `--backend codex --model
+the key is validated against OpenRouter (one unbilled call) and written to a
+`.env` — the user-level one beside `~/.config/hillclimb/config.yaml`, or with
+`--local` the one beside the folder's `config.yaml` that `hillclimb init`
+gitignores — never into `config.yaml`, where it could be journaled. A folder's
+`.env` wins over the user's, the shell over both. `--agent codex --model
 qwen/qwen3-coder` pins the route in the same command.
+
+`hillclimb disconnect <target>` undoes it on hillclimb's side: the pin is
+commented out of the same `config.yaml` (`--local` for the folder's), the staged
+homes under `~/.cache/hillclimb/` are removed, an OpenRouter key leaves the
+`.env`. The agent's own login stays: hillclimb may start a login it needs, it
+never ends one — your Claude, Codex or pi account is yours, not hillclimb's.
 
 `hillclimb smoke` is the next step up: a whole DRAFT on a real problem.
 
 ## Cheap operators through OpenRouter
 
 ```yaml
-backend: codex
-backend_auth: openrouter
+agent: codex
+agent_auth: openrouter
 model: qwen/qwen3-coder          # any OpenRouter model id
 ```
 
@@ -84,7 +102,7 @@ the bandit learn which cheap model actually earns improvements (see
 
 ```yaml
 routing:
-  draft:   {backend: claude-code, backend_auth: subscription, model: sonnet}
+  draft:   {agent: claude-code, agent_auth: subscription, model: sonnet}
   improve: {models: [qwen/qwen3-coder, deepseek/deepseek-v3]}
   debug:   {model: cohere/north-mini-code:free}
 ```
@@ -108,8 +126,8 @@ uses provider environment variables such as `ANTHROPIC_API_KEY`. OpenRouter
 requires `OPENROUTER_API_KEY` in the environment or `.env` beside `config.yaml`:
 
 ```yaml
-backend: pi
-backend_auth: openrouter
+agent: pi
+agent_auth: openrouter
 model: openrouter/deepseek/deepseek-v3.2
 routing:
   draft:   {sampling: {temperature: 1.0, top_p: 0.95}}
@@ -123,7 +141,7 @@ routing:
 | `pi.models_file` | Optional pi `models.json` for custom providers, including vLLM and llama.cpp |
 
 Sampling follows action → operator → default routing precedence and is
-recorded on each candidate. Unsupported backend combinations fail config
+recorded on each candidate. Unsupported agent combinations fail config
 validation. A short, tool-free preflight checks each distinct pi model and
 sampling combination (including every model in a pool) before search work
 starts. Provider rejection fails startup, including errors pi emits with
@@ -143,7 +161,7 @@ directory. Raw pi events remain in `agent_stream.jsonl` and are visible in
 `watch`, including token usage and pi's reported cost. For OpenRouter models
 with zero reported cost, Hillclimb falls back to its pricing catalogue.
 
-For a local OpenAI-compatible server, set `backend_auth: api-key`,
+For a local OpenAI-compatible server, set `agent_auth: api-key`,
 `model: vllm/Qwen/Qwen3-Coder-30B-A3B-Instruct` and point `pi.models_file`
 at a file like:
 

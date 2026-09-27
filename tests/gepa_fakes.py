@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from hillclimb.backends.fake import FakeBackend
+from hillclimb.agents.fake import FakeAgent
 from hillclimb.harness.budget import BudgetManager
 from hillclimb.climber import load_climber
 from hillclimb.harness.dirs import create_search_dir
@@ -61,7 +61,7 @@ class GepaSearch:
         return self.harness.execute(self.loop)
 
 
-def make_gepa(task, config, tmp_path, *, backend=None, driver=None, seed_score: float | None = 0.5,
+def make_gepa(task, config, tmp_path, *, agent=None, driver=None, seed_score: float | None = 0.5,
               budget_s: int = 3600, journal=None, search_dir=None, **harness_kwargs) -> GepaSearch:
     config.climber.ref = "gepa"
     search_dir = search_dir or create_search_dir(tmp_path / "runs" / "r", "s")
@@ -75,7 +75,7 @@ def make_gepa(task, config, tmp_path, *, backend=None, driver=None, seed_score: 
         problem=task,
         config=config,
         journal=journal,
-        backend=backend or FakeBackend(),
+        agent=agent or FakeAgent(),
         executor=executor_for(task),
         budget=BudgetManager(budget_s),
         search_dir=search_dir,

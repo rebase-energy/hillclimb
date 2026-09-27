@@ -3,7 +3,7 @@
 A `routing:` entry with a `models:` pool (2+ entries) turns that operator's
 model choice into a bandit arm pull (ShinkaEvolve-style adaptive LLM
 selection). Rewards are derived purely from journaled candidate records —
-candidate.backend.model names the arm, the parent's val score anchors the
+candidate.agent.model names the arm, the parent's val score anchors the
 comparison — so bandit state rebuilds from journal replay and `resume` works
 without any extra persistence.
 
@@ -34,7 +34,7 @@ def candidate_reward(
 ) -> float | None:
     """Journal-derivable reward for the model arm that authored `candidate`;
     None = no update (no arm recorded, or a non-terminal/harness failure)."""
-    if not candidate.backend.model:
+    if not candidate.agent.model:
         return None
     if candidate.status in ("failing", "buggy"):
         return 0.0

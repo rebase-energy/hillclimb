@@ -6,6 +6,7 @@ import typer
 
 from hillclimb.cli import common
 from hillclimb.cli._app import HillclimbGroup, app
+from hillclimb.cli.common import _m, say
 from hillclimb.harness.journal import Journal
 
 store_app = typer.Typer(
@@ -29,16 +30,16 @@ def store_sync():
 
     config = common.load_config()
     if config.store.backend == "files":
-        typer.echo("store.backend is `files`: the hillclimb folder is the store, nothing to import")
+        say("[head]store.backend is `files`[/]: the hillclimb folder is the store, nothing to import")
         return
     store = open_store(config)
     try:
         counts = sync_store(FileDataStore(config.paths.runs_dir), store)
     finally:
         store.close()
-    typer.echo(
-        f"imported {counts['runs']} run(s), {counts['searches']} search(es), "
-        f"{counts['records']} journal record(s) into {config.store.sqlite_path}"
+    say(
+        f"[head]imported[/] {counts['runs']} run(s), {counts['searches']} search(es), "
+        f"{counts['records']} journal record(s) into [path]{_m(config.store.sqlite_path)}[/]"
     )
 
 
@@ -55,9 +56,9 @@ def store_searches(
     try:
         records = store.searches(problem_key=problem)
         if not records:
-            typer.echo("no searches recorded" + (f" for {problem}" if problem else ""))
+            say("[head]no searches recorded[/]" + (f" for [path]{_m(problem)}[/]" if problem else ""))
             return
-        typer.echo(f"{'search':40} {'problem':24} {'state':8} {'best':>12}  run")
+        say(f"[head]{'search':40} {'problem':24} {'state':8} {'best':>12}  run[/]")
         for record in records:
             best = None
             for cand in Journal(store.journal(record.key)).candidates.values():
@@ -66,8 +67,9 @@ def store_searches(
                 if best is None or better(cand.val_score, best, record.meta.higher_is_better):
                     best = cand.val_score
             shown = f"{best:.6g}" if best is not None else "-"
-            typer.echo(
-                f"{record.ref:40} {record.meta.problem_key:24} {record.state:8} {shown:>12}  {record.run_name}"
+            say(
+                f"[path]{_m(record.ref):40}[/] {_m(record.meta.problem_key):24} {_m(record.state):8} "
+                f"{shown:>12}  {_m(record.run_name)}"
             )
     finally:
         store.close()

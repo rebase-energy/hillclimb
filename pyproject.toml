@@ -73,7 +73,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/hillclimb"]
-artifacts = ["src/hillclimb/backends/pi_ext/*.ts"]
+artifacts = ["src/hillclimb/agents/pi_ext/*.ts"]
 
 [tool.hatch.build.targets.sdist]
 only-include = ["src/hillclimb", "README.md", "LICENSE"]

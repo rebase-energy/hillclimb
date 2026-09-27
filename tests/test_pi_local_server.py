@@ -10,8 +10,8 @@ import threading
 
 import pytest
 
-from hillclimb.backends.base import OperatorRequest
-from hillclimb.backends.pi_cli import PiCliBackend
+from hillclimb.agents.base import OperatorRequest
+from hillclimb.agents.pi_cli import PiCliAgent
 
 
 @pytest.mark.skipif(shutil.which("pi") is None, reason="requires an installed pi CLI")
@@ -70,14 +70,14 @@ def test_real_pi_sampling_tools_fork_and_provider_error(tmp_path: Path, monkeypa
             "api": "openai-completions", "apiKey": "test-local",
             "models": [{"id": "test-model"}],
         }}}))
-        backend = PiCliBackend(auth="api-key", models_file=models)
+        agent = PiCliAgent(auth="api-key", models_file=models)
         parent_dir = tmp_path / "search" / "candidates" / "c001"
         request = OperatorRequest(
             operator="draft", prompt="Write marker.txt then reply pong.",
             candidate_dir=parent_dir, timeout_s=30, model="hillclimb-test/test-model",
             sampling={"temperature": 0.7, "top_k": 40},
         )
-        parent = backend.invoke(request)
+        parent = agent.invoke(request)
         assert parent.ok, parent.error_message
         assert parent.session_id
         assert parent.total_tokens == 30
@@ -87,7 +87,7 @@ def test_real_pi_sampling_tools_fork_and_provider_error(tmp_path: Path, monkeypa
         assert isinstance(requests[0]["top_k"], int)
 
         child_dir = parent_dir.with_name("c002")
-        child = backend.invoke(request.model_copy(update={
+        child = agent.invoke(request.model_copy(update={
             "operator": "debug", "candidate_dir": child_dir,
             "resume_session_id": parent.session_id,
         }))
@@ -97,7 +97,7 @@ def test_real_pi_sampling_tools_fork_and_provider_error(tmp_path: Path, monkeypa
         assert parent_dir.joinpath("marker.txt").read_text() == "request 1"
         assert sum(m["role"] == "user" for m in requests[2]["messages"]) == 2
 
-        rejected = backend.preflight(request.model_copy(update={
+        rejected = agent.preflight(request.model_copy(update={
             "candidate_dir": tmp_path / "preflight", "sampling": {"temperature": 0.99},
         }))
         assert not rejected.ok

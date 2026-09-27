@@ -11,8 +11,8 @@ import time
 import pytest
 
 import hillclimb.harness.pricing as pricing
-from hillclimb.backends.base import OperatorRequest
-from hillclimb.backends.codex_cli import CodexCliBackend
+from hillclimb.agents.base import OperatorRequest
+from hillclimb.agents.codex_cli import CodexCliAgent
 
 # what OpenRouter would quote for the test model: $1/M prompt, $2/M completion
 CATALOGUE = {
@@ -24,7 +24,7 @@ CATALOGUE = {
 
 @pytest.fixture(autouse=True)
 def _isolated_machine(tmp_path: Path, monkeypatch):
-    """The backend copies ~/.codex/auth.json into ~/.cache and prices calls
+    """The agent copies ~/.codex/auth.json into ~/.cache and prices calls
     from OpenRouter's live catalogue; neither may touch the developer's home
     or the network from a test."""
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
@@ -105,9 +105,9 @@ def make_request(tmp_path: Path, resume: str | None = None) -> OperatorRequest:
 
 
 def test_codex_success_parses_usage_and_normalizes_stream(tmp_path: Path):
-    backend = CodexCliBackend(codex_bin=make_stub(tmp_path, STUB_OK))
+    agent = CodexCliAgent(codex_bin=make_stub(tmp_path, STUB_OK))
     request = make_request(tmp_path)
-    result = backend.invoke(request)
+    result = agent.invoke(request)
 
     assert result.ok
     assert result.session_id == "thread-123"
@@ -136,9 +136,9 @@ def test_codex_success_parses_usage_and_normalizes_stream(tmp_path: Path):
 
 
 def test_codex_resume_command_uses_the_parent_thread(tmp_path: Path):
-    backend = CodexCliBackend(codex_bin=make_stub(tmp_path, STUB_OK))
+    agent = CodexCliAgent(codex_bin=make_stub(tmp_path, STUB_OK))
     request = make_request(tmp_path, resume="thread-parent")
-    result = backend.invoke(request)
+    result = agent.invoke(request)
 
     assert result.ok
     cmd = json.loads((request.candidate_dir / "agent_raw.json").read_text())["cmd"]
@@ -153,8 +153,8 @@ def test_codex_resume_command_uses_the_parent_thread(tmp_path: Path):
 
 
 def test_codex_rate_limit_is_classified(tmp_path: Path):
-    backend = CodexCliBackend(codex_bin=make_stub(tmp_path, STUB_RATE_LIMITED))
-    result = backend.invoke(make_request(tmp_path))
+    agent = CodexCliAgent(codex_bin=make_stub(tmp_path, STUB_RATE_LIMITED))
+    result = agent.invoke(make_request(tmp_path))
 
     assert not result.ok
     assert result.error_kind == "rate_limited"
@@ -162,8 +162,8 @@ def test_codex_rate_limit_is_classified(tmp_path: Path):
 
 
 def test_codex_extracts_nested_server_error(tmp_path: Path):
-    backend = CodexCliBackend(codex_bin=make_stub(tmp_path, STUB_UNSUPPORTED_MODEL))
-    result = backend.invoke(make_request(tmp_path))
+    agent = CodexCliAgent(codex_bin=make_stub(tmp_path, STUB_UNSUPPORTED_MODEL))
+    result = agent.invoke(make_request(tmp_path))
 
     assert not result.ok
     assert result.error_kind == "error"
@@ -171,8 +171,8 @@ def test_codex_extracts_nested_server_error(tmp_path: Path):
 
 
 def test_codex_requires_a_completed_turn(tmp_path: Path):
-    backend = CodexCliBackend(codex_bin=make_stub(tmp_path, STUB_EMPTY))
-    result = backend.invoke(make_request(tmp_path))
+    agent = CodexCliAgent(codex_bin=make_stub(tmp_path, STUB_EMPTY))
+    result = agent.invoke(make_request(tmp_path))
 
     assert not result.ok
     assert result.error_kind == "error"
@@ -181,11 +181,11 @@ def test_codex_requires_a_completed_turn(tmp_path: Path):
 
 def test_codex_subscription_auth_ignores_inherited_api_key(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "should-not-leak")
-    backend = CodexCliBackend(codex_bin=make_stub(tmp_path, STUB_OK))
-    result = backend.invoke(make_request(tmp_path))
+    agent = CodexCliAgent(codex_bin=make_stub(tmp_path, STUB_OK))
+    result = agent.invoke(make_request(tmp_path))
     assert result.ok
 
-    from hillclimb.backends.codex_cli import codex_env
+    from hillclimb.agents.codex_cli import codex_env
 
     assert "OPENAI_API_KEY" not in codex_env("subscription")
     assert codex_env("api-key")["OPENAI_API_KEY"] == "should-not-leak"
@@ -204,8 +204,8 @@ sys.exit(1)
 def test_codex_error_path_keeps_streamed_usage(tmp_path: Path):
     """A call that completed a turn before dying burned real tokens; the
     error result must journal them, not drop them with the failure."""
-    backend = CodexCliBackend(codex_bin=make_stub(tmp_path, STUB_TURN_THEN_ERROR))
-    result = backend.invoke(make_request(tmp_path))
+    agent = CodexCliAgent(codex_bin=make_stub(tmp_path, STUB_TURN_THEN_ERROR))
+    result = agent.invoke(make_request(tmp_path))
 
     assert not result.ok
     assert result.error_kind == "error"
@@ -215,9 +215,9 @@ def test_codex_error_path_keeps_streamed_usage(tmp_path: Path):
 
 def test_openrouter_auth_adds_the_provider_overrides(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
-    backend = CodexCliBackend(codex_bin=make_stub(tmp_path, STUB_OK), auth="openrouter")
+    agent = CodexCliAgent(codex_bin=make_stub(tmp_path, STUB_OK), auth="openrouter")
     request = make_request(tmp_path)
-    result = backend.invoke(request)
+    result = agent.invoke(request)
 
     assert result.ok
     # STUB_OK reports 100 input (80 cached) + 25 output tokens
@@ -232,9 +232,9 @@ def test_openrouter_auth_adds_the_provider_overrides(tmp_path: Path, monkeypatch
 
 
 def test_subscription_auth_has_no_provider_overrides(tmp_path: Path):
-    backend = CodexCliBackend(codex_bin=make_stub(tmp_path, STUB_OK), auth="subscription")
+    agent = CodexCliAgent(codex_bin=make_stub(tmp_path, STUB_OK), auth="subscription")
     request = make_request(tmp_path)
-    backend.invoke(request)
+    agent.invoke(request)
 
     cmd = json.loads((request.candidate_dir / "agent_raw.json").read_text())["cmd"]
     assert not any(arg.startswith("model_providers.") for arg in cmd)
@@ -243,8 +243,8 @@ def test_subscription_auth_has_no_provider_overrides(tmp_path: Path):
 
 def test_openrouter_auth_without_a_key_fails_before_spawning(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    backend = CodexCliBackend(codex_bin="/nonexistent/codex", auth="openrouter")
-    result = backend.invoke(make_request(tmp_path))
+    agent = CodexCliAgent(codex_bin="/nonexistent/codex", auth="openrouter")
+    result = agent.invoke(make_request(tmp_path))
 
     assert not result.ok
     assert result.error_kind == "error"
@@ -252,7 +252,7 @@ def test_openrouter_auth_without_a_key_fails_before_spawning(tmp_path: Path, mon
 
 
 def test_openrouter_auth_drops_an_inherited_openai_key(monkeypatch):
-    from hillclimb.backends.codex_cli import codex_env
+    from hillclimb.agents.codex_cli import codex_env
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
     monkeypatch.setenv("OPENAI_API_KEY", "should-not-leak")
@@ -263,7 +263,7 @@ def test_openrouter_auth_drops_an_inherited_openai_key(monkeypatch):
 
 
 def test_codex_home_is_isolated_per_auth(tmp_path: Path, monkeypatch):
-    from hillclimb.backends.codex_cli import codex_env
+    from hillclimb.agents.codex_cli import codex_env
 
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
@@ -276,7 +276,7 @@ def test_codex_home_is_isolated_per_auth(tmp_path: Path, monkeypatch):
 
 
 def test_subscription_codex_home_gets_the_login(tmp_path: Path, monkeypatch):
-    from hillclimb.backends.codex_cli import codex_env
+    from hillclimb.agents.codex_cli import codex_env
 
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     real_codex = tmp_path / ".codex"
@@ -291,7 +291,7 @@ def test_subscription_codex_home_gets_the_login(tmp_path: Path, monkeypatch):
 
 
 def test_subscription_codex_home_refreshes_a_stale_login(tmp_path: Path, monkeypatch):
-    from hillclimb.backends.codex_cli import codex_env
+    from hillclimb.agents.codex_cli import codex_env
 
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     real_codex = tmp_path / ".codex"
@@ -312,7 +312,7 @@ def test_concurrent_operators_copy_the_login_without_colliding(tmp_path: Path, m
     made the second thread's rename fail with FileNotFoundError."""
     import shutil
 
-    from hillclimb.backends.codex_cli import codex_env
+    from hillclimb.agents.codex_cli import codex_env
 
     real_codex = tmp_path / ".codex"
     real_codex.mkdir()
@@ -348,7 +348,7 @@ def test_concurrent_operators_copy_the_login_without_colliding(tmp_path: Path, m
 
 
 def test_usage_mapping_un_nests_cache_kinds():
-    from hillclimb.backends.codex_cli import _normalized_usage
+    from hillclimb.agents.codex_cli import _normalized_usage
 
     mapped = _normalized_usage(
         {
@@ -369,7 +369,7 @@ def test_usage_mapping_un_nests_cache_kinds():
 
 
 def test_usage_mapping_survives_a_provider_without_caching():
-    from hillclimb.backends.codex_cli import _normalized_usage
+    from hillclimb.agents.codex_cli import _normalized_usage
 
     assert _normalized_usage({"input_tokens": 500, "output_tokens": 30}) == {
         "input_tokens": 500,
@@ -381,10 +381,10 @@ def test_usage_mapping_survives_a_provider_without_caching():
 
 def test_out_of_credits_is_its_own_error_kind(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
-    backend = CodexCliBackend(
+    agent = CodexCliAgent(
         codex_bin=make_stub(tmp_path, STUB_OUT_OF_CREDITS), auth="openrouter"
     )
-    result = backend.invoke(make_request(tmp_path))
+    result = agent.invoke(make_request(tmp_path))
 
     assert not result.ok
     # not rate_limited: credits do not come back on their own
@@ -394,9 +394,9 @@ def test_out_of_credits_is_its_own_error_kind(tmp_path: Path, monkeypatch):
 
 def test_the_provider_key_never_reaches_an_artifact(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-secret-value")
-    backend = CodexCliBackend(codex_bin=make_stub(tmp_path, STUB_OK), auth="openrouter")
+    agent = CodexCliAgent(codex_bin=make_stub(tmp_path, STUB_OK), auth="openrouter")
     request = make_request(tmp_path)
-    result = backend.invoke(request)
+    result = agent.invoke(request)
 
     assert result.ok
     written = "\n".join(
@@ -422,10 +422,32 @@ print(json.dumps({{"type": "turn.completed", "usage": {{"input_tokens": 10, "out
 
 
 def test_a_transient_error_the_turn_recovered_from_is_not_fatal(tmp_path: Path):
-    backend = CodexCliBackend(codex_bin=make_stub(tmp_path, STUB_RECOVERED_ERROR))
-    result = backend.invoke(make_request(tmp_path))
+    agent = CodexCliAgent(codex_bin=make_stub(tmp_path, STUB_RECOVERED_ERROR))
+    result = agent.invoke(make_request(tmp_path))
 
     # codex retried the 502 itself and finished the turn; the candidate's work
     # is real and must not be thrown away
     assert result.ok
     assert result.error_kind is None
+
+
+def test_a_claude_alias_lets_the_codex_cli_pick_its_own_model(tmp_path: Path):
+    """hillclimb's one `model` setting defaults to `sonnet`, which the Codex
+    CLI refuses on a ChatGPT account: the agent omits `--model` for a
+    Claude alias and journals that the CLI chose. An OpenRouter route
+    always passes the id, since nothing else can pick one there."""
+    from hillclimb.agents.codex_cli import CODEX_DEFAULT_LABEL, native_model
+
+    assert native_model("sonnet") is None and native_model("claude-opus-4") is None
+    assert native_model("gpt-5") == "gpt-5"
+    assert native_model("sonnet", auth="openrouter") == "sonnet"
+
+    agent = CodexCliAgent(codex_bin=make_stub(tmp_path, STUB_OK))
+    request = make_request(tmp_path)
+    request.model = "sonnet"
+    result = agent.invoke(request)
+    assert result.ok
+    raw = json.loads((request.candidate_dir / "agent_raw.json").read_text())
+    assert "--model" not in raw["cmd"]
+    stream = [json.loads(l) for l in (request.candidate_dir / "agent_stream.jsonl").read_text().splitlines()]
+    assert stream[0]["model"] == CODEX_DEFAULT_LABEL

@@ -28,6 +28,10 @@ Verifier environment:
                            (also exported under the old name HILLCLIMB_TRIAL_SEED)
     $HILLCLIMB_PARAMS      the trial's params.json when the candidate declares
                            tunable parameters (`spaces.params()` follows it)
+    $HILLCLIMB_ENGINE_PYTHON  the engine's interpreter (hillclimb importable) — run it
+                           with `env -u PYTHONPATH`: the verifier's PYTHONPATH is the
+                           runtime venv's `hillclimb.spaces` shim, which shadows the package
+    $HILLCLIMB_DIR         the hillclimb dir of the search (set by api.build_executor)
 
 The command runs with cwd = the candidate candidate_dir, where `./problem/` and
 `./data/` symlinks always exist (candidate candidate dirs and trial dirs by
@@ -40,6 +44,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -266,6 +271,10 @@ def verifier_env(
         "HILLCLIMB_SOLUTION": str(solution),
         "HILLCLIMB_RESULT": str(result),
         "HILLCLIMB_SPLIT": split,
+        # the engine's own interpreter, where hillclimb itself is importable
+        # (the runtime venv above only carries the interface shim): what a
+        # meta-problem's verifier starts inner searches with
+        "HILLCLIMB_ENGINE_PYTHON": sys.executable,
     }
     if seed is not None:
         env["HILLCLIMB_REPLICATE_SEED"] = str(seed)

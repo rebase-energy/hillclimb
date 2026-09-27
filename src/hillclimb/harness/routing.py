@@ -1,8 +1,8 @@
-"""Per-operator backend/model routing: which agent runs which operator.
+"""Per-operator agent/model routing: which agent runs which operator.
 
 Field-level precedence, first non-None wins:
 action.route > config.routing[operator] > config.routing["default"] >
-the global `backend`/`model`/`backend_auth` scalars. An absent `routing:`
+the global `agent`/`model`/`agent_auth` scalars. An absent `routing:`
 block resolves to exactly the global scalars — today's behavior.
 
 Model choice has one extra form: a layer may carry a `models:` POOL instead
@@ -20,7 +20,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-from hillclimb.backends import OperatorBackend, get_backend
+from hillclimb.agents import Agent, get_agent
 from hillclimb.harness.bandit import OperatorBandits
 from hillclimb.config import Config
 from hillclimb.modules.policies.base import Route
@@ -28,9 +28,9 @@ from hillclimb.modules.policies.base import Route
 
 @dataclass(frozen=True)
 class ResolvedRoute:
-    backend: str
+    agent: str
     model: str
-    backend_auth: str
+    agent_auth: str
     sampling: dict[str, int | float] | None = None
 
 
@@ -66,13 +66,13 @@ class Router:
             return None
 
         route = ResolvedRoute(
-            backend=pick("backend", config.backend),
+            agent=pick("agent", config.agent),
             model=self._pick_model(operator, layers),
-            backend_auth=pick("backend_auth", config.backend_auth),
+            agent_auth=pick("agent_auth", config.agent_auth),
             sampling=pick_optional("sampling"),
         )
-        if route.sampling and route.backend != "pi":
-            raise ValueError(f"routing.{operator}: sampling needs backend: pi, not {route.backend!r}")
+        if route.sampling and route.agent != "pi":
+            raise ValueError(f"routing.{operator}: sampling needs agent: pi, not {route.agent!r}")
         return route
 
     def _pick_model(self, operator: str, layers: list) -> str:
@@ -117,9 +117,9 @@ class Router:
             self.bandits.update(operator, pool, model, reward)
 
 
-class BackendPool:
-    """Lazy name->instance cache, one instance per (backend, auth) per search
-    — backends are stateful (call counters, abort wiring), so a route must
+class AgentPool:
+    """Lazy name->instance cache, one instance per (agent, auth) per search
+    — agents are stateful (call counters, abort wiring), so a route must
     resolve to the same instance every time."""
 
     def __init__(
@@ -129,22 +129,22 @@ class BackendPool:
     ):
         self._abort = abort
         self._pi_models_file = pi_models_file
-        self._instances: dict[tuple[str, str], OperatorBackend] = {}
+        self._instances: dict[tuple[str, str], Agent] = {}
         self._lock = threading.Lock()
 
-    def seed(self, name: str, auth: str, backend: OperatorBackend) -> None:
-        """Register an existing instance (the default backend the harness
+    def seed(self, name: str, auth: str, agent: Agent) -> None:
+        """Register an existing instance (the default agent the harness
         already constructed) so the default route reuses it."""
-        self._instances[(name, auth)] = backend
+        self._instances[(name, auth)] = agent
 
-    def get(self, name: str, auth: str) -> OperatorBackend:
+    def get(self, name: str, auth: str) -> Agent:
         key = (name, auth)
         with self._lock:
             if key not in self._instances:
-                backend = get_backend(
+                agent = get_agent(
                     name, auth=auth, pi_models_file=self._pi_models_file
                 )
-                if self._abort is not None and hasattr(backend, "abort"):
-                    backend.abort = self._abort
-                self._instances[key] = backend
+                if self._abort is not None and hasattr(agent, "abort"):
+                    agent.abort = self._abort
+                self._instances[key] = agent
             return self._instances[key]

@@ -16,6 +16,8 @@ from hillclimb.api import (
     create_run,
     new_run_id,
     spawn_search_proc,
+    spec_entry,
+    write_run_spec,
 )
 from hillclimb.cli import common
 from hillclimb.cli._app import HillclimbGroup, app
@@ -104,19 +106,22 @@ def experiment_run(
         f"{experiment.repeats} repeat(s)" if first_repeat == 1
         else f"repeats {first_repeat}..{first_repeat + experiment.repeats - 1}"
     )
-    typer.echo(
-        f"Experiment {experiment.name}: {len(experiment.arms)} arms × {len(experiment.problems)} "
-        f"problem(s) × {repeats_text} = {len(jobs)} searches, {schedule}"
-        + (f" (at most {limit} at once)" if limit else "")
+    common.say(
+        f"[head]Experiment {common._m(experiment.name)}:[/] {len(experiment.arms)} arms × "
+        f"{len(experiment.problems)} problem(s) × {repeats_text} = {len(jobs)} searches, {schedule}"
+        + (f" [note](at most {limit} at once)[/]" if limit else "")
     )
     if seed_path is not None:
         import hashlib
 
         digest = hashlib.sha256(seed_path.read_bytes()).hexdigest()[:12]
-        typer.echo(f"  shared seed: {seed_path} (sha256 {digest})")
+        common.say(f"  shared seed: [path]{common._m(seed_path)}[/] [note](sha256 {digest})[/]")
     for job in jobs:
         settings = ", ".join(f"{k}={v}" for k, v in job.overrides.items()) or "(defaults)"
-        typer.echo(f"  {job.index:2d}. {job.problem} · {job.arm} · r{job.repeat}  {settings}")
+        common.say(
+            f"  {job.index:2d}. [path]{common._m(job.problem)}[/] · {common._m(job.arm)} · r{job.repeat}"
+            f"  [note]{common._m(settings)}[/]"
+        )
     if dry_run:
         return
     if run_id:
@@ -125,7 +130,7 @@ def experiment_run(
         if existing is None or existing.kind != "experiment":
             raise typer.BadParameter(f"--run-id {run_id!r} is not an existing experiment run")
         run_name = existing.name
-        typer.echo(f"Appending to run {run_id}")
+        common.say(f"[head]Appending to run[/] [path]{common._m(run_id)}[/]")
     else:
         run_name = experiment.name
         run_id = new_run_id(run_name)
@@ -137,6 +142,16 @@ def experiment_run(
                 problem_ids=list(dict.fromkeys(load_problem(p, config).problem_id for p in experiment.problems)),
             ),
         )
+        # the run's own recipe: one entry per search, named by arm and
+        # repeat, its overrides as `set` pairs — reruns the same searches
+        # as a plain suite (the experiment tagging is run.yaml's)
+        write_run_spec(run_dir, [
+            spec_entry(
+                job.problem, name=f"{job.arm}-r{job.repeat}", budget=child_budget, seed_from=seed_path,
+                set=[f"{key}={_set_value(value)}" for key, value in job.overrides.items()],
+            )
+            for job in jobs
+        ], source=common._spec_provenance(config, spec_path))
     launched = []
     alive: dict[int, tuple[subprocess.Popen, str]] = {}  # bounded parallel: pid -> (child, slug)
     exits: dict[str, int] = {}  # bounded parallel: slug -> non-zero exit code
@@ -154,32 +169,45 @@ def experiment_run(
         slug = f"{Path(job.problem).name}-{job.arm}-r{job.repeat}"
         if schedule == "parallel":
             if limit:
-                _reap_until_below(alive, limit, exits, typer.echo)
+                _reap_until_below(alive, limit, exits, _say_reaped)
             proc, log_path = spawn_search_proc(config, run_dir, job.index, slug, argv)
             launched.append((slug, proc.pid, log_path))
             if limit:
                 alive[proc.pid] = (proc, slug)
-                typer.echo(f"=== {job.index}/{len(jobs)}: {slug} started (pid {proc.pid}, log {log_path})")
+                common.say(
+                    f"[head]=== {job.index}/{len(jobs)}: {common._m(slug)} started[/] "
+                    f"[note](pid {proc.pid}, log {common._m(log_path)})[/]"
+                )
             continue
-        typer.echo(f"=== {job.index}/{len(jobs)}: {slug} ===")
+        common.say(f"[head]=== {job.index}/{len(jobs)}: {common._m(slug)} ===[/]")
         cwd, env = child_launch_context(config)
         result = subprocess.run([sys.executable, "-m", "hillclimb.cli", "run", *argv], cwd=cwd, env=env)
         if result.returncode != 0:
             hint = " (parked — resume it, then `experiment report`)" if result.returncode == 2 else ""
-            typer.echo(f"{slug} exited {result.returncode}{hint}; stopping the experiment", err=True)
+            common.fail(
+                f"{common._m(slug)} exited {result.returncode}{common._m(hint)}; stopping the experiment"
+            )
             raise typer.Exit(result.returncode)
     if schedule == "parallel" and not limit:
-        typer.echo(f"Run {run_id}: launched {len(launched)} searches (`hillclimb experiment report` when done)")
+        common.say(
+            f"[head]Run {common._m(run_id)}:[/] launched {len(launched)} searches "
+            "[note](`hillclimb experiment report` when done)[/]"
+        )
         for slug, pid, log_path in launched:
-            typer.echo(f"  pid={pid} {slug}  log={log_path}")
+            common.say(f"  pid={pid} [path]{common._m(slug)}[/]  log=[path]{common._m(log_path)}[/]")
         return
     if limit:
-        _reap_until_below(alive, 1, exits, typer.echo)  # drain: every child has exited
-        typer.echo(f"Run {run_id}: {len(launched)} searches finished, {len(exits)} with a non-zero exit")
+        _reap_until_below(alive, 1, exits, _say_reaped)  # drain: every child has exited
+        common.say(
+            f"[head]Run {common._m(run_id)}:[/] {len(launched)} searches finished, "
+            f"{len(exits)} with a non-zero exit"
+        )
         for slug, code in exits.items():
             hint = "parked — resume it" if code == 2 else f"exit {code}"
-            typer.echo(f"  {slug}: {hint}; log under {run_dir / 'logs'}")
-    typer.echo("")
+            common.say(
+                f"  [path]{common._m(slug)}[/]: {common._m(hint)}; log under [path]{common._m(run_dir / 'logs')}[/]"
+            )
+    common.say()
     _experiment_report_impl(config, experiment.name, "", spec_path=spec_path)
     if exits:
         raise typer.Exit(1 if any(code != 2 for code in exits.values()) else 2)
@@ -189,12 +217,19 @@ def experiment_run(
 _REAP_POLL_S = 5.0
 
 
+def _say_reaped(slug: str, code: int) -> None:
+    """One reaped child, in the CLI's voice: the exit code coloured by verdict."""
+    verdict = "ok" if code == 0 else "bad"
+    common.say(f"    finished: [path]{common._m(slug)}[/] [{verdict}](exit {code})[/]")
+
+
 def _reap_until_below(
     alive: dict[int, tuple[subprocess.Popen, str]], limit: int, exits: dict[str, int], log
 ) -> None:
     """Block until fewer than `limit` of the detached children in `alive`
     (pid -> (child, slug)) are still running, reaping each one that exits and
-    recording non-zero exit codes in `exits`. `limit=1` drains them all.
+    recording non-zero exit codes in `exits`; `log(slug, code)` announces
+    each one. `limit=1` drains them all.
     Polls the Popen objects themselves: a dropped Popen gets reaped behind
     our back by the next subprocess call, and its exit code with it."""
     while len(alive) >= limit:
@@ -203,7 +238,7 @@ def _reap_until_below(
             if code is None:
                 continue
             alive.pop(pid)
-            log(f"    finished: {slug} (exit {code})")
+            log(slug, code)
             if code != 0:
                 exits[slug] = code
         if len(alive) >= limit:

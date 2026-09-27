@@ -21,7 +21,7 @@ arms record identical data):
   highest-leverage component. Later improves of the same solution are handed
   the newest sibling `ablation.md` so components aren't re-measured.
 
-The `routing:` block maps operators to backends/models; giving a route a
+The `routing:` block maps operators to agents/models; giving a route a
 `models:` **pool** instead of a scalar turns model choice into a UCB1 bandit
 (per operator) that learns which model earns improvements — rewards derive
 from journaled results (improved on parent = 1, working-but-flat = 0.25,

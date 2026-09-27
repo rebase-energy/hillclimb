@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from hillclimb.api import create_search
-from hillclimb.backends.fake import FakeBackend
+from hillclimb.agents.fake import FakeAgent
 from hillclimb.harness.baseline import run_scored_baseline
 from hillclimb.harness.budget import BudgetManager
 from hillclimb.harness.candidate import Candidate
@@ -145,9 +145,9 @@ def test_test_process_crash_is_buggy(tmp_path, task, config):
 
 def test_failing_candidate_is_debugged_but_never_selected(tmp_path, task, config):
     spec = frozen_suite(tmp_path, task, "raise AssertionError('wrong answer')\n")
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.9), notes="runs but is wrong\n")
-    backend.queue(script=ok_script(0.8), notes="attempted repair\n")
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.9), notes="runs but is wrong\n")
+    agent.queue(script=ok_script(0.8), notes="attempted repair\n")
     search_dir = create_search_dir(tmp_path / "search-run", "s")
     journal = Journal(search_dir / "journal.jsonl")
     evaluator = CandidateEvaluator(
@@ -160,7 +160,7 @@ def test_failing_candidate_is_debugged_but_never_selected(tmp_path, task, config
         problem=task,
         config=config,
         journal=journal,
-        backend=backend,
+        agent=agent,
         executor=evaluator.executor,
         evaluator=evaluator,
         budget=BudgetManager(3600, stop_margin_s=1),
@@ -171,8 +171,8 @@ def test_failing_candidate_is_debugged_but_never_selected(tmp_path, task, config
 
     assert searcher.run() is None
     assert journal.get("c001").status == "failing"
-    assert backend.requests[1].operator == "debug"
-    assert "frozen unit-test suite failed" in backend.requests[1].prompt
+    assert agent.requests[1].operator == "debug"
+    assert "frozen unit-test suite failed" in agent.requests[1].prompt
     assert journal.best_candidate(True) is None
 
 

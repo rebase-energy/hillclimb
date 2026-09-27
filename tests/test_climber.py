@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb.backends.fake import FakeBackend
+from hillclimb.agents.fake import FakeAgent
 from hillclimb.climber import ClimberLoadError, bundled_climbers, load_climber, tree_sha256
 from hillclimb.harness.loop import PolicyLoop, SearchLoop
 from hillclimb.modules.policies.greedy import GreedyPolicy
@@ -79,17 +79,17 @@ def test_the_bundled_climbers_load_and_name_their_modules():
 def test_a_directory_climber_runs_with_its_own_operator_and_prompts(task, config, tmp_path):
     climber = load_climber(str(write_climber(tmp_path / "crosser")))
     assert climber.name == "crosser" and not climber.is_loop and climber.lint_prompts() == []
-    backend = FakeBackend()
+    agent = FakeAgent()
     for score in (0.5, 0.7, 0.9):
-        backend.queue(script=ok_script(score), notes="x\n")
+        agent.queue(script=ok_script(score), notes="x\n")
     config.budget.max_evaluations = 3  # the policy holds after its cross; a hold never ends a search
     harness, journal, _ = make_harness(
-        task, config, backend, operators=climber.operator_set(), prompts_dir=climber.prompts_dir,
+        task, config, agent, operators=climber.operator_set(), prompts_dir=climber.prompts_dir,
     )
 
     selected = harness.execute(climber.build_loop())
 
-    assert [r.operator for r in backend.requests] == ["draft", "draft", "cross"]
+    assert [r.operator for r in agent.requests] == ["draft", "draft", "cross"]
     assert selected.operator == "cross" and selected.role == "combine" and selected.val_score == 0.9
     cross_prompt = Path(selected.candidate_dir, "prompt.md").read_text()
     assert cross_prompt.startswith("Cross candidate_1.py, candidate_2.py in a bold way.")  # manifest params reached it
@@ -103,9 +103,9 @@ def test_a_directory_climber_runs_with_its_own_operator_and_prompts(task, config
 
 def test_an_operator_the_climber_did_not_list_is_refused(task, config, tmp_path):
     climber = load_climber(str(write_climber(tmp_path / "crosser")))
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.5), notes="x\n")
-    harness, _journal, _ = make_harness(task, config, backend, operators=climber.operator_set())
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.5), notes="x\n")
+    harness, _journal, _ = make_harness(task, config, agent, operators=climber.operator_set())
     draft = harness.run(Action(operator="draft")).candidate
     refused = harness.run(Action(operator="improve", target_id=draft.candidate_id))
     assert refused.kind == "rejected" and "Unknown operator 'improve'" in refused.ticket.rejected
@@ -218,7 +218,7 @@ def test_a_run_folder_written_before_climbers_still_loads(tmp_path):
     search_dir.mkdir(parents=True)
     (search_dir / "search.yaml").write_text(yaml.safe_dump({
         "schema_version": 2, "search_id": "gefcom-solar", "run_id": "r", "problem": "p",
-        "problem_id": "gefcom-solar", "backend": "claude-code", "model": "sonnet",
+        "problem_id": "gefcom-solar", "agent": "claude-code", "model": "sonnet",
         "policy": "hillclimb/policies/drafts_only.py", "policy_params": {"num_drafts": 1},
         "policy_sha256": "ab" * 32, "tuner": "optuna", "tuner_params": {"seed": 3},
         "metric": "pinball", "higher_is_better": False,
@@ -277,9 +277,9 @@ def test_execute_search_hands_the_harness_the_climbers_tuner(task, config, tmp_p
             super().__init__(**kwargs)
 
     monkeypatch.setattr(harness_module, "Harness", Spy)
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.6), notes="d\n")
-    monkeypatch.setattr("hillclimb.api.get_backend", lambda *a, **k: backend)
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.6), notes="d\n")
+    monkeypatch.setattr("hillclimb.api.get_agent", lambda *a, **k: agent)
     config.learning.enabled = False
     config.holdout.enabled = False
     config.budget.max_evaluations = 1

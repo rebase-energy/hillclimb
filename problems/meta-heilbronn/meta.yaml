@@ -1,0 +1,10 @@
+# What one verifier run of this meta-problem does: one inner `hillclimb run`
+# per problem x repeat, serially, with the candidate solution.py as the
+# climber and the user's agent/model. Score per inner problem = gap closed
+# from the inner search's floor to `target` (default: the best chart_baselines
+# value in the metric's direction); median over repeats, mean over problems.
+problems:
+  - heilbronn-11
+  - heilbronn-14
+budget: 3m        # wall clock per inner search
+repeats: 1        # inner searches are noisy: raise this before trusting a gain

@@ -196,8 +196,8 @@ async def test_archive_app_scrubs_both_panels_and_rings_the_selection(tree_works
         await pilot.press("k")
         await pilot.pause()
         assert chart.cursor is None and app.screen._tree.best_id == "c007"
-        # b selects the best in the tree and rings it on the chart
-        await pilot.press("b")
+        # * selects the best in the tree and rings it on the chart
+        await pilot.press("asterisk")
         await pilot.pause()
         assert tree.selected == "c007" and chart.selected == "c007"
         assert SELECTED_RGB in rgba_colours(chart._plot, 320, 200)

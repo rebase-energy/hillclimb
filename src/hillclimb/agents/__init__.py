@@ -3,34 +3,34 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from hillclimb.backends.base import OperatorBackend, OperatorRequest, OperatorResult
+from hillclimb.agents.base import Agent, OperatorRequest, OperatorResult
 
 
-def _make_claude_code(auth: str) -> OperatorBackend:
-    from hillclimb.backends.claude_code import ClaudeCodeBackend
+def _make_claude_code(auth: str) -> Agent:
+    from hillclimb.agents.claude_code import ClaudeCodeAgent
 
-    return ClaudeCodeBackend(auth=auth)
-
-
-def _make_dummy(auth: str) -> OperatorBackend:
-    from hillclimb.backends.dummy import DummyBackend
-
-    return DummyBackend()
+    return ClaudeCodeAgent(auth=auth)
 
 
-def _make_codex(auth: str) -> OperatorBackend:
-    from hillclimb.backends.codex_cli import CodexCliBackend
+def _make_dummy(auth: str) -> Agent:
+    from hillclimb.agents.dummy import DummyAgent
 
-    return CodexCliBackend(auth=auth)
-
-
-def _make_pi(auth: str, models_file: Path | None = None) -> OperatorBackend:
-    from hillclimb.backends.pi_cli import PiCliBackend
-
-    return PiCliBackend(auth=auth, models_file=models_file)
+    return DummyAgent()
 
 
-_BACKENDS: dict[str, Callable[[str], OperatorBackend]] = {
+def _make_codex(auth: str) -> Agent:
+    from hillclimb.agents.codex_cli import CodexCliAgent
+
+    return CodexCliAgent(auth=auth)
+
+
+def _make_pi(auth: str, models_file: Path | None = None) -> Agent:
+    from hillclimb.agents.pi_cli import PiCliAgent
+
+    return PiCliAgent(auth=auth, models_file=models_file)
+
+
+_AGENTS: dict[str, Callable[[str], Agent]] = {
     "claude-code": _make_claude_code,
     "codex": _make_codex,
     "dummy": _make_dummy,
@@ -38,17 +38,17 @@ _BACKENDS: dict[str, Callable[[str], OperatorBackend]] = {
 }
 
 
-def get_backend(
+def get_agent(
     name: str,
     auth: str = "subscription",
     *,
     pi_models_file: Path | None = None,
-) -> OperatorBackend:
-    if name not in _BACKENDS:
-        raise ValueError(f"Unknown backend: {name} (available: {', '.join(sorted(_BACKENDS))})")
+) -> Agent:
+    if name not in _AGENTS:
+        raise ValueError(f"Unknown agent: {name} (available: {', '.join(sorted(_AGENTS))})")
     if name == "pi":
         return _make_pi(auth, pi_models_file)
-    return _BACKENDS[name](auth)
+    return _AGENTS[name](auth)
 
 
-__all__ = ["OperatorBackend", "OperatorRequest", "OperatorResult", "get_backend"]
+__all__ = ["Agent", "OperatorRequest", "OperatorResult", "get_agent"]

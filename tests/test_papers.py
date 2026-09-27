@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from hillclimb.backends.fake import FakeBackend
+from hillclimb.agents.fake import FakeAgent
 from hillclimb.config import Config
 from hillclimb.modules.memory.papers import distill_paper, load_papers, paper_scope
 
@@ -45,22 +45,22 @@ def _fake_pdf(tmp_path, name="anen_wind.pdf", content=b"%PDF-1.4 fake"):
     return pdf
 
 
-def _ingest(tmp_path, monkeypatch, *, backend=None, force=False):
+def _ingest(tmp_path, monkeypatch, *, agent=None, force=False):
     monkeypatch.setenv("HILLCLIMB_CACHE_DIR", str(tmp_path / "cache"))
-    if backend is None:
-        backend = FakeBackend()
-        backend.queue(operator="paper", files={"claims.yaml": PAPER_CLAIMS_YAML})
-    monkeypatch.setattr("hillclimb.api.get_backend", lambda *a, **k: backend)
+    if agent is None:
+        agent = FakeAgent()
+        agent.queue(operator="paper", files={"claims.yaml": PAPER_CLAIMS_YAML})
+    monkeypatch.setattr("hillclimb.api.get_agent", lambda *a, **k: agent)
     knowledge_dir = tmp_path / "knowledge"
     record = distill_paper(
         Config(), knowledge_dir, _fake_pdf(tmp_path),
         problem="emflow://gefcom2014:wind", force=force, log=lambda m: None,
     )
-    return record, knowledge_dir, backend
+    return record, knowledge_dir, agent
 
 
 def test_distill_paper_end_to_end(tmp_path, monkeypatch):
-    record, knowledge_dir, backend = _ingest(tmp_path, monkeypatch)
+    record, knowledge_dir, agent = _ingest(tmp_path, monkeypatch)
 
     assert record is not None
     assert record.slug == "anen_wind"
@@ -70,7 +70,7 @@ def test_distill_paper_end_to_end(tmp_path, monkeypatch):
     assert record.claims[0].scope["family"] == "gefcom2014"
     assert record.claims[0].evidence == ["p4", "p7"]  # page provenance
     # the PDF was staged into the agent's work dir and the prompt names it
-    request = backend.requests[0]
+    request = agent.requests[0]
     assert request.operator == "paper"
     assert request.model == "sonnet"  # comprehension work, not the distill small model
     assert "anen_wind.pdf" in request.prompt
@@ -83,19 +83,19 @@ def test_distill_paper_end_to_end(tmp_path, monkeypatch):
 
 
 def test_reingest_is_cached_by_content_hash(tmp_path, monkeypatch):
-    record, knowledge_dir, backend = _ingest(tmp_path, monkeypatch)
+    record, knowledge_dir, agent = _ingest(tmp_path, monkeypatch)
     again = distill_paper(
         Config(), knowledge_dir, _fake_pdf(tmp_path),
         problem="emflow://gefcom2014:wind", log=lambda m: None,
     )
     assert again is not None and again.sha256 == record.sha256
-    assert len(backend.requests) == 1  # no second agent call
+    assert len(agent.requests) == 1  # no second agent call
 
 
 def test_failed_agent_writes_nothing(tmp_path, monkeypatch):
-    backend = FakeBackend()
-    backend.queue(operator="paper", result={"ok": False, "error_kind": "error"})
-    record, knowledge_dir, _ = _ingest(tmp_path, monkeypatch, backend=backend)
+    agent = FakeAgent()
+    agent.queue(operator="paper", result={"ok": False, "error_kind": "error"})
+    record, knowledge_dir, _ = _ingest(tmp_path, monkeypatch, agent=agent)
     assert record is None
     assert not (knowledge_dir / "papers").exists()
 

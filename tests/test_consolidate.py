@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from hillclimb.backends.fake import FakeBackend
+from hillclimb.agents.fake import FakeAgent
 from hillclimb.modules.memory.claims import Entity, ensure_concepts, load_consolidated_claims, save_entities
 from hillclimb.config import Config
 from hillclimb.modules.memory.consolidate import (
@@ -123,18 +123,18 @@ class TestPlaybooks:
         assert "## Playbook: tabular" in text and "Do X." in text
         assert render_playbooks([]) == ""
 
-    def test_consolidate_end_to_end_with_fake_backend(self, knowledge_dir, monkeypatch):
+    def test_consolidate_end_to_end_with_fake_agent(self, knowledge_dir, monkeypatch):
         # third claim so the `tabular` concept crosses PLAYBOOK_MIN_CLAIMS
         write_card(knowledge_dir, make_card(
             problem_id="comp-c", run_ref="r3/s1", finished_at="2026-07-03T00:00:00Z",
             claims=[claim(family="comp-c", cid="c1", relation="requires",
                           observed="2026-07-03T00:00:00Z")],
         ))
-        backend = FakeBackend()
+        agent = FakeAgent()
         for _ in range(4):  # one playbook agent call per qualifying concept
-            backend.queue(operator="consolidate",
+            agent.queue(operator="consolidate",
                           files={"playbook.md": "Start with HGB; avoid physics sims."})
-        monkeypatch.setattr("hillclimb.api.get_backend", lambda *a, **k: backend)
+        monkeypatch.setattr("hillclimb.api.get_agent", lambda *a, **k: agent)
         summary = consolidate(knowledge_dir, Config(), lambda m: None)
         assert summary["generalized"]  # the 2-family lift happened
         assert load_consolidated_claims(knowledge_dir)
@@ -145,7 +145,7 @@ class TestPlaybooks:
 
     def test_dry_run_writes_nothing(self, knowledge_dir, monkeypatch):
         monkeypatch.setattr(
-            "hillclimb.api.get_backend",
+            "hillclimb.api.get_agent",
             lambda *a, **k: (_ for _ in ()).throw(AssertionError("no agent calls in dry run")),
         )
         summary = consolidate(knowledge_dir, Config(), lambda m: None, dry_run=True)

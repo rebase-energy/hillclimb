@@ -1,0 +1,23 @@
+                                                                                                                        
+ Usage: root disconnect [OPTIONS] TARGET                                                                                
+                                                                                                                        
+ Undo `hillclimb connect <target>` on hillclimb's side: unpin it as the default and forget the staged credentials, so   
+ the next `connect` sets it up from scratch again.                                                                      
+                                                                                                                        
+ Unpinning edits the same config.yaml `connect` wrote (`~/.config/hillclimb/`,                                          
+ or this folder's with `--local`), commenting the lines out in place; the                                               
+ isolated homes under `~/.cache/hillclimb/` go; `openrouter` drops the key                                              
+ from the `.env`. The agent's own login is left exactly as it is — hillclimb                                            
+ never logs you out of claude, codex or pi.                                                                             
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ *    target      TEXT  claude | codex | pi | openrouter [required]                                                   │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --local      --user      Where the defaults (and an OpenRouter key) go: --user (the default) is                      │
+│                          ~/.config/hillclimb/, every folder on this machine; --local is this folder's hillclimb dir, │
+│                          overriding the user level for it alone                                                      │
+│                          [default: user]                                                                             │
+│ --help   -h              Show this message and exit.                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

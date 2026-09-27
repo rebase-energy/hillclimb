@@ -27,17 +27,27 @@ def journal_spend(journal: Journal) -> Spend:
     for candidate in journal.candidates.values():
         trials = len(candidate.trials)
         evaluations += max(0, trials - 1) if candidate.operator in FLOOR_OPERATORS else trials
-        tokens += candidate.backend.total_tokens or 0
-        cost += candidate.backend.cost_usd or 0.0
+        tokens += candidate.agent.total_tokens or 0
+        cost += candidate.agent.cost_usd or 0.0
     return Spend(evaluations=evaluations, tokens=tokens, cost_usd=cost)
 
 
 def format_remaining(seconds: float) -> str:
-    """How the clock reads in prompts and logs: `1h 05m` or `59 minutes`."""
+    """How the clock reads in prompts: `1h 05m` or `59 minutes` — prose an
+    agent reads. Logs use `format_clock`."""
     whole = int(round(seconds))
     hours, rest = divmod(whole, 3600)
     minutes = rest // 60
     return f"{hours}h {minutes:02d}m" if hours else f"{minutes} minutes"
+
+
+def format_clock(seconds: float) -> str:
+    """How the clock reads in the engine log: `9:42`, `1:05:00` — the same
+    width from one line to the next, so the log's clock gutter lines up."""
+    whole = max(0, int(round(seconds)))
+    hours, rest = divmod(whole, 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
 
 
 class BudgetManager:
@@ -63,3 +73,6 @@ class BudgetManager:
 
     def remaining_str(self) -> str:
         return format_remaining(self.remaining())
+
+    def clock_str(self) -> str:
+        return format_clock(self.remaining())

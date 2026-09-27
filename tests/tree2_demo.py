@@ -41,7 +41,7 @@ if run_dir.exists():
 write_run_meta(run_dir, RunMeta(run_id=run_id, name="tree2 demo", target="demo", problem_ids=[search_id]))
 write_search_meta(search_dir, SearchMeta(
     search_id=search_id, run_id=run_id, problem="/tmp/problem", problem_id=search_id,
-    backend="claude-code", model="sonnet", metric="score", higher_is_better=True, budget_s=3600,
+    agent="claude-code", model="sonnet", metric="score", higher_is_better=True, budget_s=3600,
 ))
 journal = Journal(search_dir / "journal.jsonl")
 t0 = datetime(2026, 9, 15, 9, 0, tzinfo=timezone.utc)

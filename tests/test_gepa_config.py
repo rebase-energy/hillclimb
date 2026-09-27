@@ -58,9 +58,9 @@ def test_invalid_params_rejected(bad):
         GEPAParams.model_validate(bad)
 
 
-def test_parallel_operators_rejected_before_spend(config):
+def test_parallel_agents_rejected_before_spend(config):
     config.climber.ref = "gepa"
-    config.concurrency.parallel_operators = 2
+    config.concurrency.parallel_agents = 2
     with pytest.raises(ValueError, match="serial in the MVP"):
         validate_gepa_search_config(config)
 

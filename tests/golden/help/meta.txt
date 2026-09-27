@@ -1,0 +1,19 @@
+                                                                                                                        
+ Usage: root meta [OPTIONS] COMMAND [ARGS]...                                                                           
+                                                                                                                        
+ Meta-problems — score a one-file climber by the inner searches it runs (the improver role). `evaluate` is what a       
+ meta-problem's verifier.sh calls.                                                                                      
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --help  -h        Show this message and exit.                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ check     The cheap pre-verifier for an improver's candidate: the file may                                           │
+│           import only hillclimb.sdk, hillclimb.spaces and the standard library,                                      │
+│           and then everything `hillclimb climber check` verifies — it loads, has                                     │
+│           exactly one policy, replays recorded searches deterministically and                                        │
+│           never writes. Exit 1 on any breach; no agent, no verifier, no inner search.                                │
+│ evaluate  Run the inner searches of a meta-problem with CLIMBER and report the                                       │
+│           gap they closed — the verifier of a problem whose solution is a climber.                                   │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

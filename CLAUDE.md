@@ -74,13 +74,20 @@ command group with `common.py` for what commands share (reached as `common.x()` 
 one patch covers every command) and `__main__.py` for the engine children. The flat
 top level is the public surface only: `api`, `config`, `problem`, `project`,
 `benchmark_providers`, `climber`, `experiment`, `connect`, `spaces` (byte-copied into
-runtime venvs, so it stays), `sdk/`, `demo/`, `backends/`, `integrations/`, `prompts/`,
+runtime venvs, so it stays), `sdk/`, `demo/`, `agents/`, `integrations/`, `prompts/`,
 `runtime/`, `climbers/`. `_moved.py` maps pre-move `module:Class` refs at the two
 places they are imported.
 
 - The hillclimb dir: all data lives in a `hillclimb/` folder (config.yaml
-  marker, problems/, specs/, runs/) found by upward search; this repo overrides
+  marker, problems/, runs/) found by upward search; this repo overrides
   runs/problems to its legacy top-level dirs in `hillclimb/config.yaml`.
+- Every run carries its spec: `api.write_run_spec` writes `runs/<run-id>/spec.yaml`
+  (one `SuiteEntry` per search as resolved — `spec_entry`; entries carry `climber`
+  and `set` too) from every launch path (foreground run, suite, fleet, experiment),
+  so `hillclimb run <run_dir>/spec.yaml` reruns it; `init` writes no `specs/` any
+  more and its `.gitignore` rules (`common.INIT_GITIGNORE`) commit a run's record
+  and ignore its bulk (candidates/, logs/, control/, best/ except solution.py +
+  params.json, store.sqlite, knowledge/graph.json, .env)
 - Directory vocabulary: every level is `<level>_dir` — `run_dir`,
   `search_dir`, `candidate_dir` (`searches/<id>/candidates/<cid>/`, where the
   agent works), `trial_dir` (`candidates/<cid>/trials/t<i>/`, holds the
@@ -102,28 +109,32 @@ places they are imported.
   serial` is mandatory when the metric measures the machine
   (time/throughput/memory) — parallel replicates measure each other. Seeds
   are never tuned. `n_trials`/`trial_mode` are accepted as legacy spellings
-- Concurrency: `concurrency.parallel_operators` per search, `concurrency.machine_max_operators`
+- Concurrency: `concurrency.parallel_agents` per search, `concurrency.machine_max_agents`
   across the machine (flock slots in `~/.cache/hillclimb/agent-slots/`, default
   `min(8, cores-2)`); verifier and agent envs are single-threaded
   (`executor.SINGLE_THREAD_ENV`, parent values win). CPU accounting:
   `harness/procs.py` (`Reaper`) reaps every child the harness spawns — verifier
   runs and agent calls — through `os.wait4`, sampling live descendants with `ps`
-  before a group kill; `OperatorResult.cpu_s` → `BackendInfo.cpu_s` is the agent
+  before a group kill; `OperatorResult.cpu_s` → `AgentInfo.cpu_s` is the agent
   call's local CPU and the chart's cost fold adds it to the trials'. Starter
   verifiers call their scorer plainly, never `exec` it (macOS drops the shell's
   child CPU at an exec; `tests/test_verifier_scripts.py`). `hillclimb ps` lists the
   engine process trees; `stop --all` reaps engines whose hillclimb dir was deleted; `reset` kills only the engines pinned to this folder's hillclimb dir, then deletes the dir
-- Operator backends: `claude-code`, `codex`, `pi` and `dummy`. Pi supports
+- Operator agents: `claude-code`, `codex`, `pi` and `dummy`. Pi supports
   `routing.<op>.sampling` (numeric provider fields), with action → operator →
   default precedence and candidate-journal persistence. Sampling on other
-  backends fails validation. `pi.models_file` adds custom/local providers;
+  agents fails validation. `pi.models_file` adds custom/local providers;
   copied configs live under isolated `~/.cache/hillclimb/pi-home/<auth>/`
   (content-hashed subdir for custom models). Pi startup is offline, search
   startup preflights each model/sampling route, and provider errors are read
   from JSON `stopReason` even on exit 0. Debug children use `--fork` to keep
   history while binding tools to the child's cwd; `--session` restores the
   parent's cwd and must not be used across candidates.
-- Agent billing: `backend_auth` picks who pays — `subscription` (the Claude or
+- Model per agent: `config.model` (default `sonnet`) is Claude's vocabulary; the
+  codex agent's `native_model` omits `--model` for a Claude alias/id so the Codex
+  CLI's own default answers (journaled as `codex-default`; the connect ping says
+  so too) — OpenRouter routes always pass the id
+- Agent billing: `agent_auth` picks who pays — `subscription` (the Claude or
   ChatGPT login), `api-key`, or `openrouter`, which points codex or pi at
   OpenRouter (`wire_api: responses`; the key comes from the environment or a
   `.env` beside config.yaml) and bills OpenRouter credits instead. Every codex
@@ -133,26 +144,38 @@ places they are imported.
   the search as `out_of_credits`, and `harness/pricing.py` fills `cost_usd` from
   OpenRouter's catalogue so `budget.max_cost_usd` applies. `hillclimb connect`
   (`connect.py`) is where a credential is checked on purpose instead of at the
-  first spawn: every probe runs through the SAME env builders the backends use
+  first spawn: every probe runs through the SAME env builders the agents use
   (`subscription_env`/`codex_env`/`pi_env`), so an inherited `ANTHROPIC_API_KEY`
   shadowing a subscription shows up in the table; a bare `connect` is the
-  status of all four targets (`claude`/`codex`/`pi` are backends and own their
+  status of all four targets (`claude`/`codex`/`pi` are agents and own their
   login, `openrouter` is a billing route), `connect <target>` runs that login,
   materializes the isolated home, pings the route with one tool-free call
-  (`connect.ping`) and pins `backend`/`backend_auth` with a line-level edit of
-  config.yaml that keeps its comments — and only when no backend is pinned yet,
-  unless `--default`. Keys live in the `.env`, never in `Config`
+  (`connect.ping`) and pins `agent`/`agent_auth` with a line-level edit of
+  a config.yaml that keeps its comments — the USER level
+  (`~/.config/hillclimb/config.yaml`, so `connect` precedes `init`; a folder's
+  config.yaml overrides it, `--local` writes there) and only when no agent is
+  pinned yet, unless `--default`. Keys live in a `.env` (user-level beside the
+  user config, read under the folder's own by `Config.load`), never in `Config`.
+  Connection states: `logged-out` / `logged-in` / `ready` (`no-key` /
+  `key-set` / `ready` for openrouter) — `ready` = the login works AND
+  `mark_connected` left `connected.json` in `record_dir` (the ping's scratch dir
+  under the machine cache; codex/pi also need their staged home); `Status.ok`
+  is the login, `Status.connected` the `ready` state.
+  `hillclimb disconnect <target>` is the mirror on hillclimb's side only:
+  `unpin_config_defaults` comments the pin out in place, `remove_staged` drops the
+  cache homes, `remove_env_key` the key. hillclimb may START an agent's login it
+  needs, it NEVER logs an agent out — the account is the person's
 - DataStore (`harness/store.py`): the one read/write path for a search's records —
   run/search metadata, the append-only journal (`Journal(store.journal(key))`,
   append order is the replay contract), the status record, and the stop/prune
-  command queue. Backends: `FileDataStore` (default; `runs/` as today) and
+  command queue. Agents: `FileDataStore` (default; `runs/` as today) and
   `SqliteDataStore` (`store.backend: sqlite` → `hillclimb/store.sqlite`, WAL,
   multi-process, writes no yaml). `open_store(config)` picks it; `resolve_search`/
   `latest_search`/`running_searches` replace dir walking; `SearchRecord.state`
   is derived at read time (`status.derive_state`, pid + heartbeat). `key_for(search_dir)`
   is `(run_id, search_id)`; `SearchMeta.search_uid` is the global id. Views and
   commands never open `journal.jsonl`/`status.json` directly — only the file
-  backend does. `hillclimb store sync` imports the folder into another backend
+  agent does. `hillclimb store sync` imports the folder into another agent
 - Tunable parameters (`spaces.py` contract + `harness/params.py` engine view +
   `modules/tuners/`): an agent may declare numeric knobs in
   `params.json` next to `solution.py` (flat `name -> {type: float|int|
@@ -192,7 +215,7 @@ places they are imported.
   representations in `~/.cache/hillclimb/similarity/` keyed by name +
   `version` + params + `cache_key` (file bytes) — never in a run.
   `solution-card` caches cards and vectors separately and calls OpenRouter
-  directly (`backends/openrouter.py`, `OPENROUTER_API_KEY`); its card noise is ~0.02.
+  directly (`agents/openrouter.py`, `OPENROUTER_API_KEY`); its card noise is ~0.02.
   `similarity.scores` (config) lists the defaults for `hillclimb similarity
   scores [search] [-s name] [-c ids] [-f file…] [--explain] [--json]`
 - Harness + climber restructure (in progress on branch `harness-climber`;
@@ -318,7 +341,7 @@ places they are imported.
   sets `name` + `role` (`create | repair | refine | combine`) and implements
   `prepare(ctx) -> Preparation(prompt, copy_parent, inherit_params,
   copy_inspirations, fork_session, files)`; it never touches disk, journal or
-  backend. The harness (`search._prepare` → `_prepare_attempt`, pure, so a
+  agent. The harness (`search._prepare` → `_prepare_attempt`, pure, so a
   refusal leaves no dir/journal/spend) checks `valid_target`, executes the
   preparation, and fills `{{contract}}` itself — appending the contract when
   a prompt has no token, so an operator cannot drop it (`search._contract` is
@@ -327,7 +350,7 @@ places they are imported.
   `failure_reason`, `report_section`) take candidate ids. `Candidate.role` is
   journaled (backfilled from the operator on load, None for an unknown
   operator) and `journal.drafts()`/`debug_chain()`, `debug_depth` and the
-  dummy backend key on ROLE, never on the operator's name; the registry
+  dummy agent key on ROLE, never on the operator's name; the registry
   (`operators.get_operator/operator_names/role_of/register_operator`) is the
   vocabulary `climber check` and the pi route preflight derive from.
   `baseline`/`seed`/`tune` stay harness-native (no prompt). Inspiration files
@@ -368,7 +391,7 @@ places they are imported.
   reports contract breaches (stall on empty journal, replay/idempotence
   divergence, dangling or wrong-status targets, journal/file writes,
   shared-instance factory, dirty prompt overrides); `--smoke` adds a
-  dummy-backend search; engines in `_ENGINES` are out of scope (exit 2)
+  dummy-agent search; engines in `_ENGINES` are out of scope (exit 2)
 - Prompt overrides: `paths.prompts_dir` (default `<hillclimb dir>/prompts/`)
   shadows package templates by name (`prompts/render.py`: `set_override_dir`
   is activated once per engine process in `api.execute_search`, refusing to
@@ -410,6 +433,40 @@ places they are imported.
   reference producer, and the emflow eval runner emits one instance per
   scored origin (`<asof>/<zone>`, GEFCom2014's task x zone); a candidate may
   miss keys (failed instances), never introduce new ones
+- Meta-problem kit (`meta.py`, `cli/meta.py`; built, UNDOCUMENTED until its
+  own launch — nothing in README/docs names it): a problem with
+  `solution_kind: climber` in `problem.yaml` is a META-problem whose
+  `solution.py` is a ONE-FILE climber (policy + optional `Operator`
+  subclasses with inline prompts + param defaults; `load_climber` already
+  takes one `.py`), so the candidate contract is unchanged (`$HILLCLIMB_SOLUTION`,
+  `solution_sha256`, inject, `best/`). The kind selects `contract_climber`
+  (+ `params_cue_climber`, both harness-owned) and `create_search` derives
+  `SearchMeta.role` (`solver` | `improver`, default solver so every old
+  record loads; `watch` labels only improvers). The role is the PROBLEM's
+  doing, never a manifest key — the same bundle runs at either level. Its
+  verifier is `hillclimb meta evaluate` (hidden group) on
+  `$HILLCLIMB_ENGINE_PYTHON` (new verifier env key: the engine's interpreter;
+  `api.build_executor` also exports `$HILLCLIMB_DIR`): reads `meta.yaml`
+  (inner `problems`, `budget` per inner search, `repeats`, optional
+  `floor`/`target`), writes a nested hillclimb dir under the replicate dir
+  (`meta.nested_config`: the user's agent/model/routing/problems, own runs,
+  files store, learning off), measures each inner floor ONCE
+  (`score_floor`, like `verify` — a search's files-only c000 is unscored),
+  runs one inner `hillclimb run --climber <solution.py>` per problem × repeat
+  serially (scrubbing the outer verifier's `HILLCLIMB_*` keys; a trial's
+  `$HILLCLIMB_PARAMS` values ride as `--set climber.params.k=v`, so the
+  tuner seam tunes policy knobs), and scores **gap closed** = per problem
+  `(best − floor)/(target − floor)` direction-aware, clamped at 0, target =
+  best `chart_baselines` value; median over repeats, mean over problems,
+  each instance on the `instances` key, spend as `inner_*` metrics. An inner
+  run that exits non-zero fails the verifier (→ buggy → debug target); a
+  spec the outer `budget.exec_timeout_s` cannot fit is refused before
+  spending. `hillclimb meta check` = import allow-list (`hillclimb.sdk`,
+  `hillclimb.spaces`, stdlib; `check_climber_source`, the v1 permissions
+  rule) + `climber check`. Reference meta-problem `problems/meta-heilbronn/`
+  (repo only, NOT in the bundled catalog; baseline `greedy.py` byte-identical
+  to `modules/policies/greedy.py`, `tests/test_meta.py` enforces).
+  Deferred: directory-shaped candidates, parallel inner runs, replay/ReplayHarness
 - Experiments (`experiment.py`): a spec (`hillclimb/experiments/<name>.yaml`)
   is problems × named arms (dotted config overrides, `Config.apply_overrides`)
   × repeats; searches are tagged in `SearchMeta` (`experiment`, `arm`,
@@ -427,7 +484,22 @@ places they are imported.
   `within-noise`/`unknown`) so a meta-verifier reads a score, not a table.
   `problems/make_heilbronn.py` stamps the heilbronn difficulty ladder
   (11/14/17; committed dirs must match the generator — `tests/test_heilbronn_ladder.py`)
+- CLI voice (`cli/common.py`): every sentence a command speaks goes through `say`/
+  `warn`/`fail` with the theme's markup (`[head]` lead, `[path]` paths/refs/ids,
+  `[cmd]` commands, `[note]` dim explanations, `[ok]/[warn]/[bad]` verdicts; every
+  dynamic value through `_m()`); a foreground engine's log lines go through
+  `engine_log` (`engine_line` marks the clock, `word:` leads, candidate ids and
+  trouble by shape). Data a script pipes — `--json`, diffs, file bodies, stdout
+  tails — stays on `typer.echo`, byte-exact. `say_no_hillclimb_dir` is the one
+  rendering of the missing-dir hint
+- `hillclimb run <problem>` DETACHES by default (one-search fleet through
+  `_run_problem_fleet`/`api.run_fleet`, summary + `hillclimb watch` hint); a suite's or
+  experiment's child (`--run-id`), an experiment arm, and `--no-detach` run in-process;
+  the in-terminal log is a clock gutter (`common.engine_log`/`split_engine_line`, clock
+  from `BudgetManager.clock_str`)
 - CLI: `uv run hillclimb --help` (engine); live TUIs: `watch` (agents; `watch candidates` jumps to a search),
+  every screen's way back is `keys.back_binding` (esc or b, footer `esc/b back`), so
+  `b` is never anything else — the tree views select the best with `*`;
   `chart` (best score vs time per search; a bare `chart` on a folder with
   several run×problem pairs opens `ChartPickerScreen` first — enter opens,
   esc pops back; `watch` pushes the same `ChartScreen` with `c` via
@@ -509,7 +581,7 @@ places they are imported.
 
 The engine process is the **single writer** of search state — the journal,
 status and `best/` of `runs/<run-id>/searches/<search-id>/`, whichever
-DataStore backend holds the records. Never edit those files (or rows)
+DataStore agent holds the records. Never edit those files (or rows)
 directly — control a search through `hillclimb stop|kill|prune|resume`, which
 route through the store's command queue when the engine is live. The journal
 is append-only; replay keeps the last record per candidate. What stays on disk

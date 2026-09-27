@@ -328,7 +328,7 @@ def _experiment_search(runs_dir: Path, run_id: str, search_id: str, arm: str, *,
     search_dir.mkdir(parents=True)
     write_search_meta(search_dir, SearchMeta(
         search_id=search_id, run_id=run_id, problem="p", problem_id="p", problem_key="p",
-        backend="dummy", model="", metric="score", higher_is_better=True,
+        agent="dummy", model="", metric="score", higher_is_better=True,
         experiment="exp", arm=arm, repeat=1, started_at=f"2026-09-04T10:0{len(search_id)}:00+00:00",
     ))
     journal = Journal(search_dir / "journal.jsonl")

@@ -1,4 +1,4 @@
-"""Policy registry: name -> factory, mirroring backends.get_backend — plus
+"""Policy registry: name -> factory, mirroring agents.get_agent — plus
 file policies, the seam an edited exploration process is loaded through.
 
 `search.policy` names either a registry entry (`greedy`, `openevolve`) or

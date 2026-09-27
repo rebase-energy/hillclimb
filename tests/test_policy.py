@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb.backends.fake import FakeBackend
+from hillclimb.agents.fake import FakeAgent
 from hillclimb.harness.budget import BudgetManager
 from hillclimb.harness.candidate import Candidate
 from tests.conftest import local_executor
@@ -187,16 +187,16 @@ class ScriptedPolicy:
 
 
 def test_custom_policy_drives_search(task, config):
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.6), notes="one\n")
-    backend.queue(script=ok_script(0.7), notes="two\n")
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.6), notes="one\n")
+    agent.queue(script=ok_script(0.7), notes="two\n")
     search_dir = create_search_dir(config.paths.runs_dir, "test-run")
     policy = ScriptedPolicy()
     searcher = SearchRig(
         problem=task,
         config=config,
         journal=Journal(search_dir / "journal.jsonl"),
-        backend=backend,
+        agent=agent,
         executor=local_executor(),
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir,
@@ -207,7 +207,7 @@ def test_custom_policy_drives_search(task, config):
     best = searcher.run()
 
     assert best.val_score == 0.7
-    assert [r.operator for r in backend.requests] == ["draft", "draft"]
+    assert [r.operator for r in agent.requests] == ["draft", "draft"]
     draft = searcher.journal.get("c001")
     assert draft.policy_meta == {"proposal": 1}
     prompt = Path(draft.candidate_dir, "prompt.md").read_text()
@@ -227,7 +227,7 @@ def test_policy_replay_on_resume(task, config, tmp_path):
         problem=task,
         config=config,
         journal=Journal(tmp_path / "j.jsonl"),  # fresh replay of the same file
-        backend=FakeBackend(),
+        agent=FakeAgent(),
         executor=local_executor(),
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=tmp_path,
@@ -406,15 +406,15 @@ def test_file_policy_drives_a_search_and_is_recorded(task, config, tmp_path):
     path.write_text(FILE_POLICY)
     config.climber.ref = str(path)
     config.climber.params = {"num_drafts": 1}
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.6), notes="one\n")
-    backend.queue(script=ok_script(0.7), notes="two\n")
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.6), notes="one\n")
+    agent.queue(script=ok_script(0.7), notes="two\n")
     config.budget.max_evaluations = 2
     loop = build_loop(config)
     assert loop.policy.name == "drafts-only"
-    harness, _journal, _search_dir = make_harness(task, config, backend, name="test-run")
+    harness, _journal, _search_dir = make_harness(task, config, agent, name="test-run")
     harness.execute(loop)
-    assert [r.operator for r in backend.requests] == ["draft", "draft"]  # never improve
+    assert [r.operator for r in agent.requests] == ["draft", "draft"]  # never improve
 
     root = tmp_path / "problems"
     write_problem(root, "p")
@@ -503,10 +503,10 @@ def test_searcher_hands_observe_a_holdout_blind_candidate(task, config, tmp_path
     search_dir = create_search_dir(config.paths.runs_dir, "test-run")
     journal = Journal(search_dir / "journal.jsonl")
     _add_with_holdout(journal, tmp_path, "c001", val=0.5, holdout=0.42, selected=True)
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.6), notes="improved\n")
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.6), notes="improved\n")
     searcher = SearchRig(
-        problem=task, config=config, journal=journal, backend=backend,
+        problem=task, config=config, journal=journal, agent=agent,
         executor=local_executor(), budget=BudgetManager(60, stop_margin_s=1),
         search_dir=search_dir, log=lambda *_: None, policy=Spy(),
     )

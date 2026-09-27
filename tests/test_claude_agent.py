@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb.backends.base import OperatorRequest
-from hillclimb.backends.claude_code import ClaudeCodeBackend
+from hillclimb.agents.base import OperatorRequest
+from hillclimb.agents.claude_code import ClaudeCodeAgent
 
 RESULT_LINE = json.dumps(
     {
@@ -83,9 +83,9 @@ def make_request(tmp_path: Path, timeout_s: int = 30) -> OperatorRequest:
 
 
 def test_success_parses_result_and_streams(tmp_path: Path):
-    backend = ClaudeCodeBackend(claude_bin=make_stub(tmp_path, STUB_OK))
+    agent = ClaudeCodeAgent(claude_bin=make_stub(tmp_path, STUB_OK))
     request = make_request(tmp_path)
-    result = backend.invoke(request)
+    result = agent.invoke(request)
 
     assert result.ok
     assert result.session_id == "sess-123"
@@ -109,9 +109,9 @@ def test_success_parses_result_and_streams(tmp_path: Path):
 
 
 def test_rate_limit_detected_in_stream(tmp_path: Path):
-    backend = ClaudeCodeBackend(claude_bin=make_stub(tmp_path, STUB_RATE_LIMITED))
+    agent = ClaudeCodeAgent(claude_bin=make_stub(tmp_path, STUB_RATE_LIMITED))
     request = make_request(tmp_path)
-    result = backend.invoke(request)
+    result = agent.invoke(request)
 
     assert not result.ok
     assert result.error_kind == "rate_limited"
@@ -120,9 +120,9 @@ def test_rate_limit_detected_in_stream(tmp_path: Path):
 
 
 def test_timeout_kills_and_cleans_pid(tmp_path: Path):
-    backend = ClaudeCodeBackend(claude_bin=make_stub(tmp_path, STUB_SLEEPER))
+    agent = ClaudeCodeAgent(claude_bin=make_stub(tmp_path, STUB_SLEEPER))
     request = make_request(tmp_path, timeout_s=1)
-    result = backend.invoke(request)
+    result = agent.invoke(request)
 
     assert not result.ok
     assert result.error_kind == "timeout"
@@ -130,9 +130,9 @@ def test_timeout_kills_and_cleans_pid(tmp_path: Path):
 
 
 def test_nonzero_exit_is_error(tmp_path: Path):
-    backend = ClaudeCodeBackend(claude_bin=make_stub(tmp_path, STUB_CRASH))
+    agent = ClaudeCodeAgent(claude_bin=make_stub(tmp_path, STUB_CRASH))
     request = make_request(tmp_path)
-    result = backend.invoke(request)
+    result = agent.invoke(request)
 
     assert not result.ok
     assert result.error_kind == "error"
@@ -141,9 +141,9 @@ def test_nonzero_exit_is_error(tmp_path: Path):
 
 def test_zero_exit_without_result_is_error(tmp_path: Path):
     stub = f"#!{sys.executable}\nimport sys\nsys.stdin.read()\n"
-    backend = ClaudeCodeBackend(claude_bin=make_stub(tmp_path, stub))
+    agent = ClaudeCodeAgent(claude_bin=make_stub(tmp_path, stub))
     request = make_request(tmp_path)
-    result = backend.invoke(request)
+    result = agent.invoke(request)
 
     assert not result.ok
     assert result.error_kind == "error"
@@ -160,8 +160,8 @@ def test_quota_snapshots_bracket_the_call(tmp_path: Path, monkeypatch):
         ]
     )
     monkeypatch.setattr("hillclimb.harness.quota.snapshot", lambda: next(snaps))
-    backend = ClaudeCodeBackend(claude_bin=make_stub(tmp_path, STUB_OK))
-    result = backend.invoke(make_request(tmp_path))
+    agent = ClaudeCodeAgent(claude_bin=make_stub(tmp_path, STUB_OK))
+    result = agent.invoke(make_request(tmp_path))
 
     assert result.ok
     assert result.quota_start["five_hour"]["utilization"] == 10
@@ -174,8 +174,8 @@ def test_api_key_auth_skips_quota(tmp_path: Path, monkeypatch):
         "hillclimb.harness.quota.snapshot",
         lambda: pytest.fail("api-key auth must not fetch quota"),
     )
-    backend = ClaudeCodeBackend(claude_bin=make_stub(tmp_path, STUB_OK), auth="api-key")
-    result = backend.invoke(make_request(tmp_path))
+    agent = ClaudeCodeAgent(claude_bin=make_stub(tmp_path, STUB_OK), auth="api-key")
+    result = agent.invoke(make_request(tmp_path))
 
     assert result.ok
     assert result.quota_start is None
@@ -196,9 +196,9 @@ print(json.dumps({{"type": "result", "subtype": "success", "is_error": False,
 def test_mentioning_rate_limits_in_transcript_is_not_rate_limited(tmp_path: Path):
     """Regression: a debug agent whose *output text* discussed limit strings
     got misclassified as rate_limited and parked a healthy run."""
-    backend = ClaudeCodeBackend(claude_bin=make_stub(tmp_path, STUB_MENTIONS_LIMITS))
+    agent = ClaudeCodeAgent(claude_bin=make_stub(tmp_path, STUB_MENTIONS_LIMITS))
     request = make_request(tmp_path)
-    result = backend.invoke(request)
+    result = agent.invoke(request)
 
     assert result.ok
     assert result.error_kind is None
@@ -227,9 +227,9 @@ def test_timeout_still_reports_streamed_tokens(tmp_path: Path):
     """A timed-out call burned real tokens; the per-turn stream (deduped by
     message id, final write wins) is the count of record when no result
     message ever lands."""
-    backend = ClaudeCodeBackend(claude_bin=make_stub(tmp_path, STUB_STREAMS_THEN_HANGS))
+    agent = ClaudeCodeAgent(claude_bin=make_stub(tmp_path, STUB_STREAMS_THEN_HANGS))
     request = make_request(tmp_path, timeout_s=2)
-    result = backend.invoke(request)
+    result = agent.invoke(request)
 
     assert not result.ok
     assert result.error_kind == "timeout"
@@ -250,9 +250,9 @@ sys.exit(1)
 
 def test_error_result_keeps_usage(tmp_path: Path):
     """An error-shaped result message still carries usage — journal it."""
-    backend = ClaudeCodeBackend(claude_bin=make_stub(tmp_path, STUB_ERROR_RESULT_WITH_USAGE))
+    agent = ClaudeCodeAgent(claude_bin=make_stub(tmp_path, STUB_ERROR_RESULT_WITH_USAGE))
     request = make_request(tmp_path)
-    result = backend.invoke(request)
+    result = agent.invoke(request)
 
     assert not result.ok
     assert result.error_kind == "error"
@@ -269,7 +269,7 @@ def test_agent_cpu_is_reported(tmp_path: Path):
         "sys.stdin.read()\nimport time\nt = time.process_time()\nwhile time.process_time() - t < 0.3: pass\n",
         1,
     )
-    backend = ClaudeCodeBackend(claude_bin=make_stub(tmp_path, burning))
-    result = backend.invoke(make_request(tmp_path))
+    agent = ClaudeCodeAgent(claude_bin=make_stub(tmp_path, burning))
+    result = agent.invoke(make_request(tmp_path))
     assert result.ok
     assert result.cpu_s is not None and result.cpu_s >= 0.2

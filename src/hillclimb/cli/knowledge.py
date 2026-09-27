@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import typer
 
 from hillclimb.cli import common
+from hillclimb.cli.common import _m, fail, say, warn
 from hillclimb.cli._app import HillclimbGroup, app
 from hillclimb.config import Config
 from hillclimb.harness.journal import Journal
@@ -33,7 +34,7 @@ def knowledge_backfill():
     config = common.load_config()
     knowledge_dir = resolve_knowledge_dir(config)
     if knowledge_dir is None:
-        typer.echo("learning is disabled or no hillclimb/knowledge dir resolvable", err=True)
+        fail("learning is disabled or no [path]hillclimb/knowledge[/] dir resolvable")
         raise typer.Exit(1)
     written = 0
     store = open_store(config)
@@ -59,8 +60,8 @@ def knowledge_backfill():
             )
             path = write_card(knowledge_dir, card)
             written += 1
-            typer.echo(f"  {search_ref(search_dir)} -> {path.relative_to(knowledge_dir)}")
-    typer.echo(f"{written} knowledge card(s) written to {knowledge_dir}")
+            say(f"  [path]{_m(search_ref(search_dir))}[/] -> [path]{_m(path.relative_to(knowledge_dir))}[/]")
+    say(f"[head]{written} knowledge card(s) written[/] to [path]{_m(knowledge_dir)}[/]")
 
 
 @knowledge_app.command("live")
@@ -80,7 +81,7 @@ def knowledge_live(run: str = typer.Argument("latest", help="Run id, or `latest`
     if run == "latest":
         latest = latest_search(store)
         if latest is None:
-            typer.echo(f"No searches found in {runs_dir}", err=True)
+            fail(f"No searches found in [path]{_m(runs_dir)}[/]")
             raise typer.Exit(1)
         run_dir = latest.search_dir.parents[1]
     else:
@@ -89,17 +90,17 @@ def knowledge_live(run: str = typer.Argument("latest", help="Run id, or `latest`
             raise typer.BadParameter(f"No run named {run!r} in {runs_dir}")
     cards = load_live_cards(run_dir)
     if not cards:
-        typer.echo(f"no live cards under {run_dir / 'knowledge'}")
+        say(f"no live cards under [path]{_m(run_dir / 'knowledge')}[/]")
         raise typer.Exit(0)
-    typer.echo(f"Run {run_dir.name} — {len(cards)} live card(s)")
+    say(f"[head]Run {_m(run_dir.name)}[/] — {len(cards)} live card(s)")
     for card in cards:
         val = f"{card.selected_val:.5g}" if card.selected_val is not None else "-"
-        typer.echo(
-            f"  {card.run_ref}: {card.n_ok} passing / {card.n_failing} failing / "
+        say(
+            f"  [path]{_m(card.run_ref)}[/]: {card.n_ok} passing / {card.n_failing} failing / "
             f"{card.n_buggy} buggy of "
-            f"{card.n_candidates}, best {card.metric or 'score'} {val}"
+            f"{card.n_candidates}, best {_m(card.metric or 'score')} [head]{val}[/]"
         )
-    typer.echo("")
+    say()
     typer.echo(render_live_experience(cards, max_cards=len(cards)))
 
 
@@ -119,7 +120,7 @@ def knowledge_show(target: str = typer.Argument(..., help="Problem target, e.g. 
     config = common.load_config()
     knowledge_dir = resolve_knowledge_dir(config)
     if knowledge_dir is None:
-        typer.echo("learning is disabled or no hillclimb/knowledge dir resolvable", err=True)
+        fail("learning is disabled or no [path]hillclimb/knowledge[/] dir resolvable")
         raise typer.Exit(1)
     problem = load_problem(target, config)
     cards = load_cards(
@@ -127,7 +128,7 @@ def knowledge_show(target: str = typer.Argument(..., help="Problem target, e.g. 
         family=problem_family(problem.problem_id, str(target)),
     )
     if not cards:
-        typer.echo(f"no knowledge cards for {problem.problem_id} in {knowledge_dir}")
+        say(f"no knowledge cards for [path]{_m(problem.problem_id)}[/] in [path]{_m(knowledge_dir)}[/]")
         raise typer.Exit(0)
     typer.echo(render_prior_experience(cards, max_cards=config.learning.max_cards))
 
@@ -160,7 +161,7 @@ def knowledge_distill(
     config = common.load_config()
     knowledge_dir = resolve_knowledge_dir(config)
     if knowledge_dir is None:
-        typer.echo("learning is disabled or no hillclimb/knowledge dir resolvable", err=True)
+        fail("learning is disabled or no [path]hillclimb/knowledge[/] dir resolvable")
         raise typer.Exit(1)
 
     if backfill:
@@ -176,20 +177,20 @@ def knowledge_distill(
             work_dir = knowledge_dir / ".distill" / path.stem
             card.claims = distill_claims_from_card(
                 card, work_dir=work_dir, knowledge_dir=knowledge_dir,
-                config=config, log=typer.echo,
+                config=config, log=_log,
             )
             if card.claims:
                 write_card(knowledge_dir, card)
                 distilled += 1
-                typer.echo(f"  {path.relative_to(knowledge_dir)}: {len(card.claims)} claim(s)")
-        typer.echo(f"{distilled} card(s) backfilled with claims")
+                say(f"  [path]{_m(path.relative_to(knowledge_dir))}[/]: {len(card.claims)} claim(s)")
+        say(f"[head]{distilled} card(s) backfilled with claims[/]")
         return
 
     store = open_store(config)
     if search == "latest":
         record = latest_search(store)
         if record is None:
-            typer.echo(f"No searches found in {config.paths.runs_dir}", err=True)
+            fail(f"No searches found in [path]{_m(config.paths.runs_dir)}[/]")
             raise typer.Exit(1)
     else:
         run_id, _, search_id = search.partition("/")
@@ -199,7 +200,7 @@ def knowledge_distill(
     meta, search_dir = record.meta, record.search_dir
     journal = Journal(store.journal(record.key))
     if not journal.scored_candidates():
-        typer.echo("search has no scored candidates — nothing to distill", err=True)
+        fail("search has no scored candidates — nothing to distill")
         raise typer.Exit(1)
     problem = SimpleNamespace(
         problem_id=meta.problem_id,
@@ -214,10 +215,15 @@ def knowledge_distill(
     )
     card.claims = distill_claims(
         journal, problem=problem, card=card, search_dir=search_dir,
-        knowledge_dir=knowledge_dir, config=config, log=typer.echo,
+        knowledge_dir=knowledge_dir, config=config, log=_log,
     )
     path = write_card(knowledge_dir, card)
-    typer.echo(f"{len(card.claims)} claim(s) -> {path}")
+    say(f"[head]{len(card.claims)} claim(s)[/] -> [path]{_m(path)}[/]")
+
+
+def _log(message: str) -> None:
+    """A library's progress line, in the CLI's voice (escaped, never markup)."""
+    say(_m(message))
 
 
 def _graph_module(config):
@@ -227,9 +233,9 @@ def _graph_module(config):
     from hillclimb.harness.glue import build_graph_module
 
     try:
-        return build_graph_module(config, log=lambda message: typer.echo(message, err=True))
+        return build_graph_module(config, log=lambda message: warn(_m(message)))
     except ValueError as exc:
-        typer.echo(str(exc), err=True)
+        fail(_m(exc))
         raise typer.Exit(2) from exc
 
 
@@ -253,7 +259,7 @@ def knowledge_query(
     config = common.load_config()
     knowledge_dir = resolve_knowledge_dir(config)
     if knowledge_dir is None:
-        typer.echo("learning is disabled or no hillclimb/knowledge dir resolvable", err=True)
+        fail("learning is disabled or no [path]hillclimb/knowledge[/] dir resolvable")
         raise typer.Exit(1)
     module = _graph_module(config)
     hits = module.query(load_or_build_graph(knowledge_dir, module=module), terms, family=family, limit=limit)
@@ -282,17 +288,18 @@ def knowledge_consolidate(
     config = common.load_config()
     knowledge_dir = resolve_knowledge_dir(config)
     if knowledge_dir is None:
-        typer.echo("learning is disabled or no hillclimb/knowledge dir resolvable", err=True)
+        fail("learning is disabled or no [path]hillclimb/knowledge[/] dir resolvable")
         raise typer.Exit(1)
-    summary = consolidate(knowledge_dir, config, typer.echo, dry_run=dry_run)
+    summary = consolidate(knowledge_dir, config, _log, dry_run=dry_run)
     verb = "would generalize" if dry_run else "generalized"
-    typer.echo(f"{verb} {len(summary['generalized'])} claim(s)")
+    say(f"[head]{verb} {len(summary['generalized'])} claim(s)[/]")
     if dry_run:
-        typer.echo(
-            "playbook candidates: " + (", ".join(summary["playbook_concepts"]) or "(none)")
+        say(
+            "playbook candidates: "
+            + (", ".join(f"[path]{_m(c)}[/]" for c in summary["playbook_concepts"]) or "[note](none)[/]")
         )
     else:
-        typer.echo(f"{len(summary['playbooks_written'])} playbook(s) written")
+        say(f"[head]{len(summary['playbooks_written'])} playbook(s) written[/]")
 
 
 @knowledge_app.command("rebuild")
@@ -307,11 +314,11 @@ def knowledge_rebuild():
     config = common.load_config()
     knowledge_dir = resolve_knowledge_dir(config)
     if knowledge_dir is None:
-        typer.echo("learning is disabled or no hillclimb/knowledge dir resolvable", err=True)
+        fail("learning is disabled or no [path]hillclimb/knowledge[/] dir resolvable")
         raise typer.Exit(1)
     module = _graph_module(config)
     graph = rebuild_graph(knowledge_dir, module=module)
-    typer.echo(f"rebuilt {graph_path(knowledge_dir)} ({module.name})")
+    say(f"[head]rebuilt[/] [path]{_m(graph_path(knowledge_dir))}[/] [note]({_m(module.name)})[/]")
     typer.echo(graph_stats(graph))
 
 
@@ -330,7 +337,7 @@ def _paper_knowledge_dir() -> tuple[Config, Path]:
     config = common.load_config()
     knowledge_dir = resolve_knowledge_dir(config)
     if knowledge_dir is None:
-        typer.echo("learning is disabled or no hillclimb/knowledge dir resolvable", err=True)
+        fail("learning is disabled or no [path]hillclimb/knowledge[/] dir resolvable")
         raise typer.Exit(1)
     return config, knowledge_dir
 
@@ -360,16 +367,16 @@ def paper_add(
     ingested = 0
     for pdf in pdfs:
         if not pdf.exists():
-            typer.echo(f"no such file: {pdf}", err=True)
+            fail(f"no such file: [path]{_m(pdf)}[/]")
             raise typer.Exit(1)
         record = distill_paper(
-            config, knowledge_dir, pdf, problem=problem, force=force, log=typer.echo
+            config, knowledge_dir, pdf, problem=problem, force=force, log=_log
         )
         if record is not None:
             ingested += 1
     if ingested:
         rebuild_graph(knowledge_dir, module=_graph_module(config))
-        typer.echo("knowledge graph rebuilt")
+        say("[head]knowledge graph rebuilt[/]")
     if ingested < len(pdfs):
         raise typer.Exit(1)
 
@@ -382,14 +389,14 @@ def paper_list():
     _config, knowledge_dir = _paper_knowledge_dir()
     papers = load_papers(knowledge_dir)
     if not papers:
-        typer.echo("no papers ingested yet — add one with `hillclimb paper add <pdf>`")
+        say("no papers ingested yet — add one with [cmd]hillclimb paper add <pdf>[/]")
         return
     for paper in papers:
         scope = paper.problem_id or paper.family or "global"
         title = f"  {paper.title!r}" if paper.title else ""
-        typer.echo(
-            f"{paper.slug}  [{scope}]  {len(paper.claims)} claim(s)  "
-            f"added {paper.added_at[:10]}{title}"
+        say(
+            f"[path]{_m(paper.slug)}[/]  [note]{_m(f'[{scope}]')}[/]  {len(paper.claims)} claim(s)  "
+            f"added {_m(paper.added_at[:10])}[note]{_m(title)}[/]"
         )
 
 
@@ -408,7 +415,7 @@ def knowledge_graph(
     config = common.load_config()
     knowledge_dir = resolve_knowledge_dir(config)
     if knowledge_dir is None:
-        typer.echo("learning is disabled or no hillclimb/knowledge dir resolvable", err=True)
+        fail("learning is disabled or no [path]hillclimb/knowledge[/] dir resolvable")
         raise typer.Exit(1)
     if stats:
         module = _graph_module(config)

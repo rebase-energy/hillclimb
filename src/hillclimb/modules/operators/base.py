@@ -2,7 +2,7 @@
 
 An `Operator` turns a policy's `Action` into a `Preparation` — the prompt for
 the agent plus what the harness should put in the new candidate dir. It never
-touches the filesystem, the journal or a backend itself: the harness executes
+touches the filesystem, the journal or a agent itself: the harness executes
 the preparation, fills in the problem's contract (an operator cannot drop
 it), clamps the timeout to the budget, routes the call by the operator's
 name, runs the agent and scores the result.
@@ -180,7 +180,7 @@ class Preparation:
     copy_parent: bool = False  # start from the target's solution.py
     inherit_params: bool = False  # carry the target's best parameter values as defaults
     copy_inspirations: bool = True  # copy the action's inspirations in (`inspiration_filename`)
-    fork_session: bool = False  # ask to continue the target's agent session (granted only where a backend can)
+    fork_session: bool = False  # ask to continue the target's agent session (granted only where a agent can)
     files: Mapping[str, Path] = field(default_factory=dict)  # extra files: name in the dir -> source
     texts: Mapping[str, str] = field(default_factory=dict)  # extra files written from text: name -> content
     # the attempt only counts if the agent CHANGED the copied parent solution;

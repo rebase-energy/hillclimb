@@ -22,8 +22,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
-from hillclimb.backends import get_backend
-from hillclimb.backends.base import OperatorRequest
+from hillclimb.agents import get_agent
+from hillclimb.agents.base import OperatorRequest
 from hillclimb.harness.budget import BudgetManager
 from hillclimb.harness.candidate import Candidate
 from hillclimb.config import Config
@@ -180,12 +180,18 @@ def build_executor(config: Config, problem: ProblemSpec, log: Log = print):
     """The problem's verifier command, wired to the runtime venv it needs."""
     from hillclimb.harness.executor import CommandExecutor
 
+    env_extra = dict(problem.verifier_env)
+    if config.hillclimb_dir is not None:
+        # the hillclimb dir this verifier runs under: what a meta-problem's
+        # verifier reads to give its inner searches the user's agent,
+        # model and problems (`hillclimb meta evaluate`)
+        env_extra.setdefault("HILLCLIMB_DIR", str(config.hillclimb_dir))
     return CommandExecutor(
         ensure_runtime_venv(
             config, kind=problem.runtime, log=log, requirements=problem.requirements_file
         ),
         problem.verifier_cmd,
-        env_extra=problem.verifier_env,
+        env_extra=env_extra,
         pythonpath=interface_shim(log),
     )
 
@@ -270,7 +276,7 @@ def spent_seconds(journal: Journal) -> float:
     fallback — under parallel workers this overcounts wall-clock; prefer
     resume_spent_seconds."""
     return sum(
-        (c.backend.agent_duration_s or 0)
+        (c.agent.agent_duration_s or 0)
         + sum(r.duration_s or 0 for t in c.trials for r in t.replicates)
         + sum(t.unit_tests.duration_s for t in c.trials if t.unit_tests is not None)
         for c in journal.candidates.values()
@@ -307,6 +313,57 @@ def create_run(config: Config, meta: RunMeta) -> Path:
     return run_dir
 
 
+RUN_SPEC_FILE = "spec.yaml"
+
+
+def spec_entry(
+    target: str,
+    *,
+    name: str | None = None,
+    budget: int | str | None = None,
+    agent: str | None = None,
+    model: str | None = None,
+    climber: str | None = None,
+    parallel_agents: int | None = None,
+    n_replicates: int | None = None,
+    seed_from: Path | str | None = None,
+    set: Sequence[str] = (),  # noqa: A002 — the spec key is `set`
+) -> dict:
+    """One `problems:` entry of a run spec, from the parameters a search
+    actually launched with (see `write_run_spec`). Keys left None are left
+    out; a seed path is made absolute, since the file will not sit next to
+    the spec it came from; an integer budget is spelled in seconds."""
+    if isinstance(budget, int):
+        budget = f"{budget}s"
+    if seed_from is not None:
+        seed_from = str(Path(seed_from).expanduser().resolve())
+    entry = {
+        "target": target, "name": name, "budget": budget, "agent": agent, "model": model,
+        "climber": climber, "parallel_agents": parallel_agents, "n_replicates": n_replicates,
+        "seed_from": seed_from, "set": list(set),
+    }
+    return {key: value for key, value in entry.items() if value not in (None, [])}
+
+
+def write_run_spec(run_dir: Path, entries: list[dict], *, source: Path | str | None = None) -> Path:
+    """`runs/<run-id>/spec.yaml`: the run's own spec, one `problems:` entry
+    per search it launched, with every parameter the launch resolved to —
+    so the run carries its recipe next to its record and artifacts, and
+    `hillclimb run runs/<run-id>/spec.yaml` runs it again. It is generated
+    from the resolved parameters, never copied from the spec a run was
+    launched with (`source`, noted in the header): a copy would keep paths
+    relative to a file that is not there."""
+    import yaml
+
+    lines = ["# The spec this run launched from — rerun it with: hillclimb run <this file>"]
+    if source is not None:
+        lines.append(f"# launched from: {source}")
+    body = yaml.safe_dump({"problems": entries}, sort_keys=False, allow_unicode=True)
+    path = run_dir / RUN_SPEC_FILE
+    path.write_text("\n".join(lines) + "\n" + body)
+    return path
+
+
 def create_search(
     config: Config,
     problem: ProblemSpec,
@@ -339,9 +396,10 @@ def create_search(
         problem=problem.target or str(problem.problem_dir),
         problem_id=problem.problem_id,
         problem_key=problem.problem_key,
-        backend=config.backend,
+        agent=config.agent,
         model=config.model,
         climber=config.climber.ref,
+        role="improver" if problem.solution_kind == "climber" else "solver",
         climber_sha256=climber.sha256,
         climber_manifest=climber.manifest.model_dump(exclude_defaults=False),
         climber_params=config.climber.params,
@@ -595,7 +653,7 @@ def _raise_stop_requested(signum, frame):
     raise StopRequested(f"signal {signal.Signals(signum).name}")
 
 
-def _preflight_pi_routes(config: Config, search_dir: Path, router, backends, log: Log) -> None:
+def _preflight_pi_routes(config: Config, search_dir: Path, router, agents, log: Log) -> None:
     """Validate every statically reachable pi model/sampling combination.
 
     This deliberately happens before the baseline or first draft. Provider
@@ -619,7 +677,7 @@ def _preflight_pi_routes(config: Config, search_dir: Path, router, backends, log
     pending: dict[str, tuple] = {}
     for operator in sorted(operators):
         route = router.resolve(operator)
-        if route.backend != "pi":
+        if route.agent != "pi":
             continue
         models = [route.model]
         for layer in (
@@ -635,7 +693,7 @@ def _preflight_pi_routes(config: Config, search_dir: Path, router, backends, log
                 break
         for model in models:
             key = json.dumps(
-                [route.backend_auth, model, route.sampling],
+                [route.agent_auth, model, route.sampling],
                 sort_keys=True,
                 separators=(",", ":"),
             )
@@ -645,10 +703,10 @@ def _preflight_pi_routes(config: Config, search_dir: Path, router, backends, log
         digest = hashlib.sha256(key.encode()).hexdigest()[:12]
         work_dir = search_dir / "pi-preflight" / digest
         work_dir.mkdir(parents=True, exist_ok=True)
-        backend = backends.get("pi", route.backend_auth)
-        preflight = getattr(backend, "preflight", None)
+        agent = agents.get("pi", route.agent_auth)
+        preflight = getattr(agent, "preflight", None)
         if preflight is None:
-            raise RuntimeError("pi backend does not implement preflight")
+            raise RuntimeError("pi agent does not implement preflight")
         log(
             f"pi preflight: model={model}"
             + (f" sampling={route.sampling}" if route.sampling else "")
@@ -749,23 +807,23 @@ def execute_search(
                     log(f"learning: reference solution from {skill.run_ref} ({reference_note})")
             except Exception as exc:  # noqa: BLE001
                 log(f"learning: skill selection failed (draft unaffected): {exc}")
-    backend_obj = get_backend(
-        config.backend,
-        auth=config.backend_auth,
+    agent_obj = get_agent(
+        config.agent,
+        auth=config.agent_auth,
         pi_models_file=config.pi.models_file,
     )
-    if hasattr(backend_obj, "abort"):
-        backend_obj.abort = abort
-    from hillclimb.harness.routing import BackendPool, Router
+    if hasattr(agent_obj, "abort"):
+        agent_obj.abort = abort
+    from hillclimb.harness.routing import AgentPool, Router
 
-    backends = BackendPool(
+    agents = AgentPool(
         abort=abort, pi_models_file=config.pi.models_file
     )
-    backends.seed(config.backend, config.backend_auth, backend_obj)
+    agents.seed(config.agent, config.agent_auth, agent_obj)
     router = Router(config)
 
     try:
-        _preflight_pi_routes(config, search_dir, router, backends, log)
+        _preflight_pi_routes(config, search_dir, router, agents, log)
     except (StopRequested, KeyboardInterrupt) as exc:
         status.finalize("stopped", last_error=str(exc)[:500] or None)
         store.close()
@@ -776,7 +834,7 @@ def execute_search(
         raise
     from hillclimb.project import machine_cache_dir
 
-    machine_max = config.concurrency.effective_machine_max_operators()
+    machine_max = config.concurrency.effective_machine_max_agents()
     slots = MachineSlots(machine_cache_dir() / "agent-slots", machine_max) if machine_max > 0 else None
     evaluator = build_evaluator(config, problem, search_dir, journal, status=status, log=log)
     from hillclimb.harness.core import Harness
@@ -791,7 +849,7 @@ def execute_search(
         problem=problem,
         config=config,
         journal=journal,
-        backend=backend_obj,
+        agent=agent_obj,
         executor=evaluator.executor,
         budget=budget,
         search_dir=search_dir,
@@ -805,7 +863,7 @@ def execute_search(
         reference_solution=reference_solution,
         reference_note=reference_note,
         router=router,
-        backends=backends,
+        agents=agents,
         drain_commands=lambda: store.drain_commands(key),
         operators=build_operators(config, search_dir),
         prompts_dir=climber.prompts_dir,
@@ -947,7 +1005,7 @@ def run_search(
     run_id: str | None = None,
     run_name: str | None = None,
     config: Config | None = None,
-    backend: str | None = None,
+    agent: str | None = None,
     model: str | None = None,
     holdout: bool = True,
     seed_from: Path | str | None = None,
@@ -958,14 +1016,15 @@ def run_search(
     the engine to completion. Suites are a CLI concern (parallel processes);
     this API runs exactly one search. `seed_from` scores an incumbent
     solution as the floor candidate a re-search must beat."""
-    config = config or Config.load(backend=backend, model=model)
-    if backend:
-        config.backend = backend
+    config = config or Config.load(agent=agent, model=model)
+    if agent:
+        config.agent = agent
     if model:
         config.model = model
     if not holdout:
         config.holdout.enabled = False
     problem = load_problem(target, config)
+    run_dir_is_new = run_id is None
     if run_id is None:
         run_name = run_name or name or problem.problem_id
         run_id = new_run_id(run_name)
@@ -983,10 +1042,16 @@ def run_search(
         run_dir = config.paths.runs_dir / run_id  # suite child: parent wrote run.yaml
     total_s = budget_s or problem.time_budget_s
     seed_path = Path(seed_from) if seed_from else None
+    if run_dir_is_new:
+        write_run_spec(run_dir, [spec_entry(
+            target, budget=total_s, agent=config.agent, model=config.model,
+            climber=config.climber.ref, parallel_agents=config.concurrency.parallel_agents,
+            n_replicates=config.evaluation.n_replicates, seed_from=seed_path,
+        )])
     search_dir = create_search(config, problem, run_dir, run_id, total_s, seed_from=seed_path)
     log(
         f"Search {search_ref(search_dir)} (problem={problem.problem_id}, "
-        f"backend={config.backend}, model={config.model}, budget={total_s}s)"
+        f"agent={config.agent}, model={config.model}, budget={total_s}s)"
     )
     return execute_search(
         config,
@@ -1051,10 +1116,10 @@ def fleet_argv(
     run_name: str,
     *,
     budget: int | str | None = None,
-    backend: str | None = None,
+    agent: str | None = None,
     model: str | None = None,
     climber: str | None = None,
-    parallel_operators: int | None = None,
+    parallel_agents: int | None = None,
     n_replicates: int | None = None,
     holdout: bool = True,
     learning: bool = True,
@@ -1076,14 +1141,14 @@ def fleet_argv(
             argv += ["--repeat", str(repeat)]
     if budget:
         argv += ["--budget", f"{budget}s" if isinstance(budget, int) else str(budget)]
-    if backend:
-        argv += ["--backend", backend]
+    if agent:
+        argv += ["--agent", agent]
     if model:
         argv += ["--model", model]
     if climber:
         argv += ["--climber", climber]
-    if parallel_operators is not None:
-        argv += ["--parallel-operators", str(parallel_operators)]
+    if parallel_agents is not None:
+        argv += ["--parallel-agents", str(parallel_agents)]
     if n_replicates is not None:
         argv += ["--n-replicates", str(n_replicates)]
     if not holdout:
@@ -1104,7 +1169,7 @@ class FleetEngine:
     """One engine of a mixed fleet: the arm it is tagged as, the climber it
     runs, and the `--set` overrides that apply to this engine only (after the
     fleet-wide ones, so they win). `climber=None` keeps the fleet-wide climber.
-    Overrides are the one per-arm knob — `concurrency.parallel_operators=1`
+    Overrides are the one per-arm knob — `concurrency.parallel_agents=1`
     for a serial climber like GEPA, `climber.params.seed=7`, anything
     `Config.apply_overrides` accepts."""
 
@@ -1204,10 +1269,10 @@ def run_fleet(
     parallel_searches: int = 1,
     run_name: str | None = None,
     budget: int | str | None = None,
-    backend: str | None = None,
+    agent: str | None = None,
     model: str | None = None,
     climber: str | None = None,
-    parallel_operators: int | None = None,
+    parallel_agents: int | None = None,
     n_replicates: int | None = None,
     holdout: bool = True,
     learning: bool = True,
@@ -1236,6 +1301,24 @@ def run_fleet(
     ensure_runtime_venv(config, problem.runtime, log=log, requirements=problem.requirements_file)
     name = run_name or problem.problem_id
     run_dir = create_problem_run(config, name, target, problem.problem_id)
+    shared_entry = dict(
+        budget=budget, agent=agent or config.agent, model=model or config.model,
+        parallel_agents=parallel_agents, n_replicates=n_replicates, seed_from=seed_from,
+    )
+    if engines is None:
+        entries = [
+            spec_entry(target, climber=climber or config.climber.ref, set=overrides, **shared_entry)
+            for _ in range(parallel_searches)
+        ]
+    else:
+        entries = [
+            spec_entry(
+                target, name=engine.arm, climber=engine.climber or climber or config.climber.ref,
+                set=(*overrides, *engine.overrides), **shared_entry,
+            )
+            for engine in engines
+        ]
+    write_run_spec(run_dir, entries)
     # Freeze before starting any child engine. Every search in the fleet then
     # binds to this same run-owned bundle, even if the live problem tree changes
     # while the fleet is running.
@@ -1243,8 +1326,8 @@ def run_fleet(
 
     problem.unit_tests = freeze_for_run(problem, run_dir)
     shared = dict(
-        budget=budget, backend=backend, model=model,
-        parallel_operators=parallel_operators, n_replicates=n_replicates, holdout=holdout,
+        budget=budget, agent=agent, model=model,
+        parallel_agents=parallel_agents, n_replicates=n_replicates, holdout=holdout,
         learning=learning, seed_from=seed_from, knowledge_context_file=knowledge_context_file,
     )
     plan: list[tuple[str, list[str]]] = []  # (log slug, argv) per engine

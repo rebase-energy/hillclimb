@@ -137,7 +137,7 @@ class TestInjection:
         import sys
 
         from hillclimb.api import create_search, execute_search
-        from hillclimb.backends.fake import FakeBackend
+        from hillclimb.agents.fake import FakeAgent
         from hillclimb.harness.budget import BudgetManager
         from hillclimb.harness.dirs import create_run_dir
         from tests.conftest import ok_script
@@ -147,14 +147,14 @@ class TestInjection:
         config.budget.stop_margin_s = 1
         config.holdout.enabled = False
         config.climber.params["num_drafts"] = 2
-        backend = FakeBackend()
-        monkeypatch.setattr("hillclimb.api.get_backend", lambda *a, **k: backend)
+        agent = FakeAgent()
+        monkeypatch.setattr("hillclimb.api.get_agent", lambda *a, **k: agent)
         config.budget.max_evaluations = 2  # two drafts, then stop
 
         def run_once(name, vals):
             for val in vals:
-                backend.queue(script=ok_script(val), notes=f"approach {val}\n")
-            backend.queue(operator="distill", files={"claims.yaml": "claims: []\n"})
+                agent.queue(script=ok_script(val), notes=f"approach {val}\n")
+            agent.queue(operator="distill", files={"claims.yaml": "claims: []\n"})
             run_dir = create_run_dir(config.paths.runs_dir, name)
             search_dir = create_search(config, task, run_dir, name, 3600)
             outcome = execute_search(

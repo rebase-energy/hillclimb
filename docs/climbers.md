@@ -42,13 +42,13 @@ climber (a repeated climber becomes `greedy-2`):
 uv run hillclimb run circle-packing --budget 30m \
   --climber greedy --climber openevolve --climber gepa \
   --seed-from hillclimb/experiments/seeds/circle-packing.py \
-  --arm-set gepa:concurrency.parallel_operators=1 \
+  --arm-set gepa:concurrency.parallel_agents=1 \
   --arm-set gepa:climber.params.max_metric_calls=60
 uv run hillclimb watch                          # the three searches side by side, arm in the problem column
 uv run hillclimb experiment report <run-id>     # arms compared; --experiment NAME names it instead
 ```
 
-The GEPA climber is serial, so its arm needs `concurrency.parallel_operators=1`
+The GEPA climber is serial, so its arm needs `concurrency.parallel_agents=1`
 while the others keep the fleet-wide operator count. `--parallel-searches N`
 repeats every arm N times (repeat-major, like `hillclimb experiment run`).
 Searches of one run share live knowledge cards; pass `--set
@@ -156,7 +156,7 @@ would diverge), a target or inspiration id that does not exist, an
 operator that needs a target without one, a `debug` on a non-failing/non-buggy
 candidate, a mutated journal or a file written under a search dir, a
 factory that hands back the same object, and a prompt override that
-lints dirty. `--smoke --problem P` then runs a short `--backend dummy`
+lints dirty. `--smoke --problem P` then runs a short `--agent dummy`
 search so the whole loop, prompts included, executes once; `--json` is the
 machine-readable form. Exit 1 on any breach.
 
@@ -175,7 +175,7 @@ only when their climber hashes agree.
 hillclimb climber list                          # the bundled climbers and every one under hillclimb/climbers/
 hillclimb climber new mine --from greedy        # copy one into hillclimb/climbers/mine/
 hillclimb climber check --climber hillclimb/climbers/mine          # replay recorded journals through it
-hillclimb climber check --climber hillclimb/climbers/mine --problem circle-packing --smoke   # + one dummy-backend search
+hillclimb climber check --climber hillclimb/climbers/mine --problem circle-packing --smoke   # + one dummy-agent search
 hillclimb run circle-packing --climber hillclimb/climbers/mine
 ```
 
@@ -195,7 +195,7 @@ reads and writes the cross-search memory), `graph` (the module that indexes
 that memory: `knowledge-graph`, the built-in, or a `file.py` / `module:Class`
 subclassing `hillclimb.sdk.GraphModule` — see
 [operators-and-memory.md](operators-and-memory.md)), `tuner`/`tuner_params`,
-`similarity` and `prompts`; `routing` is reserved — which backend and model
+`similarity` and `prompts`; `routing` is reserved — which agent and model
 run is the user's choice in `config.yaml`, never a climber's. The user's
 `climber.params`, `climber.operators`, `climber.tuner`, `climber.memory` and
 `climber.graph` lay over the manifest without copying it.
@@ -221,7 +221,7 @@ uv run hillclimb run <problem> --climber gepa --seed-from my_solution.py
 
 GEPA's reflective mutation is the `gepa-reflect` operator, run by a routed
 hillclimb agent (configure `routing.gepa-reflect`, falling back to
-`routing.default` and the global backend/model) in an ordinary candidate
+`routing.default` and the global agent/model) in an ordinary candidate
 dir; every evaluation becomes a normal journaled `cNNN` candidate, so
 `watch`, `tree` and `chart` work unchanged. GEPA checkpoints under
 `SEARCH_DIR/loop/state/` and `hillclimb resume` continues both the journal
@@ -229,7 +229,7 @@ and the optimizer, with a warm evaluation cache keyed on the solution's
 hash so replayed proposals cost nothing.
 
 MVP limits: one mutable file (`solution.py`), serial
-(`concurrency.parallel_operators: 1`), no merge, and a **required executable
+(`concurrency.parallel_agents: 1`), no merge, and a **required executable
 seed** — pass `--seed-from` or ship an executable baseline. Holdout privacy
 is strict and one-way: holdout scoring runs only after the optimizer
 finishes, and no holdout value ever reaches GEPA's prompts, feedback, or

@@ -1,4 +1,4 @@
-# OpenRouter operators through the Codex backend
+# OpenRouter operators through the Codex agent
 
 Run hillclimb operators on OpenRouter models — cheap, parallel, billed to
 OpenRouter credits — without touching a Claude or ChatGPT subscription.
@@ -38,24 +38,24 @@ Two consequences drive the design: `CODEX_HOME` isolation is a correctness
 
 ## Design
 
-### 1. A third auth mode on the codex backend
+### 1. A third auth mode on the codex agent
 
-`backend_auth` gains `openrouter` alongside `subscription` and `api-key`.
+`agent_auth` gains `openrouter` alongside `subscription` and `api-key`.
 The model name becomes an OpenRouter id.
 
 ```yaml
-backend: codex
-backend_auth: openrouter
+agent: codex
+agent_auth: openrouter
 model: qwen/qwen3-coder
 ```
 
 This rides the existing routing precedence (`routing.py`) with no new
-machinery, because `Route.backend_auth` is already a per-operator field. A
+machinery, because `Route.agent_auth` is already a per-operator field. A
 mixed fleet is therefore config, not code:
 
 ```yaml
 routing:
-  draft:   {backend: claude-code, backend_auth: subscription, model: sonnet}
+  draft:   {agent: claude-code, agent_auth: subscription, model: sonnet}
   improve: {models: [qwen/qwen3-coder, deepseek/deepseek-v3]}   # UCB1 bandit picks
   debug:   {model: cohere/north-mini-code:free}
 ```
@@ -103,7 +103,7 @@ existing `rate_limited` path (`RATE_LIMIT_MARKERS` already covers them).
 
 `_normalized_usage` currently keeps only `input_tokens` and `output_tokens`,
 discarding `cached_input_tokens` and `cache_write_input_tokens`. Instead it
-maps OpenRouter's usage onto the four canonical token keys the claude backend
+maps OpenRouter's usage onto the four canonical token keys the claude agent
 already defines (`USAGE_TOKEN_KEYS`): OpenRouter's `input_tokens` *includes*
 its cached subset, so the uncached remainder becomes `input_tokens`,
 `cached_input_tokens` becomes `cache_read_input_tokens`, and
@@ -132,7 +132,7 @@ usage), so it tests offline against a checked-in fixture. An unknown model
 yields `None`, never a guess — `budget.max_cost_usd` must not be enforced
 against invented numbers.
 
-`CodexCliBackend.invoke` fills `OperatorResult.cost_usd` from it for
+`CodexCliAgent.invoke` fills `OperatorResult.cost_usd` from it for
 `openrouter` auth only; subscription runs keep reporting `None` as today.
 
 ### 5. Key handling — `.env` beside `config.yaml`
@@ -147,7 +147,7 @@ stream, and `.env` is gitignored.
 
 - **Command construction** — `openrouter` auth produces the provider
   overrides and the right model; `subscription` produces today's argv
-  unchanged (regression guard for the existing backend).
+  unchanged (regression guard for the existing agent).
 - **Env** — the key reaches the child env; `OPENAI_API_KEY` is dropped; a
   missing key raises a named error before any process spawns.
 - **CODEX_HOME** — a per-auth dir is created; `auth.json` is copied for
@@ -162,23 +162,23 @@ stream, and `.env` is gitignored.
   no `sk-or-` substring.
 
 No test touches the network. The live smoke path stays
-`hillclimb smoke --backend codex`, run manually against a `:free` model; it
-takes the auth mode from `config.yaml` (`backend_auth: openrouter`) rather
+`hillclimb smoke --agent codex`, run manually against a `:free` model; it
+takes the auth mode from `config.yaml` (`agent_auth: openrouter`) rather
 than gaining a flag of its own.
 
 ## Documentation
 
-- README's backend table gains the OpenRouter row and the three-line config.
+- README's agent table gains the OpenRouter row and the three-line config.
 - A short "which model" note: prefer providers with automatic prompt caching,
   because the 12.3k preamble repeats on every call.
-- CLAUDE.md gains one line on the `backend_auth: openrouter` route, in the
-  concurrency/backends area.
+- CLAUDE.md gains one line on the `agent_auth: openrouter` route, in the
+  concurrency/agents area.
 
 ## Out of scope
 
 - A generic `providers:` block for Groq/Together/local vLLM. The same
   mechanism generalises when a second provider is actually needed.
-- An `opencode` backend. Only worthwhile if codex's Responses-only constraint
+- An `opencode` agent. Only worthwhile if codex's Responses-only constraint
   becomes a problem; the spike says it is not.
 - A `--model`-per-arm fleet CLI. Experiment arms already express it.
 - Lowering codex's hard-coded 65536 output request. No config knob exists;

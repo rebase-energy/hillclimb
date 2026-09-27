@@ -4,9 +4,9 @@ it; the counts are journal-derived, so a resumed search needs no counter."""
 
 from __future__ import annotations
 
-from hillclimb.backends.fake import FakeBackend
+from hillclimb.agents.fake import FakeAgent
 from hillclimb.harness.budget import Spend, journal_spend
-from hillclimb.harness.candidate import BackendInfo, Candidate
+from hillclimb.harness.candidate import AgentInfo, Candidate
 from hillclimb.harness.journal import Journal
 from hillclimb.harness.loop import PolicyLoop, SearchLoop
 from hillclimb.modules.policies.greedy import GreedyPolicy
@@ -25,7 +25,7 @@ def test_spend_counts_what_the_climber_caused(tmp_path):
             Candidate(
                 candidate_id=cid, operator=operator, status="passing",
                 trials=[mk_trial(val_score=0.5, submission_ok=True, index=i) for i in range(n_trials)],
-                backend=BackendInfo(total_tokens=tokens, cost_usd=0.5 if tokens else None),
+                agent=AgentInfo(total_tokens=tokens, cost_usd=0.5 if tokens else None),
             )
         )
 
@@ -39,14 +39,14 @@ def test_spend_counts_what_the_climber_caused(tmp_path):
 
 def test_evaluation_budget_ends_the_search_like_the_clock_does(task, config):
     config.budget.max_evaluations = 3
-    backend = FakeBackend()
+    agent = FakeAgent()
     for score in (0.5, 0.6, 0.7, 0.8, 0.9):
-        backend.queue(script=ok_script(score), notes="d\n")
-    harness, journal, _ = make_harness(task, config, backend)
+        agent.queue(script=ok_script(score), notes="d\n")
+    harness, journal, _ = make_harness(task, config, agent)
 
     selected = harness.execute(PolicyLoop(GreedyPolicy()))
 
-    assert len(backend.requests) == 3 and harness.spend().evaluations == 3
+    assert len(agent.requests) == 3 and harness.spend().evaluations == 3
     assert selected.val_score == 0.7
     assert harness.closed_reason == "evaluation budget spent" and harness.capacity == 0
     assert harness.view().budget.evaluations_remaining == 0
@@ -70,12 +70,12 @@ class FillEverySlot(SearchLoop):
 def test_in_flight_work_has_its_evaluation_reserved(task, config):
     """Four free slots, two evaluations left: only two attempts start — the
     cap is never overshot by work that was already running."""
-    config.concurrency.parallel_operators = 4
+    config.concurrency.parallel_agents = 4
     config.budget.max_evaluations = 2
-    backend = FakeBackend()
+    agent = FakeAgent()
     for score in (0.5, 0.6, 0.7, 0.8):
-        backend.queue(script=ok_script(score), notes="d\n")
-    harness, _journal, _ = make_harness(task, config, backend)
+        agent.queue(script=ok_script(score), notes="d\n")
+    harness, _journal, _ = make_harness(task, config, agent)
     loop = FillEverySlot()
 
     harness.execute(loop)
@@ -86,22 +86,22 @@ def test_in_flight_work_has_its_evaluation_reserved(task, config):
 
 def test_token_budget_closes_the_harness(task, config):
     config.budget.max_tokens = 1500
-    backend = FakeBackend()
+    agent = FakeAgent()
     for score in (0.5, 0.6, 0.7):
-        backend.queue(script=ok_script(score), notes="d\n", result={"total_tokens": 1000})
-    harness, _journal, _ = make_harness(task, config, backend)
+        agent.queue(script=ok_script(score), notes="d\n", result={"total_tokens": 1000})
+    harness, _journal, _ = make_harness(task, config, agent)
     assert harness.view().budget.tokens_remaining == 1500
 
     harness.execute(PolicyLoop(GreedyPolicy()))
 
     # the second call crossed the line; a third never starts
-    assert len(backend.requests) == 2 and harness.spend().tokens == 2000
+    assert len(agent.requests) == 2 and harness.spend().tokens == 2000
     assert harness.closed_reason == "token budget spent"
     assert harness.view().budget.tokens_remaining == 0
 
 
 def test_no_limits_means_no_limits(task, config):
-    harness, _journal, _ = make_harness(task, config, FakeBackend())
+    harness, _journal, _ = make_harness(task, config, FakeAgent())
     budget = harness.view().budget
     assert (budget.evaluations_remaining, budget.tokens_remaining, budget.cost_remaining_usd) == (None, None, None)
     assert harness.open
@@ -111,10 +111,10 @@ def test_status_reports_every_dimension(task, config):
     config.budget.max_evaluations = 5
     config.budget.max_tokens = 10_000
     written: list[SearchStatus] = []
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.5), notes="d\n", result={"total_tokens": 1234})
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.5), notes="d\n", result={"total_tokens": 1234})
     status = StatusWriter(lambda s: written.append(s.model_copy(deep=True)), SearchStatus(search_id="s", run_id="r"))
-    harness, _journal, _ = make_harness(task, config, backend, status=status)
+    harness, _journal, _ = make_harness(task, config, agent, status=status)
 
     harness.run(Action(operator="draft"))
 

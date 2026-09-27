@@ -72,10 +72,12 @@ def test_readout_ranks_best_first_in_the_metric_direction(monkeypatch):
     class Spy:
         legend_visible = True
         order = None
+        split = None
 
         def add_line(self, *a, **kw): pass
         def add_scatter(self, *a, **kw): pass
         def set_readout_order(self, order): self.order = order
+        def set_readout_split_axes(self, on): self.split = on
 
     climb = Climb(events=[ClimbEvent(1.0, 0.6, True, "r", "draft")], extent=1.0)
     for higher, expected in ((True, "descending"), (False, "ascending")):
@@ -83,6 +85,8 @@ def test_readout_ranks_best_first_in_the_metric_direction(monkeypatch):
         monkeypatch.setattr("hillclimb.tui.chart.themed_plot", lambda: spy)
         build_climb_plot(climb, {"OpenEvolve": 0.7}, higher_is_better=higher)
         assert spy.order == expected
+        # the cost overlay's y2/y3 rows sit under a rule of their own
+        assert spy.split is True
 
 
 @pytest.mark.asyncio
@@ -117,3 +121,76 @@ async def test_notifications_wear_the_hillclimb_panel():
         # $warning comes back through Textual's colour space, a unit off
         warn_rgb = warning.styles.border_left[1].rgb
         assert all(abs(a - b) <= 2 for a, b in zip(warn_rgb, (0xEA, 0xB3, 0x08)))
+
+
+def test_y_axis_names_the_metric_and_its_direction(monkeypatch):
+    """The y axis says what the problem scores and which way is up, and
+    the holdout view says so up front; the plot gets it as its y title."""
+    from hillclimb.tui.chart import Climb, ClimbEvent, build_climb_plot, y_axis_title
+
+    assert y_axis_title("normalized-min-triangle-area", True) == (
+        "normalized-min-triangle-area (higher is better)"
+    )
+    assert y_axis_title("rmse", False) == "rmse (lower is better)"
+    assert y_axis_title("rmse", False, holdout=True) == "holdout rmse (lower is better)"
+
+    class Spy:
+        legend_visible = True
+        title = None
+
+        def add_line(self, *a, **kw): pass
+        def add_scatter(self, *a, **kw): pass
+        def set_y_title(self, text): self.title = text
+
+    spy = Spy()
+    monkeypatch.setattr("hillclimb.tui.chart.themed_plot", lambda: spy)
+    climb = Climb(events=[ClimbEvent(1.0, 0.6, True, "r", "draft")], extent=1.0)
+    build_climb_plot(climb, {}, y_title=y_axis_title("score", True))
+    assert spy.title == "score (higher is better)"
+
+
+def test_footer_offers_switch_problem_and_holdout_only_where_they_apply():
+    """`p` is shown only when the folder holds a second problem to switch
+    to, `h` only for a problem that scores a holdout — a key that could
+    only say "no" stays out of the footer."""
+    from types import SimpleNamespace
+
+    from hillclimb.config import Config
+
+    screen = ChartScreen(Config())
+    assert {b.action: b.description for b in ChartScreen.BINDINGS if b.key == "p"} == {
+        "next_problem": "switch problem"
+    }
+    screen._problem_keys = ["circle-packing"]
+    screen._anchor = SimpleNamespace(holdout_enabled=False)
+    assert screen.check_action("next_problem", ()) is False
+    assert screen.check_action("toggle_holdout", ()) is False
+    screen._problem_keys = ["circle-packing", "heilbronn-convex-13"]
+    screen._anchor = SimpleNamespace(holdout_enabled=True)
+    assert screen.check_action("next_problem", ()) is True
+    assert screen.check_action("toggle_holdout", ()) is True
+    # the anchor is not resolved yet: nothing to toggle holdout on
+    screen._anchor = None
+    assert screen.check_action("toggle_holdout", ()) is False
+    assert screen.check_action("toggle_cost", ()) is True
+
+
+@pytest.mark.asyncio
+async def test_cost_toggle_puts_the_overlay_on_its_own_legend_row(config):
+    """`c` overlays the cost series and the legend band gains a `Cost:` row
+    for them — the whole refresh path runs with the four-element entries."""
+    from hillclimb.tui.chart import COST_GROUP, COST_TOKENS_LABEL, ChartApp, ChartLegend
+    from tests.test_watch import make_run_with_search
+
+    make_run_with_search(config.paths.runs_dir, "r1")
+    app = ChartApp(config, search="r1/circle-packing")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        assert isinstance(app.screen, ChartScreen)
+        await pilot.press("c")
+        await pilot.pause(0.3)
+        entries = app.screen._legend_entries
+        cost_rows = [e[0] for e in entries if len(e) > 3 and e[3] == COST_GROUP]
+        assert COST_TOKENS_LABEL in cost_rows
+        band = str(app.screen.query_one("#chart-legend", ChartLegend).render())
+        assert f"{COST_GROUP}: " in band

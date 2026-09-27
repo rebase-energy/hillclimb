@@ -500,5 +500,5 @@ def eval_result_for(candidate: Candidate, *, feedback: str = "") -> EvalResult:
         features=dict(candidate.metrics) if valid else {},
         feedback=feedback,
         trials=tuple(summarize_trial(t) for t in candidate.trials),
-        cost_usd=candidate.backend.cost_usd or 0.0,
+        cost_usd=candidate.agent.cost_usd or 0.0,
     )

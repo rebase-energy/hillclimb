@@ -1,4 +1,4 @@
-"""Codex CLI operator backend.
+"""Codex CLI operator agent.
 
 One Hillclimb operator call becomes one non-interactive ``codex exec`` turn
 inside the candidate directory. Codex's JSONL events are normalized to the
@@ -17,8 +17,8 @@ import threading
 import time
 from pathlib import Path
 
-from hillclimb.backends.base import OperatorRequest, OperatorResult
-from hillclimb.backends.claude_code import (
+from hillclimb.agents.base import OperatorRequest, OperatorResult
+from hillclimb.agents.claude_code import (
     PID_FILE,
     RATE_LIMIT_MARKERS,
     STREAM_FILE,
@@ -53,7 +53,7 @@ def codex_home(auth: str) -> Path:
     if source.exists() and (
         not target.exists() or source.stat().st_mtime > target.stat().st_mtime
     ):
-        # atomic: concurrent operators share this directory — threads of one
+        # atomic: concurrent agents share this directory — threads of one
         # search process as much as separate processes, so the staging file
         # must be unique per call, not per pid
         fd, staging = tempfile.mkstemp(prefix=".auth.", suffix=".json", dir=home)
@@ -72,7 +72,7 @@ def codex_env(auth: str = "subscription") -> dict[str, str]:
     if auth == "openrouter":
         if not env.get("OPENROUTER_API_KEY"):
             raise RuntimeError(
-                "backend_auth: openrouter needs OPENROUTER_API_KEY — export it "
+                "agent_auth: openrouter needs OPENROUTER_API_KEY — export it "
                 "or put it in a .env beside config.yaml"
             )
         # billing must not fall back to an inherited OpenAI account
@@ -138,6 +138,25 @@ def _error_message(message: dict) -> str:
             if payload.get("message"):
                 return str(payload["message"])
     return str(value or message)
+
+
+# Claude Code's model aliases (and ids) mean nothing to the Codex CLI, but
+# hillclimb's one `model` setting defaults to `sonnet` for every agent. A
+# codex call with such a model omits `--model` and lets the Codex CLI's own
+# default model answer — the CLI knows which model the account may use
+# better than a pinned id that goes stale with every release. OpenRouter
+# routes always need an explicit model id, so nothing is omitted there.
+CLAUDE_MODELS = ("sonnet", "opus", "haiku")
+CODEX_DEFAULT_LABEL = "codex-default"  # what the journal says when the CLI chose
+
+
+def native_model(model: str, auth: str = "subscription") -> str | None:
+    """The `--model` to pass, or None to let the Codex CLI pick its default."""
+    if auth == "openrouter":
+        return model
+    if model in CLAUDE_MODELS or model.startswith("claude") or model == CODEX_DEFAULT_LABEL:
+        return None
+    return model
 
 
 class _CodexStreamReader(threading.Thread):
@@ -260,7 +279,7 @@ class _CodexStreamReader(threading.Thread):
                 sink.flush()
 
 
-class CodexCliBackend:
+class CodexCliAgent:
     """Run Hillclimb operators through an authenticated local Codex CLI."""
 
     name = "codex"
@@ -279,9 +298,10 @@ class CodexCliBackend:
         cmd = [self.codex_bin]
         if self.auth == "openrouter":
             cmd += ["-c", OPENROUTER_PROVIDER, "-c", "model_provider=openrouter"]
+        native = native_model(request.model, self.auth)
+        if native is not None:
+            cmd += ["--model", native]
         cmd += [
-            "--model",
-            request.model,
             "--sandbox",
             "workspace-write",
             "--ask-for-approval",
@@ -347,7 +367,10 @@ class CodexCliBackend:
                     if proc is not None:
                         reaper = Reaper(proc)  # reaps through wait4: the call's CPU rides along
                         pid_path.write_text(str(proc.pid))
-                        reader = _CodexStreamReader(proc.stdout, stream_path, request.model)
+                        reader = _CodexStreamReader(
+                            proc.stdout, stream_path,
+                            native_model(request.model, self.auth) or CODEX_DEFAULT_LABEL,
+                        )
                         reader.start()
                         try:
                             proc.stdin.write(request.prompt)

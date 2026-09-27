@@ -243,6 +243,8 @@ from plotui import Plot  # noqa: E402
 from plotui.textual import PlotWidget  # noqa: E402
 from textual.app import App, ComposeResult  # noqa: E402
 from textual.binding import Binding  # noqa: E402
+
+from hillclimb.tui.keys import back_binding  # noqa: E402
 from textual import events  # noqa: E402
 from textual.containers import Vertical  # noqa: E402
 from textual.message import Message  # noqa: E402
@@ -523,12 +525,13 @@ class TreeScreen(LiveScreen):
 
     BINDING_GROUP_TITLE = "tree"
     BINDINGS = [
-        Binding("escape", "dismiss_or_back", "back"),
+        back_binding("dismiss_or_back"),
         Binding("enter", "activate", "open", show=False, priority=True),
         Binding("+,=", "zoom_in", "zoom in", show=False),
         Binding("-", "zoom_out", "zoom out", show=False),
         Binding("f,0", "fit", "fit", show=False, tooltip="frame the whole tree"),
-        Binding("b", "select_best", "best", tooltip="select the current best"),
+        # `*`: the star the best wears in every table (b is back, everywhere)
+        Binding("asterisk", "select_best", "best", key_display="*", tooltip="select the current best"),
         Binding("n", "next_search", "next search", tooltip="the next search in the store"),
         Binding("p", "prev_search", "prev search", show=False, tooltip="the previous search"),
         Binding("j", "scrub_back", "back in time", show=False, tooltip="one tick per landed result"),

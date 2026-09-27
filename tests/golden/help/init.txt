@@ -3,7 +3,8 @@
                                                                                                                         
  Create a hillclimb dir.                                                                                                
                                                                                                                         
- A hillclimb/ folder holding config, problems, run specs, and runs.                                                     
+ A hillclimb/ folder holding config, problems, and runs — plus the                                                      
+ gitignore rules that commit the record of every run and not its bulk.                                                  
                                                                                                                         
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │   [directory]      PATH  Where to create the hillclimb/ dir [default: .]                                             │

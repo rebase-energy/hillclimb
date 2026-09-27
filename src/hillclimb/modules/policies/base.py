@@ -50,10 +50,10 @@ INJECT_ACTION = "inject"
 
 @dataclass(frozen=True)
 class Route:
-    """Backend/model override for one action; None fields inherit from the
+    """Agent/model override for one action; None fields inherit from the
     routing config, which in turn falls back to the global config scalars."""
 
-    backend: str | None = None
+    agent: str | None = None
     model: str | None = None
     sampling: dict[str, int | float] | None = None
 

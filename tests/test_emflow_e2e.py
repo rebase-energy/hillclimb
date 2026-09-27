@@ -1,4 +1,4 @@
-"""End-to-end emflow search with the fake backend on swedish-temperatures:ar
+"""End-to-end emflow search with the fake agent on swedish-temperatures:ar
 (packaged data — no HF, no token, no agent spend)."""
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import pytest
 
 pytest.importorskip("emflow")
 
-from hillclimb.backends.fake import FakeBackend  # noqa: E402
+from hillclimb.agents.fake import FakeAgent  # noqa: E402
 from hillclimb.harness.budget import BudgetManager  # noqa: E402
 from hillclimb.harness.executor import CommandExecutor, CommandHoldoutScorer  # noqa: E402
 from hillclimb.harness.journal import Journal  # noqa: E402
@@ -55,10 +55,10 @@ def test_full_emflow_search(config, tmp_path):
     (search_dir / "candidates").mkdir(parents=True)
     (search_dir / "best").mkdir()
 
-    backend = FakeBackend()
-    backend.queue(script=predictor_module("Climatology7d", "7D"), notes="7-day climatology\n")
-    backend.queue(script=predictor_module("Climatology30d", "30D"), notes="30-day climatology\n")
-    backend.queue(script=predictor_module("Climatology60d", "60D"), notes="improve: 60-day window\n")
+    agent = FakeAgent()
+    agent.queue(script=predictor_module("Climatology7d", "7D"), notes="7-day climatology\n")
+    agent.queue(script=predictor_module("Climatology30d", "30D"), notes="30-day climatology\n")
+    agent.queue(script=predictor_module("Climatology60d", "60D"), notes="improve: 60-day window\n")
 
     python = Path(sys.executable)
     from hillclimb.harness.evaluation import CandidateEvaluator
@@ -78,7 +78,7 @@ def test_full_emflow_search(config, tmp_path):
         problem=spec,
         config=config,
         journal=journal,
-        backend=backend,
+        agent=agent,
         executor=evaluator.executor,
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir,
@@ -113,5 +113,5 @@ def test_full_emflow_search(config, tmp_path):
         assert not (Path(candidate.candidate_dir) / "holdout_predictions.csv").exists()
 
     # the improve prompt carried the emflow contract, not the CSV one
-    improve_prompts = [r.prompt for r in backend.requests if r.operator == "improve"]
+    improve_prompts = [r.prompt for r in agent.requests if r.operator == "improve"]
     assert improve_prompts and "get_model()" in improve_prompts[0]

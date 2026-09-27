@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from hillclimb.backends.fake import FakeBackend
+from hillclimb.agents.fake import FakeAgent
 from hillclimb.harness.control import ControlCommand
 from hillclimb.harness.loop import ClimberError, HarnessClosed, SearchLoop
 from hillclimb.modules.policies.base import Action
@@ -44,12 +44,12 @@ class Generations(SearchLoop):
 
 
 def test_a_loop_that_is_not_a_policy_drives_a_search(task, config):
-    config.concurrency.parallel_operators = 2
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.5), notes="a\n")
-    backend.queue(script=ok_script(0.7), notes="b\n")
-    backend.queue(script=ok_script(0.9), notes="refined\n")
-    harness, journal, _ = make_harness(task, config, backend)
+    config.concurrency.parallel_agents = 2
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.5), notes="a\n")
+    agent.queue(script=ok_script(0.7), notes="b\n")
+    agent.queue(script=ok_script(0.9), notes="refined\n")
+    harness, journal, _ = make_harness(task, config, agent)
     loop = Generations()
 
     selected = harness.execute(loop)
@@ -79,11 +79,11 @@ class Stubborn(SearchLoop):
 
 
 def test_a_loop_that_ignores_a_stop_cannot_spend_any_more(task, config):
-    backend = FakeBackend()
+    agent = FakeAgent()
     for score in (0.5, 0.6, 0.7):
-        backend.queue(script=ok_script(score), notes="d\n")
+        agent.queue(script=ok_script(score), notes="d\n")
     commands: list = []
-    harness, journal, _ = make_harness(task, config, backend, drain_commands=lambda: [commands.pop()] if commands else [])
+    harness, journal, _ = make_harness(task, config, agent, drain_commands=lambda: [commands.pop()] if commands else [])
     loop = Stubborn()
 
     original = harness._execute_job
@@ -96,7 +96,7 @@ def test_a_loop_that_ignores_a_stop_cannot_spend_any_more(task, config):
     with pytest.raises(StopRequested):
         harness.execute(loop)
 
-    assert len(backend.requests) == 1  # the stop landed during the first attempt
+    assert len(agent.requests) == 1  # the stop landed during the first attempt
     assert loop.closed_errors == 9  # every later ask was refused with HarnessClosed
     assert not harness.open and "stop" in harness.closed_reason.lower()
     assert harness.capacity == 0
@@ -104,9 +104,9 @@ def test_a_loop_that_ignores_a_stop_cannot_spend_any_more(task, config):
 
 
 def test_refused_actions_come_back_as_rejected_tickets_and_leave_no_trace(task, config):
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.5), notes="d\n")
-    harness, journal, search_dir = make_harness(task, config, backend)
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.5), notes="d\n")
+    harness, journal, search_dir = make_harness(task, config, agent)
     passing = harness.run(Action(operator="draft")).candidate
     ids_before = set(journal.candidates)
 
@@ -114,7 +114,7 @@ def test_refused_actions_come_back_as_rejected_tickets_and_leave_no_trace(task, 
 
     assert outcome.kind == "rejected" and outcome.candidate is None
     assert "whose status is passing" in outcome.ticket.rejected
-    assert set(journal.candidates) == ids_before and len(backend.requests) == 1
+    assert set(journal.candidates) == ids_before and len(agent.requests) == 1
     rejected = audit_lines(search_dir, "action_rejected")
     assert [(r["operator"], r["target_id"]) for r in rejected] == [("debug", passing.candidate_id)]
     # a dangling id and an unknown operator are refusals too, not crashes
@@ -124,10 +124,10 @@ def test_refused_actions_come_back_as_rejected_tickets_and_leave_no_trace(task, 
 
 
 def test_a_good_action_resets_the_refusal_count(task, config):
-    backend = FakeBackend()
+    agent = FakeAgent()
     for score in (0.5, 0.6):
-        backend.queue(script=ok_script(score), notes="d\n")
-    harness, _journal, _ = make_harness(task, config, backend)
+        agent.queue(script=ok_script(score), notes="d\n")
+    harness, _journal, _ = make_harness(task, config, agent)
     for _ in range(2):
         assert harness.run(Action(operator="crossover")).kind == "rejected"
     assert harness.run(Action(operator="draft")).kind == "evaluated"
@@ -137,10 +137,10 @@ def test_a_good_action_resets_the_refusal_count(task, config):
 
 
 def test_run_reports_what_happened_to_the_attempt(task, config):
-    backend = FakeBackend()
-    backend.queue(script=CRASH, notes="broken\n")
-    backend.queue(script=ok_script(0.6), notes="fixed\n")
-    harness, journal, _ = make_harness(task, config, backend)
+    agent = FakeAgent()
+    agent.queue(script=CRASH, notes="broken\n")
+    agent.queue(script=ok_script(0.6), notes="fixed\n")
+    harness, journal, _ = make_harness(task, config, agent)
 
     broken = harness.run(Action(operator="draft"))
     assert broken.kind == "evaluated" and broken.candidate.status == "buggy"
@@ -153,7 +153,7 @@ def test_run_reports_what_happened_to_the_attempt(task, config):
 
 
 def test_a_closed_harness_refuses_work_and_says_why(task, config):
-    harness, _journal, _ = make_harness(task, config, FakeBackend(), max_candidates=0)
+    harness, _journal, _ = make_harness(task, config, FakeAgent(), max_candidates=0)
     assert not harness.open and harness.capacity == 0
     assert harness.closed_reason == "evaluation cap reached"
     with pytest.raises(HarnessClosed, match="evaluation cap reached"):
@@ -170,9 +170,9 @@ class LeavesWorkBehind(SearchLoop):
 
 
 def test_work_a_loop_left_in_flight_is_still_committed(task, config):
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.8), notes="d\n")
-    harness, journal, _ = make_harness(task, config, backend)
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.8), notes="d\n")
+    harness, journal, _ = make_harness(task, config, agent)
 
     selected = harness.execute(LeavesWorkBehind())
 
@@ -181,7 +181,7 @@ def test_work_a_loop_left_in_flight_is_still_committed(task, config):
 
 
 def test_wait_with_nothing_in_flight_is_a_tick(task, config):
-    harness, _journal, _ = make_harness(task, config, FakeBackend())
+    harness, _journal, _ = make_harness(task, config, FakeAgent())
     assert harness.wait(timeout=0.01) == []
     assert harness.open
 
@@ -191,16 +191,16 @@ def test_running_out_of_budget_is_a_quiet_refusal_not_an_error(task, config):
     then lost the race to the budget gets a refusal, never an exception."""
     from hillclimb.harness.budget import BudgetManager
 
-    backend = FakeBackend()
+    agent = FakeAgent()
     harness, journal, search_dir = make_harness(
-        task, config, backend, budget=BudgetManager(3600, stop_margin_s=1, spent_s=3600)
+        task, config, agent, budget=BudgetManager(3600, stop_margin_s=1, spent_s=3600)
     )
     assert not harness.open and harness.closed_reason == "out of budget"
     for _ in range(5):  # never a ClimberError either: it is not the climber's fault
         outcome = harness.run(Action(operator="draft"))
         assert outcome.kind == "rejected" and outcome.ticket.rejected == "out of budget"
     assert harness.submit(Action(operator="draft")).rejected == "out of budget"
-    assert not backend.requests and not journal.candidates
+    assert not agent.requests and not journal.candidates
     assert not audit_lines(search_dir, "action_rejected")
 
 
@@ -213,8 +213,8 @@ from hillclimb.sdk import Operator, Preparation  # noqa: E402
 
 
 def test_inject_scores_a_text_the_loop_already_has(task, config):
-    backend = FakeBackend()
-    harness, journal, search_dir = make_harness(task, config, backend)
+    agent = FakeAgent()
+    harness, journal, search_dir = make_harness(task, config, agent)
 
     marker = "# only-in-the-source-text\n"
     first = harness.run(Action(operator=INJECT_ACTION, payload={"source": ok_script(0.4)}))
@@ -225,7 +225,7 @@ def test_inject_scores_a_text_the_loop_already_has(task, config):
         )
     )
 
-    assert not backend.requests  # no agent was ever called
+    assert not agent.requests  # no agent was ever called
     assert (first.kind, first.candidate.val_score) == ("evaluated", 0.4)
     assert child.candidate.parent_id == first.candidate.candidate_id
     assert child.candidate.operator == "inject" and child.candidate.role == "inject"
@@ -240,7 +240,7 @@ def test_inject_scores_a_text_the_loop_already_has(task, config):
 
 
 def test_inject_refuses_nonsense_before_creating_anything(task, config):
-    harness, journal, _ = make_harness(task, config, FakeBackend())
+    harness, journal, _ = make_harness(task, config, FakeAgent())
     assert harness.run(Action(operator=INJECT_ACTION)).kind == "rejected"
     outcome = harness.run(Action(operator=INJECT_ACTION, target_id="c999", payload={"source": "x=1\n"}))
     assert outcome.kind == "rejected" and not journal.candidates
@@ -263,10 +263,10 @@ class Mutate(Operator):
 def test_require_change_turns_an_untouched_parent_into_unchanged(task, config):
     operators.register_operator(Mutate)
     try:
-        backend = FakeBackend()
-        backend.queue(script=None, notes="looked, changed nothing\n")  # leaves the parent copy as it is
-        backend.queue(script=ok_script(0.9), notes="a real change\n")
-        harness, journal, _ = make_harness(task, config, backend)
+        agent = FakeAgent()
+        agent.queue(script=None, notes="looked, changed nothing\n")  # leaves the parent copy as it is
+        agent.queue(script=ok_script(0.9), notes="a real change\n")
+        harness, journal, _ = make_harness(task, config, agent)
         parent = harness.run(Action(operator=INJECT_ACTION, payload={"source": ok_script(0.5)})).candidate
         action = Action(operator="mutate", target_id=parent.candidate_id, payload={"feedback": '{"weak": "x"}'})
 
@@ -286,7 +286,7 @@ def test_require_change_turns_an_untouched_parent_into_unchanged(task, config):
 
 def test_outcome_result_never_carries_holdout(task_larger, config):
     """The scored view is projected from the holdout-blind copy."""
-    harness, journal, _ = make_harness(task_larger, config, FakeBackend())
+    harness, journal, _ = make_harness(task_larger, config, FakeAgent())
     outcome = harness.run(Action(operator=INJECT_ACTION, payload={"source": ok_script(0.5)}))
     dumped = repr(outcome.result) + repr(outcome.candidate)
     assert "holdout_score=None" in dumped or "holdout" not in repr(outcome.result)
@@ -294,7 +294,7 @@ def test_outcome_result_never_carries_holdout(task_larger, config):
 
 
 def test_search_info_and_budget_view_read_like_the_prompts_do(task, config):
-    harness, _journal, _ = make_harness(task, config, FakeBackend())
+    harness, _journal, _ = make_harness(task, config, FakeAgent())
     assert harness.info.baseline_source is None  # this problem ships no baseline solution
     assert harness.view().budget.remaining_str() in ("1h 00m", "59 minutes")
 
@@ -303,10 +303,10 @@ def test_a_stop_from_outside_the_loop_closes_the_harness_even_if_swallowed(task,
     """SIGTERM lands at an arbitrary point. `request_stop` latches first, so a
     loop (or a library under it, like gepa's proposer) that swallows the
     StopRequested raised right after still cannot start anything."""
-    backend = FakeBackend()
+    agent = FakeAgent()
     for score in (0.5, 0.6, 0.7):
-        backend.queue(script=ok_script(score), notes="d\n")
-    harness, journal, _ = make_harness(task, config, backend)
+        agent.queue(script=ok_script(score), notes="d\n")
+    harness, journal, _ = make_harness(task, config, agent)
     original = harness._execute_job
 
     def sigterm_during_first_attempt(job):
@@ -317,4 +317,4 @@ def test_a_stop_from_outside_the_loop_closes_the_harness_even_if_swallowed(task,
     loop = Stubborn()
     with pytest.raises(StopRequested, match="SIGTERM"):
         harness.execute(loop)
-    assert harness.abort.is_set() and len(backend.requests) == 1 and loop.closed_errors == 9
+    assert harness.abort.is_set() and len(agent.requests) == 1 and loop.closed_errors == 9

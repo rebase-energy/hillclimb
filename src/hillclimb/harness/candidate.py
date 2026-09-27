@@ -26,7 +26,7 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-class BackendInfo(BaseModel):
+class AgentInfo(BaseModel):
     """Metadata about the LLM agent call that authored the candidate's code.
     Lives on the Candidate (not a Trial): it describes creation, not execution."""
 
@@ -34,7 +34,7 @@ class BackendInfo(BaseModel):
     model: str | None = None  # requested model/route alias (bandit arm on replay)
     sampling: dict[str, int | float] | None = None
     # fully-qualified model that served the call, from the agent stream
-    # (e.g. "claude-sonnet-4-5-20250929"); None on old journals and backends
+    # (e.g. "claude-sonnet-4-5-20250929"); None on old journals and agents
     # that only know the alias
     model_id: str | None = None
     session_id: str | None = None
@@ -213,7 +213,7 @@ class Candidate(BaseModel):
     args: dict = Field(default_factory=dict)
     debug_depth: int = 0
     candidate_dir: str = ""
-    backend: BackendInfo = Field(default_factory=BackendInfo)
+    agent: AgentInfo = Field(default_factory=AgentInfo)   # journals before the rename say `backend`
     trials: list[Trial] = Field(default_factory=list)
     # the candidate declared a valid params.json (tune actions may target it);
     # params_error carries why a declaration was rejected (scored on defaults)
@@ -237,6 +237,15 @@ class Candidate(BaseModel):
 
             self.role = role_of(self.operator)
         return self
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_agent_key(cls, data):
+        """Journals from before the rename record the agent call as `backend`."""
+        if isinstance(data, dict) and "backend" in data:
+            data = dict(data)
+            data.setdefault("agent", data.pop("backend"))
+        return data
 
     @model_validator(mode="before")
     @classmethod

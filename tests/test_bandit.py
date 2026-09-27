@@ -8,10 +8,10 @@ from tests.factories import trial as mk_trial
 import sys
 from pathlib import Path
 
-from hillclimb.backends.fake import FakeBackend
+from hillclimb.agents.fake import FakeAgent
 from hillclimb.harness.bandit import UCB1, OperatorBandits, candidate_reward
 from hillclimb.harness.budget import BudgetManager
-from hillclimb.harness.candidate import BackendInfo, Candidate
+from hillclimb.harness.candidate import AgentInfo, Candidate
 from hillclimb.config import Config, RouteConfig
 from tests.conftest import local_executor
 from hillclimb.harness.journal import Journal
@@ -27,7 +27,7 @@ def cand(cid, operator="improve", parent=None, status="passing", val=None, model
         parent_id=parent,
         operator=operator,
         status=status,
-        backend=BackendInfo(model=model),
+        agent=AgentInfo(model=model),
         trials=[mk_trial(val_score=val)] if val is not None else [],
         is_best=best,
     )
@@ -122,14 +122,14 @@ def test_router_observe_credits_pool_arm_only():
 # --- end-to-end through the searcher + replay reconstruction ---
 
 
-def make_searcher(task, config, backend, search_dir=None, router=None):
+def make_searcher(task, config, agent, search_dir=None, router=None):
     search_dir = search_dir or create_search_dir(config.paths.runs_dir, "test-run")
     journal = Journal(search_dir / "journal.jsonl")
     searcher = SearchRig(
         problem=task,
         config=config,
         journal=journal,
-        backend=backend,
+        agent=agent,
         executor=local_executor(),
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir,
@@ -141,15 +141,15 @@ def make_searcher(task, config, backend, search_dir=None, router=None):
 
 def test_pool_routes_models_and_journals_the_arm(task, config):
     config.routing = {"draft": RouteConfig(models=["m1", "m2"])}
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.6), notes="a\n")
-    backend.queue(script=ok_script(0.5), notes="b\n")
-    searcher, journal, _ = make_searcher(task, config, backend)
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.6), notes="a\n")
+    agent.queue(script=ok_script(0.5), notes="b\n")
+    searcher, journal, _ = make_searcher(task, config, agent)
     first = searcher.run_operator("draft", None)
     second = searcher.run_operator("draft", None)
     # unpulled-first: both arms get exercised before any exploitation
-    assert [r.model for r in backend.requests] == ["m1", "m2"]
-    assert first.backend.model == "m1" and second.backend.model == "m2"
+    assert [r.model for r in agent.requests] == ["m1", "m2"]
+    assert first.agent.model == "m1" and second.agent.model == "m2"
     stats = searcher.router.bandits.snapshot()["draft"]
     assert stats["m1"] == {"pulls": 1, "mean_reward": 1.0}  # took the lead
     assert stats["m2"] == {"pulls": 1, "mean_reward": 0.25}  # ok, no gain
@@ -159,23 +159,23 @@ def test_bandit_state_rebuilds_from_journal_replay(task, config):
     """The resume contract: a fresh searcher over the same journal ends up
     with identical bandit statistics, with no extra persistence."""
     config.routing = {"draft": RouteConfig(models=["m1", "m2"])}
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.6), notes="a\n")
-    backend.queue(script=ok_script(0.5), notes="b\n")
-    searcher, _, search_dir = make_searcher(task, config, backend)
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.6), notes="a\n")
+    agent.queue(script=ok_script(0.5), notes="b\n")
+    searcher, _, search_dir = make_searcher(task, config, agent)
     searcher.run_operator("draft", None)
     searcher.run_operator("draft", None)
     live = searcher.router.bandits.snapshot()
 
-    resumed, _, _ = make_searcher(task, config, FakeBackend(), search_dir=search_dir)
+    resumed, _, _ = make_searcher(task, config, FakeAgent(), search_dir=search_dir)
     assert resumed.router.bandits.snapshot() == live
 
 
 def test_no_pool_means_no_bandit_and_unchanged_routing(task, config):
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.6), notes="a\n")
-    searcher, _, _ = make_searcher(task, config, backend)
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.6), notes="a\n")
+    searcher, _, _ = make_searcher(task, config, agent)
     assert searcher.router.bandits is None
     candidate = searcher.run_operator("draft", None)
-    assert backend.requests[0].model == config.model
-    assert candidate.backend.model == config.model  # arm recorded regardless
+    assert agent.requests[0].model == config.model
+    assert candidate.agent.model == config.model  # arm recorded regardless

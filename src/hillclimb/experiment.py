@@ -274,7 +274,7 @@ def collect_results(
             higher_is_better=meta.higher_is_better,
             started_at=meta.started_at,
             candidates=len(scored),
-            tokens=sum(c.backend.total_tokens or 0 for c in candidates if c.backend),
+            tokens=sum(c.agent.total_tokens or 0 for c in candidates if c.agent),
             minutes_to_best=minutes_since(best.finished_at, meta.started_at) if best else None,
         ))
     rows.sort(key=lambda r: (r.experiment, r.problem_key, r.repeat, r.started_at))

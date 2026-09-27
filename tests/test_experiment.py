@@ -10,7 +10,7 @@ import pytest
 import typer
 import yaml
 
-from hillclimb.harness.candidate import BackendInfo
+from hillclimb.harness.candidate import AgentInfo
 from hillclimb.config import Config, parse_set_overrides
 from hillclimb.harness.dirs import create_run_dir, create_search_dir
 from hillclimb.experiment import (
@@ -187,14 +187,14 @@ class TestCollect:
             write_run_meta(run_dir, RunMeta(run_id=run_id, name=run_id, kind="experiment", target="p", problem_ids=["p"]))
         search_dir = create_search_dir(run_dir, search_id)
         write_search_meta(search_dir, SearchMeta(
-            search_id=search_id, run_id=run_id, problem="p", problem_id="p", backend="dummy", model="-",
+            search_id=search_id, run_id=run_id, problem="p", problem_id="p", agent="dummy", model="-",
             metric="accuracy", experiment=experiment, arm=arm, repeat=repeat,
             started_at=f"2026-08-23T0{repeat}:00:00+00:00",
         ))
         journal = Journal(search_dir / "journal.jsonl")
         c = make_candidate("c001", operator="draft", status="passing", val_score=holdout or 0.1,
                            finished_at=f"2026-08-23T0{repeat}:10:00+00:00")
-        c.backend = BackendInfo(name="dummy", total_tokens=1000)
+        c.agent = AgentInfo(name="dummy", total_tokens=1000)
         journal.candidate_result(c)
         write_status(search_dir, SearchStatus(
             search_id=search_id, run_id=run_id, state=state, pid=0,
@@ -223,7 +223,7 @@ def test_chart_labels_and_colours_experiment_curves_by_arm():
 
     def record(arm, repeat, search_id):
         meta = SearchMeta(
-            search_id=search_id, run_id="exp", problem="p", problem_id="p", backend="dummy", model="-",
+            search_id=search_id, run_id="exp", problem="p", problem_id="p", agent="dummy", model="-",
             metric="score", experiment="ab" if arm else None, arm=arm, repeat=repeat,
         )
         return SearchRecord(meta=meta, run_name="exp", state="done", search_dir=Path("x"), activity_at="")

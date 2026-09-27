@@ -67,7 +67,7 @@ def _search(runs_dir: Path, run_id: str, name: str, scores: list[tuple[str, floa
     search_dir = run_dir / "searches" / "p"
     search_dir.mkdir(parents=True)
     write_search_meta(search_dir, SearchMeta(
-        search_id="p", run_id=run_id, problem="p", problem_id="p", backend="dummy",
+        search_id="p", run_id=run_id, problem="p", problem_id="p", agent="dummy",
         model="m", metric="score", higher_is_better=not lower, started_at="2026-08-22T10:00:00+00:00",
     ))
     journal = Journal(search_dir / "journal.jsonl")
@@ -135,12 +135,12 @@ def test_demo_launches_parallel_detached_searches(tmp_path, monkeypatch):
         launched.append((cmd, kwargs))
         return FakeProc()
 
-    monkeypatch.setattr("hillclimb.cli.run._demo_preflight", lambda backend: None)
+    monkeypatch.setattr("hillclimb.cli.run._demo_preflight", lambda agent: None)
     monkeypatch.setattr("subprocess.Popen", fake_popen)
     with pytest.raises(SystemExit) as exc:
         cli_main([
-            "demo", "--budget", "5m", "--parallel-searches", "2", "--parallel-operators", "3",
-            "--backend", "dummy", "--model", "haiku",
+            "demo", "--budget", "5m", "--parallel-searches", "2", "--parallel-agents", "3",
+            "--agent", "dummy", "--model", "haiku",
         ])
     assert exc.value.code == 0
     assert (tmp_path / "hillclimb" / "config.yaml").exists()
@@ -154,7 +154,7 @@ def test_demo_launches_parallel_detached_searches(tmp_path, monkeypatch):
         # one run, N searches on the same problem: they share live knowledge
         assert cmd[1:] == [
             "-m", "hillclimb.cli", "run", DEMO_PROBLEM_ID, "--run-id", run_dir.name, "--run-name", "demo",
-            "--budget", "5m", "--backend", "dummy", "--model", "haiku", "--parallel-operators", "3",
+            "--budget", "5m", "--agent", "dummy", "--model", "haiku", "--parallel-agents", "3",
         ]
         assert kwargs["start_new_session"] is True
         assert kwargs["env"]["HILLCLIMB_DIR"] == str(tmp_path / "hillclimb")
@@ -195,9 +195,10 @@ def test_problem_list_shows_every_bundled_problem_without_a_project(tmp_path, mo
     assert exc.value.code == 0
 
     output = capsys.readouterr().out
-    assert "problem" in output and "metric" in output and "direction" in output and "budget" in output
-    assert "circle-packing" in output and "sum-radii" in output and "1m" in output
-    assert "heilbronn-convex-13" in output and "normalized-min-triangle-area" in output and "30m" in output
+    assert "problem" in output and "metric" in output and "direction" in output and "best known" in output
+    assert "budget" not in output  # the clock is the user's `--budget`, not the problem's size
+    assert "circle-packing" in output and "sum-radii" in output and "AlphaEvolve" in output
+    assert "heilbronn-convex-13" in output and "normalized-min-triangle-area" in output
     assert "knapsack" in output and "mean-percent-of-upper-bound" in output
     assert "hillclimb problem get <problem>" in output
     assert not (tmp_path / "hillclimb").exists()
@@ -218,7 +219,7 @@ def test_run_parallel_searches_spawns_detached_engines(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as exc:
         cli_main([
             "run", DEMO_PROBLEM_ID, "--budget", "10m",
-            "--parallel-searches", "3", "--parallel-operators", "2", "--backend", "dummy",
+            "--parallel-searches", "3", "--parallel-agents", "2", "--agent", "dummy",
         ])
     assert exc.value.code == 0
     assert len(launched) == 3
@@ -226,9 +227,18 @@ def test_run_parallel_searches_spawns_detached_engines(tmp_path, monkeypatch):
 
     (run_dir,) = iter_run_dirs(tmp_path / "hillclimb" / "runs")
     assert load_run_meta(run_dir).name == DEMO_PROBLEM_ID
+    # the fleet's own spec: one entry per search, with what it launched with
+    import yaml
+
+    spec = yaml.safe_load((run_dir / "spec.yaml").read_text())
+    assert len(spec["problems"]) == 3
+    assert spec["problems"][0] == {
+        "target": DEMO_PROBLEM_ID, "budget": "10m", "agent": "dummy", "model": "sonnet",
+        "climber": "greedy", "parallel_agents": 2,
+    }
     assert launched[0][3:] == [
         "run", DEMO_PROBLEM_ID, "--run-id", run_dir.name, "--run-name", DEMO_PROBLEM_ID,
-        "--budget", "10m", "--backend", "dummy", "--parallel-operators", "2",
+        "--budget", "10m", "--agent", "dummy", "--parallel-agents", "2",
     ]
 
 
@@ -282,7 +292,7 @@ def test_search_meta_problem_key_backfills_like_hillclimb_go():
     from hillclimb.harness.run import SearchMeta
 
     def meta(**kw):
-        base = dict(search_id="s", run_id="r", backend="b", model="m", metric="score")
+        base = dict(search_id="s", run_id="r", agent="b", model="m", metric="score")
         return SearchMeta(**{**base, **kw})
 
     assert meta(problem="/x/toy", problem_id="toy", problem_key="toy@ab12cd34").problem_key == "toy@ab12cd34"
@@ -331,7 +341,7 @@ def test_chart_baselines_reload_current_problem_config(tmp_path, config):
         run_id="r",
         problem=str(problem_dir),
         problem_id="circle-packing",
-        backend="dummy",
+        agent="dummy",
         model="m",
         metric="sum-radii",
         chart_baselines={"stale snapshot": 0.1},
@@ -365,7 +375,7 @@ def test_chart_groups_searches_by_problem_key_across_runs(tmp_path):
     second = run_dir / "searches" / "p-2"
     second.mkdir(parents=True)
     write_search_meta(second, SearchMeta(
-        search_id="p-2", run_id="r1", problem="p", problem_id="p", backend="dummy",
+        search_id="p-2", run_id="r1", problem="p", problem_id="p", agent="dummy",
         model="m", metric="score", started_at="2026-08-22T10:00:30+00:00",
     ))
     Journal(second / "journal.jsonl").candidate_result(Candidate(

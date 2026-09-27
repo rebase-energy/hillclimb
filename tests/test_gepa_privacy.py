@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from hillclimb.api import _finish_holdout
-from hillclimb.backends.fake import FakeBackend
+from hillclimb.agents.fake import FakeAgent
 from hillclimb.harness.dirs import create_search_dir
 from hillclimb.harness.evaluation import CandidateEvaluator
 from hillclimb.harness.journal import Journal
@@ -54,9 +54,9 @@ def run_search(task, config, tmp_path):
     config.holdout.top_k = 2
     holdout = SentinelHoldout()
     driver = DoneMarkingDriver(holdout, steps=2)
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.6))
-    backend.queue(script=ok_script(0.7))
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.6))
+    agent.queue(script=ok_script(0.7))
     search_dir = create_search_dir(tmp_path / "runs" / "r", "s")
     journal = Journal(search_dir / "journal.jsonl")
     # exactly what execute_search builds for gepa: the climber asks for `after`
@@ -66,7 +66,7 @@ def run_search(task, config, tmp_path):
         holdout_scorer=holdout, holdout_timing="after", journal=journal,
     )
     searcher = make_gepa(
-        task, config, tmp_path, backend=backend, driver=driver,
+        task, config, tmp_path, agent=agent, driver=driver,
         search_dir=search_dir, journal=journal, evaluator=evaluator,
     )
     selected = searcher.run()

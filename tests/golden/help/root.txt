@@ -14,6 +14,9 @@
 │             them, start your own, check one before spending budget on it                                             │
 │ connect     Connect the agents that run operators (claude, codex, pi) and the OpenRouter route that pays for them.   │
 │ demo        Try hillclimb in one command: agents climb the circle-packing problem.                                   │
+│ disconnect  Undo `hillclimb connect <target>` on hillclimb's side: unpin it as the                                   │
+│             default and forget the staged credentials, so the next `connect` sets it                                 │
+│             up from scratch again.                                                                                   │
 │ experiment  Compare setups: named arms of config overrides × repeats on a problem                                    │
 │ graph       Live knowledge graph (same screen as `hillclimb knowledge graph`).                                       │
 │ init        Create a hillclimb dir.                                                                                  │
@@ -28,7 +31,7 @@
 │ run         Start a run on a problem or a run-spec YAML.                                                             │
 │ show        Everything known about one candidate.                                                                    │
 │ similarity  Live 3D similarity views of a search's candidates: `map` (pairwise, default) and `reference`.            │
-│ smoke       One real DRAFT call through the selected backend, end to end.                                            │
+│ smoke       One real DRAFT call through the selected agent, end to end.                                              │
 │ status      Show the candidate tree of a search.                                                                     │
 │ stop        Gracefully stop a running engine.                                                                        │
 │ store       The record store behind the cross-run views (`store.backend` in config.yaml: files | sqlite)             │

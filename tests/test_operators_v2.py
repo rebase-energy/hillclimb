@@ -6,7 +6,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from hillclimb.backends.fake import FakeBackend
+from hillclimb.agents.fake import FakeAgent
 from hillclimb.harness.budget import BudgetManager
 from tests.conftest import local_executor
 from hillclimb.harness.journal import Journal
@@ -15,14 +15,14 @@ from hillclimb.harness.dirs import create_search_dir
 from tests.conftest import ok_script
 
 
-def make_searcher(task, config, backend, max_candidates=10):
+def make_searcher(task, config, agent, max_candidates=10):
     search_dir = create_search_dir(config.paths.runs_dir, "test-run")
     journal = Journal(search_dir / "journal.jsonl")
     searcher = SearchRig(
         problem=task,
         config=config,
         journal=journal,
-        backend=backend,
+        agent=agent,
         executor=local_executor(),
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir,
@@ -36,7 +36,7 @@ def make_searcher(task, config, backend, max_candidates=10):
 
 
 def test_draft_prompt_carries_research_cue_by_default(task, config):
-    searcher, _, _ = make_searcher(task, config, FakeBackend())
+    searcher, _, _ = make_searcher(task, config, FakeAgent())
     prompt = searcher.build_prompt("draft", None, "minimal")
     assert "# Research first" in prompt
     assert "state of the art" in prompt
@@ -48,7 +48,7 @@ def test_draft_prompt_carries_research_cue_by_default(task, config):
 
 def test_draft_research_cue_gated_off(task, config):
     config.climber.operators.setdefault("draft", {})["retrieval"] = False
-    searcher, _, _ = make_searcher(task, config, FakeBackend())
+    searcher, _, _ = make_searcher(task, config, FakeAgent())
     prompt = searcher.build_prompt("draft", None, "minimal")
     assert "# Research first" not in prompt
     assert "{{" not in prompt
@@ -57,16 +57,16 @@ def test_draft_research_cue_gated_off(task, config):
 # --- ablation-guided improve ---
 
 
-def scored_target(task, config, backend):
-    backend.queue(script=ok_script(0.6), notes="draft one\n")
-    searcher, journal, _ = make_searcher(task, config, backend)
+def scored_target(task, config, agent):
+    agent.queue(script=ok_script(0.6), notes="draft one\n")
+    searcher, journal, _ = make_searcher(task, config, agent)
     target = searcher.run_operator("draft", None)
     assert target.status == "passing"
     return searcher, journal, target
 
 
 def test_improve_prompt_carries_ablation_cue_by_default(task, config):
-    searcher, _, target = scored_target(task, config, FakeBackend())
+    searcher, _, target = scored_target(task, config, FakeAgent())
     prompt = searcher.build_prompt("improve", target, None)
     assert "Ablation study" in prompt
     assert "ablation.md" in prompt
@@ -78,7 +78,7 @@ def test_improve_prompt_carries_ablation_cue_by_default(task, config):
 
 def test_improve_ablation_cue_gated_off(task, config):
     config.climber.operators.setdefault("improve", {})["ablation"] = False
-    searcher, _, target = scored_target(task, config, FakeBackend())
+    searcher, _, target = scored_target(task, config, FakeAgent())
     prompt = searcher.build_prompt("improve", target, None)
     assert "Ablation study" not in prompt
     assert "exactly ONE measurable change" in prompt
@@ -88,9 +88,9 @@ def test_improve_ablation_cue_gated_off(task, config):
 def test_improve_prompt_reuses_sibling_ablation(task, config):
     """An earlier improve attempt's ablation.md (analyzing the same target
     solution) is fed to the next improve of that target, newest first."""
-    backend = FakeBackend()
-    searcher, _, target = scored_target(task, config, backend)
-    backend.queue(script=ok_script(0.7), notes="model: swap to gbm\n")
+    agent = FakeAgent()
+    searcher, _, target = scored_target(task, config, agent)
+    agent.queue(script=ok_script(0.7), notes="model: swap to gbm\n")
     child = searcher.run_operator("improve", target)
     Path(child.candidate_dir, "ablation.md").write_text(
         "- features: +0.04\n- model: +0.01\n- target: features\n"
@@ -103,10 +103,10 @@ def test_improve_prompt_reuses_sibling_ablation(task, config):
 
 
 def test_prior_ablations_empty_without_files_or_when_gated(task, config):
-    backend = FakeBackend()
-    searcher, _, target = scored_target(task, config, backend)
+    agent = FakeAgent()
+    searcher, _, target = scored_target(task, config, agent)
     assert "Prior ablation findings" not in searcher.build_prompt("improve", target, None)
-    backend.queue(script=ok_script(0.7), notes="tweak\n")
+    agent.queue(script=ok_script(0.7), notes="tweak\n")
     child = searcher.run_operator("improve", target)
     Path(child.candidate_dir, "ablation.md").write_text("- model: +0.02\n")
     config.climber.operators.setdefault("improve", {})["ablation"] = False

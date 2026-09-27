@@ -4,19 +4,22 @@
  OpenRouter credits as the bill for codex or pi operators.                                                              
                                                                                                                         
  The only credential hillclimb stores itself: the key is validated against                                              
- OpenRouter (one unbilled call), then written to the `.env` beside                                                      
- config.yaml that `hillclimb init` gitignores — never into config.yaml,                                                 
- where it could be journaled. `--backend codex` also pins the route.                                                    
+ OpenRouter (one unbilled call), then written to a `.env` — the user-level                                              
+ one in `~/.config/hillclimb/`, or with `--local` the one beside this                                                   
+ folder's config.yaml that `hillclimb init` gitignores — never into                                                     
+ config.yaml, where it could be journaled. `--agent codex` also pins                                                    
+ the route.                                                                                                             
                                                                                                                         
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --key                          TEXT  The API key; omitted, connect asks for it (input hidden)                        │
-│ --backend                      TEXT  Also route this backend through OpenRouter: codex | pi                          │
+│ --agent                        TEXT  Also route this agent through OpenRouter: codex | pi                            │
 │ --model                        TEXT  OpenRouter model id, e.g. qwen/qwen3-coder                                      │
 │ --probe        --no-probe            Make one tool-free agent call to prove the route works [default: probe]         │
-│ --default      --no-default          Write this backend into config.yaml. Default: only when no backend is pinned    │
-│                                      there yet                                                                       │
-│ --user                               Write the defaults to ~/.config/hillclimb/config.yaml instead of the hillclimb  │
-│                                      dir                                                                             │
+│ --default      --no-default          Pin this agent as the default. Default: only when none is pinned there yet      │
+│ --local        --user                Where the defaults (and an OpenRouter key) go: --user (the default) is          │
+│                                      ~/.config/hillclimb/, every folder on this machine; --local is this folder's    │
+│                                      hillclimb dir, overriding the user level for it alone                           │
+│                                      [default: user]                                                                 │
 │ --help     -h                        Show this message and exit.                                                     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 

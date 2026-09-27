@@ -22,8 +22,8 @@ GEPA should generate and select candidate `solution.py` text while hillclimb rem
 of truth for candidate directories, agent execution, verifier calls, validation trials, budgets,
 controls, the append-only journal, status, best/selected candidates, and private holdout scoring.
 
-The runtime mutation agent should use hillclimb's existing backend/router abstraction. This makes
-Claude Code usable by configuring the normal hillclimb backend or a `routing.gepa` override; do
+The runtime mutation agent should use hillclimb's existing agent/router abstraction. This makes
+Claude Code usable by configuring the normal hillclimb agent or a `routing.gepa` override; do
 not add a second Claude SDK integration inside the GEPA adapter.
 
 ## Definition of done
@@ -33,7 +33,7 @@ The work is complete only when all of the following are true:
 - `search.policy: gepa` and `hillclimb run ... --policy gepa` dispatch to a dedicated GEPA search
   runner without pretending that GEPA satisfies the read-only `SearchPolicy` contract.
 - A seeded GEPA run proposes edited `solution.py` candidates through an existing hillclimb agent
-  backend, evaluates them with the existing verifier contract, and journals every evaluation.
+  agent, evaluates them with the existing verifier contract, and journals every evaluation.
 - Higher-is-better and lower-is-better metrics both produce correct GEPA fitness values.
 - Invalid proposals receive useful reflective feedback and a finite dominated fitness rather than
   crashing the optimization.
@@ -48,7 +48,7 @@ The work is complete only when all of the following are true:
 - Greedy and OpenEvolve behavior remains unchanged, and the full test suite passes.
 - A live, sequential three-arm experiment completes three Greedy searches, three OpenEvolve
   searches, and three GEPA searches from the identical executable seed, wall-clock budget,
-  verifier settings, Claude Code backend, and model. All nine searches must finish successfully
+  verifier settings, Claude Code agent, and model. All nine searches must finish successfully
   and their results must be recorded before the implementation task is considered complete.
 - The README explains installation, configuration, limitations, resume behavior, and the
   distinction between the OpenEvolve policy and the GEPA engine.
@@ -69,7 +69,7 @@ changes isolated and review the final diff by path.
 
 The current `SearchPolicy` seam in `src/hillclimb/policy.py` is deliberately read-only. A policy
 chooses an `Action`—operator, target, inspirations, complexity, route, and metadata—then
-`GreedySearcher` creates the workspace and asks a hillclimb backend to draft or edit the actual
+`GreedySearcher` creates the workspace and asks a hillclimb agent to draft or edit the actual
 candidate.
 
 GEPA is a full optimizer. Its faithful loop includes candidate text, evaluation feedback,
@@ -104,7 +104,7 @@ The factory can live in `src/hillclimb/search_strategy.py`. Avoid renaming or mo
 |---|---|---|
 | Candidate text | GEPA | Candidate is initially `{"solution.py": source}`. |
 | Parent/Pareto selection | GEPA | Use upstream GEPA behavior and checkpointing. |
-| Reflection and mutation | GEPA + hillclimb backend | A custom GEPA proposer invokes the routed agent in a scratch workspace. |
+| Reflection and mutation | GEPA + hillclimb agent | A custom GEPA proposer invokes the routed agent in a scratch workspace. |
 | Problem/data access | hillclimb | Link or copy with the same isolation rules as existing candidates. |
 | Candidate IDs/directories | hillclimb | Continue canonical `cNNN` IDs and normal search-tree layout. |
 | Validation execution | hillclimb | Use `Executor` and the trusted result-file contract. |
@@ -125,7 +125,7 @@ Implement these constraints explicitly rather than leaving ambiguous partial sup
 - A seed is required. Accept `--seed-from`, or use an executable code baseline if the problem
   already provides one. If neither exists, fail before optimization with an actionable message
   telling the user to pass `--seed-from`.
-- Serial GEPA proposal/evaluation. Reject `search.parallel_operators > 1` for GEPA with a clear
+- Serial GEPA proposal/evaluation. Reject `search.parallel_agents > 1` for GEPA with a clear
   unsupported-in-MVP message rather than silently ignoring it, and explicitly set GEPA's own
   `EngineConfig.parallel=False` because upstream currently defaults it to true.
 - GEPA merge disabled. Reject `use_merge: true` in the MVP. Mutation lineage is supported; merge
@@ -146,12 +146,12 @@ resume, suite/fleet propagation, and experiment overrides already persist those 
 Example:
 
 ```yaml
-backend: claude-code
+agent: claude-code
 model: claude-sonnet-4-5
 
 search:
   policy: gepa
-  parallel_operators: 1
+  parallel_agents: 1
   n_trials: 1
   policy_params:
     max_metric_calls: 50
@@ -166,13 +166,13 @@ search:
 
 routing:
   gepa:
-    backend: claude-code
+    agent: claude-code
     model: claude-sonnet-4-5
 ```
 
 Treat model identifiers in documentation as examples; use identifiers supported by the installed
-backend. `Router.resolve("gepa")` already falls back through `routing.default` to the global
-backend/model/auth settings.
+agent. `Router.resolve("gepa")` already falls back through `routing.default` to the global
+agent/model/auth settings.
 
 Create an integration-specific Pydantic model, for example `GEPAParams`, instead of spreading
 untyped `dict.get()` calls through the runner. Forbid unknown keys so misspelled budget or privacy
@@ -255,7 +255,7 @@ framework before a second engine requires it.
 2. Inspect `git status --short`; preserve all unrelated work.
 3. Read the current versions of `api.py`, `search.py`, `policy.py`, `executor.py`, `journal.py`,
    `candidate.py`, `baseline.py`, `control.py`, `routing.py`, `status.py`, `config.py`, and the
-   backend base classes.
+   agent base classes.
 4. Install/sync the optional GEPA dependency in the development environment.
 5. Prefer the public single-task `gepa.optimize_anything.optimize_anything` frontend. Inspect its
    installed signature plus `GEPAConfig`, `EngineConfig`, `ReflectionConfig`, custom candidate
@@ -305,7 +305,7 @@ private trial/report logic into a second engine.
 3. For `policy != "gepa"`, construct `GreedySearcher` exactly as today and call `get_policy()`.
 4. For `policy == "gepa"`, lazily import and construct `GEPASearcher`; do not call `get_policy()`.
 5. Pass the same dependencies already created by `execute_search`: journal, executor, budget,
-   status, slots/abort where relevant, router, backend pool, holdout scorer, command drain,
+   status, slots/abort where relevant, router, agent pool, holdout scorer, command drain,
    knowledge context, reference solution, and seed path.
 6. Parse `GEPAParams` and enforce MVP constraints before creating any candidate.
 7. Keep `SearchMeta.policy` and `policy_params` unchanged so existing resume logic continues to
@@ -320,7 +320,7 @@ For each proposal:
 1. Receive the parent candidate, reflective dataset, requested components, and GEPA metadata.
 2. Require `components_to_update == ["solution.py"]` or the equivalent set. Reject unexpected
    component names.
-3. Resolve `Router.resolve("gepa")`, acquire the backend from `BackendPool`, and respect the
+3. Resolve `Router.resolve("gepa")`, acquire the agent from `AgentPool`, and respect the
    remaining wall and cost budgets before launching it.
 4. Create a scratch directory under:
 
@@ -343,19 +343,19 @@ For each proposal:
    - an explicit instruction not to invent, read, or optimize against holdout data;
    - the remaining time budget.
 
-7. Invoke the existing `OperatorBackend` with an `OperatorRequest` pointed at the scratch
-   directory. Use the backend's normal authentication, abort event, model, timeout, cost, and token
+7. Invoke the existing `Agent` with an `OperatorRequest` pointed at the scratch
+   directory. Use the agent's normal authentication, abort event, model, timeout, cost, and token
    accounting.
 8. On success, read the edited `solution.py`, ensure it is non-empty and remains inside the
    workspace, and return `{"solution.py": source}` to GEPA.
 9. Record proposal metadata in a thread-safe bridge keyed by a stable source hash:
 
    - GEPA iteration ID and parent iteration ID;
-   - backend/model/session/cost/tokens/duration;
+   - agent/model/session/cost/tokens/duration;
    - scratch directory;
    - parent source hash.
 
-10. If the backend fails without producing usable source, raise a typed proposer error that the
+10. If the agent fails without producing usable source, raise a typed proposer error that the
     runner translates into a controlled failed proposal or search failure according to upstream
     GEPA's supported callback semantics. Never return the unchanged parent while claiming a new
     proposal.
@@ -374,7 +374,7 @@ Implement an idempotent bridge from GEPA candidate text to a canonical hillclimb
 - Maintain `source_hash -> Candidate` and GEPA iteration/source mappings.
 - On first evaluation, allocate the next journal ID and create the normal `cNNN` candidate
   directory.
-- Copy the proposed source into that canonical directory and attach the proposal's backend info.
+- Copy the proposed source into that canonical directory and attach the proposal's agent info.
 - Use operator `improve` for generated proposals and existing `seed`/baseline semantics for the
   initial candidate.
 - Put at least these values in `policy_meta`:
@@ -442,7 +442,7 @@ forbidden holdout keys and sentinel values.
 `GEPASearcher.run()` should follow this order:
 
 1. Replay the journal and reconcile any pending candidates with the same recovery rules used by
-   the existing searcher. Rebuild source-hash, lineage, backend-cost, and iteration maps from
+   the existing searcher. Rebuild source-hash, lineage, agent-cost, and iteration maps from
    candidate files plus `policy_meta`.
 2. Write/recover the declared or scored baseline using the existing baseline helpers. Do not
    create a second baseline on resume.
@@ -534,14 +534,14 @@ Hillclimb remains the outer authority.
   hillclimb display/selection only.
 - Raise the normal park or stop exception when commanded.
 - Check `BudgetManager.should_stop()` and remaining operator time.
-- Check the configured USD cost ceiling using journaled backend costs.
-- Pass the shared abort event to the backend and machine-slot acquisition.
+- Check the configured USD cost ceiling using journaled agent costs.
+- Pass the shared abort event to the agent and machine-slot acquisition.
 
 #### Between proposal/evaluation iterations
 
 - Refresh status counts, cost, best, selected, and current entries.
 - Use a GEPA stop callback if the installed API supports it. If callbacks only run at iteration
-  boundaries, document that control latency is bounded by the current backend/verifier call; abort
+  boundaries, document that control latency is bounded by the current agent/verifier call; abort
   still handles an in-flight agent process.
 - Do not use a background thread that mutates the journal.
 
@@ -585,7 +585,7 @@ Update the README and relevant CLI help:
 - installation with `hillclimb[gepa]`;
 - a minimal command and YAML example;
 - the seed requirement and one-component MVP;
-- how to select Claude Code through the normal backend/routing configuration;
+- how to select Claude Code through the normal agent/routing configuration;
 - resume/checkpoint location;
 - validation-versus-holdout privacy guarantee;
 - GEPA limitations in the MVP;
@@ -602,7 +602,7 @@ overrides.
 
 ## Test plan
 
-Use fake backends, fake executors, and a monkeypatched/fake GEPA driver for most tests. No test in
+Use fake agents, fake executors, and a monkeypatched/fake GEPA driver for most tests. No test in
 the default suite may contact a model provider or require credentials.
 
 ### Unit tests
@@ -612,9 +612,9 @@ the default suite may contact a model provider or require credentials.
 - Runner factory selects `GEPASearcher` only for `policy == "gepa"`; all existing policies take the
   unchanged path.
 - Proposer materializes parent source and feedback, resolves `routing.gepa`, invokes the fake
-  backend, and returns the edited source.
+  agent, and returns the edited source.
 - Proposer rejects missing, empty, escaped, or unchanged output as specified.
-- Proposal bridge records backend/model/cost/tokens and GEPA lineage by source hash.
+- Proposal bridge records agent/model/cost/tokens and GEPA lineage by source hash.
 - Evaluator converts higher-is-better and lower-is-better raw scores correctly.
 - Invalid verifier output returns dominated finite fitness plus useful stderr/report feedback.
 - Duplicate source content reuses the existing evaluation and candidate ID.
@@ -628,7 +628,7 @@ the default suite may contact a model provider or require credentials.
 
 ### End-to-end tests with fakes
 
-- Start from a seed, have a fake mutation backend improve source twice, have fake GEPA evaluate the
+- Start from a seed, have a fake mutation agent improve source twice, have fake GEPA evaluate the
   candidates, and verify canonical directories, parent IDs, events, status, best, and selection.
 - Repeat with a lower-is-better problem.
 - Produce a buggy candidate followed by a recovery and assert the reflection feedback contains the
@@ -641,7 +641,7 @@ the default suite may contact a model provider or require credentials.
 
 ### Optional upstream integration test
 
-Mark a small real-GEPA, fake-backend test with `pytest.importorskip("gepa")`. It should exercise the
+Mark a small real-GEPA, fake-agent test with `pytest.importorskip("gepa")`. It should exercise the
 installed callback signatures without making external model calls. Keep it deterministic and
 fast.
 
@@ -671,7 +671,7 @@ uv run hillclimb run src/hillclimb/demo/circle-packing \
   --policy gepa \
   --seed-from PATH_TO_WORKING_SOLUTION \
   --budget 20m \
-  --set search.parallel_operators=1 \
+  --set search.parallel_agents=1 \
   --set search.policy_params.max_metric_calls=3 \
   --set search.policy_params.max_candidate_proposals=2
 ```
@@ -695,8 +695,8 @@ search strategies and record the results before declaring the task complete:
 2. OpenEvolve;
 3. GEPA.
 
-These are three **search strategies/optimizers**, not three operator backends. All arms must use the
-same real Claude Code operator backend and the same verified Claude model so the experiment varies
+These are three **search strategies/optimizers**, not three operator agents. All arms must use the
+same real Claude Code operator agent and the same verified Claude model so the experiment varies
 only the search strategy.
 
 ### Add shared-seed support to experiments
@@ -731,7 +731,7 @@ the purpose is to compare improvement from a neutral, reproducible starting poin
 
 Add `hillclimb/experiments/gepa-vs-openevolve-vs-greedy.yaml`. Use this shape, replacing
 `VERIFIED_CLAUDE_MODEL_ID` with an identifier successfully exercised through the installed
-`claude-code` backend:
+`claude-code` agent:
 
 ```yaml
 name: gepa-vs-openevolve-vs-greedy
@@ -743,10 +743,10 @@ schedule: sequential
 noise_floor: 0.01
 
 defaults:
-  backend: claude-code
+  agent: claude-code
   model: VERIFIED_CLAUDE_MODEL_ID
   learning.enabled: false
-  search.parallel_operators: 1
+  search.parallel_agents: 1
   search.n_trials: 1
   holdout.enabled: true
   holdout.top_k: 5
@@ -789,7 +789,7 @@ The arm order must remain repeat-major and round-robin as implemented by `experi
 
 The live experiment requires installed optional dependencies, working Claude Code authentication,
 sufficient provider quota, and at least the full nine-search wall/cost allowance. Dummy/fake
-backends satisfy automated tests but do not satisfy this acceptance phase.
+agents satisfy automated tests but do not satisfy this acceptance phase.
 
 Run:
 
@@ -814,11 +814,11 @@ uv run hillclimb experiment report \
 ```
 
 Before the paid run, the dry run must print exactly three arms × one problem × three repeats = nine
-searches, show a shared seed path, and show the same backend/model/budget/trial/learning settings for
+searches, show a shared seed path, and show the same agent/model/budget/trial/learning settings for
 all arms. Correct the configuration before spending model quota if any of these differ.
 
 If the cloud environment lacks Claude credentials, quota, optional dependencies, or the authorized
-cost budget, this phase is blocked. Do not silently substitute Codex, a dummy backend, fewer arms,
+cost budget, this phase is blocked. Do not silently substitute Codex, a dummy agent, fewer arms,
 shorter runs, or synthetic results, and do not mark the task complete. Report the exact missing
 precondition and the already completed implementation/test work.
 
@@ -829,11 +829,11 @@ Create `docs/gepa-three-arm-results.md` after the live runs. It must contain:
 - repository commit and dirty-worktree note;
 - GEPA, OpenEvolve, hillclimb, Python, and platform versions;
 - experiment-spec hash and seed-source hash;
-- resolved Claude backend/model and non-secret authentication mode;
+- resolved Claude agent/model and non-secret authentication mode;
 - start/end timestamps and the exact commands used;
 - one row per search with arm, repeat, run/search reference, terminal state, seed score, selected
   candidate ID, selected validation/holdout score, candidate/verifier-call count, invalid-candidate
-  count, wall time, model tokens, and model cost where the backend reports them;
+  count, wall time, model tokens, and model cost where the agent reports them;
 - per-arm mean, median, spread, paired gap to Greedy, and repeat wins from `experiment report`;
 - whether GEPA hit a metric/proposal cap or any arm hit wall/cost limits;
 - any retries, resumes, failures, or deviations, without deleting the original failed run records;
@@ -849,14 +849,14 @@ All of the following must pass:
 
 - `--dry-run` expands to exactly nine jobs: three repeats for each named arm.
 - The same seed file and source hash are used by all nine searches.
-- The same Claude Code backend, Claude model, 15-minute budget, trial settings, verifier, metric
+- The same Claude Code agent, Claude model, 15-minute budget, trial settings, verifier, metric
   direction, learning setting, and serial operator setting are used by all arms.
 - Every search reaches terminal state `done`; parked, stopped, failed, crashed, or still-running
   searches must be resumed or rerun and documented before completion.
 - The experiment report contains `n=3` for Greedy, OpenEvolve, and GEPA.
 - Every search has a scored seed, at least one evaluated post-seed candidate, and a non-null selected
   candidate/score.
-- GEPA candidates appear in the normal journal/tree/status views with correct lineage and backend
+- GEPA candidates appear in the normal journal/tree/status views with correct lineage and agent
   accounting.
 - GEPA state, prompts, and ASI contain no holdout fields or sentinel values.
 - The exact run references and complete results are recorded in `docs/gepa-three-arm-results.md`.
@@ -873,7 +873,7 @@ All of the following must pass:
 | Duplicate candidates on resume | Stable source hash, journal replay, checkpoint reconciliation, idempotent evaluator. |
 | Metric direction inversion | Raw score in journal, one explicit max-fitness transform, tests in both directions. |
 | Invalid code breaks search | Canonical buggy candidate + finite dominated fitness + actionable logs. |
-| Agent cost is lost | Attach proposer `BackendInfo` to the evaluated candidate and replay its cost. |
+| Agent cost is lost | Attach proposer `AgentInfo` to the evaluated candidate and replay its cost. |
 | Scope explosion | One task, one file, one parent, serial execution, required seed, no merge. |
 | Existing behavior regresses | Small dispatch factory, shared validation helpers, existing suite before/after. |
 | Live acceptance cannot run in cloud | Treat missing Claude auth/quota/cost authority as a blocker; never replace it with fake evidence. |
@@ -900,11 +900,11 @@ leave the changes uncommitted and report exactly which paths belong to this task
 - [ ] Optional extra installs and missing-extra error is actionable.
 - [ ] `--policy gepa` dispatches at engine level, not through `_POLICIES`.
 - [ ] Seed requirement is enforced before model spend.
-- [ ] Claude Code can be selected through `backend` or `routing.gepa`.
+- [ ] Claude Code can be selected through `agent` or `routing.gepa`.
 - [ ] GEPA proposes `solution.py`; hillclimb creates/evaluates canonical candidates.
 - [ ] Raw score direction and GEPA max-fitness mapping are tested.
 - [ ] Invalid candidates produce finite dominated fitness and reflective feedback.
-- [ ] Candidate metadata contains reproducible GEPA lineage and backend accounting.
+- [ ] Candidate metadata contains reproducible GEPA lineage and agent accounting.
 - [ ] GEPA inputs/state have no holdout data.
 - [ ] Normal completion applies existing top-k holdout and selection.
 - [ ] Stop, park, abort, wall/cost budgets, heartbeat, and resume work.
@@ -915,7 +915,7 @@ leave the changes uncommitted and report exactly which paths belong to this task
 - [ ] Experiment YAML supports one shared seed and the launcher passes it to every arm.
 - [ ] The committed three-arm dry run expands to nine comparable jobs.
 - [ ] Three Greedy, three OpenEvolve, and three GEPA live searches all finish in state `done` using
-      the same Claude backend/model, seed, budget, and verifier settings.
+      the same Claude agent/model, seed, budget, and verifier settings.
 - [ ] Each of the three arms reports `n=3`, a selected score for every repeat, and at least one
       evaluated post-seed proposal per search.
 - [ ] `docs/gepa-three-arm-results.md` records all nine run references, measurements, environment,
@@ -936,11 +936,11 @@ phases in order, run targeted tests after each risky boundary, then run the full
 
 Do not expose holdout data to GEPA. Do not register GEPA as a normal SearchPolicy. Keep the MVP to
 one solution.py component, serial execution, a required executable seed, and no merge. Use
-hillclimb's existing routed backend so Claude Code can be the mutation agent.
+hillclimb's existing routed agent so Claude Code can be the mutation agent.
 
 Do not finish after automated tests. Implement shared experiment seed support, then complete the
 required three-arm live acceptance experiment: three Greedy, three OpenEvolve, and three GEPA
-searches using the same seed, Claude backend/model, verifier settings, and 15-minute budget. All
+searches using the same seed, Claude agent/model, verifier settings, and 15-minute budget. All
 nine searches must reach state done and be recorded in docs/gepa-three-arm-results.md. If real
 Claude credentials, quota, or authorized cost are unavailable, report that as a concrete blocker;
 do not substitute fake runs or mark the task complete.

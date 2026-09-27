@@ -9,6 +9,7 @@ from pathlib import Path
 import typer
 
 from hillclimb.cli import common
+from hillclimb.cli.common import _m, say
 from hillclimb.cli._app import HillclimbGroup, app
 from hillclimb.cli.knowledge import knowledge_graph
 from hillclimb.config import Config
@@ -16,6 +17,19 @@ from hillclimb.harness.journal import Journal
 from hillclimb.harness.run import search_ref
 from hillclimb.harness.store import DataStore, SearchRecord, open_store, resolve_search
 from hillclimb.problem import load_problem
+
+
+SUMMARY_CHARS = 110  # a candidate's summary in the status table, before `…`
+
+
+def _status_style(status: str) -> str:
+    """The theme style for a candidate's verdict: passing is ok, a failure
+    or a bug is bad, everything else (pending, abandoned) warns."""
+    if status == "passing":
+        return "ok"
+    if status in ("failing", "buggy", "crashed"):
+        return "bad"
+    return "warn"
 
 
 @app.command()
@@ -29,7 +43,7 @@ def status(search: str = typer.Argument("latest")):
     state = record.state
     if search_status is not None:
         remaining = int(search_status.budget.remaining_s)
-        line = f"state={state}  budget: {int(search_status.budget.spent_s)}s spent / {remaining}s left"
+        line = f"[head]state={_m(state)}[/]  budget: {int(search_status.budget.spent_s)}s spent / {remaining}s left"
         budget = search_status.budget
         if budget.max_evaluations:
             line += f"  evaluations {budget.evaluations}/{budget.max_evaluations}"
@@ -37,26 +51,54 @@ def status(search: str = typer.Argument("latest")):
             line += f"  tokens {budget.tokens:,}/{budget.max_tokens:,}"
         if search_status.current:
             active = " · ".join(
-                f"{c.candidate_id}({c.operator}/{c.phase})" for c in search_status.current[:3]
+                f"[path]{_m(c.candidate_id)}[/]({_m(c.operator)}/{_m(c.phase)})"
+                for c in search_status.current[:3]
             )
             if len(search_status.current) > 3:
                 active += f" +{len(search_status.current) - 3}"
             line += f"  active: {active}"
-        typer.echo(line)
-    typer.echo(f"Search {search_ref(search_dir)} — {len(journal.candidates)} candidates")
-    for candidate in journal.candidates.values():
+        say(line)
+    say(f"[head]Search[/] [path]{_m(search_ref(search_dir))}[/] — {len(journal.candidates)} candidates")
+    candidates = list(journal.candidates.values())
+    with_holdout = any(c.holdout_score is not None for c in candidates)
+    # the CURRENT selection wears the star and the `selected` mark; a record's
+    # own `is_selected` is historical (set when it landed, never cleared)
+    current = journal.selected_candidate(bool(record.meta.higher_is_better))
+    current_id = current.candidate_id if current is not None else None
+    rows = []
+    for candidate in candidates:
+        is_current = candidate.candidate_id == current_id
         score = f"{candidate.val_score:.5f}" if candidate.val_score is not None else "-"
-        hold = f" hold={candidate.holdout_score:.5f}" if candidate.holdout_score is not None else ""
-        marks = (" *SELECTED*" if candidate.is_selected else "") + (
-            " *best-val*" if candidate.is_best else ""
+        hold = f"{candidate.holdout_score:.5f}" if candidate.holdout_score is not None else ""
+        marks = " ".join(
+            mark for mark, on in (
+                ("[ok]selected[/]", is_current),
+                ("[head]best[/]", candidate.is_best),
+                ("[warn]pruned[/]", candidate.pruned),
+            ) if on
         )
-        if candidate.pruned:
-            marks += " *PRUNED*"
-        parent = f" <- {candidate.parent_id}" if candidate.parent_id else ""
-        typer.echo(
-            f"  {candidate.candidate_id} {candidate.operator:<9} {candidate.status:<9} "
-            f"val={score}{hold}{marks}{parent}  {candidate.summary[:70]}"
-        )
+        summary = candidate.summary or ""
+        if len(summary) > SUMMARY_CHARS:
+            summary = summary[: SUMMARY_CHARS - 1].rstrip() + "…"
+        row = [
+            _m(candidate.candidate_id) + (" [warn]★[/]" if is_current else ""),
+            _m(candidate.operator),
+            f"[{_status_style(candidate.status)}]{_m(candidate.status)}[/]",
+            score,
+            *([hold] if with_holdout else []),
+            marks,
+            f"[path]{_m(candidate.parent_id)}[/]" if candidate.parent_id else "",
+            f"[note]{_m(summary)}[/]",
+        ]
+        rows.append(row)
+    # every cell wraps inside its own column, so a long summary folds under
+    # itself and never spills under the id
+    common.table(
+        [("", "path"), ("operator", None), ("status", None), ("val", None),
+         *([("holdout", None)] if with_holdout else []),
+         ("", None), ("parent", "path"), ("summary", None)],
+        rows,
+    )
     scored = [
         c
         for c in journal.candidates.values()
@@ -64,13 +106,13 @@ def status(search: str = typer.Argument("latest")):
     ]
     if scored:
         gaps = [abs(c.val_score - c.holdout_score) for c in scored]
-        typer.echo(
-            f"val→holdout gap: mean {sum(gaps)/len(gaps):.5g}, max {max(gaps):.5g} over {len(scored)} candidates"
+        say(
+            f"[head]val→holdout gap:[/] mean {sum(gaps)/len(gaps):.5g}, max {max(gaps):.5g} over {len(scored)} candidates"
         )
     floor = journal.noise_floor()
     if floor is not None:
-        typer.echo(
-            f"noise floor: {floor:.5g} (median trial spread) — gains below "
+        say(
+            f"[head]noise floor:[/] {floor:.5g} [note](median trial spread)[/] — gains below "
             f"~{2 * floor:.3g} are not measurable"
         )
 
@@ -113,25 +155,25 @@ def show(
         )
         if on
     ]
-    header = f"{cand.candidate_id}  {cand.operator}"
+    header = f"[head][path]{_m(cand.candidate_id)}[/]  {_m(cand.operator)}"
     if cand.complexity:
-        header += f"[{cand.complexity}]"
-    header += f"  status={cand.status}"
+        header += _m(f"[{cand.complexity}]")
+    header += f"  status={_m(cand.status)}[/]"
     if cand.parent_id:
-        header += f"  <- {cand.parent_id}"
+        header += f"  <- [path]{_m(cand.parent_id)}[/]"
     if marks:
-        header += f"  [{', '.join(marks)}]"
-    typer.echo(header)
+        header += "  " + _m(f"[{', '.join(marks)}]")
+    say(header)
     if cand.summary:
-        typer.echo(f"summary: {cand.summary}")
-    backend = cand.backend
-    if backend.name:
-        agent_line = f"agent: {backend.name}"
-        if backend.cost_usd is not None:
-            agent_line += f", ${backend.cost_usd:.2f}"
-        if backend.num_turns is not None:
-            agent_line += f", {backend.num_turns} turns"
-        typer.echo(agent_line)
+        say(f"[head]summary:[/] {_m(cand.summary)}")
+    agent = cand.agent
+    if agent.name:
+        agent_line = f"agent: {agent.name}"
+        if agent.cost_usd is not None:
+            agent_line += f", ${agent.cost_usd:.2f}"
+        if agent.num_turns is not None:
+            agent_line += f", {agent.num_turns} turns"
+        say(f"[head]agent:[/] {_m(agent_line[len('agent: '):])}")
     for trial in cand.trials:
         parts = [f"val={trial.val_score if trial.val_score is not None else '-'}"]
         if trial.params:
@@ -141,7 +183,7 @@ def show(
         if trial.holdout_error:
             parts.append(f"holdout_error={trial.holdout_error[:60]}")
         mark = "*" if trial.is_best and len(cand.trials) > 1 else ""
-        typer.echo(f"trial {trial.index}{mark}: {'  '.join(parts)}")
+        say(f"[head]trial {trial.index}{mark}:[/] {_m('  '.join(parts))}")
         for replicate in trial.replicates:
             rparts = [f"val={replicate.val_score if replicate.val_score is not None else '-'}"]
             if replicate.seed is not None:
@@ -151,30 +193,32 @@ def show(
             if replicate.returncode not in (0, None):
                 rparts.append(f"rc={replicate.returncode}")
             if replicate.timed_out:
-                rparts.append("TIMEOUT")
-            typer.echo(f"  replicate {replicate.seed if replicate.seed is not None else 0}: {'  '.join(rparts)}")
+                rparts.append("[bad]TIMEOUT[/]")  # the one part that is markup, not a value
+            seed = replicate.seed if replicate.seed is not None else 0
+            shown = "  ".join(r if r == "[bad]TIMEOUT[/]" else _m(r) for r in rparts)
+            say(f"  [head]replicate {seed}:[/] {shown}")
     if cand.tunable:
-        typer.echo("tunable: yes")
+        say("[head]tunable:[/] [ok]yes[/]")
     elif cand.params_error:
-        typer.echo(f"tunable: no — {cand.params_error}")
+        say(f"[head]tunable:[/] no — [note]{_m(cand.params_error)}[/]")
     scores = f"val_score={cand.val_score}"
     if cand.holdout_score is not None:
         scores += f"  holdout={cand.holdout_score:.5g}"
-    typer.echo(f"{scores}  ({metric}, {'higher' if higher else 'lower'} is better)")
+    say(f"[head]{_m(scores)}[/]  [note]({_m(metric)}, {'higher' if higher else 'lower'} is better)[/]")
 
     report = candidate_report(cand)
-    typer.echo("\n# Evaluation breakdown (validation split)\n")
+    say("\n[head]# Evaluation breakdown (validation split)[/]\n")
     typer.echo(
         render_report(report, metric)
         or "(no evaluation report — pre-feature candidate or non-emflow problem)"
     )
     delta = render_delta(candidate_report(parent), report, higher)
     if delta:
-        typer.echo(f"\n# Where it moved vs parent {parent.candidate_id}\n")
+        say(f"\n[head]# Where it moved vs parent [path]{_m(parent.candidate_id)}[/][/]\n")
         typer.echo(delta)
 
     if cand.metrics or cand.policy_meta:
-        typer.echo("\n# search metadata\n")
+        say("\n[head]# search metadata[/]\n")
         if cand.metrics:
             typer.echo("metrics: " + json.dumps(cand.metrics, sort_keys=True))
         if cand.policy_meta:
@@ -183,10 +227,10 @@ def show(
     candidate_dir = Path(cand.candidate_dir) if cand.candidate_dir else None
     solution = candidate_dir / "solution.py" if candidate_dir else None
     if parent is not None:
-        typer.echo(f"\n# solution.py diff vs {parent.candidate_id}\n")
+        say(f"\n[head]# solution.py diff vs [path]{_m(parent.candidate_id)}[/][/]\n")
         parent_solution = Path(parent.candidate_dir) / "solution.py" if parent.candidate_dir else None
         if solution is None or not solution.exists() or parent_solution is None or not parent_solution.exists():
-            typer.echo("(candidate_dir not available on this machine)")
+            say("[note](candidate_dir not available on this machine)[/]")
         else:
             diff = "".join(
                 difflib.unified_diff(
@@ -198,10 +242,10 @@ def show(
             )
             typer.echo(diff.rstrip() or "(identical)")
     if candidate_dir is not None and (candidate_dir / "notes.md").exists():
-        typer.echo("\n# notes.md\n")
+        say("\n[head]# notes.md[/]\n")
         typer.echo((candidate_dir / "notes.md").read_text().rstrip())
     if candidate_dir is not None and (candidate_dir / "exec_stdout.log").exists():
-        typer.echo("\n# stdout (tail)\n")
+        say("\n[head]# stdout (tail)[/]\n")
         typer.echo(tail(candidate_dir / "exec_stdout.log").rstrip())
 
 
@@ -393,10 +437,10 @@ def surface(
     try:
         problem = load_problem(record.meta.problem, config)
     except Exception as exc:  # noqa: BLE001 — a moved/deleted problem dir
-        typer.echo(f"Cannot load problem {record.meta.problem!r}: {exc}")
+        say(f"[warn]Cannot load problem [path]{_m(repr(record.meta.problem))}[/]: {_m(exc)}[/]")
         return
     if problem.landscape_path is None:
-        typer.echo(surface_unavailable(problem))
+        say(f"[warn]{_m(surface_unavailable(problem))}[/]")
         return
     SurfaceApp(config, search).run()
 
@@ -518,7 +562,7 @@ def similarity_scores(
 
     if list_scores:
         for name, cls in sorted(registered_scores().items()):
-            typer.echo(f"{name:15} {cls.description}")
+            say(f"[path]{_m(f'{name:15}')}[/] [note]{_m(cls.description)}[/]")
         return
     config = _config_or_default() if files else common.load_config()
     if files:
@@ -540,7 +584,7 @@ def similarity_scores(
             if solution.path.is_file():
                 solutions.append(solution)
             elif wanted:
-                typer.echo(f"{cid}: no solution.py — skipped", err=True)
+                common.warn(f"[path]{_m(cid)}[/]: no solution.py — skipped")
     if len(solutions) < 2:
         raise typer.BadParameter("need at least two solutions with a solution.py to compare")
 
@@ -554,7 +598,7 @@ def similarity_scores(
         try:
             matrix = similarity_matrix(instance, solutions)
         except SimilarityUnavailable as exc:
-            typer.echo(f"{instance.name}: unavailable — {exc}", err=True)
+            common.warn(f"[path]{_m(instance.name)}[/]: unavailable — {_m(exc)}")
             continue
         explanations = {s.id: instance.explain(s) for s in solutions} if explain else {}
         results.append((matrix, explanations))
@@ -651,7 +695,7 @@ def _open_similarity(search: str | None, single: bool, view: str, metric: str = 
                 config, reference=reference, run=(record.run_id, meta.problem_key), view=view, metric=metric,
             ).run()
             return
-        typer.echo(f"run view unavailable ({unavailable}); opening {record.ref} alone")
+        say(f"[warn]run view unavailable ({_m(unavailable)})[/]; opening [path]{_m(record.ref)}[/] alone")
 
     candidates = list(Journal(store.journal(record.key)).candidates.values())
     if view == "map":
@@ -665,7 +709,7 @@ def _open_similarity(search: str | None, single: bool, view: str, metric: str = 
             if unavailable is None:
                 break
     if unavailable is not None:
-        typer.echo(unavailable)
+        say(f"[warn]{_m(unavailable)}[/]")
         return
     SimilarityApp(config, record.ref, reference=reference, view=view, metric=metric).run()
 

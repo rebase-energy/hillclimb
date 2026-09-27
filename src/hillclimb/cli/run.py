@@ -23,11 +23,13 @@ from hillclimb.api import (
     resume_spent_seconds,
     run_fleet,
     spawn_search_proc,
+    spec_entry,
+    write_run_spec,
 )
-from hillclimb.backends import get_backend
+from hillclimb.agents import get_agent
 from hillclimb.cli import common
 from hillclimb.cli._app import app, print_banner
-from hillclimb.cli.common import _m, next_steps, say
+from hillclimb.cli.common import _m, fail, next_steps, say, warn
 from hillclimb.config import Config, RouteConfig
 from hillclimb.harness.budget import BudgetManager
 from hillclimb.harness.core import Harness
@@ -78,17 +80,17 @@ def _execute(
 ) -> None:
     """CLI shell over api.execute_search: messages + exit codes."""
     outcome = execute_search(
-        config, problem, search_dir, budget, log=typer.echo, seed_from=seed_from,
+        config, problem, search_dir, budget, log=common.engine_log, seed_from=seed_from,
         knowledge_context=knowledge_context,
     )
     ref = outcome.ref
     if outcome.state == "parked":
-        typer.echo(f"\nParked: {outcome.error}")
-        typer.echo(f"Resume later with: hillclimb resume {ref}")
+        say(f"\n[warn]Parked:[/] {_m(outcome.error)}")
+        say(f"Resume later with: [cmd]hillclimb resume {_m(ref)}[/]")
         raise typer.Exit(2)
     if outcome.state == "stopped":
-        typer.echo("\nStopped.")
-        typer.echo(f"Resume with: hillclimb resume {ref}")
+        say("\n[head]Stopped.[/]")
+        say(f"Resume with: [cmd]hillclimb resume {_m(ref)}[/]")
         raise typer.Exit(2)
     selected = outcome.selected
     if selected is not None:
@@ -127,23 +129,30 @@ def _run_problem(
         except (KeyError, ValueError) as exc:
             raise typer.BadParameter(str(exc)) from exc
     problem = load_problem(target, config)
+    total_s = common.parse_budget(budget) if budget else problem.time_budget_s
     if run_id is None:
         run_name = run_name or problem.problem_id
         run_dir = _create_problem_run(config, run_name, target, problem.problem_id)
         run_id = run_dir.name
+        # the run's own recipe, next to its record (spec.yaml)
+        write_run_spec(run_dir, [spec_entry(
+            target, budget=budget or total_s, agent=config.agent, model=config.model,
+            climber=config.climber.ref, parallel_agents=config.concurrency.parallel_agents,
+            n_replicates=config.evaluation.n_replicates, seed_from=seed_from,
+            set=[f"{key}={value}" for key, value in (arm_overrides or {}).items()],
+        )])
     else:
-        # suite child: the parent already wrote run.yaml
+        # suite child: the parent already wrote run.yaml and spec.yaml
         run_name = run_name or run_id
         run_dir = config.paths.runs_dir / run_id
-    total_s = common.parse_budget(budget) if budget else problem.time_budget_s
     search_dir = create_search(
         config, problem, run_dir, run_id, total_s, seed_from=seed_from,
         experiment=experiment, arm=arm, repeat=repeat, arm_overrides=arm_overrides,
     )
     tag = f", experiment={experiment}/{arm}" + (f" r{repeat}" if repeat else "") if experiment else ""
-    typer.echo(
-        f"Search {search_ref(search_dir)} (run={run_name}, problem={problem.problem_id}, "
-        f"backend={config.backend}, model={config.model}, budget={total_s}s{tag})"
+    say(
+        f"[head]Search {_m(search_ref(search_dir))}[/] [note](run={_m(run_name)}, problem={_m(problem.problem_id)}, "
+        f"agent={_m(config.agent)}, model={_m(config.model)}, budget={total_s}s{_m(tag)})[/]"
     )
     _execute(
         config, problem, search_dir,
@@ -157,12 +166,12 @@ def _run_suite(
     target: str,
     config: Config,
     budget: str | None,
-    backend: str | None,
+    agent: str | None,
     model: str | None,
     holdout: bool,
     name: str | None,
     climber: str | None = None,
-    parallel_operators: int | None = None,
+    parallel_agents: int | None = None,
     n_replicates: int | None = None,
     seed_from: Path | None = None,
     learning: bool = True,
@@ -198,26 +207,30 @@ def _run_suite(
     for problem_target in problem_targets:
         freeze_for_run(load_problem(problem_target, config), run_dir)
     launched = []
+    entries: list[dict] = []
     for index, (entry, problem_target) in enumerate(zip(suite.problems, problem_targets), 1):
         slug = Path(problem_target).name or f"problem-{index}"
         cmd = [problem_target, "--run-id", run_id, "--run-name", run_name]
         # CLI flags override the spec entry's committed values
         child_budget = budget or entry.budget
-        child_backend = backend or entry.backend
+        child_agent = agent or entry.agent
         child_model = model or entry.model
-        child_parallel = parallel_operators if parallel_operators is not None else entry.parallel_operators
+        child_climber = climber or entry.climber
+        child_parallel = parallel_agents if parallel_agents is not None else entry.parallel_agents
         child_replicates = n_replicates if n_replicates is not None else entry.n_replicates
         child_seed = seed_from or entry.seed_from
+        child_set = [*entry.set, *(set_ or [])]  # the CLI's pairs apply last, so they win
+        seed_path: Path | None = None
         if child_budget:
             cmd += ["--budget", child_budget]
-        if child_backend:
-            cmd += ["--backend", child_backend]
+        if child_agent:
+            cmd += ["--agent", child_agent]
         if child_model:
             cmd += ["--model", child_model]
-        if climber:
-            cmd += ["--climber", climber]
+        if child_climber:
+            cmd += ["--climber", child_climber]
         if child_parallel is not None:
-            cmd += ["--parallel-operators", str(child_parallel)]
+            cmd += ["--parallel-agents", str(child_parallel)]
         if child_replicates is not None:
             cmd += ["--n-replicates", str(child_replicates)]
         if child_seed:
@@ -230,21 +243,31 @@ def _run_suite(
             cmd.append("--no-holdout")
         if not learning:
             cmd.append("--no-learning")
-        for pair in set_ or []:
+        for pair in child_set:
             cmd += ["--set", pair]
+        entries.append(spec_entry(
+            problem_target, name=entry.name, budget=child_budget, agent=child_agent,
+            model=child_model, climber=child_climber, parallel_agents=child_parallel,
+            n_replicates=child_replicates, seed_from=seed_path, set=child_set,
+        ))
         pid, log_path = _spawn_search(config, run_dir, index, slug, cmd)
         launched.append((problem_target, pid, log_path))
-    typer.echo(f"Run {run_id}: launched {len(launched)} searches")
+    # the run's own recipe: the entries as resolved, next to run.yaml
+    write_run_spec(run_dir, entries, source=common._spec_provenance(config, suite.suite_path))
+    say(f"[head]Run {_m(run_id)}[/]: launched {len(launched)} searches")
     for problem_target, pid, log_path in launched:
-        typer.echo(f"  pid={pid} {problem_target}  log={log_path}")
+        say(f"  pid={pid} [path]{_m(problem_target)}[/]  log=[path]{_m(log_path)}[/]")
 
 
 @app.command()
 def run(
     target: str,
     budget: str = typer.Option(None, help="Wall-clock budget, e.g. 2h / 30m"),
-    backend: str = typer.Option(None, help="Operator backend: claude-code | codex | pi | dummy"),
-    model: str = typer.Option(None, help="Model for operator calls, e.g. sonnet / opus"),
+    agent: str = typer.Option(
+        None, "--agent", "--backend",
+        help="The coding agent that runs the operators: claude-code | codex | pi | dummy (--backend is the old spelling)",
+    ),
+    model: str = typer.Option(None, help="Model the agent runs, e.g. sonnet / opus"),
     climber: list[str] = typer.Option(
         None, "--climber",
         help=(
@@ -261,12 +284,17 @@ def run(
         help="Cross-search memory (cards/claims injection + distillation); off = memory-blind arm",
     ),
     name: str = typer.Option(None, "--name", help="Run name shown in the TUI"),
-    parallel_operators: int = typer.Option(
-        None, "--parallel-operators", help="Concurrent operators per search (worker pool)"
+    parallel_agents: int = typer.Option(
+        None, "--parallel-agents", "--parallel-operators",
+        help="Concurrent agents per search, one candidate each (--parallel-operators is the old spelling)",
     ),
     parallel_searches: int = typer.Option(
         1, "--parallel-searches", min=1,
-        help="Independent searches on the problem at once (>1 runs them detached, in the background)",
+        help="Independent searches on the problem at once, each its own detached engine",
+    ),
+    detach: bool = typer.Option(
+        True, "--detach/--no-detach",
+        help="Run as a detached engine (the default; `hillclimb watch` follows it) or in this terminal (Ctrl-C stops it)",
     ),
     n_replicates: int = typer.Option(
         None, "--n-replicates", "--n-trials",
@@ -282,7 +310,7 @@ def run(
         None, "--arm-set",
         help=(
             "A setting for one arm of a mixed fleet, ARM:KEY=VALUE: "
-            "--arm-set gepa:concurrency.parallel_operators=1 (applied after --set)"
+            "--arm-set gepa:concurrency.parallel_agents=1 (applied after --set)"
         ),
     ),
     experiment: str = typer.Option(
@@ -298,14 +326,19 @@ def run(
         help="Pre-built knowledge context (markdown) injected into every operator prompt",
     ),
 ):
-    """Start a run on a problem or a run-spec YAML."""
-    config = common.load_config(backend=backend, model=model)
+    """Start a run on a problem or a run-spec YAML.
+
+    The search runs as a detached engine and the terminal comes straight
+    back: `hillclimb watch` follows it, `hillclimb stop --all` ends it.
+    `--no-detach` keeps it in this terminal instead (Ctrl-C stops it).
+    """
+    config = common.load_config(agent=agent, model=model)
     if not holdout:
         config.holdout.enabled = False
     if not learning:
         config.learning.enabled = False
     if policy:
-        typer.echo("note: `--policy` is now `--climber` (same values)", err=True)
+        warn("note: `--policy` is now `--climber` (same values)")
     climbers = [*(climber or []), *(policy or [])]
     mixed = len(climbers) > 1
     arm_overrides = common._parse_arm_set(arm_set or [])
@@ -314,8 +347,8 @@ def run(
     single_climber = None if mixed else (climbers[0] if climbers else None)
     if single_climber is not None:
         config.climber.ref = single_climber
-    if parallel_operators is not None:
-        config.concurrency.parallel_operators = parallel_operators
+    if parallel_agents is not None:
+        config.concurrency.parallel_agents = parallel_agents
     if n_replicates is not None:
         config.evaluation.n_replicates = n_replicates
     overrides = common._parse_set(set_ or [])
@@ -329,8 +362,8 @@ def run(
         if mixed:
             raise typer.BadParameter("a spec takes one --climber; mixed fleets run on a single problem")
         _run_suite(
-            target, config, budget, backend, model, holdout, name,
-            climber=single_climber, parallel_operators=parallel_operators, n_replicates=n_replicates,
+            target, config, budget, agent, model, holdout, name,
+            climber=single_climber, parallel_agents=parallel_agents, n_replicates=n_replicates,
             seed_from=seed_from, learning=learning, set_=set_,
         )
         return
@@ -341,18 +374,22 @@ def run(
             raise typer.BadParameter(str(exc)) from exc
         _run_problem_fleet(
             target, config, budget, parallel_searches, name,
-            backend=backend, model=model, climber=None, parallel_operators=parallel_operators,
+            agent=agent, model=model, climber=None, parallel_agents=parallel_agents,
             n_replicates=n_replicates, holdout=holdout, learning=learning, set_=set_ or [],
             seed_from=seed_from, knowledge_context_file=knowledge_context_file,
             engines=engines, experiment=experiment,
         )
         return
-    if parallel_searches > 1:
-        if experiment or run_id:
-            raise typer.BadParameter("--parallel-searches does not combine with --experiment/--run-id")
+    if parallel_searches > 1 and (experiment or run_id):
+        raise typer.BadParameter("--parallel-searches does not combine with --experiment/--run-id")
+    # The default is a detached engine — the terminal comes straight back with
+    # the run id and `hillclimb watch` to follow it. A suite's or experiment's
+    # child (`--run-id`), an experiment arm, and `--no-detach` run here.
+    detached = detach and run_id is None and experiment is None
+    if parallel_searches > 1 or detached:
         _run_problem_fleet(
             target, config, budget, parallel_searches, name,
-            backend=backend, model=model, climber=single_climber, parallel_operators=parallel_operators,
+            agent=agent, model=model, climber=single_climber, parallel_agents=parallel_agents,
             n_replicates=n_replicates, holdout=holdout, learning=learning, set_=set_ or [],
             seed_from=seed_from, knowledge_context_file=knowledge_context_file,
         )
@@ -379,10 +416,10 @@ def _run_problem_fleet(
     parallel_searches: int,
     name: str | None,
     *,
-    backend: str | None,
+    agent: str | None,
     model: str | None,
     climber: str | None,
-    parallel_operators: int | None,
+    parallel_agents: int | None,
     n_replicates: int | None,
     holdout: bool,
     learning: bool,
@@ -401,14 +438,14 @@ def _run_problem_fleet(
         parallel_searches=parallel_searches,
         run_name=name,
         budget=budget,
-        backend=backend, model=model, climber=climber,
-        parallel_operators=parallel_operators, n_replicates=n_replicates,
+        agent=agent, model=model, climber=climber,
+        parallel_agents=parallel_agents, n_replicates=n_replicates,
         holdout=holdout, learning=learning, seed_from=seed_from,
         knowledge_context_file=knowledge_context_file, overrides=set_,
         engines=engines, experiment=experiment,
-        log=typer.echo,
+        log=common.engine_log,
     )
-    operators = parallel_operators if parallel_operators is not None else config.concurrency.parallel_operators
+    operators = parallel_agents if parallel_agents is not None else config.concurrency.parallel_agents
     if engines:
         arms = ", ".join(dict.fromkeys(engine.arm for engine in engines))
         say(
@@ -416,13 +453,14 @@ def _run_problem_fleet(
             f"running in the background"
         )
     else:
+        searches = "1 search" if parallel_searches == 1 else f"{parallel_searches} searches"
         say(
-            f"[head]Run {_m(fleet.run_id)}[/]: {parallel_searches} searches x {operators} operators "
+            f"[head]Run {_m(fleet.run_id)}[/]: {searches} x {operators} operator{'' if operators == 1 else 's'} "
             f"running in the background"
         )
     say(f"Engine logs in [path]{_m(fleet.run_dir / 'logs')}[/]")
     steps = [
-        ("hillclimb watch", "every agent, what it is doing, its candidate's score"),
+        ("hillclimb watch", "follow the search: every agent, what it is doing, its candidate's score"),
         ("hillclimb chart", "best score so far against time"),
         ("hillclimb stop --all", "end the run; the best solution of every search stays in runs/"),
     ]
@@ -476,19 +514,19 @@ def resume(
         store = open_store(config)
         targets = [r for r in store.searches() if r.state in RESUMABLE_STATES]
         if not targets:
-            typer.echo("No parked, stopped, or crashed searches to resume.")
+            say("[head]No parked, stopped, or crashed searches to resume.[/]")
             raise typer.Exit(1)
         for record in targets:
             pid, log_path = _spawn_resume(config, record)
-            typer.echo(f"Resuming {record.ref} ({record.state}) detached: pid {pid}, log {log_path}")
+            say(f"[head]Resuming {_m(record.ref)}[/] ({_m(record.state)}) detached: pid {pid}, log [path]{_m(log_path)}[/]")
         return
     store, record = common.open_search(config, search)
     if detach:
         pid, log_path = _spawn_resume(config, record)
-        typer.echo(f"Resuming {record.ref} ({record.state}) detached: pid {pid}, log {log_path}")
+        say(f"[head]Resuming {_m(record.ref)}[/] ({_m(record.state)}) detached: pid {pid}, log [path]{_m(log_path)}[/]")
         return
     meta, search_dir = record.meta, record.search_dir
-    config = common.load_config(backend=meta.backend, model=meta.model)
+    config = common.load_config(agent=meta.agent, model=meta.model)
     config.holdout.enabled = meta.holdout_enabled
     # the search resumes under the policy/routing it started with, not
     # whatever the live config currently says
@@ -510,12 +548,11 @@ def resume(
                 ) from exc
             now = None
         if snapshot is None:
-            typer.echo("note: this search predates climber snapshots; resuming from the live climber", err=True)
+            warn("note: this search predates climber snapshots; resuming from the live climber")
         if now is not None and now != meta.climber_sha256:
-            typer.echo(
-                f"note: climber {meta.climber} changed since the search started "
-                f"({meta.climber_sha256[:12]} -> {now[:12]}); resuming the version it started with",
-                err=True,
+            warn(
+                f"note: climber {_m(meta.climber)} changed since the search started "
+                f"({_m(meta.climber_sha256[:12])} -> {_m(now[:12])}); resuming the version it started with"
             )
     if meta.tuner is not None:
         config.climber.tuner = meta.tuner
@@ -533,8 +570,8 @@ def resume(
     )
     journal = Journal(store.journal(record.key))
     spent = resume_spent_seconds(store.read_status(record.key), journal)
-    typer.echo(
-        f"Resuming {search_ref(search_dir)}: {len(journal.candidates)} candidates, ~{int(spent)}s spent"
+    say(
+        f"[head]Resuming {_m(search_ref(search_dir))}[/]: {len(journal.candidates)} candidates, ~{int(spent)}s spent"
     )
     _execute(
         config,
@@ -544,52 +581,53 @@ def resume(
     )
 
 
-def _demo_preflight(backend: str) -> None:
+def _demo_preflight(agent: str) -> None:
     """Fail fast, with the fix, on the two tools the engine shells out to."""
     import shutil
 
     missing = []
     if shutil.which("uv") is None:
         missing.append("uv is not on PATH (it builds the solution venv): pip install uv")
-    if backend == "claude-code" and shutil.which("claude") is None:
+    if agent == "claude-code" and shutil.which("claude") is None:
         missing.append(
             "claude (Claude Code CLI) is not on PATH — the agents run through it:\n"
             "    npm install -g @anthropic-ai/claude-code && claude login"
         )
-    if backend == "codex" and shutil.which("codex") is None:
+    if agent == "codex" and shutil.which("codex") is None:
         missing.append(
             "codex (Codex CLI) is not on PATH — install it and run `codex login`"
         )
-    if backend == "pi" and shutil.which("pi") is None:
-        missing.append("pi (pi coding-agent CLI) is not on PATH — install pi before running this backend")
+    if agent == "pi" and shutil.which("pi") is None:
+        missing.append("pi (pi coding-agent CLI) is not on PATH — install pi before running this agent")
     if missing:
         for line in missing:
-            typer.echo(f"error: {line}", err=True)
-        typer.echo("`hillclimb connect` checks every backend's credential.", err=True)
+            fail(f"error: {_m(line)}")
+        say("[cmd]hillclimb connect[/] checks every agent's credential.", err=True)
         raise typer.Exit(1)
 
 
-def _print_demo_intro(folder: Path, parallel_searches: int, parallel_operators: int, budget: str) -> None:
-    from rich.console import Console
+def _print_demo_intro(folder: Path, parallel_searches: int, parallel_agents: int, budget: str) -> None:
     from rich.panel import Panel
     from rich.table import Table
 
-    console = Console(highlight=False)
+    # the shared console: the panel speaks in the same styles as every
+    # other line the CLI prints
+    console = common._console()
     table = Table.grid(padding=(0, 2))
-    table.add_column(style="bold cyan")
+    table.add_column(style="cmd")
     table.add_column()
     for command, what in DEMO_COMMANDS:
         table.add_row(command, what)
     body = Table.grid(padding=(0, 0))
     body.add_row(
         f"Circle packing: 26 circles in the unit square, maximize the sum of radii.\n"
-        f"{parallel_searches} searches of {budget} are climbing in parallel in [cyan]{folder}[/],\n"
-        f"each running {parallel_operators} operators at a time, "
+        f"{parallel_searches} searches of {_m(budget)} are climbing in parallel in [path]{_m(folder)}[/],\n"
+        f"each running {parallel_agents} operators at a time, "
         f"starting from a one-circle baseline (sum of radii 0.5).\n"
     )
     body.add_row("They run in the background — watch them from this terminal:\n")
     body.add_row(table)
-    body.add_row("\n[bold cyan]hillclimb stop --all[/] ends the demo; the best solutions stay in runs/.")
+    body.add_row("\n[cmd]hillclimb stop --all[/] ends the demo; the best solutions stay in runs/.")
     console.print(Panel(body, title="hillclimb demo", border_style="cyan", expand=False))
     console.print()
 
@@ -607,11 +645,15 @@ DEMO_COMMANDS = (
 def demo(
     budget: str = typer.Option("10m", help="Wall-clock budget per search, e.g. 10m"),
     parallel_searches: int = typer.Option(3, "--parallel-searches", min=1, help="Searches to run at once"),
-    parallel_operators: int = typer.Option(
-        3, "--parallel-operators", min=1, help="Concurrent operators (one candidate each) per search"
+    parallel_agents: int = typer.Option(
+        3, "--parallel-agents", "--parallel-operators", min=1,
+        help="Concurrent agents (one candidate each) per search",
     ),
-    model: str = typer.Option(None, help="Model for operator calls, e.g. sonnet / opus"),
-    backend: str = typer.Option(None, help="Operator backend: claude-code | codex | pi | dummy"),
+    model: str = typer.Option(None, help="Model the agent runs, e.g. sonnet / opus"),
+    agent: str = typer.Option(
+        None, "--agent", "--backend",
+        help="The coding agent that runs the operators: claude-code | codex | pi | dummy (--backend is the old spelling)",
+    ),
 ):
     """Try hillclimb in one command: agents climb the circle-packing problem.
 
@@ -625,45 +667,48 @@ def demo(
     print_banner()
     if find_hillclimb_dir() is None:
         folder = common.scaffold_hillclimb_dir(Path.cwd())
-        typer.echo(f"Created hillclimb dir at {folder}")
-    config = common.load_config(backend=backend, model=model)
+        say(f"[head]Created hillclimb dir[/] at [path]{_m(folder)}[/]")
+    config = common.load_config(agent=agent, model=model)
     problem_dir, created = install_demo_problem(config.paths.problems_dir)
     if created:
-        typer.echo(f"Installed the {DEMO_PROBLEM_ID} problem at {problem_dir}")
-    _demo_preflight(config.backend)
+        say(f"[head]Installed the {_m(DEMO_PROBLEM_ID)} problem[/] at [path]{_m(problem_dir)}[/]")
+    _demo_preflight(config.agent)
     run_dir = _run_problem_fleet(
         DEMO_PROBLEM_ID, config, budget, parallel_searches, "demo",
-        backend=backend, model=model, climber=None, parallel_operators=parallel_operators,
+        agent=agent, model=model, climber=None, parallel_agents=parallel_agents,
         n_replicates=None, holdout=True, learning=True, set_=[],
     )
-    _print_demo_intro(config.hillclimb_dir, parallel_searches, parallel_operators, budget)
-    typer.echo(f"Engine logs in {run_dir / 'logs'}")
+    _print_demo_intro(config.hillclimb_dir, parallel_searches, parallel_agents, budget)
+    say(f"Engine logs in [path]{_m(run_dir / 'logs')}[/]")
 
 
 @app.command()
 def smoke(
     target: str = typer.Argument("circle-packing"),
     model: str = typer.Option(None),
-    backend: str = typer.Option(None, help="Operator backend: claude-code | codex | pi | dummy"),
+    agent: str = typer.Option(
+        None, "--agent", "--backend",
+        help="The coding agent that runs the operators: claude-code | codex | pi | dummy (--backend is the old spelling)",
+    ),
 ):
-    """One real DRAFT call through the selected backend, end to end.
+    """One real DRAFT call through the selected agent, end to end.
 
     Executes the result and reports — verifies auth, JSON field names, and
     the filesystem contract.
     """
-    config = common.load_config(backend=backend, model=model)
+    config = common.load_config(agent=agent, model=model)
     problem = load_problem(target, config)
-    _demo_preflight(config.backend)
+    _demo_preflight(config.agent)
     version_cmd = {
         "claude-code": ["claude", "-v"],
         "codex": ["codex", "--version"],
         "pi": ["pi", "--version"],
-    }.get(config.backend)
+    }.get(config.agent)
     if version_cmd:
         version = subprocess.run(
             version_cmd, capture_output=True, text=True
         ).stdout.strip()
-        typer.echo(f"{config.backend} version: {version}")
+        say(f"{_m(config.agent)} version: [head]{_m(version)}[/]")
     run_id = f"smoke-{datetime.now():%Y%m%d-%H%M%S}"
     run_dir = create_run(
         config,
@@ -676,48 +721,48 @@ def smoke(
         ),
     )
     search_dir = create_search(config, problem, run_dir, run_id, total_s=1800)
-    from hillclimb.harness.routing import BackendPool, Router
+    from hillclimb.harness.routing import AgentPool, Router
 
-    backend_instance = get_backend(
-        config.backend, auth=config.backend_auth, pi_models_file=config.pi.models_file
+    agent_instance = get_agent(
+        config.agent, auth=config.agent_auth, pi_models_file=config.pi.models_file
     )
-    backends = BackendPool(pi_models_file=config.pi.models_file)
-    backends.seed(config.backend, config.backend_auth, backend_instance)
+    agents = AgentPool(pi_models_file=config.pi.models_file)
+    agents.seed(config.agent, config.agent_auth, agent_instance)
     journal = Journal(open_store(config).journal(key_for(search_dir)))
-    evaluator = build_evaluator(config, problem, search_dir, journal, log=typer.echo)
+    evaluator = build_evaluator(config, problem, search_dir, journal, log=common.engine_log)
     harness = Harness(
         problem=problem,
         config=config,
         journal=journal,
-        backend=backend_instance,
+        agent=agent_instance,
         router=Router(config),
-        backends=backends,
+        agents=agents,
         executor=evaluator.executor,
         budget=BudgetManager(1800, stop_margin_s=0),
         search_dir=search_dir,
-        log=typer.echo,
+        log=common.engine_log,
         evaluator=evaluator,
     )
-    typer.echo(
-        f"Running one {config.backend} DRAFT in the foreground; "
-        "this can take several minutes."
+    say(
+        f"[head]Running one {_m(config.agent)} DRAFT in the foreground;[/] "
+        "[note]this can take several minutes.[/]"
     )
-    typer.echo("To follow it live, open another terminal and run: hillclimb watch")
+    say("To follow it live, open another terminal and run: [cmd]hillclimb watch[/]")
     outcome = harness.run(Action(operator="draft"))
     if outcome.candidate is None:
-        typer.echo(f"the harness refused the draft: {outcome.ticket.rejected}")
+        fail(f"the harness refused the draft: {_m(outcome.ticket.rejected)}")
         raise typer.Exit(1)
     # the journal's own record: the smoke report shows holdout, which a
     # loop-facing Outcome never carries
     candidate = journal.get(outcome.candidate.candidate_id)
     trial = candidate.last_trial
-    typer.echo(f"\ncandidate:   {candidate.candidate_id} status={candidate.status}")
-    typer.echo(f"val_score:   {candidate.val_score}")
-    typer.echo(f"holdout:     {candidate.holdout_score} (error: {trial.holdout_error if trial else '-'})")
-    typer.echo(f"session_id:  {candidate.backend.session_id}")
-    typer.echo(f"cost_usd:    {candidate.backend.cost_usd}")
-    typer.echo(f"num_turns:   {candidate.backend.num_turns}")
-    typer.echo(f"error_kind:  {candidate.backend.error_kind}")
-    typer.echo(f"raw output:  {Path(candidate.candidate_dir) / 'agent_raw.json'}")
-    if candidate.backend.session_id is None and candidate.backend.error_kind is None:
-        typer.echo("WARNING: session_id not parsed — check agent_raw.json for actual field names")
+    say(f"\n[head]candidate:[/]   [path]{_m(candidate.candidate_id)}[/] status={_m(candidate.status)}")
+    say(f"[head]val_score:[/]   {_m(candidate.val_score)}")
+    say(f"[head]holdout:[/]     {_m(candidate.holdout_score)} [note](error: {_m(trial.holdout_error if trial else '-')})[/]")
+    say(f"[head]session_id:[/]  {_m(candidate.agent.session_id)}")
+    say(f"[head]cost_usd:[/]    {_m(candidate.agent.cost_usd)}")
+    say(f"[head]num_turns:[/]   {_m(candidate.agent.num_turns)}")
+    say(f"[head]error_kind:[/]  {_m(candidate.agent.error_kind)}")
+    say(f"[head]raw output:[/]  [path]{_m(Path(candidate.candidate_dir) / 'agent_raw.json')}[/]")
+    if candidate.agent.session_id is None and candidate.agent.error_kind is None:
+        warn("WARNING: session_id not parsed — check agent_raw.json for actual field names")

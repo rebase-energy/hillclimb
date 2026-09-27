@@ -95,7 +95,7 @@ def test_run_suite_launches_one_child_per_problem(config, tmp_path, monkeypatch)
         str(suite),
         config,
         budget="10m",
-        backend="dummy",
+        agent="dummy",
         model=None,
         holdout=True,
         name="Demo",
@@ -106,7 +106,7 @@ def test_run_suite_launches_one_child_per_problem(config, tmp_path, monkeypatch)
     run_ids = [cmd[cmd.index("--run-id") + 1] for cmd, _ in calls]
     assert len(set(run_ids)) == 1
     assert all(cmd[cmd.index("--run-name") + 1] == "Demo" for cmd, _ in calls)
-    assert all("--backend" in cmd and "dummy" in cmd for cmd, _ in calls)
+    assert all("--agent" in cmd and "dummy" in cmd for cmd, _ in calls)
     assert all("--budget" in cmd and "10m" in cmd for cmd, _ in calls)
     run_dirs = iter_run_dirs(config.paths.runs_dir)
     assert len(run_dirs) == 1
@@ -115,6 +115,14 @@ def test_run_suite_launches_one_child_per_problem(config, tmp_path, monkeypatch)
     assert meta.kind == "suite"
     # suite logs live inside the run dir
     assert (run_dirs[0] / "logs").is_dir()
+    # and so does the run's own spec: the entries as launched, rerunnable
+    from hillclimb.problem import load_suite
+
+    rerun = load_suite(run_dirs[0] / "spec.yaml", config)
+    assert [(e.target, e.budget, e.agent) for e in rerun.problems] == [
+        (str(root / "a"), "10m", "dummy"), (str(root / "b"), "10m", "dummy"),
+    ]
+    assert "# launched from:" in (run_dirs[0] / "spec.yaml").read_text()
 
 
 def test_run_suite_threads_no_learning_flag(config, tmp_path, monkeypatch):
@@ -132,12 +140,12 @@ def test_run_suite_threads_no_learning_flag(config, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("subprocess.Popen", lambda cmd, **kw: (calls.append(cmd), DummyProc())[1])
 
-    _run_suite(str(suite), config, budget=None, backend="dummy", model=None,
+    _run_suite(str(suite), config, budget=None, agent="dummy", model=None,
                holdout=True, name="Demo", learning=False)
     assert all("--no-learning" in cmd for cmd in calls)
 
     calls.clear()
-    _run_suite(str(suite), config, budget=None, backend="dummy", model=None,
+    _run_suite(str(suite), config, budget=None, agent="dummy", model=None,
                holdout=True, name="Demo2", learning=True)
     assert all("--no-learning" not in cmd for cmd in calls)
 
@@ -158,7 +166,7 @@ def test_run_suite_allows_the_same_problem_twice(config, tmp_path, monkeypatch):
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("subprocess.Popen", lambda cmd, **kw: calls.append(cmd) or DummyProc())
-    _run_suite(str(suite), config, budget=None, backend=None, model=None, holdout=True, name=None)
+    _run_suite(str(suite), config, budget=None, agent=None, model=None, holdout=True, name=None)
     assert len(calls) == 2
     meta = load_run_meta(iter_run_dirs(config.paths.runs_dir)[0])
     assert meta.problem_ids == ["a"]
@@ -176,7 +184,7 @@ def make_search(runs_dir, run_id, search_id, run_kind="problem"):
         search_dir,
         SearchMeta(
             search_id=search_id, run_id=run_id, problem="p", problem_id=search_id,
-            backend="dummy", model="m", metric="score",
+            agent="dummy", model="m", metric="score",
         ),
     )
     return search_dir
@@ -193,7 +201,7 @@ def test_search_meta_defaults_for_pre_policy_files(tmp_path):
         yaml.safe_dump(
             {
                 "schema_version": 2, "search_id": "a", "run_id": "r",
-                "problem": "p", "problem_id": "a", "backend": "dummy",
+                "problem": "p", "problem_id": "a", "agent": "dummy",
                 "model": "m", "metric": "score",
             }
         )
@@ -234,7 +242,7 @@ def test_resume_restores_policy_and_routing(config, tmp_path, monkeypatch):
         search_dir,
         SearchMeta(
             search_id="a", run_id="run-1", problem="p", problem_id="a",
-            backend="dummy", model="m", metric="score", budget_s=600,
+            agent="dummy", model="m", metric="score", budget_s=600,
             policy="scripted", policy_params={"depth": 2},
             routing={"draft": {"model": "opus-4.8"}},
         ),
@@ -256,7 +264,7 @@ def test_resume_restores_policy_and_routing(config, tmp_path, monkeypatch):
     assert restored.climber.ref == "scripted"
     assert restored.climber.params == {"depth": 2}
     assert restored.routing["draft"].model == "opus-4.8"
-    assert restored.routing["draft"].backend is None
+    assert restored.routing["draft"].agent is None
 
 
 def test_resume_all_spawns_only_resumable_searches(config, tmp_path, monkeypatch):
@@ -330,7 +338,7 @@ def test_resolve_search_dir_skips_v1_layout(config, tmp_path):
 
 
 def test_spent_seconds_sums_agent_and_trial_time(tmp_path):
-    from hillclimb.harness.candidate import BackendInfo, Candidate
+    from hillclimb.harness.candidate import AgentInfo, Candidate
     from hillclimb.api import spent_seconds
     from hillclimb.harness.journal import Journal
 
@@ -339,7 +347,7 @@ def test_spent_seconds_sums_agent_and_trial_time(tmp_path):
         Candidate(
             candidate_id="c001",
             operator="draft",
-            backend=BackendInfo(agent_duration_s=100.0),
+            agent=AgentInfo(agent_duration_s=100.0),
             trials=[mk_trial(duration_s=30.0), mk_trial(duration_s=20.0)],
         )
     )
@@ -520,26 +528,26 @@ def test_wide_terminal_prints_the_mark(monkeypatch, capsys):
     assert BANNER_LINES[0] in capsys.readouterr().out
 
 
-def test_legacy_parallel_agents_key_maps_to_parallel_operators():
+def test_legacy_parallel_agents_key_maps_to_parallel_agents():
     from hillclimb.config import Config
     from hillclimb.problem import SuiteEntry
 
     old = Config.model_validate({"search": {"parallel_agents": 4, "machine_max_agents": 5}})
-    assert old.concurrency.parallel_operators == 4
-    assert SuiteEntry(target="x", parallel_agents=2).parallel_operators == 2
-    assert old.concurrency.effective_machine_max_operators() == 5
+    assert old.concurrency.parallel_agents == 4
+    assert SuiteEntry(target="x", parallel_agents=2).parallel_agents == 2
+    assert old.concurrency.effective_machine_max_agents() == 5
 
 
-def test_machine_max_operators_defaults_to_cores_minus_two_capped(monkeypatch):
+def test_machine_max_agents_defaults_to_cores_minus_two_capped(monkeypatch):
     from hillclimb.config import ConcurrencyConfig
 
     monkeypatch.setattr("os.cpu_count", lambda: 10)
-    assert ConcurrencyConfig().effective_machine_max_operators() == 8
+    assert ConcurrencyConfig().effective_machine_max_agents() == 8
     monkeypatch.setattr("os.cpu_count", lambda: 32)
-    assert ConcurrencyConfig().effective_machine_max_operators() == 8
+    assert ConcurrencyConfig().effective_machine_max_agents() == 8
     monkeypatch.setattr("os.cpu_count", lambda: 4)
-    assert ConcurrencyConfig().effective_machine_max_operators() == 2
-    assert ConcurrencyConfig(machine_max_operators=0).effective_machine_max_operators() == 0  # off
+    assert ConcurrencyConfig().effective_machine_max_agents() == 2
+    assert ConcurrencyConfig(machine_max_agents=0).effective_machine_max_agents() == 0  # off
 
 
 def test_orphan_engines_are_those_whose_dir_is_gone(tmp_path, monkeypatch):
@@ -750,7 +758,7 @@ def _summit_search(
             problem=problem_id,
             problem_id=problem_id,
             problem_key=problem_id,
-            backend="dummy",
+            agent="dummy",
             model="",
             metric="score",
             higher_is_better=higher_is_better,
@@ -984,9 +992,30 @@ def _capture_fleet(monkeypatch, config, tmp_path):
         calls.append({"target": target, **kwargs})
         return SimpleNamespace(run_id="20260910-120000-cp", run_dir=tmp_path / "runs" / "20260910-120000-cp")
 
-    monkeypatch.setattr(common, "load_config", lambda backend=None, model=None: config)
+    monkeypatch.setattr(common, "load_config", lambda agent=None, model=None: config)
     monkeypatch.setattr("hillclimb.cli.run.run_fleet", fake_run_fleet)
     return calls
+
+
+def test_run_detaches_by_default_and_points_at_watch(config, monkeypatch, tmp_path):
+    """A plain `hillclimb run` is a one-search detached engine: the terminal
+    comes back with the run summary and `hillclimb watch` as the next step;
+    `--no-detach` runs it in-process as before."""
+    from hillclimb import cli
+
+    calls = _capture_fleet(monkeypatch, config, tmp_path)
+    result = CliRunner().invoke(cli.app, ["run", "circle-packing", "--budget", "1m", "--agent", "dummy"])
+    assert result.exit_code == 0, result.output
+    (call,) = calls
+    assert call["target"] == "circle-packing" and call["parallel_searches"] == 1
+    assert "1 search x" in result.output and "running in the background" in result.output
+    assert "hillclimb watch" in result.output
+
+    ran = []
+    monkeypatch.setattr("hillclimb.cli.run._run_problem", lambda *a, **k: ran.append(a))
+    result = CliRunner().invoke(cli.app, ["run", "circle-packing", "--budget", "1m", "--agent", "dummy", "--no-detach"])
+    assert result.exit_code == 0, result.output
+    assert len(calls) == 1 and len(ran) == 1
 
 
 def test_run_with_several_policies_launches_a_mixed_fleet(config, monkeypatch, tmp_path):
@@ -995,9 +1024,9 @@ def test_run_with_several_policies_launches_a_mixed_fleet(config, monkeypatch, t
 
     calls = _capture_fleet(monkeypatch, config, tmp_path)
     result = CliRunner().invoke(cli.app, [
-        "run", "circle-packing", "--budget", "1m", "--backend", "dummy",
+        "run", "circle-packing", "--budget", "1m", "--agent", "dummy",
         "--climber", "greedy", "--climber", "openevolve", "--climber", "gepa",
-        "--arm-set", "gepa:concurrency.parallel_operators=1", "--set", "learning.enabled=false",
+        "--arm-set", "gepa:concurrency.parallel_agents=1", "--set", "learning.enabled=false",
         "--experiment", "three-way",
     ])
 
@@ -1007,7 +1036,7 @@ def test_run_with_several_policies_launches_a_mixed_fleet(config, monkeypatch, t
     assert call["engines"] == [
         FleetEngine(arm="greedy", climber="greedy"),
         FleetEngine(arm="openevolve", climber="openevolve"),
-        FleetEngine(arm="gepa", climber="gepa", overrides=("concurrency.parallel_operators=1",)),
+        FleetEngine(arm="gepa", climber="gepa", overrides=("concurrency.parallel_agents=1",)),
     ]
     assert call["experiment"] == "three-way" and call["overrides"] == ["learning.enabled=false"]
     assert config.climber.ref == "greedy"  # the parent's config is not bent to any one arm
@@ -1027,8 +1056,8 @@ def test_run_mixed_fleet_repeats_every_arm_and_rejects_stray_flags(config, monke
 
     for extra, message in (
         (["--arm", "x"], "--arm/--run-id do not apply"),
-        (["--arm-set", "openevolve:concurrency.parallel_operators=1"], "unknown arm"),
-        (["--arm-set", "gepa-concurrency.parallel_operators=1"], "ARM:KEY=VALUE"),
+        (["--arm-set", "openevolve:concurrency.parallel_agents=1"], "unknown arm"),
+        (["--arm-set", "gepa-concurrency.parallel_agents=1"], "ARM:KEY=VALUE"),
     ):
         # a wide terminal: rich wraps (and elides) usage errors in narrow boxes
         result = CliRunner().invoke(
@@ -1059,7 +1088,7 @@ def test_resume_warns_when_the_policy_file_changed(config, tmp_path, monkeypatch
         search_dir,
         SearchMeta(
             search_id="a", run_id="run-1", problem="p", problem_id="a",
-            backend="dummy", model="m", metric="score", budget_s=600,
+            agent="dummy", model="m", metric="score", budget_s=600,
             policy=str(policy_file), policy_sha256="0" * 64,
         ),
     )
@@ -1077,3 +1106,38 @@ def test_resume_warns_when_the_policy_file_changed(config, tmp_path, monkeypatch
     policy_file.unlink()
     with pytest.raises(typer.BadParameter, match="is gone"):
         resume("run-1/a")
+
+
+def test_engine_lines_speak_in_the_cli_voice():
+    """A foreground engine's log lines get the theme's markup by shape —
+    clock dim, `word:` lead bold, candidate ids in the path colour, trouble
+    warned whole — and nothing in the text itself is read as markup."""
+    from hillclimb.cli.common import engine_line
+
+    # rich escapes only what could read as a tag, so the digit-led clock stays bare
+    assert engine_line("[59 minutes left] draft (c002)") == "[note][59 minutes left][/] draft ([path]c002[/])"
+    assert engine_line("  new selection: c002 val_score=0.0355") == "  [head]new selection:[/] [path]c002[/] val_score=0.0355"
+    assert engine_line("learning: 3 prior search card(s) inform this search") == (
+        "[head]learning:[/] 3 prior search card(s) inform this search"
+    )
+    assert engine_line("baseline written: baseline: none shipped") == "[head]baseline written:[/] baseline: none shipped"
+    assert engine_line("  worker for c009 crashed: KeyError") == "[warn]  worker for c009 crashed: KeyError[/]"
+    # an agent's own words, brackets included, print as written
+    assert engine_line("draft (c003): uses [x, y] grid") == "draft ([path]c003[/]): uses \\[x, y] grid"
+    assert engine_line("Done.") == "Done."
+
+
+def test_engine_lines_split_into_a_clock_gutter_and_a_message():
+    """On a terminal the foreground log is two columns: the clock (without
+    its brackets) and the message, marked up; a line without a clock has an
+    empty gutter and keeps its own indent."""
+    from hillclimb.cli.common import split_engine_line
+
+    assert split_engine_line("[9:42 left] draft (c001)") == ("9:42 left", "draft ([path]c001[/])")
+    assert split_engine_line("[1:05:00 left] tune c003 t1 restarts=7 lr=0.0196") == (
+        "1:05:00 left", "tune [path]c003[/] t1 restarts=7 lr=0.0196"
+    )
+    assert split_engine_line("  new selection: c001 val=0.028911") == (
+        "", "  [head]new selection:[/] [path]c001[/] val=0.028911"
+    )
+    assert split_engine_line("learning: 5 claim(s) distilled") == ("", "[head]learning:[/] 5 claim(s) distilled")

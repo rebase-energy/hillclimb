@@ -24,9 +24,9 @@ Date: 2026-09-01
 Run 2026-09-01 from a machine with outbound HTTPS; all three problems resolved
 against the public API and all six searches reached terminal state `done`. Each
 was a single 10-minute greedy search, holdout off, learning off, ensembling off,
-`n_trials=1`. Two backends, same problems.
+`n_trials=1`. Two agents, same problems.
 
-| problem | direction | backend | best | candidates | leaderboard #1 | gap |
+| problem | direction | agent | best | candidates | leaderboard #1 | gap |
 |---|---|---|---|---|---|---|
 | circle-packing | maximize | claude-code / sonnet | 2.62086 | 6 | 2.636 | −0.015 |
 | circle-packing | maximize | codex / gpt-5.6-sol | **2.63429** | 4 | 2.636 | −0.002 |
@@ -37,7 +37,7 @@ was a single 10-minute greedy search, holdout off, learning off, ensembling off,
 
 Codex was ahead on all three, though on difference-bases only by 0.0008. Each
 cell is a single 10-minute search: this is a smoke test of the integration, not
-a backend comparison, and no gap here is supported by repeats.
+a agent comparison, and no gap here is supported by repeats.
 
 For context on the leaderboards: circle-packing's top ten are all tied at 2.636,
 difference-bases' top eight at 2.639 (with #9 at 2.6476 and #10 at 2.6537), and

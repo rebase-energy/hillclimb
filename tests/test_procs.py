@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from hillclimb.backends.fake import FakeBackend
+from hillclimb.agents.fake import FakeAgent
 from hillclimb.harness.procs import Reaper, descendant_cpu_s, parse_ps_time
 from hillclimb.modules.policies.base import Action
 from tests.conftest import ok_script
@@ -68,13 +68,13 @@ def test_reaper_reads_cpu_at_a_normal_exit():
 
 
 def test_agent_cpu_reaches_the_journal(task, config):
-    """The backend's cpu_s lands on the candidate's backend record, next to
+    """The agent's cpu_s lands on the candidate's agent record, next to
     its tokens, so the chart's cost fold can add it to the verifier's."""
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.5), notes="d\n", result={"total_tokens": 10, "cpu_s": 12.5})
-    harness, journal, _ = make_harness(task, config, backend)
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.5), notes="d\n", result={"total_tokens": 10, "cpu_s": 12.5})
+    harness, journal, _ = make_harness(task, config, agent)
     harness.run(Action(operator="draft"))
     drafted = [c for c in journal.candidates.values() if c.operator == "draft"]
     assert len(drafted) == 1
-    assert drafted[0].backend.cpu_s == 12.5
-    assert drafted[0].backend.total_tokens == 10
+    assert drafted[0].agent.cpu_s == 12.5
+    assert drafted[0].agent.total_tokens == 10

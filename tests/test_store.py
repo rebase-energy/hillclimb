@@ -26,7 +26,7 @@ from hillclimb.harness.store import DataStore, FileDataStore, SqliteDataStore, k
 
 def _meta(run_id: str, search_id: str, key: str = "p", started: str = "2026-08-22T10:00:00+00:00") -> SearchMeta:
     return SearchMeta(
-        search_id=search_id, run_id=run_id, problem=key, problem_id=key, backend="dummy",
+        search_id=search_id, run_id=run_id, problem=key, problem_id=key, agent="dummy",
         model="m", metric="score", started_at=started,
     )
 
@@ -227,16 +227,16 @@ def test_store_cli_sync_and_searches(tmp_path: Path, monkeypatch):
     assert result.exit_code == 0 and "nothing to import" in result.output
 
 
-@pytest.mark.parametrize("backend", ["files", "sqlite"])
+@pytest.mark.parametrize("store_backend", ["files", "sqlite"])
 @pytest.mark.slow
-def test_engine_runs_entirely_through_the_store(config, tmp_path: Path, backend: str):
+def test_engine_runs_entirely_through_the_store(config, tmp_path: Path, store_backend: str):
     from hillclimb.api import run_search
 
-    config.store.backend = backend
+    config.store.backend = store_backend
     config.store.sqlite_path = tmp_path / "store.sqlite"
     outcome = run_search(
         "circle-packing", budget_s=10, name="store-test", config=config,
-        backend="dummy", holdout=False, log=lambda _: None,
+        agent="dummy", holdout=False, log=lambda _: None,
     )
     store = open_store(config)
     try:
@@ -251,7 +251,7 @@ def test_engine_runs_entirely_through_the_store(config, tmp_path: Path, backend:
         assert store.read_status(record.key).state == "done"
         assert climb_curves(store, "circle-packing")[0].ys
         on_disk = outcome.search_dir / "journal.jsonl"
-        assert on_disk.exists() == (backend == "files")
-        assert (outcome.search_dir / "candidates").exists()  # agents always work on disk
+        assert on_disk.exists() == (store_backend == "files")
+        assert (outcome.search_dir / "candidates").exists()  # backends always work on disk
     finally:
         store.close()

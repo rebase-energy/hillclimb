@@ -40,7 +40,7 @@ src/hillclimb/
     # later, same shape: archives/  feedback/  routers/
 
   climbers/              bundled manifests (unchanged; module refs updated)
-  backends/ integrations/ prompts/ runtime/ demo/   unchanged
+  agents/ integrations/ prompts/ runtime/ demo/   unchanged
 
   tui/                   every terminal view and the pure layout it draws
     watch.py chart.py graphview.py ganttview.py gantt.py

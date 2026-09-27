@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb.backends.fake import FakeBackend
+from hillclimb.agents.fake import FakeAgent
 from hillclimb.harness.budget import BudgetManager
 from tests.conftest import local_executor
 from hillclimb.harness.journal import Journal
@@ -107,7 +107,7 @@ def test_status_writer_update_and_finalize(tmp_path: Path):
     assert loaded.current == []
 
 
-def make_searcher_with_status(task, config, backend, budget_s=3600):
+def make_searcher_with_status(task, config, agent, budget_s=3600):
     search_dir = create_search_dir(config.paths.runs_dir, "test-search")
     budget = BudgetManager(budget_s, stop_margin_s=1)
     status = StatusWriter(
@@ -117,7 +117,7 @@ def make_searcher_with_status(task, config, backend, budget_s=3600):
         problem=task,
         config=config,
         journal=Journal(search_dir / "journal.jsonl"),
-        backend=backend,
+        agent=agent,
         executor=local_executor(),
         budget=budget,
         search_dir=search_dir,
@@ -129,10 +129,10 @@ def make_searcher_with_status(task, config, backend, budget_s=3600):
 
 
 def test_search_updates_status(task, config):
-    backend = FakeBackend()
+    agent = FakeAgent()
     for score in (0.6, 0.7, 0.5):
-        backend.queue(script=ok_script(score), notes="d\n")
-    searcher, status, search_dir = make_searcher_with_status(task, config, backend)
+        agent.queue(script=ok_script(score), notes="d\n")
+    searcher, status, search_dir = make_searcher_with_status(task, config, agent)
 
     searcher.run()
     status.finalize("done")
@@ -146,9 +146,9 @@ def test_search_updates_status(task, config):
 
 
 def test_rate_limited_run_can_finalize_parked(task, config):
-    backend = FakeBackend()
-    backend.queue(result={"ok": False, "error_kind": "rate_limited", "error_message": "limit"})
-    searcher, status, search_dir = make_searcher_with_status(task, config, backend)
+    agent = FakeAgent()
+    agent.queue(result={"ok": False, "error_kind": "rate_limited", "error_message": "limit"})
+    searcher, status, search_dir = make_searcher_with_status(task, config, agent)
 
     with pytest.raises(ParkedSearch):
         searcher.run()

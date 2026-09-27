@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb.backends.fake import FakeBackend
+from hillclimb.agents.fake import FakeAgent
 from hillclimb.harness.budget import BudgetManager
 from hillclimb.harness.candidate import Candidate
 from hillclimb.harness.dirs import create_search_dir
@@ -45,7 +45,7 @@ print(f"val_score: {0.5 + 0.01 * P['k']:.4f}")
 """
 
 
-def make_searcher(task, config, backend, max_candidates=3, holdout=False, **policy_params):
+def make_searcher(task, config, agent, max_candidates=3, holdout=False, **policy_params):
     config.climber.params = {"num_drafts": 1, "tune_budget": 2, **policy_params}
     config.climber.tuner_params = {"seed": 1}
     search_dir = create_search_dir(config.paths.runs_dir, "tune-run")
@@ -60,7 +60,7 @@ def make_searcher(task, config, backend, max_candidates=3, holdout=False, **poli
             holdout_scorer=FileHoldoutScorer(), journal=journal,
         )
     searcher = SearchRig(
-        problem=task, config=config, journal=journal, backend=backend,
+        problem=task, config=config, journal=journal, agent=agent,
         executor=executor_for(task), budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir, max_candidates=max_candidates, log=lambda *_: None,
         policy=GreedyPolicy(params=config.climber.params), **kwargs,
@@ -69,10 +69,10 @@ def make_searcher(task, config, backend, max_candidates=3, holdout=False, **poli
 
 
 def test_tune_trials_land_on_the_declaring_candidate(task, config):
-    backend = FakeBackend()
-    backend.queue(script=TUNED_SCRIPT, notes="tunable draft\n", files={"params.json": PARAMS})
-    backend.queue(script=ok_script(0.3), notes="worse improve\n")
-    searcher, journal, search_dir = make_searcher(task, config, backend)
+    agent = FakeAgent()
+    agent.queue(script=TUNED_SCRIPT, notes="tunable draft\n", files={"params.json": PARAMS})
+    agent.queue(script=ok_script(0.3), notes="worse improve\n")
+    searcher, journal, search_dir = make_searcher(task, config, agent)
     searcher.run()
 
     draft = journal.get("c001")
@@ -91,7 +91,7 @@ def test_tune_trials_land_on_the_declaring_candidate(task, config):
     assert t1["k"]["value"] == draft.trials[1].params["k"]
     assert json.loads((Path(draft.candidate_dir) / "params.json").read_text())["k"]["default"] == 1
     # no agent ran for the tune jobs; the improve ran after the budget was spent
-    assert [r.operator for r in backend.requests] == ["draft", "improve"]
+    assert [r.operator for r in agent.requests] == ["draft", "improve"]
     # re-journaled per tune commit; replay keeps the last record
     records = [json.loads(line) for line in (search_dir / "journal.jsonl").read_text().splitlines()]
     assert sum(1 for r in records if r["event"] == "candidate_result" and r["candidate_id"] == "c001") >= 3
@@ -105,31 +105,31 @@ def test_tune_trials_land_on_the_declaring_candidate(task, config):
     child = journal.get("c002")
     inherited = json.loads((Path(child.candidate_dir) / "params.json").read_text())
     assert inherited["k"]["default"] == best.params["k"] and "value" not in inherited["k"]
-    improve_prompt = backend.requests[1].prompt
+    improve_prompt = agent.requests[1].prompt
     assert "The parent declared tunable parameters" in improve_prompt
     assert f"k: int in [0, 9], default 1 = {best.params['k']}" in improve_prompt
     assert "## Tunable parameters (optional)" in improve_prompt
 
 
 def test_malformed_declaration_is_scored_on_defaults_and_never_tuned(task, config):
-    backend = FakeBackend()
-    backend.queue(script=TUNED_SCRIPT, notes="broken declaration\n", files={"params.json": "{oops"})
-    backend.queue(script=ok_script(0.3), notes="improve\n")
-    searcher, journal, _ = make_searcher(task, config, backend)
+    agent = FakeAgent()
+    agent.queue(script=TUNED_SCRIPT, notes="broken declaration\n", files={"params.json": "{oops"})
+    agent.queue(script=ok_script(0.3), notes="improve\n")
+    searcher, journal, _ = make_searcher(task, config, agent)
     searcher.run()
 
     draft = journal.get("c001")
     assert draft.status == "passing" and draft.val_score == pytest.approx(0.51)
     assert not draft.tunable and draft.params_error
     assert len(draft.trials) == 1 and draft.trials[0].params == {}
-    assert [r.operator for r in backend.requests] == ["draft", "improve"]
+    assert [r.operator for r in agent.requests] == ["draft", "improve"]
 
 
 def test_holdout_runs_for_the_winning_trial_only(task, config):
-    backend = FakeBackend()
-    backend.queue(script=TUNED_HOLDOUT_SCRIPT, notes="tunable\n", files={"params.json": PARAMS})
-    backend.queue(script=ok_script(0.3), notes="improve\n")
-    searcher, journal, _ = make_searcher(task, config, backend, holdout=True)
+    agent = FakeAgent()
+    agent.queue(script=TUNED_HOLDOUT_SCRIPT, notes="tunable\n", files={"params.json": PARAMS})
+    agent.queue(script=ok_script(0.3), notes="improve\n")
+    searcher, journal, _ = make_searcher(task, config, agent, holdout=True)
     scorer = searcher.evaluator.holdout_scorer
     searcher.run()
 
@@ -148,13 +148,13 @@ def test_holdout_runs_for_the_winning_trial_only(task, config):
 
 def test_tune_beats_the_incumbent_through_the_accept_band(task, config):
     """A tune trial that lifts a runner-up above the best promotes it."""
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.55), notes="plain best\n")
-    backend.queue(script=TUNED_SCRIPT, notes="tunable runner-up\n", files={"params.json": PARAMS})
-    backend.queue(script=ok_script(0.2), notes="later improve\n")
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.55), notes="plain best\n")
+    agent.queue(script=TUNED_SCRIPT, notes="tunable runner-up\n", files={"params.json": PARAMS})
+    agent.queue(script=ok_script(0.2), notes="later improve\n")
     # nine distinct draws over k in 0..9 must reach k >= 6; no interleave
     searcher, journal, _ = make_searcher(
-        task, config, backend, max_candidates=4, tune_budget=9, tune_burst=9, tune_gate="always"
+        task, config, agent, max_candidates=4, tune_budget=9, tune_burst=9, tune_gate="always"
     )
     searcher.run()
 
@@ -171,14 +171,14 @@ def test_parallel_tune_jobs_get_distinct_indices(task, config):
     trial indices and both land. The two drafts may land in either order
     (the free slot may take an improve first), so the candidate cap and the
     response queue leave room for both orders."""
-    config.concurrency.parallel_operators = 2
-    backend = FakeBackend()
-    backend.queue(script=TUNED_SCRIPT, notes="tunable\n", files={"params.json": PARAMS})
-    backend.queue(script=ok_script(0.3), notes="second draft (pool fills it)\n")
+    config.concurrency.parallel_agents = 2
+    agent = FakeAgent()
+    agent.queue(script=TUNED_SCRIPT, notes="tunable\n", files={"params.json": PARAMS})
+    agent.queue(script=ok_script(0.3), notes="second draft (pool fills it)\n")
     for _ in range(4):
-        backend.queue(script=ok_script(0.2), notes="improve\n")
+        agent.queue(script=ok_script(0.2), notes="improve\n")
     searcher, journal, _ = make_searcher(
-        task, config, backend, max_candidates=6, tune_budget=4, tune_parallel=2
+        task, config, agent, max_candidates=6, tune_budget=4, tune_parallel=2
     )
     searcher.run()
 
@@ -189,9 +189,9 @@ def test_parallel_tune_jobs_get_distinct_indices(task, config):
 
 
 def test_aborted_tune_job_leaves_the_candidate_untouched(task, config):
-    backend = FakeBackend()
-    backend.queue(script=TUNED_SCRIPT, notes="tunable\n", files={"params.json": PARAMS})
-    searcher, journal, search_dir = make_searcher(task, config, backend, max_candidates=2)
+    agent = FakeAgent()
+    agent.queue(script=TUNED_SCRIPT, notes="tunable\n", files={"params.json": PARAMS})
+    searcher, journal, search_dir = make_searcher(task, config, agent, max_candidates=2)
     searcher.run()  # baseline c000 + the draft c001, then the candidate cap stops it
     before = journal.get("c001").model_dump()
 
@@ -207,9 +207,9 @@ def test_aborted_tune_job_leaves_the_candidate_untouched(task, config):
 
 
 def test_run_operator_tune_refuses_an_untunable_target(task, config):
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.6), notes="plain\n")
-    searcher, journal, _ = make_searcher(task, config, backend, max_candidates=2)
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.6), notes="plain\n")
+    searcher, journal, _ = make_searcher(task, config, agent, max_candidates=2)
     draft = searcher.run_operator("draft", None)  # c000: no baseline written by run_operator
     with pytest.raises(ValueError, match="cannot be tuned"):
         searcher.run_operator(TUNE_ACTION, draft)

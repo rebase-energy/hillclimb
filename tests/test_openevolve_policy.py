@@ -12,7 +12,7 @@ import pytest
 
 pytest.importorskip("openevolve")
 
-from hillclimb.backends.fake import FakeBackend
+from hillclimb.agents.fake import FakeAgent
 from hillclimb.harness.budget import BudgetManager
 from hillclimb.harness.candidate import Candidate
 from hillclimb.harness.dirs import create_search_dir
@@ -141,20 +141,20 @@ def test_buggy_and_code_less_floor_are_not_programs(config, tmp_path):
 def test_openevolve_policy_drives_search_end_to_end(task, config):
     config.climber.ref = "openevolve"
     config.climber.params = {**PARAMS, "num_drafts": 2}
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.6), notes="one\n")
-    backend.queue(script=ok_script(0.7), notes="two\n")
-    backend.queue(script=ok_script(0.8), notes="three\n")
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.6), notes="one\n")
+    agent.queue(script=ok_script(0.7), notes="two\n")
+    agent.queue(script=ok_script(0.8), notes="three\n")
     search_dir = create_search_dir(config.paths.runs_dir, "test-run")
     policy = get_policy("openevolve", config.climber.params)
     searcher = SearchRig(
         problem=task, config=config, journal=Journal(search_dir / "journal.jsonl"),
-        backend=backend, executor=local_executor(), budget=BudgetManager(3600, stop_margin_s=1),
+        agent=agent, executor=local_executor(), budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir, max_candidates=4, log=lambda *_: None, policy=policy,
     )
     best = searcher.run()
     assert best.val_score == 0.8
-    assert [r.operator for r in backend.requests] == ["draft", "draft", "improve"]
+    assert [r.operator for r in agent.requests] == ["draft", "draft", "improve"]
     evolved = searcher.journal.get("c003")
     assert evolved.operator == "improve" and evolved.parent_id in {"c001", "c002"}
     assert "island" in evolved.policy_meta and "cell" in evolved.policy_meta

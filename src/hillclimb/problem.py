@@ -12,6 +12,11 @@ from hillclimb.config import Config
 from hillclimb.harness.direction import legacy_direction_key
 
 
+SOLUTION_KINDS = ("program", "climber")
+# the harness-owned contract prompt per solution kind (prompts/<name>.md)
+CONTRACT_TEMPLATES = {"program": "contract_verifier", "climber": "contract_climber"}
+
+
 class UnitTestSpec(BaseModel):
     """Optional, framework-neutral correctness gate for a problem.
 
@@ -61,6 +66,12 @@ class ProblemSpec(BaseModel):
     higher_is_better: bool
     time_budget_s: int
     allow_network: bool = False
+    # What a solution.py IS. `program`: a script or module the verifier
+    # drives (every ordinary problem). `climber`: a one-file hillclimb climber
+    # — the problem is a META-problem whose verifier runs inner searches with
+    # the candidate as their climber (`hillclimb meta evaluate`), and a search
+    # on it runs its climber in the improver role (`SearchMeta.role`).
+    solution_kind: Literal["program", "climber"] = "program"
     # Named score references drawn as horizontal lines by `hillclimb chart`.
     # A mapping keeps problem.yaml compact and preserves legend order.
     chart_baselines: dict[str, float] = Field(default_factory=dict)
@@ -186,18 +197,20 @@ class SuiteEntry(BaseModel):
     target: str
     name: str | None = None
     model: str | None = None
-    backend: str | None = None
+    agent: str | None = None
     budget: str | None = None  # "2h" / "30m" / seconds — parsed by the CLI
-    parallel_operators: int | None = None
+    climber: str | None = None  # a bundled name, a climber dir, or a .py file
+    parallel_agents: int | None = None
     n_replicates: int | None = None
     seed_from: str | None = None  # incumbent solution.py, relative to the spec file
+    set: list[str] = Field(default_factory=list)  # `key=value` config overrides (`--set`)
 
     @model_validator(mode="before")
     @classmethod
     def _legacy_keys(cls, data):
         if isinstance(data, dict):
             data = dict(data)
-            for old, new in (("parallel_agents", "parallel_operators"), ("n_trials", "n_replicates")):
+            for old, new in (("backend", "agent"), ("parallel_operators", "parallel_agents"), ("n_trials", "n_replicates")):
                 if old in data:
                     data.setdefault(new, data.pop(old))
         return data
@@ -391,6 +404,11 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
     if not data_dir.exists():
         raise FileNotFoundError(f"Problem data directory not found: {data_dir}")
 
+    solution_kind = meta.get("solution_kind", "program")
+    if solution_kind not in SOLUTION_KINDS:
+        raise ValueError(
+            f"{problem_yaml}: solution_kind must be one of {', '.join(SOLUTION_KINDS)}, not {solution_kind!r}"
+        )
     common = dict(
         problem_id=problem_id,
         problem_dir=problem_dir.resolve(),
@@ -400,6 +418,9 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
         higher_is_better=bool(legacy_direction_key(meta)["higher_is_better"]),
         time_budget_s=meta.get("time_budget_s", config.budget.total_s),
         allow_network=bool(meta.get("allow_network", False)),
+        solution_kind=solution_kind,
+        # a climber is prompted for as a climber, not as a script
+        contract_template=CONTRACT_TEMPLATES[solution_kind],
     )
     verifier_cmd = _verifier_argv(problem_yaml, problem_dir, meta)
     contract_path = _optional_file(problem_dir, meta, "contract", default="contract.md")

@@ -2,7 +2,7 @@
 
 ## Implementation notes (2026-09-16)
 
-Implemented with backend, routing/journal sampling, custom providers,
+Implemented with agent, routing/journal sampling, custom providers,
 preflight, raw-stream viewer support, tests and the temperature experiment
 spec. The reasoning-effort sibling remains a follow-up. Tests against the
 installed 0.73.1 CLI and a loopback OpenAI-compatible provider confirmed
@@ -56,7 +56,7 @@ spend: under $0.01.
 | Does it work headless? | Yes. `pi -p --mode json` reads the prompt from stdin, streams JSON lines, exits 0. |
 | Is there a session id for debug chains? | Yes. The first JSON line is `{"type":"session","id":"<uuid>",…}`; `--session <uuid> --session-dir <dir>` resumed the same session headlessly and the model remembered the earlier turn. |
 | Where do usage and cost come from? | Every assistant `message_end` carries `usage: {input, output, cacheRead, cacheWrite, totalTokens, cost: {…, total}}` and `model` + `provider`. Cost is pi's own catalogue price. |
-| What does a model that refuses temperature do? | Sonnet 5 returned Anthropic's 400 `"temperature is deprecated for this model"`. pi reported it as an assistant message with `stopReason: "error"` and **still exited 0**. The backend must read `stopReason`, never the exit code. |
+| What does a model that refuses temperature do? | Sonnet 5 returned Anthropic's 400 `"temperature is deprecated for this model"`. pi reported it as an assistant message with `stopReason: "error"` and **still exited 0**. The agent must read `stopReason`, never the exit code. |
 | Does personal config leak in? | Not with `PI_CODING_AGENT_DIR` pointed at an isolated folder plus `--no-extensions --no-skills --no-prompt-templates --no-context-files`. The extension is still loaded via explicit `-e`. |
 | Catalogue freshness | The bundled catalogue did not know `claude-sonnet-5` (ran as a custom id with a warning). `pi update --models` refreshes it; `PI_OFFLINE=1` pins it. |
 
@@ -65,9 +65,9 @@ a shipped extension, and provider errors are detected from the event stream.
 
 ## Design
 
-### 1. A `pi` backend next to `claude-code` and `codex`
+### 1. A `pi` agent next to `claude-code` and `codex`
 
-`backends/pi_cli.py`, registered in `backends/__init__.py` as `"pi"`. One
+`agents/pi_cli.py`, registered in `agents/__init__.py` as `"pi"`. One
 operator call is one process:
 
 ```
@@ -80,9 +80,9 @@ pi -p --mode json
 ```
 
 - prompt on stdin, cwd = `candidate_dir`, `start_new_session=True` and the
-  codex backend's `_kill_group` for timeouts/abort;
+  codex agent's `_kill_group` for timeouts/abort;
 - raw stream to `<candidate_dir>/agent_stream.jsonl`, pid to `agent.pid`,
-  stderr to `agent_stderr.log` (same files as the other backends, so `watch`
+  stderr to `agent_stderr.log` (same files as the other agents, so `watch`
   needs nothing new);
 - `--session-dir` is per search so a debug child can resume its parent's
   uuid from its own candidate dir (`search_dir = candidate_dir.parents[1]`,
@@ -98,13 +98,13 @@ wants:
 | `session_id` | `{"type":"session","id":…}` header |
 | `model_id` | first assistant `message_end.message.model` (pi's id; prefix `provider/` when it is not the requested alias) |
 | `token_usage` | sum over assistant `message_end.usage`: `input→input_tokens`, `output→output_tokens`, `cacheWrite→cache_creation_input_tokens`, `cacheRead→cache_read_input_tokens` |
-| `cost_usd` | sum of `usage.cost.total`; when pi reports 0 for an OpenRouter model, fall back to `pricing.cost_usd` like the codex backend |
+| `cost_usd` | sum of `usage.cost.total`; when pi reports 0 for an OpenRouter model, fall back to `pricing.cost_usd` like the codex agent |
 | `num_turns` | count of `turn_end` |
 | `ok` / `error_kind` | last assistant `stopReason`: `"stop"`/`"toolUse"` ok; `"error"` → classify `errorMessage`: `RATE_LIMIT_MARKERS` → `rate_limited`, `402`/insufficient credits → `out_of_credits`, else `error`; killed → `timeout`/`aborted` |
 
 ### 2. Auth modes
 
-`backend_auth` keeps its three values; the validator in `config.py` that
+`agent_auth` keeps its three values; the validator in `config.py` that
 pins `openrouter` to `codex` widens to `codex | pi`.
 
 - `subscription`: pi's `/login` writes `~/.pi/agent/auth.json`; copy it into
@@ -126,28 +126,28 @@ uses:
 
 ```yaml
 routing:
-  draft:   {backend: pi, backend_auth: openrouter,
+  draft:   {agent: pi, agent_auth: openrouter,
             model: openrouter/deepseek/deepseek-v3.2,
             sampling: {temperature: 1.0, top_p: 0.95}}
-  improve: {backend: pi, backend_auth: openrouter,
+  improve: {agent: pi, agent_auth: openrouter,
             model: openrouter/deepseek/deepseek-v3.2,
             sampling: {temperature: 0.2}}
 ```
 
 - `RouteConfig.sampling: dict[str, float] | None` (config), `Route.sampling`
   (policy override), `ResolvedRoute.sampling` (routing.py `pick`),
-  `OperatorRequest.sampling` (backend), `BackendInfo.sampling` (journal —
+  `OperatorRequest.sampling` (agent), `AgentInfo.sampling` (journal —
   charts and experiment reports group on it).
-- The pi backend serializes it as `HILLCLIMB_SAMPLING='{"temperature":…}'`
+- The pi agent serializes it as `HILLCLIMB_SAMPLING='{"temperature":…}'`
   in the child env. The shipped extension
-  (`src/hillclimb/backends/pi_ext/hillclimb-sampling.ts`, package data,
+  (`src/hillclimb/agents/pi_ext/hillclimb-sampling.ts`, package data,
   the file used in the spike) merges the object into every provider payload
   and logs one line per request to stderr. Empty/unset = no-op.
 - The config validator rejects `sampling` on `claude-code` and `codex`
   routes with the same shape of error as the `openrouter` check, so a knob
   that would be silently ignored fails at load instead.
 - Model gating stays the operator's responsibility: Claude 4.7+ and OpenAI
-  reasoning models 400 on any temperature. The backend turns that 400 into
+  reasoning models 400 on any temperature. The agent turns that 400 into
   `error_kind="error"` with the provider message, and a **preflight** at
   search start (`pi -p --no-tools` "reply pong" with the route's sampling,
   ~500 tokens, one per distinct (model, sampling) route) fails the search
@@ -160,7 +160,7 @@ and friends go straight through to vLLM/llama.cpp, and seeds stay out of it
 ### 4. Local servers (vLLM, llama.cpp)
 
 pi's `models.json` declares custom OpenAI-compatible providers. Add
-`pi.models_file: <path>` to `Config` (default: none); when set, the backend
+`pi.models_file: <path>` to `Config` (default: none); when set, the agent
 copies it into the isolated dir as `models.json` at construction. A vLLM
 entry is then ordinary config:
 
@@ -186,10 +186,10 @@ it.
 
 ## Steps
 
-1. `backends/pi_cli.py` + `pi_ext/hillclimb-sampling.ts` (package data in
+1. `agents/pi_cli.py` + `pi_ext/hillclimb-sampling.ts` (package data in
    `pyproject.toml`), `_PiStreamReader`, `pi_home(auth)`, `pi_env(auth)`,
-   registration in `backends/__init__.py`.
-2. `tests/test_pi_backend.py` on the codex-backend pattern (stub `pi`
+   registration in `agents/__init__.py`.
+2. `tests/test_pi_agent.py` on the codex-agent pattern (stub `pi`
    script that asserts stdin/env/argv and prints a session header, an
    assistant `message_end` with usage, a `turn_end`): session id, usage
    mapping, cost fallback, `stopReason: error` → not ok on exit 0,
@@ -197,11 +197,11 @@ it.
    when the route carries `sampling`, `--session` on resume, isolated
    `PI_CODING_AGENT_DIR`, auth copy.
 3. `sampling` field through `config.py` (+ validator), `policy.Route`,
-   `routing.py`, `OperatorRequest`, `search.py` (request + `BackendInfo`),
+   `routing.py`, `OperatorRequest`, `search.py` (request + `AgentInfo`),
    `candidate.py`; tests in `test_config`/`test_policy`/`test_search`.
 4. `Config.pi.models_file` and the isolated-dir `settings.json`/`models.json`
    writer; a test that the file lands where `PI_CODING_AGENT_DIR` points.
-5. Preflight in `api.execute_search` (behind the pi backend only), logged
+5. Preflight in `api.execute_search` (behind the pi agent only), logged
    like the emflow venv warm-up; a test through the stub binary.
 6. `hillclimb/experiments/temperature.yaml`: control `t0.2` vs `t0.7` vs
    `t1.0` on `openrouter/deepseek/deepseek-v3.2` (or `qwen/qwen3-coder`),
@@ -209,14 +209,14 @@ it.
    (fast verifier, `instances` breakdown), `noise_floor` from
    `hillclimb verify --repeat 5`. The report's `verdict` per arm is the
    deliverable.
-7. Docs: CLAUDE.md backend list (`pi`, `sampling`, `pi.models_file`),
+7. Docs: CLAUDE.md agent list (`pi`, `sampling`, `pi.models_file`),
    README config table, `hillclimb` skill note.
 
 ## Open questions
 
 - **Context files.** `--no-context-files` keeps pi from reading a
   candidate's `CLAUDE.md`/`AGENTS.md`. The prompt already carries the
-  contract, so parity with the other backends argues for off; flip it if a
+  contract, so parity with the other agents argues for off; flip it if a
   problem starts shipping an `AGENTS.md` on purpose.
 - **Session dir location.** Per search keeps resume simple; per candidate
   would keep everything that belongs to a candidate inside its dir (the

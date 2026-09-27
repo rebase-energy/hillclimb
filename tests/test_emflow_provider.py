@@ -92,7 +92,7 @@ def test_emflow_contract_prompt(econfig):
     import sys
     from pathlib import Path
 
-    from hillclimb.backends.fake import FakeBackend
+    from hillclimb.agents.fake import FakeAgent
     from hillclimb.harness.budget import BudgetManager
     from tests.conftest import local_executor
     from hillclimb.harness.journal import Journal
@@ -103,7 +103,7 @@ def test_emflow_contract_prompt(econfig):
     (search_dir / "candidates").mkdir(parents=True)
     searcher = SearchRig(
         problem=spec, config=econfig, journal=Journal(search_dir / "journal.jsonl"),
-        backend=FakeBackend(), executor=local_executor(),
+        agent=FakeAgent(), executor=local_executor(),
         budget=BudgetManager(600, stop_margin_s=1), search_dir=search_dir,
         log=lambda *_: None,
     )

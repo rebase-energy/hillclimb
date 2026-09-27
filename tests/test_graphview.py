@@ -597,7 +597,7 @@ async def test_help_panel_toggles_and_lists_every_command(graph_workspace):
         assert rows["shift-drag"] == "pan"
         assert rows["scroll"] == "zoom"
         # ...listed beside every key, including those hidden from the footer
-        assert {"+ =", "f 0", "j", "esc", "q"} <= set(rows)
+        assert {"+ =", "f 0", "j", "esc/b", "q"} <= set(rows)
         assert all(len(keys) <= 12 for keys in rows), "a key cap would wrap"
 
         await pilot.press("question_mark")

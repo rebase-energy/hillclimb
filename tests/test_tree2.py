@@ -432,7 +432,7 @@ class TestWidget:
         assert issubclass(Tree2Screen, TreeScreen)
         keys = [b.key for b in Tree2Screen.BINDINGS]
         assert {"1", "5", "j", "n", "l"} <= set(keys) and "6" not in keys  # five legend entries, no more
-        assert keys.index("b") + 1 == keys.index("l")  # lineage sits right after best in the footer
+        assert keys.index("asterisk") + 1 == keys.index("l")  # lineage sits right after best in the footer
 
     def test_hooks(self):
         from hillclimb.tui.tree2view import Tree2PlotWidget
@@ -480,8 +480,8 @@ async def test_tree2_app_mounts_sizes_marks_selects_and_scrubs(tree_workspace):
         await pilot.pause()
         assert canvas._plot.camera_state()[2] == 1.0
         assert canvas.radius == pytest.approx(fitted)
-        # b selects the best: its number is named beside the mark, detail opens
-        await pilot.press("b")
+        # * selects the best: its number is named beside the mark, detail opens
+        await pilot.press("asterisk")
         await pilot.pause()
         assert canvas.selected == "c007"
         assert set(canvas._label_cells.values()) == {"c007"}
@@ -524,7 +524,7 @@ async def test_tree2_app_mounts_sizes_marks_selects_and_scrubs(tree_workspace):
         assert app.screen._tree.best_id == "c007"
         # the footer reads esc, b, l, n …: lineage right after best
         keys = list(app.screen._bindings.key_to_bindings)
-        assert keys.index("b") < keys.index("l") < keys.index("n")
+        assert keys.index("asterisk") < keys.index("l") < keys.index("n")
         await pilot.press("question_mark")
         await pilot.pause()
         assert app.screen.query(Tree2Keys)

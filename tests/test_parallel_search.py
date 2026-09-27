@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb.backends.fake import FakeBackend
+from hillclimb.agents.fake import FakeAgent
 from hillclimb.harness.budget import BudgetManager
 from tests.conftest import local_executor
 from hillclimb.harness.journal import Journal
@@ -37,7 +37,7 @@ print("val_score: 0.5")
 """
 
 
-def make_searcher(task, config, backend, **kwargs):
+def make_searcher(task, config, agent, **kwargs):
     search_dir = create_search_dir(config.paths.runs_dir, "test-search")
     journal = Journal(search_dir / "journal.jsonl")
     kwargs.setdefault("budget", BudgetManager(3600, stop_margin_s=1))
@@ -45,7 +45,7 @@ def make_searcher(task, config, backend, **kwargs):
         problem=task,
         config=config,
         journal=journal,
-        backend=backend,
+        agent=agent,
         executor=local_executor(),
         search_dir=search_dir,
         log=lambda *_: None,
@@ -57,9 +57,9 @@ def make_searcher(task, config, backend, **kwargs):
 class TestMultiSeedTrials:
     def test_trials_recorded_and_val_is_mean(self, task, config):
         config.evaluation.n_replicates = 3
-        backend = FakeBackend()
-        backend.queue(script=SEEDED_SCRIPT, notes="seeded draft\n")
-        searcher, journal, _ = make_searcher(task, config, backend)
+        agent = FakeAgent()
+        agent.queue(script=SEEDED_SCRIPT, notes="seeded draft\n")
+        searcher, journal, _ = make_searcher(task, config, agent)
 
         candidate = searcher.run_operator("draft", None)
 
@@ -71,9 +71,9 @@ class TestMultiSeedTrials:
 
     def test_trial_zero_artifacts_at_workspace_root(self, task, config):
         config.evaluation.n_replicates = 2
-        backend = FakeBackend()
-        backend.queue(script=SEEDED_SCRIPT, notes="seeded draft\n")
-        searcher, _, _ = make_searcher(task, config, backend)
+        agent = FakeAgent()
+        agent.queue(script=SEEDED_SCRIPT, notes="seeded draft\n")
+        searcher, _, _ = make_searcher(task, config, agent)
 
         candidate = searcher.run_operator("draft", None)
 
@@ -87,9 +87,9 @@ class TestMultiSeedTrials:
 
     def test_seed_flaky_candidate_is_buggy(self, task, config):
         config.evaluation.n_replicates = 2
-        backend = FakeBackend()
-        backend.queue(script=FLAKY_SCRIPT, notes="flaky draft\n")
-        searcher, _, _ = make_searcher(task, config, backend)
+        agent = FakeAgent()
+        agent.queue(script=FLAKY_SCRIPT, notes="flaky draft\n")
+        searcher, _, _ = make_searcher(task, config, agent)
 
         candidate = searcher.run_operator("draft", None)
 
@@ -98,9 +98,9 @@ class TestMultiSeedTrials:
 
     def test_single_replicate_still_gets_a_trial_dir(self, task, config):
         assert config.evaluation.n_replicates == 1
-        backend = FakeBackend()
-        backend.queue(script=ok_script(0.7), notes="draft\n")
-        searcher, _, _ = make_searcher(task, config, backend)
+        agent = FakeAgent()
+        agent.queue(script=ok_script(0.7), notes="draft\n")
+        searcher, _, _ = make_searcher(task, config, agent)
 
         candidate = searcher.run_operator("draft", None)
 
@@ -116,7 +116,7 @@ class TestMultiSeedTrials:
 
 
 class TestHoldoutTopK:
-    def make_holdout_searcher(self, task, config, backend, top_k):
+    def make_holdout_searcher(self, task, config, agent, top_k):
         from tests.test_search import FileHoldoutScorer
 
         config.holdout.top_k = top_k
@@ -133,7 +133,7 @@ class TestHoldoutTopK:
             problem=problem,
             config=config,
             journal=journal,
-            backend=backend,
+            agent=agent,
             executor=evaluator.executor,
             budget=BudgetManager(3600, stop_margin_s=1),
             search_dir=search_dir,
@@ -152,11 +152,11 @@ print("val_score: {val}")
 '''
 
     def test_gate_skips_holdout_below_top_k(self, task, config):
-        backend = FakeBackend()
+        agent = FakeAgent()
         # two strong drafts fill top_k=2, then a weak one
         for val in (0.9, 0.8, 0.1):
-            backend.queue(script=self.holdout_script(val), notes="d\n")
-        searcher, journal = self.make_holdout_searcher(task, config, backend, top_k=2)
+            agent.queue(script=self.holdout_script(val), notes="d\n")
+        searcher, journal = self.make_holdout_searcher(task, config, agent, top_k=2)
         for _ in range(3):
             searcher.run_operator("draft", None)
 
@@ -167,19 +167,19 @@ print("val_score: {val}")
         assert weak.holdout_score is None  # gated: no holdout query spent
 
     def test_gate_disabled_scores_everyone(self, task, config):
-        backend = FakeBackend()
+        agent = FakeAgent()
         for val in (0.9, 0.8, 0.1):
-            backend.queue(script=self.holdout_script(val), notes="d\n")
-        searcher, journal = self.make_holdout_searcher(task, config, backend, top_k=0)
+            agent.queue(script=self.holdout_script(val), notes="d\n")
+        searcher, journal = self.make_holdout_searcher(task, config, agent, top_k=0)
         for _ in range(3):
             searcher.run_operator("draft", None)
         assert all(journal.get(f"c00{i}").holdout_score is not None for i in (0, 1, 2))
 
     def test_gated_candidate_not_selectable(self, task, config):
-        backend = FakeBackend()
+        agent = FakeAgent()
         for val in (0.9, 0.8, 0.1):
-            backend.queue(script=self.holdout_script(val), notes="d\n")
-        searcher, journal = self.make_holdout_searcher(task, config, backend, top_k=2)
+            agent.queue(script=self.holdout_script(val), notes="d\n")
+        searcher, journal = self.make_holdout_searcher(task, config, agent, top_k=2)
         for _ in range(3):
             searcher.run_operator("draft", None)
         selected = journal.selected_candidate(True, "rank-blend")
@@ -191,14 +191,14 @@ print("val_score: {val}")
 import threading  # noqa: E402
 import time  # noqa: E402
 
-from hillclimb.backends.fake import GateBackend  # noqa: E402
+from hillclimb.agents.fake import GateAgent  # noqa: E402
 from hillclimb.harness.control import ControlCommand, write_command  # noqa: E402
 from hillclimb.harness.glue import ParkedSearch, StopRequested  # noqa: E402
 
 
-def pool_searcher(task, config, backend, n, max_candidates=10, **kwargs):
-    config.concurrency.parallel_operators = n
-    return make_searcher(task, config, backend, max_candidates=max_candidates, **kwargs)
+def pool_searcher(task, config, agent, n, max_candidates=10, **kwargs):
+    config.concurrency.parallel_agents = n
+    return make_searcher(task, config, agent, max_candidates=max_candidates, **kwargs)
 
 
 CRASH = 'raise RuntimeError("boom")\n'
@@ -213,8 +213,8 @@ class GoldenScenario:
         self.max_candidates = max_candidates
         self.budget_spent = budget_spent
 
-    def queue(self, backend):
-        self._queue_fn(backend)
+    def queue(self, agent):
+        self._queue_fn(agent)
 
     def searcher_kwargs(self):
         if not self.budget_spent:
@@ -222,33 +222,33 @@ class GoldenScenario:
         return {"budget": BudgetManager(3600, stop_margin_s=1, spent_s=self.budget_spent)}
 
 
-def _drafts_then_improve(backend):
-    backend.queue(script=ok_script(0.6), notes="a\n")
-    backend.queue(script=ok_script(0.7), notes="b\n")
-    backend.queue(script=ok_script(0.5), notes="c\n")
-    backend.queue(script=ok_script(0.8), notes="improve\n")
+def _drafts_then_improve(agent):
+    agent.queue(script=ok_script(0.6), notes="a\n")
+    agent.queue(script=ok_script(0.7), notes="b\n")
+    agent.queue(script=ok_script(0.5), notes="c\n")
+    agent.queue(script=ok_script(0.8), notes="improve\n")
 
 
-def _debug_chain(backend):
-    backend.queue(script=CRASH, notes="buggy draft\n")
-    backend.queue(script=CRASH, notes="failed fix\n")
-    backend.queue(script=ok_script(0.6), notes="fixed\n")
-    backend.queue(script=ok_script(0.7), notes="draft two\n")
-    backend.queue(script=ok_script(0.5), notes="draft three\n")
+def _debug_chain(agent):
+    agent.queue(script=CRASH, notes="buggy draft\n")
+    agent.queue(script=CRASH, notes="failed fix\n")
+    agent.queue(script=ok_script(0.6), notes="fixed\n")
+    agent.queue(script=ok_script(0.7), notes="draft two\n")
+    agent.queue(script=ok_script(0.5), notes="draft three\n")
 
 
-def _ensemble_window(backend):
-    backend.queue(script=ok_script(0.6), notes="a\n")
-    backend.queue(script=ok_script(0.7), notes="b\n")
-    backend.queue(script=ok_script(0.9), notes="ensemble\n")
-    backend.queue(script=ok_script(0.5), notes="post-ensemble draft\n")
+def _ensemble_window(agent):
+    agent.queue(script=ok_script(0.6), notes="a\n")
+    agent.queue(script=ok_script(0.7), notes="b\n")
+    agent.queue(script=ok_script(0.9), notes="ensemble\n")
+    agent.queue(script=ok_script(0.5), notes="post-ensemble draft\n")
 
 
-def _improve_tie(backend):
-    backend.queue(script=ok_script(0.7), notes="a\n")
-    backend.queue(script="print('val_score: 0.7')\nimport shutil\nshutil.copy('data/sample_submission.csv', 'submission.csv')\n", notes="b same score\n")
-    backend.queue(script=ok_script(0.5), notes="c\n")
-    backend.queue(script=ok_script(0.8), notes="improve\n")
+def _improve_tie(agent):
+    agent.queue(script=ok_script(0.7), notes="a\n")
+    agent.queue(script="print('val_score: 0.7')\nimport shutil\nshutil.copy('data/sample_submission.csv', 'submission.csv')\n", notes="b same score\n")
+    agent.queue(script=ok_script(0.5), notes="c\n")
+    agent.queue(script=ok_script(0.8), notes="improve\n")
 
 
 GOLDEN_SCENARIOS = {
@@ -338,20 +338,20 @@ def journal_sequence(journal_path):
 
 class TestWorkerPool:
     def test_three_drafts_in_flight_concurrently(self, task, config):
-        backend = GateBackend()
+        agent = GateAgent()
         for score in (0.6, 0.7, 0.8):
-            backend.queue(script=ok_script(score), notes="d\n")
-        searcher, journal, _ = pool_searcher(task, config, backend, n=3, max_candidates=4)
+            agent.queue(script=ok_script(score), notes="d\n")
+        searcher, journal, _ = pool_searcher(task, config, agent, n=3, max_candidates=4)
 
         runner = threading.Thread(target=searcher.run)
         runner.start()
         for _ in range(3):
-            assert backend.started.acquire(timeout=10)
+            assert agent.started.acquire(timeout=10)
         pending = [c for c in journal.candidates.values() if c.status == "pending"]
         assert len(pending) == 3
         assert len({c.candidate_id for c in pending}) == 3
         assert len({c.candidate_dir for c in pending}) == 3
-        backend.release_all()
+        agent.release_all()
         runner.join(timeout=30)
         assert not runner.is_alive()
         assert len(journal.scored_candidates()) == 3
@@ -363,10 +363,10 @@ class TestWorkerPool:
         across draft/improve, debug-chain, ensemble-window, and improve-tie
         histories."""
         scenario = GOLDEN_SCENARIOS[scenario_name]
-        backend = FakeBackend()
-        scenario.queue(backend)
+        agent = FakeAgent()
+        scenario.queue(agent)
         searcher, journal, search_dir = make_searcher(
-            task, config, backend,
+            task, config, agent,
             max_candidates=scenario.max_candidates, **scenario.searcher_kwargs(),
         )
         searcher.run()
@@ -377,16 +377,16 @@ class TestWorkerPool:
         )
 
     def test_rate_limit_drains_in_flight_then_parks(self, task, config):
-        # GateBackend pops responses at RELEASE time (FIFO), so the release
+        # GateAgent pops responses at RELEASE time (FIFO), so the release
         # order maps to the response order below. The scheduler refills the
         # freed slot after the first commit — the third gate/response is that
         # refill, still in flight when the park lands (the drain case).
-        backend = GateBackend()
-        backend.queue(script=ok_script(0.6), notes="good draft\n")       # 1st release
-        backend.queue(script=None, result={"ok": False, "error_kind": "rate_limited",
+        agent = GateAgent()
+        agent.queue(script=ok_script(0.6), notes="good draft\n")       # 1st release
+        agent.queue(script=None, result={"ok": False, "error_kind": "rate_limited",
                                            "error_message": "limit"})    # 2nd release
-        backend.queue(script=ok_script(0.7), notes="drained draft\n")    # 3rd release
-        searcher, journal, _ = pool_searcher(task, config, backend, n=2, max_candidates=5)
+        agent.queue(script=ok_script(0.7), notes="drained draft\n")    # 3rd release
+        searcher, journal, _ = pool_searcher(task, config, agent, n=2, max_candidates=5)
 
         outcome: dict = {}
 
@@ -398,13 +398,13 @@ class TestWorkerPool:
 
         runner = threading.Thread(target=run)
         runner.start()
-        assert backend.started.acquire(timeout=10)
-        assert backend.started.acquire(timeout=10)
-        backend.release(0)  # first worker commits ok; scheduler refills a slot
-        assert backend.started.acquire(timeout=10)  # the refill arrives
-        backend.release(1)  # rate-limited -> park committed, drain begins
+        assert agent.started.acquire(timeout=10)
+        assert agent.started.acquire(timeout=10)
+        agent.release(0)  # first worker commits ok; scheduler refills a slot
+        assert agent.started.acquire(timeout=10)  # the refill arrives
+        agent.release(1)  # rate-limited -> park committed, drain begins
         time.sleep(1.5)
-        backend.release(2)  # in-flight refill finishes and is committed
+        agent.release(2)  # in-flight refill finishes and is committed
         runner.join(timeout=30)
         assert not runner.is_alive()
 
@@ -414,10 +414,10 @@ class TestWorkerPool:
         assert statuses == ["parked", "passing", "passing", "passing"]
 
     def test_graceful_stop_drains_in_flight(self, task, config):
-        backend = GateBackend()
-        backend.queue(script=ok_script(0.6), notes="a\n")
-        backend.queue(script=ok_script(0.7), notes="b\n")
-        searcher, journal, search_dir = pool_searcher(task, config, backend, n=2, max_candidates=6)
+        agent = GateAgent()
+        agent.queue(script=ok_script(0.6), notes="a\n")
+        agent.queue(script=ok_script(0.7), notes="b\n")
+        searcher, journal, search_dir = pool_searcher(task, config, agent, n=2, max_candidates=6)
 
         outcome: dict = {}
 
@@ -429,11 +429,11 @@ class TestWorkerPool:
 
         runner = threading.Thread(target=run)
         runner.start()
-        assert backend.started.acquire(timeout=10)
-        assert backend.started.acquire(timeout=10)
+        assert agent.started.acquire(timeout=10)
+        assert agent.started.acquire(timeout=10)
         write_command(search_dir, ControlCommand(action="stop", source="cli"))
         time.sleep(2.0)  # control poll notices, sets drain
-        backend.release_all()
+        agent.release_all()
         runner.join(timeout=30)
         assert not runner.is_alive()
 
@@ -442,19 +442,19 @@ class TestWorkerPool:
         assert len(journal.scored_candidates()) == 2
 
     def test_graceful_deadline_lets_in_flight_finish(self, task, config):
-        backend = GateBackend()
-        backend.queue(script=ok_script(0.6), notes="a\n")
-        backend.queue(script=ok_script(0.7), notes="b\n")
-        searcher, journal, _ = pool_searcher(task, config, backend, n=2, max_candidates=6)
+        agent = GateAgent()
+        agent.queue(script=ok_script(0.6), notes="a\n")
+        agent.queue(script=ok_script(0.7), notes="b\n")
+        searcher, journal, _ = pool_searcher(task, config, agent, n=2, max_candidates=6)
         runner = threading.Thread(target=searcher.run)
         runner.start()
-        assert backend.started.acquire(timeout=10)
-        assert backend.started.acquire(timeout=10)
+        assert agent.started.acquire(timeout=10)
+        assert agent.started.acquire(timeout=10)
         # the budget runs out while both operators are in flight
         searcher.budget._started = time.monotonic() - searcher.budget.total_s - 1
         time.sleep(2.0)
         assert runner.is_alive()  # graceful (default): still waiting on the operators
-        backend.release_all()
+        agent.release_all()
         runner.join(timeout=30)
         assert not runner.is_alive()
         # both finished and were committed as real work, past the deadline
@@ -463,11 +463,11 @@ class TestWorkerPool:
 
     def test_hard_deadline_aborts_in_flight(self, task, config):
         config.budget.deadline = "hard"
-        backend = GateBackend()
-        backend.queue(script=ok_script(0.6), notes="a\n")
-        backend.queue(script=ok_script(0.7), notes="b\n")
-        searcher, journal, _ = pool_searcher(task, config, backend, n=2, max_candidates=6)
-        backend.abort = searcher.abort
+        agent = GateAgent()
+        agent.queue(script=ok_script(0.6), notes="a\n")
+        agent.queue(script=ok_script(0.7), notes="b\n")
+        searcher, journal, _ = pool_searcher(task, config, agent, n=2, max_candidates=6)
+        agent.abort = searcher.abort
         outcome: dict = {}
 
         def run():
@@ -478,8 +478,8 @@ class TestWorkerPool:
 
         runner = threading.Thread(target=run)
         runner.start()
-        assert backend.started.acquire(timeout=10)
-        assert backend.started.acquire(timeout=10)
+        assert agent.started.acquire(timeout=10)
+        assert agent.started.acquire(timeout=10)
         # nobody releases the gates: the deadline alone must cut the operators off
         searcher.budget._started = time.monotonic() - searcher.budget.total_s - 1
         runner.join(timeout=30)
@@ -493,10 +493,10 @@ class TestWorkerPool:
     def test_journal_integrity_under_parallelism(self, task, config):
         import json
 
-        backend = FakeBackend()
+        agent = FakeAgent()
         for i in range(8):
-            backend.queue(script=ok_script(0.5 + i / 100), notes=f"d{i}\n")
-        searcher, journal, search_dir = pool_searcher(task, config, backend, n=3, max_candidates=8)
+            agent.queue(script=ok_script(0.5 + i / 100), notes=f"d{i}\n")
+        searcher, journal, search_dir = pool_searcher(task, config, agent, n=3, max_candidates=8)
         searcher.run()
 
         created, terminal = set(), set()
@@ -514,16 +514,16 @@ class TestWorkerPool:
 
 class TestDecideNextPolicy:
     def test_prospective_branches_counts_pending(self, task, config):
-        backend = FakeBackend()
-        searcher, journal, _ = pool_searcher(task, config, backend, n=2)
+        agent = FakeAgent()
+        searcher, journal, _ = pool_searcher(task, config, agent, n=2)
         from hillclimb.harness.candidate import Candidate
 
         journal.candidate_created(Candidate(candidate_id="c000", operator="draft", candidate_dir="w"))
         assert searcher._prospective_branches() == 1  # pending draft counts
 
     def test_debuggable_tip_skips_active_child_and_depth(self, task, config):
-        backend = FakeBackend()
-        searcher, journal, _ = pool_searcher(task, config, backend, n=2)
+        agent = FakeAgent()
+        searcher, journal, _ = pool_searcher(task, config, agent, n=2)
         from hillclimb.harness.candidate import Candidate
 
         journal.candidate_result(Candidate(candidate_id="c000", operator="draft", status="buggy", candidate_dir="w"))
@@ -596,13 +596,13 @@ class TestResumeAccounting:
 
     def test_falls_back_to_work_sum(self, tmp_path):
         from hillclimb.api import resume_spent_seconds
-        from hillclimb.harness.candidate import BackendInfo, Candidate
+        from hillclimb.harness.candidate import AgentInfo, Candidate
 
         journal = Journal(tmp_path / "journal.jsonl")
         journal.candidate_result(
             Candidate(
                 candidate_id="c001", operator="draft",
-                backend=BackendInfo(agent_duration_s=100.0),
+                agent=AgentInfo(agent_duration_s=100.0),
                 trials=[mk_trial(duration_s=50.0)],
             )
         )
@@ -612,9 +612,9 @@ class TestResumeAccounting:
 class TestCostCeiling:
     def test_parks_when_ceiling_reached(self, task, config):
         config.budget.max_cost_usd = 0.05
-        backend = FakeBackend()
-        backend.queue(script=ok_script(0.6), notes="d\n", result={"cost_usd": 0.06})
-        searcher, journal, _ = make_searcher(task, config, backend)
+        agent = FakeAgent()
+        agent.queue(script=ok_script(0.6), notes="d\n", result={"cost_usd": 0.06})
+        searcher, journal, _ = make_searcher(task, config, agent)
 
         searcher.run_operator("draft", None)  # spends past the ceiling
         with pytest.raises(ParkedSearch, match="cost ceiling"):
@@ -622,9 +622,9 @@ class TestCostCeiling:
         assert searcher.total_cost_usd() == pytest.approx(0.06)
 
     def test_no_ceiling_by_default(self, task, config):
-        backend = FakeBackend()
-        backend.queue(script=ok_script(0.6), notes="d\n", result={"cost_usd": 999.0})
-        searcher, _, _ = make_searcher(task, config, backend)
+        agent = FakeAgent()
+        agent.queue(script=ok_script(0.6), notes="d\n", result={"cost_usd": 999.0})
+        searcher, _, _ = make_searcher(task, config, agent)
         searcher.run_operator("draft", None)
         searcher._check_cost_ceiling()  # no raise
 
@@ -632,9 +632,9 @@ class TestCostCeiling:
         from hillclimb.harness.budget import BudgetManager as BM
         from hillclimb.harness.status import SearchStatus, StatusWriter, read_status
 
-        backend = FakeBackend()
-        backend.queue(script=ok_script(0.6), notes="d\n", result={"cost_usd": 1.25})
-        searcher, _, search_dir = make_searcher(task, config, backend)
+        agent = FakeAgent()
+        agent.queue(script=ok_script(0.6), notes="d\n", result={"cost_usd": 1.25})
+        searcher, _, search_dir = make_searcher(task, config, agent)
         searcher.status = StatusWriter(
             search_dir, SearchStatus(search_id="s"), budget=BM(100, stop_margin_s=0)
         )
@@ -646,9 +646,9 @@ class TestIncumbentSeeding:
     def test_seed_scored_as_floor_candidate(self, task, config, tmp_path):
         seed = tmp_path / "incumbent.py"
         seed.write_text(ok_script(0.8))
-        backend = FakeBackend()
-        backend.queue(script=ok_script(0.6), notes="worse draft\n")
-        searcher, journal, _ = make_searcher(task, config, backend, seed_solution=seed)
+        agent = FakeAgent()
+        agent.queue(script=ok_script(0.6), notes="worse draft\n")
+        searcher, journal, _ = make_searcher(task, config, agent, seed_solution=seed)
         searcher.max_candidates = 3  # baseline + seed + one draft
 
         searcher.run()
@@ -664,12 +664,12 @@ class TestIncumbentSeeding:
     def test_improve_targets_the_seed(self, task, config, tmp_path):
         seed = tmp_path / "incumbent.py"
         seed.write_text(ok_script(0.9))
-        backend = FakeBackend()
+        agent = FakeAgent()
         for _ in range(3):  # drafts all weaker than the incumbent
-            backend.queue(script=ok_script(0.5), notes="d\n")
-        backend.queue(script=ok_script(0.95), notes="improved incumbent\n")
+            agent.queue(script=ok_script(0.5), notes="d\n")
+        agent.queue(script=ok_script(0.95), notes="improved incumbent\n")
         config.climber.params["num_drafts"] = 3
-        searcher, journal, _ = make_searcher(task, config, backend, seed_solution=seed)
+        searcher, journal, _ = make_searcher(task, config, agent, seed_solution=seed)
         searcher.max_candidates = 6  # baseline + seed + 3 drafts + 1 improve
 
         searcher.run()
@@ -682,8 +682,8 @@ class TestIncumbentSeeding:
     def test_resume_does_not_reseed(self, task, config, tmp_path):
         seed = tmp_path / "incumbent.py"
         seed.write_text(ok_script(0.8))
-        backend = FakeBackend()
-        searcher, journal, search_dir = make_searcher(task, config, backend, seed_solution=seed)
+        agent = FakeAgent()
+        searcher, journal, search_dir = make_searcher(task, config, agent, seed_solution=seed)
         searcher.max_candidates = 2  # baseline + seed, then stop
         searcher.run()
 
@@ -691,7 +691,7 @@ class TestIncumbentSeeding:
 
         resumed = SearchRig(
             problem=task, config=config, journal=Journal(search_dir / "journal.jsonl"),
-            backend=backend, executor=local_executor(),
+            agent=agent, executor=local_executor(),
             budget=BM(3600, stop_margin_s=1), search_dir=search_dir,
             log=lambda *_: None, seed_solution=seed, max_candidates=2,
         )
@@ -703,9 +703,9 @@ class TestIncumbentSeeding:
 def test_worker_crash_does_not_hang_the_scheduler(task, config):
     """A worker that dies without reporting used to leave the candidate in
     flight and the scheduler blocked on the done-queue forever."""
-    config.concurrency.parallel_operators = 2
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.5), notes="d\n")
+    config.concurrency.parallel_agents = 2
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.5), notes="d\n")
     search_dir = create_search_dir(config.paths.runs_dir, "crash-search")
     journal = Journal(search_dir / "journal.jsonl")
 
@@ -714,7 +714,7 @@ def test_worker_crash_does_not_hang_the_scheduler(task, config):
             raise RuntimeError("executor blew up")
 
     searcher = SearchRig(
-        problem=task, config=config, journal=journal, backend=backend,
+        problem=task, config=config, journal=journal, agent=agent,
         executor=ExplodingExecutor(),
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir, max_candidates=3, log=lambda *_: None,

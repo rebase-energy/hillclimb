@@ -15,7 +15,7 @@ problems/my-problem/
 ```
 
 `hillclimb init` scaffolds a working `problems/example/`; `hillclimb problem
-get <problem>` copies a bundled starter problem to edit.
+get <problem>` copies a bundled example problem to edit.
 
 Minimum `problem.yaml`:
 
@@ -223,9 +223,9 @@ evaluation:
   min_improvement: 0.0   # ...or an absolute floor, in metric units
 ```
 
-Concurrency is bounded machine-wide, not per search: `concurrency.parallel_operators`
+Concurrency is bounded machine-wide, not per search: `concurrency.parallel_agents`
 is how many operators one search keeps in flight, and
-`concurrency.machine_max_operators` (default `min(8, cores - 2)`, `0` = off) caps
+`concurrency.machine_max_agents` (default `min(8, cores - 2)`, `0` = off) caps
 the total across every search on the machine — extra operators wait
 (`waiting-slot` in `hillclimb watch`). Every verifier and agent process gets
 `OMP/OPENBLAS/MKL_NUM_THREADS=1` unless the parent environment sets them, so

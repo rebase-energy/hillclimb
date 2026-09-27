@@ -3,7 +3,7 @@
 Each candidate is one interval on a wall-clock axis: from the moment its
 operator was dispatched (`created_at`) to the moment it finished (or "now"
 while it is still in flight). No slot index is journaled, so lanes are
-reconstructed by greedy first-fit interval packing — with `parallel_operators`
+reconstructed by greedy first-fit interval packing — with `parallel_agents`
 slots and no stalls that converges to exactly one lane per slot, and any
 extra lanes are themselves signal (bursts). The agent→verifier boundary is
 the first trial's `started_at`; the score moment is the last trial's

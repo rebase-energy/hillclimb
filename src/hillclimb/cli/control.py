@@ -9,7 +9,7 @@ import typer
 
 from hillclimb.cli import common
 from hillclimb.cli._app import app
-from hillclimb.cli.common import _m, say
+from hillclimb.cli.common import _m, fail, say, warn
 from hillclimb.config import Config
 from hillclimb.harness.control import request_prune, request_stop
 from hillclimb.harness.store import (
@@ -31,19 +31,19 @@ def _load_config_or_reap_orphans(all_: bool) -> Config:
         return common.load_config(raise_not_found=True)
     except HillclimbDirNotFound as exc:
         if not all_:
-            typer.echo(str(exc), err=True)
+            common.say_no_hillclimb_dir(exc)
             raise typer.Exit(1) from exc
         orphans = orphan_engines()
         if not orphans:
-            typer.echo(str(exc), err=True)
-            typer.echo("No orphaned engines running either.")
+            common.say_no_hillclimb_dir(exc)
+            say("No orphaned engines running either.")
             raise typer.Exit(1)
-        typer.echo("No hillclimb/ dir found, but engines whose hillclimb dir was deleted are still running:")
+        say("[head]No hillclimb/ dir found[/], but engines whose hillclimb dir was deleted are still running:")
         for engine in orphans:
-            typer.echo(f"  pid {engine.pid}  (was {engine.hillclimb_dir})")
+            say(f"  pid [path]{engine.pid}[/]  [note](was {_m(engine.hillclimb_dir)})[/]")
         forced = kill_engines(orphans)
-        typer.echo(
-            f"Terminated {len(orphans)} engine process group(s) with their agents and verifiers"
+        say(
+            f"[head]Terminated[/] {len(orphans)} engine process group(s) with their agents and verifiers"
             + (f"; {len(forced)} needed SIGKILL." if forced else ".")
         )
         raise typer.Exit(0)
@@ -57,7 +57,7 @@ def _search_targets(config: Config, search: str, all_: bool) -> tuple[DataStore,
     store = open_store(config)
     running = running_searches(store)
     if not running:
-        typer.echo("No running searches.")
+        say("[head]No running searches.[/]")
         raise typer.Exit(1)
     return store, running
 
@@ -75,7 +75,7 @@ def ps():
     table = process_table()
     trees = engine_trees(table)
     if not trees:
-        typer.echo("No hillclimb engines running.")
+        say("[head]No hillclimb engines running.[/]")
         return
     total = 0
     for engine, kids in trees:
@@ -83,22 +83,22 @@ def ps():
         where = str(engine.hillclimb_dir) if engine.hillclimb_dir else "?"
         tag = "  [orphan: dir deleted]" if engine.hillclimb_dir and not engine.hillclimb_dir.exists() else ""
         argv = proc.command.split("hillclimb.cli run", 1)[-1].strip()
-        typer.echo(f"engine pid {proc.pid}  up {proc.elapsed}  run {argv}")
-        typer.echo(f"  dir {where}{tag}")
+        say(f"[head]engine pid {proc.pid}[/]  up {_m(proc.elapsed)}  run [cmd]{_m(argv)}[/]")
+        say(f"  dir [path]{_m(where)}[/][warn]{_m(tag)}[/]")
         for kid in kids:
             role = (
                 "agent" if "claude -p" in kid.command or "claude --" in kid.command
                 else "verifier" if "verifier.sh" in kid.command
                 else "child"
             )
-            typer.echo(
+            say(
                 f"  {role:8} pid {kid.pid:<6} cpu {kid.cpu:5.1f}%  mem {kid.rss_mb:6.0f}M  "
-                f"up {kid.elapsed:>8}  {kid.command[:70]}"
+                f"up {_m(kid.elapsed):>8}  [note]{_m(kid.command[:70])}[/]"
             )
         total += 1 + len(kids)
     cpu = sum(table[e.pid].cpu for e, _ in trees) + sum(k.cpu for _, kids in trees for k in kids)
     mem = sum(table[e.pid].rss_mb for e, _ in trees) + sum(k.rss_mb for _, kids in trees for k in kids)
-    typer.echo(f"{len(trees)} engine(s), {total} processes, {cpu:.0f}% cpu, {mem:.0f}M rss")
+    say(f"[head]{len(trees)} engine(s)[/], {total} processes, {cpu:.0f}% cpu, {mem:.0f}M rss")
 
 
 @app.command()
@@ -117,9 +117,9 @@ def stop(
         ref = record.ref
         outcome = request_stop(store, record.key, source="cli")
         if outcome is None:
-            typer.echo(f"Search {ref} is {record.state}; nothing to stop.")
+            say(f"[head]Search [path]{_m(ref)}[/] is {_m(record.state)}[/]; nothing to stop.")
             raise typer.Exit(1)
-        typer.echo(f"{outcome} (use `hillclimb kill {ref}` to interrupt now)")
+        say(f"[head]{_m(outcome)}[/] [note](use [cmd]hillclimb kill {_m(ref)}[/] to interrupt now)[/]")
 
 
 @app.command()
@@ -147,9 +147,9 @@ def prune(
             source="cli",
         )
     except ValueError as exc:
-        typer.echo(f"Cannot prune: {exc}")
+        fail(f"Cannot prune: {_m(exc)}")
         raise typer.Exit(1)
-    typer.echo(outcome)
+    say(f"[head]{_m(outcome)}[/]")
 
 
 @app.command()
@@ -169,12 +169,12 @@ def kill(
         ref = record.ref
         state = record.state
         if state != "running":
-            typer.echo(f"Search {ref} is {state}; nothing to kill.")
+            say(f"[head]Search [path]{_m(ref)}[/] is {_m(state)}[/]; nothing to kill.")
             raise typer.Exit(1)
         engine_pid = store.read_status(record.key).pid
         os.kill(engine_pid, signal.SIGTERM)
-        typer.echo(f"Sent SIGTERM to engine pid {engine_pid} ({ref}).")
-        typer.echo(f"Resume with: hillclimb resume {ref}")
+        say(f"[head]Sent SIGTERM[/] to engine pid {engine_pid} ([path]{_m(ref)}[/]).")
+        say(f"Resume with: [cmd]hillclimb resume {_m(ref)}[/]")
 
 
 @app.command()
@@ -197,7 +197,7 @@ def reset(
     config = common.load_config()
     root = config.hillclimb_dir
     if root is None:  # pragma: no cover - Config.load always sets it via discovery
-        typer.echo("No hillclimb dir to reset.", err=True)
+        fail("No hillclimb dir to reset.")
         raise typer.Exit(1)
     engines = live_engines()
     mine = engines_for(root, engines)
@@ -205,30 +205,31 @@ def reset(
 
     say(f"[head]Will delete[/] [path]{_m(root)}[/]")
     if mine:
-        typer.echo(f"and terminate {len(mine)} engine(s) running against it (with their agents and verifiers):")
+        say(f"and terminate {len(mine)} engine(s) running against it [note](with their agents and verifiers)[/]:")
         for engine in mine:
-            typer.echo(f"  pid {engine.pid}")
+            say(f"  pid [path]{engine.pid}[/]")
     else:
-        typer.echo("No engines are running against it.")
+        say("No engines are running against it.")
     if unknown:
-        typer.echo(
-            f"Note: {len(unknown)} engine(s) whose hillclimb dir could not be read will be left alone: "
+        say(
+            f"[note]Note: {len(unknown)} engine(s) whose hillclimb dir could not be read will be left alone: "
             + ", ".join(f"pid {e.pid}" for e in unknown)
+            + "[/]"
         )
     outside = []
     for label, path in (("runs_dir", config.paths.runs_dir), ("problems_dir", config.paths.problems_dir)):
         if path.exists() and not path.resolve().is_relative_to(root.resolve()):
             outside.append((label, path))
     for label, path in outside:
-        typer.echo(f"Note: {label} {path} lives outside the hillclimb dir and will be left in place.")
+        say(f"[note]Note: {_m(label)} [path]{_m(path)}[/] lives outside the hillclimb dir and will be left in place.[/]")
     if not yes and not typer.confirm("Proceed?", default=False):
-        typer.echo("Aborted.")
+        say("[head]Aborted.[/]")
         raise typer.Exit(1)
 
     if mine:
         forced = kill_engines(mine)
-        typer.echo(
-            f"Terminated {len(mine)} engine process tree(s)"
+        say(
+            f"[head]Terminated[/] {len(mine)} engine process tree(s)"
             + (f"; {len(forced)} needed SIGKILL." if forced else ".")
         )
     shutil.rmtree(root)

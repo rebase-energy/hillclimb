@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb.backends.fake import FakeBackend
+from hillclimb.agents.fake import FakeAgent
 from tests.test_parallel_search import GOLDEN_SCENARIOS, make_searcher
 
 GOLDEN_DIR = Path(__file__).parent / "golden" / "prompts"
@@ -56,10 +56,10 @@ def collect_prompts(search_dir: Path, tmp_path: Path) -> dict[str, str]:
 @pytest.mark.parametrize("scenario_name", sorted(GOLDEN_SCENARIOS))
 def test_prompts_match_golden(task, config, tmp_path, scenario_name):
     scenario = GOLDEN_SCENARIOS[scenario_name]
-    backend = FakeBackend()
-    scenario.queue(backend)
+    agent = FakeAgent()
+    scenario.queue(agent)
     searcher, _journal, search_dir = make_searcher(
-        task, config, backend,
+        task, config, agent,
         max_candidates=scenario.max_candidates, **scenario.searcher_kwargs(),
     )
     searcher.run()
@@ -97,13 +97,13 @@ def test_openevolve_prompts_match_golden(task, config, tmp_path):
 
     config.climber.ref = "openevolve"
     config.climber.params = {**PARAMS, "num_drafts": 2}
-    backend = FakeBackend()
+    agent = FakeAgent()
     for score, note in ((0.6, "one\n"), (0.7, "two\n"), (0.8, "three\n")):
-        backend.queue(script=ok_script(score), notes=note)
+        agent.queue(script=ok_script(score), notes=note)
     search_dir = create_search_dir(config.paths.runs_dir, "test-search")
     SearchRig(
         problem=task, config=config, journal=Journal(search_dir / "journal.jsonl"),
-        backend=backend, executor=local_executor(), budget=BudgetManager(3600, stop_margin_s=1),
+        agent=agent, executor=local_executor(), budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir, max_candidates=4, log=lambda *_: None,
         policy=get_policy("openevolve", config.climber.params),
     ).run()
@@ -116,9 +116,9 @@ def test_gepa_proposer_prompts_match_golden(task, config, tmp_path):
     from tests.conftest import ok_script
     from tests.gepa_fakes import FakeGEPADriver, make_gepa
 
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.6))
-    backend.queue(script=ok_script(0.7))
-    search = make_gepa(task, config, tmp_path, backend=backend, driver=FakeGEPADriver(steps=2))
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.6))
+    agent.queue(script=ok_script(0.7))
+    search = make_gepa(task, config, tmp_path, agent=agent, driver=FakeGEPADriver(steps=2))
     search.run()
     _check("gepa", collect_prompts(search.search_dir, tmp_path))

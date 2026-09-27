@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from hillclimb.modules import operators
-from hillclimb.backends.fake import FakeBackend
+from hillclimb.agents.fake import FakeAgent
 from hillclimb.harness.candidate import Candidate
 from hillclimb.harness.journal import Journal
 from hillclimb.modules.policies.base import Action
@@ -44,17 +44,17 @@ def reflect():
 
 
 def test_custom_operator_runs_end_to_end_with_the_contract_appended(task, config, reflect):
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.5), notes="draft\n")
-    backend.queue(script=ok_script(0.7), notes="reflected\n")
-    searcher, journal, _ = make_searcher(task, config, backend)
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.5), notes="draft\n")
+    agent.queue(script=ok_script(0.7), notes="reflected\n")
+    searcher, journal, _ = make_searcher(task, config, agent)
     parent = searcher.run_operator("draft", None)
 
     job = searcher._prepare(Action(operator="reflect", target_id=parent.candidate_id))
     child = searcher._commit(searcher._execute_job(job))
 
     assert child.operator == "reflect" and child.role == "refine" and child.val_score == 0.7
-    assert backend.requests[-1].operator == "reflect" and backend.requests[-1].role == "refine"
+    assert agent.requests[-1].operator == "reflect" and agent.requests[-1].role == "refine"
     prompt = Path(child.candidate_dir, "prompt.md").read_text()
     assert prompt.startswith(f"Reflect on {parent.candidate_id} and do better.\n\n")
     # the operator never mentioned the contract; the harness appended it
@@ -63,9 +63,9 @@ def test_custom_operator_runs_end_to_end_with_the_contract_appended(task, config
 
 
 def test_refused_action_leaves_no_trace(task, config):
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.5), notes="draft\n")
-    searcher, journal, search_dir = make_searcher(task, config, backend)
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.5), notes="draft\n")
+    searcher, journal, search_dir = make_searcher(task, config, agent)
     passing = searcher.run_operator("draft", None)
     before_ids = set(journal.candidates)
     before_dirs = {p.name for p in (search_dir / "candidates").iterdir()}
@@ -81,11 +81,11 @@ def test_refused_action_leaves_no_trace(task, config):
 
     assert set(journal.candidates) == before_ids
     assert {p.name for p in (search_dir / "candidates").iterdir()} == before_dirs
-    assert len(backend.requests) == 1  # nothing was spent
+    assert len(agent.requests) == 1  # nothing was spent
 
 
 def test_operator_context_is_holdout_blind(task, config, reflect, tmp_path):
-    searcher, journal, _ = make_searcher(task, config, FakeBackend())
+    searcher, journal, _ = make_searcher(task, config, FakeAgent())
     ws = tmp_path / "c001"
     ws.mkdir()
     (ws / "solution.py").write_text(ok_script(0.5))
@@ -105,10 +105,10 @@ def test_operator_context_is_holdout_blind(task, config, reflect, tmp_path):
 
 
 def test_role_is_journaled_and_backfilled_for_older_records(task, config, tmp_path):
-    backend = FakeBackend()
-    backend.queue(script=CRASH, notes="buggy\n")
-    backend.queue(script=ok_script(0.6), notes="fixed\n")
-    searcher, journal, search_dir = make_searcher(task, config, backend)
+    agent = FakeAgent()
+    agent.queue(script=CRASH, notes="buggy\n")
+    agent.queue(script=ok_script(0.6), notes="fixed\n")
+    searcher, journal, search_dir = make_searcher(task, config, agent)
     broken = searcher.run_operator("draft", None)
     fixed = searcher.run_operator("debug", broken)
     assert (broken.role, fixed.role, fixed.debug_depth) == ("create", "repair", 1)
@@ -147,7 +147,7 @@ def test_extra_files_must_be_bare_names(task, config):
 
     operators.register_operator(Escaper)
     try:
-        searcher, _journal, _dir = make_searcher(task, config, FakeBackend())
+        searcher, _journal, _dir = make_searcher(task, config, FakeAgent())
         with pytest.raises(ValueError, match="must be a bare file name"):
             searcher._prepare(Action(operator="escaper"))
     finally:
@@ -157,10 +157,10 @@ def test_extra_files_must_be_bare_names(task, config):
 def test_action_args_are_journaled_and_payload_never_is(task, config, reflect):
     """`args` are the attempt's small knobs (kept with the candidate);
     `payload` is bulk input for the operator (never written to the journal)."""
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.5), notes="draft\n")
-    backend.queue(script=ok_script(0.7), notes="reflected\n")
-    searcher, journal, search_dir = make_searcher(task, config, backend)
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.5), notes="draft\n")
+    agent.queue(script=ok_script(0.7), notes="reflected\n")
+    searcher, journal, search_dir = make_searcher(task, config, agent)
     parent = searcher.run(Action(operator="draft", args={"complexity": "advanced"})).candidate
 
     secret = "BULK-FEEDBACK-" + "x" * 5000

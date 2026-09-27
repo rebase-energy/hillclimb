@@ -1,6 +1,6 @@
 """Connecting hillclimb to the agents that run its operators.
 
-`backend` + `backend_auth` say WHO runs an operator call and WHO pays for it.
+`agent` + `agent_auth` say WHO runs an operator call and WHO pays for it.
 Both were only settings: the credential behind them was discovered at the
 first spawn inside a search, so a missing login surfaced as a dead operator
 minutes into a climb, and a stale one as a bill on the wrong account. This
@@ -8,24 +8,28 @@ module makes it a step you take on purpose.
 
 Two things make a check trustworthy here:
 
-* It runs **through the same env builders the backends use** —
+* It runs **through the same env builders the agents use** —
   `subscription_env`, `codex_env`, `pi_env` — so what it reports is what an
   operator will see, not what the personal CLI config happens to hold. The
   difference is real: an inherited `ANTHROPIC_API_KEY` silently rebills a
   "subscription" search to the API, and `subscription_env` drops it. A check
   against the ambient environment would miss exactly the failure worth
   catching.
-* A **target is not a backend**. `claude`, `codex` and `pi` are backends and
+* A **target is not a agent**. `claude`, `codex` and `pi` are agents and
   own their own login flow — hillclimb shells out to it and then materializes
   the isolated per-auth home the searches read (`codex_home`, `pi_home`).
   `openrouter` is a billing route for codex and pi, and is the one credential
-  hillclimb stores itself: in the `.env` beside `config.yaml` that
-  `hillclimb init` already gitignores. Keys never enter `Config`, so they
-  cannot be journaled.
+  hillclimb stores itself: in a `.env` — the user-level one beside
+  `~/.config/hillclimb/config.yaml`, or with `--local` the one beside the
+  folder's `config.yaml` that `hillclimb init` already gitignores. Keys never
+  enter `Config`, so they cannot be journaled.
 
-Connecting writes at most two things: that `.env` line, and the `backend` /
-`backend_auth` defaults in `config.yaml`. Everything else lives where the
-agent's own CLI put it.
+Connecting writes at most two things: that `.env` line, and the `agent` /
+`agent_auth` defaults in a `config.yaml`. Both land at the USER level by
+default — `~/.config/hillclimb/` — so one login serves every folder on the
+machine and `hillclimb connect` works before `hillclimb init`; a folder's
+own `config.yaml`/`.env` overrides them (`--local` writes there instead).
+Everything else lives where the agent's own CLI put it.
 """
 
 from __future__ import annotations
@@ -38,11 +42,11 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-# targets in the order the status table lists them: the backends that run
+# targets in the order the status table lists them: the agents that run
 # operators, then the route that pays for them
 TARGETS = ("claude", "codex", "pi", "openrouter")
-BACKEND_FOR = {"claude": "claude-code", "codex": "codex", "pi": "pi"}
-# which billing modes each backend implements (config.BACKEND_AUTHS is the
+AGENT_FOR = {"claude": "claude-code", "codex": "codex", "pi": "pi"}
+# which billing modes each agent implements (config.AGENT_AUTHS is the
 # full vocabulary; claude-code has no OpenRouter route)
 AUTHS_FOR = {
     "claude": ("subscription", "api-key"),
@@ -68,18 +72,29 @@ class Status:
     """One (target, auth) pair, as an operator would find it.
 
     `state` is the machine-readable verdict; `detail` is what was found and
-    `fix` the command that would change it. Only `ready` means a search
-    would get through its first operator call.
+    `fix` the command that would change it. Three states matter for an
+    agent: `logged-out` (its own login is missing), `logged-in` (the login
+    works but hillclimb has not connected it — `hillclimb connect <target>`
+    has not completed on this machine, or its cache was wiped) and `ready`
+    (logged in AND connected: the ping passed and what a search reads is
+    staged). The OpenRouter route says `no-key` / `key-set` / `ready` the
+    same way. Only `ready` means a search would get through its first
+    operator call without `connect` first.
     """
 
     target: str
     auth: str
-    state: str  # ready | missing-cli | logged-out | no-key | unsupported | error
+    state: str  # ready | logged-in | key-set | logged-out | no-key | missing-cli | unsupported | error
     detail: str = ""
     fix: str = ""
 
     @property
     def ok(self) -> bool:
+        """The credential itself works — what `connect` needs to proceed."""
+        return self.state in ("ready", "logged-in", "key-set")
+
+    @property
+    def connected(self) -> bool:
         return self.state == "ready"
 
     def as_dict(self) -> dict:
@@ -88,6 +103,7 @@ class Status:
             "auth": self.auth,
             "state": self.state,
             "ok": self.ok,
+            "connected": self.connected,
             "detail": self.detail,
             "fix": self.fix,
         }
@@ -181,7 +197,7 @@ def _run(cmd: list[str], env: dict[str, str]) -> subprocess.CompletedProcess:
 
 
 def _check_claude(auth: str) -> Status:
-    from hillclimb.backends.claude_code import subscription_env
+    from hillclimb.agents.claude_code import subscription_env
 
     binary = shutil.which("claude")
     if binary is None:
@@ -201,24 +217,14 @@ def _check_claude(auth: str) -> Status:
     ok, detail = parse_claude_status(proc.returncode, proc.stdout or proc.stderr)
     if not ok:
         return Status("claude", auth, "logged-out", detail, "claude auth login")
-    return Status("claude", auth, "ready", _with_quota(detail))
-
-
-def _with_quota(detail: str) -> str:
-    """Append subscription window utilization when it is readable — the
-    number that decides whether a long search will finish on this plan."""
-    from hillclimb.harness import quota
-
-    snapshot = quota.snapshot() or {}
-    window = snapshot.get("five_hour") or {}
-    utilization = window.get("utilization")
-    if not isinstance(utilization, (int, float)):
-        return detail
-    return f"{detail} — {utilization:.0f}% of the 5-hour window used"
+    # The status says who is logged in and nothing about the plan's window:
+    # quota is the search's concern (journaled per candidate by
+    # `harness.quota`), not the connection's.
+    return Status("claude", auth, "ready", detail)
 
 
 def _check_codex(auth: str) -> Status:
-    from hillclimb.backends.codex_cli import codex_env
+    from hillclimb.agents.codex_cli import codex_env
 
     binary = shutil.which("codex")
     if binary is None:
@@ -286,7 +292,7 @@ def _check_pi(auth: str) -> Status:
 
 
 def _check_openrouter(auth: str = "openrouter") -> Status:
-    from hillclimb.backends.openrouter import OpenRouterError, key_info
+    from hillclimb.agents.openrouter import OpenRouterError, key_info
 
     if not os.environ.get("OPENROUTER_API_KEY"):
         return Status(
@@ -314,35 +320,86 @@ def check(target: str, auth: str) -> Status:
             f"{target} has no {auth} route (one of {', '.join(AUTHS_FOR[target])})",
         )
     if target == "claude":
-        return _check_claude(auth)
+        status = _check_claude(auth)
+    elif target == "codex":
+        status = _check_codex(auth)
+    elif target == "pi":
+        status = _check_pi(auth)
+    else:
+        status = _check_openrouter(auth)
+    return _with_connection(status)
+
+
+def _with_connection(status: Status) -> Status:
+    """A working credential is `ready` only once `connect` has completed for
+    it on this machine; until then it is `logged-in` (`key-set` for the
+    OpenRouter route) with `connect` as the fix."""
+    if status.state != "ready" or is_connected(status.target, status.auth):
+        return status
+    state = "key-set" if status.target == "openrouter" else "logged-in"
+    return Status(
+        status.target, status.auth, state, status.detail, f"hillclimb connect {status.target}"
+    )
+
+
+def record_dir(target: str, auth: str) -> Path:
+    """Where `connect <target>` leaves its mark for this auth mode: the
+    ping's scratch dir under the machine cache, named like the staged
+    homes (`claude-code-subscription`, `openrouter-openrouter`), so
+    `staged_homes` — and with it `disconnect` — already covers it."""
+    from hillclimb.project import machine_cache_dir
+
+    return machine_cache_dir() / "connect" / f"{AGENT_FOR.get(target, target)}-{auth}"
+
+
+def mark_connected(target: str, auth: str, model: str | None) -> Path:
+    """Record that `connect` completed: when, and the model it pinged."""
+    import json
+    from datetime import datetime, timezone
+
+    path = record_dir(target, auth) / "connected.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "target": target, "auth": auth, "model": model,
+        "connected_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }, indent=2) + "\n")
+    return path
+
+
+def is_connected(target: str, auth: str) -> bool:
+    """`connect` completed for this pair and what a search reads is still
+    there: the record, and for codex/pi the staged home too."""
+    if not (record_dir(target, auth) / "connected.json").exists():
+        return False
+    homes = Path.home() / ".cache" / "hillclimb"  # where codex_home/pi_home write
     if target == "codex":
-        return _check_codex(auth)
+        return (homes / "codex-home" / auth).is_dir()
     if target == "pi":
-        return _check_pi(auth)
-    return _check_openrouter(auth)
+        return (homes / "pi-home" / auth).is_dir()
+    return True
 
 
 def configured_auth(config, target: str) -> str | None:
-    """The billing mode this config actually selects for a backend, or None
+    """The billing mode this config actually selects for a agent, or None
     when nothing routes to it. Routing overrides the scalar per operator, so
-    a backend can appear under several modes; the global one wins the row,
+    a agent can appear under several modes; the global one wins the row,
     else the first routed one in sorted order."""
-    backend = BACKEND_FOR.get(target)
-    if backend is None:  # openrouter is a route, not a backend
+    agent = AGENT_FOR.get(target)
+    if agent is None:  # openrouter is a route, not a agent
         return "openrouter"
-    if config.backend == backend:
-        return config.backend_auth
+    if config.agent == agent:
+        return config.agent_auth
     default = config.routing.get("default")
     routed: list[str] = []
     for name in sorted(config.routing):
         route = config.routing[name]
-        route_backend = route.backend or (default.backend if default else None) or config.backend
-        if route_backend != backend:
+        route_agent = route.agent or (default.agent if default else None) or config.agent
+        if route_agent != agent:
             continue
         routed.append(
-            route.backend_auth
-            or (default.backend_auth if default else None)
-            or config.backend_auth
+            route.agent_auth
+            or (default.agent_auth if default else None)
+            or config.agent_auth
         )
     return routed[0] if routed else None
 
@@ -358,7 +415,7 @@ def status_rows(config) -> list[tuple[Status, bool]]:
         auth = configured_auth(config, target) or "subscription"
         if auth not in AUTHS_FOR[target]:
             auth = AUTHS_FOR[target][0]
-        is_default = BACKEND_FOR.get(target) == config.backend
+        is_default = AGENT_FOR.get(target) == config.agent
         rows.append((check(target, auth), is_default))
     return rows
 
@@ -385,22 +442,57 @@ def run_login(target: str) -> int:
     return subprocess.call([binary, *cmd[1:]])
 
 
+def staged_homes(target: str) -> list[Path]:
+    """Everything `connect <target>` materialized under the machine cache
+    for searches to read — the isolated per-auth homes (every auth mode of
+    the target) and the ping's scratch dirs. What `disconnect` removes. The
+    agent's own login (`~/.claude`, `~/.codex`, `~/.pi`) is never among
+    them: hillclimb may start a login it needs, never end one — the account
+    belongs to the person, not to hillclimb."""
+    from hillclimb.project import machine_cache_dir
+
+    cache = Path.home() / ".cache" / "hillclimb"  # where codex_home/pi_home write
+    pings = machine_cache_dir() / "connect"
+    found: list[Path] = []
+    if target == "codex":
+        found += sorted((cache / "codex-home").glob("*"))
+        found += sorted(pings.glob("codex-*"))
+    elif target == "pi":
+        found += sorted((cache / "pi-home").glob("*"))
+        found += sorted(pings.glob("pi-*"))
+    elif target == "claude":
+        found += sorted(pings.glob("claude-code-*"))
+    elif target == "openrouter":
+        found += [p for p in (cache / "codex-home" / "openrouter", cache / "pi-home" / "openrouter") if p.exists()]
+        found += sorted(pings.glob("*-openrouter"))
+    return [p for p in found if p.is_dir()]
+
+
+def remove_staged(target: str) -> list[Path]:
+    """Delete `staged_homes(target)`; returns what was removed."""
+    removed = []
+    for path in staged_homes(target):
+        shutil.rmtree(path, ignore_errors=True)
+        removed.append(path)
+    return removed
+
+
 def import_credentials(target: str, auth: str, models_file: Path | None = None) -> Path | None:
     """Materialize the isolated per-auth home a search will read, now rather
     than inside the first operator call. Returns the directory, or None for a
     target that has none (claude-code uses the ambient login)."""
     if target == "codex":
-        from hillclimb.backends.codex_cli import codex_home
+        from hillclimb.agents.codex_cli import codex_home
 
         return codex_home(auth)
     if target == "pi":
-        from hillclimb.backends.pi_cli import pi_home
+        from hillclimb.agents.pi_cli import pi_home
 
         return pi_home(auth, models_file)
     return None
 
 
-def ping(backend_name: str, auth: str, model: str, *, models_file: Path | None = None):
+def ping(agent_name: str, auth: str, model: str, *, models_file: Path | None = None):  # noqa: D417
     """One real, tool-free operator call — the proof that the credential, the
     model id and the provider route all work together. Costs a handful of
     tokens, which is the cheapest honest answer available; a key that is
@@ -408,15 +500,17 @@ def ping(backend_name: str, auth: str, model: str, *, models_file: Path | None =
 
     Runs in the machine cache, never in a run: it is not a candidate.
     """
-    from hillclimb.backends import get_backend
-    from hillclimb.backends.base import OperatorRequest
+    from hillclimb.agents import get_agent
+    from hillclimb.agents.base import OperatorRequest
     from hillclimb.project import machine_cache_dir
 
-    work_dir = machine_cache_dir() / "connect" / f"{backend_name}-{auth}"
+    # the same dir `mark_connected` records into, so a failed re-ping also
+    # clears the old mark: a connection is only as current as its last ping
+    work_dir = machine_cache_dir() / "connect" / f"{agent_name}-{auth}"
     if work_dir.exists():
         shutil.rmtree(work_dir, ignore_errors=True)
     work_dir.mkdir(parents=True, exist_ok=True)
-    backend = get_backend(backend_name, auth=auth, pi_models_file=models_file)
+    agent = get_agent(agent_name, auth=auth, pi_models_file=models_file)
     request = OperatorRequest(
         operator="draft",  # the routed operators all look alike to a provider
         prompt=PING_PROMPT,
@@ -426,8 +520,8 @@ def ping(backend_name: str, auth: str, model: str, *, models_file: Path | None =
     )
     # pi's preflight is the same call without tools; the others have no
     # cheaper door than invoke()
-    preflight = getattr(backend, "preflight", None)
-    return preflight(request) if preflight else backend.invoke(request)
+    preflight = getattr(agent, "preflight", None)
+    return preflight(request) if preflight else agent.invoke(request)
 
 
 # --------------------------------------------------------------------------
@@ -441,11 +535,11 @@ def apply_config_defaults(text: str, updates: dict[str, str]) -> str:
     A line-level edit rather than a YAML round-trip: `config.yaml` is
     hand-written and heavily commented (`hillclimb init` ships it that way),
     and re-emitting it from a parsed dict would throw all of that away. Only
-    column-zero keys match, so `routing:`'s indented `backend:` is never
-    touched, and the commented-out `# backend:` line `init` leaves behind is
+    column-zero keys match, so `routing:`'s indented `agent:` is never
+    touched, and the commented-out `# agent:` line `init` leaves behind is
     uncommented in place — the setting appears where its comment explains it.
     A key with nowhere to go lands next to the one written just before it, so
-    `backend` and `backend_auth` end up adjacent instead of scattered.
+    `agent` and `agent_auth` end up adjacent instead of scattered.
     """
     lines = text.splitlines()
     anchor: int | None = None
@@ -474,21 +568,46 @@ def apply_config_defaults(text: str, updates: dict[str, str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def pins_backend(text: str) -> bool:
-    """Does this config.yaml already choose a backend on purpose?
+def unpin_config_defaults(text: str, target: str) -> str:
+    """The inverse of `apply_config_defaults` for one target: comment out
+    the column-zero `agent:` (and `agent_auth:`) lines when they name
+    that target's agent — a agent `disconnect` is not what pins another
+    one — or, for the `openrouter` route, just the `agent_auth:` line that
+    names it. Anything else is left byte-for-byte."""
+    lines = text.splitlines()
+    agent = next((line for line in lines if re.match(r"^agent:", line)), None)
+    pinned = agent.split(":", 1)[1].strip() if agent else None
+    if target == "openrouter":
+        keys = ["agent_auth"] if any(re.match(r"^agent_auth:\s*openrouter\s*$", l) for l in lines) else []
+    else:
+        keys = ["agent", "agent_auth"] if pinned == AGENT_FOR[target] else []
+    for key in keys:
+        pattern = re.compile(rf"^{re.escape(key)}:")
+        lines = [f"# {line}" if pattern.match(line) else line for line in lines]
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def pins_agent(text: str) -> bool:
+    """Does this config.yaml already choose a agent on purpose?
 
     Connecting should not silently repoint an existing setup at whatever was
     connected last; it should complete a fresh one. An active column-zero
-    `backend:` is the signal that someone already decided.
+    `agent:` is the signal that someone already decided.
     """
-    return any(re.match(r"^backend:", line) for line in text.splitlines())
+    return any(re.match(r"^agent:", line) for line in text.splitlines())
 
 
-def env_file(config) -> Path | None:
-    """Where provider keys belong for this config: the `.env` beside
-    `config.yaml`, or the repo-root one already in use (`Config.load` reads
-    the hillclimb dir's first, then its parent's — writing anywhere else
-    would store a key nothing loads)."""
+def env_file(config, *, local: bool = False) -> Path | None:
+    """Where a provider key belongs: the user-level `.env` beside
+    `~/.config/hillclimb/config.yaml` (every folder reads it, under its
+    own), or with `local` this folder's — the `.env` beside `config.yaml`,
+    or the repo-root one already in use (`Config.load` reads the hillclimb
+    dir's first, then its parent's — writing anywhere else would store a
+    key nothing loads). `local` without a hillclimb dir is None."""
+    from hillclimb.project import user_env_path
+
+    if not local:
+        return user_env_path()
     if config.hillclimb_dir is None:
         return None
     beside = config.hillclimb_dir / ".env"
@@ -512,9 +631,19 @@ def upsert_env(text: str, key: str, value: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def remove_env_key(text: str, key: str) -> str:
+    """Drop `KEY=…` from a .env, every other line intact."""
+    pattern = re.compile(rf"^\s*(export\s+)?{re.escape(key)}\s*=")
+    lines = [line for line in text.splitlines() if not pattern.match(line)]
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
 def write_env_key(path: Path, key: str, value: str) -> None:
     """Store a provider key, readable only by its owner. The file may already
-    hold other keys, so it is edited, never replaced."""
+    hold other keys, so it is edited, never replaced. The user-level file
+    is the first thing written under `~/.config/hillclimb/` on a fresh
+    machine, so the folder is made on the way."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     text = path.read_text() if path.exists() else ""
     path.write_text(upsert_env(text, key, value))
     path.chmod(0o600)

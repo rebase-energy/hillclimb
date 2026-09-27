@@ -10,7 +10,7 @@ from tests.factories import trial as mk_trial
 from math import isclose
 from pathlib import Path
 
-from hillclimb.backends.fake import FakeBackend
+from hillclimb.agents.fake import FakeAgent
 from hillclimb.harness.budget import BudgetManager
 from hillclimb.harness.candidate import Candidate
 from hillclimb.harness.journal import Journal
@@ -84,12 +84,12 @@ def test_noise_floor_from_repeated_trials(tmp_path):
 # --- the accept band ---
 
 
-def make_searcher(task, config, backend=None, **kwargs):
+def make_searcher(task, config, agent=None, **kwargs):
     search_dir = create_search_dir(config.paths.runs_dir, "noise-run")
     journal = Journal(search_dir / "journal.jsonl")
     searcher = SearchRig(
         problem=task, config=config, journal=journal,
-        backend=backend or FakeBackend(), executor=executor_for(task),
+        agent=agent or FakeAgent(), executor=executor_for(task),
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir, log=lambda *_: None, **kwargs,
     )
@@ -138,11 +138,11 @@ def test_within_noise_candidate_is_not_promoted(task, config):
     config.evaluation.min_improvement = 0.05
     config.climber.params["num_drafts"] = 3
     logs: list[str] = []
-    backend = FakeBackend()
-    backend.queue(script=ok_script(0.60), notes="first\n")
-    backend.queue(script=ok_script(0.61), notes="noise-sized gain\n")
-    backend.queue(script=ok_script(0.80), notes="real gain\n")
-    searcher, journal, _ = make_searcher(task, config, backend)
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.60), notes="first\n")
+    agent.queue(script=ok_script(0.61), notes="noise-sized gain\n")
+    agent.queue(script=ok_script(0.80), notes="real gain\n")
+    searcher, journal, _ = make_searcher(task, config, agent)
     searcher.log = logs.append
     for _ in range(3):
         searcher.run_operator("draft", None)
@@ -158,7 +158,7 @@ def test_bandit_reward_ignores_gains_inside_the_band():
 
     parent = candidate("c1", 0.60)
     child = candidate("c2", 0.61, parent="c1")
-    child.backend.model = "sonnet"
+    child.agent.model = "sonnet"
     assert candidate_reward(child, parent, higher_is_better=True) == 1.0
     assert candidate_reward(
         child, parent, higher_is_better=True, band=0.05
@@ -197,9 +197,9 @@ def test_serial_trials_do_not_share_the_machine(task, config):
     its own sibling trials when they run concurrently."""
     config.evaluation.n_replicates = 3
     config.evaluation.replicate_mode = "serial"
-    backend = FakeBackend()
-    backend.queue(script=TIMED_SOLUTION, notes="timed\n")
-    searcher, journal, _ = make_searcher(task, config, backend)
+    agent = FakeAgent()
+    agent.queue(script=TIMED_SOLUTION, notes="timed\n")
+    searcher, journal, _ = make_searcher(task, config, agent)
     node = searcher.run_operator("draft", None)
 
     replicates = node.trials[0].replicates
@@ -211,9 +211,9 @@ def test_serial_trials_do_not_share_the_machine(task, config):
 def test_parallel_trials_run_concurrently(task, config):
     config.evaluation.n_replicates = 3
     config.evaluation.replicate_mode = "parallel"  # the default
-    backend = FakeBackend()
-    backend.queue(script=TIMED_SOLUTION, notes="timed\n")
-    searcher, journal, _ = make_searcher(task, config, backend)
+    agent = FakeAgent()
+    agent.queue(script=TIMED_SOLUTION, notes="timed\n")
+    searcher, journal, _ = make_searcher(task, config, agent)
     node = searcher.run_operator("draft", None)
 
     assert len(node.trials[0].replicates) == 3

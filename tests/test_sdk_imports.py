@@ -34,7 +34,7 @@ CLIMBER_MODULES = [
 ALLOWED = {
     ("modules/policies/openevolve.py", "hillclimb.modules.policies.greedy"):
         "reuses greedy's draft/debug decisions; becomes an sdk helper with the climber bundle (7a)",
-    ("modules/similarity/solution_card.py", "hillclimb.backends.openrouter"):
+    ("modules/similarity/solution_card.py", "hillclimb.agents.openrouter"):
         "direct LLM + embedding client; moves behind an sdk completion service (7a)",
     ("modules/similarity/solution_card.py", "hillclimb.modules.similarity.base"):
         "pre-sdk import; switched together with the completion service (7a)",

@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb.backends.fake import FakeBackend
-from hillclimb.harness.candidate import BackendInfo, Candidate
+from hillclimb.agents.fake import FakeAgent
+from hillclimb.harness.candidate import AgentInfo, Candidate
 from hillclimb.harness.journal import Journal
 from hillclimb.modules.memory.knowledge import (
     KnowledgeCard,
@@ -191,15 +191,15 @@ class TestLiveSharing:
         config.budget.stop_margin_s = 1
         config.holdout.enabled = False
         config.climber.params["num_drafts"] = 1
-        backend = FakeBackend()
-        monkeypatch.setattr("hillclimb.api.get_backend", lambda *a, **k: backend)
+        agent = FakeAgent()
+        monkeypatch.setattr("hillclimb.api.get_agent", lambda *a, **k: agent)
         config.budget.max_evaluations = 2  # draft + improve, then stop
         run_dir = create_run_dir(config.paths.runs_dir, "suite-run")
 
         def run_search(problem, notes):
             for note, val in zip(notes, (0.7, 0.75)):
-                backend.queue(script=ok_script(val), notes=note + "\n")
-            backend.queue(operator="distill", files={"claims.yaml": "claims: []\n"})
+                agent.queue(script=ok_script(val), notes=note + "\n")
+            agent.queue(operator="distill", files={"claims.yaml": "claims: []\n"})
             search_dir = create_search(config, problem, run_dir, "suite-run", 3600)
             outcome = execute_search(
                 config, problem, search_dir, BudgetManager(3600, stop_margin_s=1),
@@ -239,12 +239,12 @@ class TestEndToEnd:
         config.paths.runtime_python = Path(sys.executable)
         config.budget.stop_margin_s = 1
         config.holdout.enabled = False
-        monkeypatch.setattr("hillclimb.api.get_backend", lambda *a, **k: backend)
+        monkeypatch.setattr("hillclimb.api.get_agent", lambda *a, **k: agent)
         config.budget.max_evaluations = 1  # stop after one draft
 
         def run_once(name, val, note):
-            backend.queue(script=ok_script(val), notes=note + "\n")
-            backend.queue(operator="distill", files={"claims.yaml": (
+            agent.queue(script=ok_script(val), notes=note + "\n")
+            agent.queue(operator="distill", files={"claims.yaml": (
                 "claims:\n"
                 "  - subject: gradient-boosting\n"
                 "    relation: helps\n"
@@ -260,7 +260,7 @@ class TestEndToEnd:
                 log=lambda *_: None, target="demo-task",
             )
 
-        backend = FakeBackend()
+        agent = FakeAgent()
         # first search: 1 draft then out of responses -> cap candidates
         config.climber.params["num_drafts"] = 1
         outcome1 = run_once("run-one", 0.7, "winning approach: gradient boosting")

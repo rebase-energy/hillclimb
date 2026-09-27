@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import uuid
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -37,6 +38,15 @@ class SearchMeta(BaseModel):
     """runs/<run-id>/searches/<search-id>/search.yaml — one search worker on
     one problem."""
 
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_agent_key(cls, data):
+        """A search recorded before the rename names its coding agent `backend`."""
+        if isinstance(data, dict) and "backend" in data:
+            data = dict(data)
+            data.setdefault("agent", data.pop("backend"))
+        return data
+
     schema_version: int = SCHEMA_VERSION
     search_id: str
     run_id: str
@@ -53,7 +63,7 @@ class SearchMeta(BaseModel):
     # migration; `<run-id>/<search-id>` stays the human address. Pre-uid
     # search.yaml files get a deterministic uuid5 of that address on read.
     search_uid: str = ""
-    backend: str
+    agent: str   # search.yaml files from before the rename say `backend`
     model: str
     # additive with defaults on purpose: a field without one would hide every
     # existing run dir from the scanners
@@ -65,6 +75,11 @@ class SearchMeta(BaseModel):
     # themselves are snapshotted into `<search_dir>/climber/`, which is what
     # the engine — and a resume — loads.
     climber: str = "greedy"
+    # The role the climber plays here, derived from the problem at
+    # `create_search` and never declared by the climber: `solver` when the
+    # problem's solution is a program, `improver` when it is a climber (a
+    # meta-problem). The same bundle may run in either role.
+    role: Literal["solver", "improver"] = "solver"
     climber_sha256: str | None = None
     climber_manifest: dict = Field(default_factory=dict)
     climber_params: dict = Field(default_factory=dict)

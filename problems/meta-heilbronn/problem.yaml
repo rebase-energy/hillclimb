@@ -1,0 +1,14 @@
+# A META-problem: the solution is a one-file hillclimb climber, and the
+# verifier scores it by running inner searches on the heilbronn ladder with
+# the candidate as their climber. Part of the meta-problem kit — not in the
+# bundled catalog (`hillclimb problem list`) until that launch.
+problem_id: meta-heilbronn
+metric: gap-closed          # fraction of floor → best-known covered, mean over inner problems
+higher_is_better: true
+description: description.md
+solution_kind: climber      # solution.py is a climber; a search here runs its climber as an improver
+baseline: greedy.py         # the bundled greedy policy as one file (byte-identical to the package's)
+allow_network: true         # inner searches spawn agents
+# a verifier run is the whole meta.yaml (2 problems x 1 repeat x 3m + start-up),
+# so the outer config needs `budget.exec_timeout_s` above that: 900 fits
+time_budget_s: 7200

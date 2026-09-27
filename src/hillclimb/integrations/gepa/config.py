@@ -53,8 +53,8 @@ class GEPAParams(BaseModel):
 def validate_gepa_search_config(config: Config) -> GEPAParams:
     """Parse and gate the config before any candidate dir or model spend."""
     params = GEPAParams.model_validate(config.climber.params or {})
-    if config.concurrency.parallel_operators > 1:
+    if config.concurrency.parallel_agents > 1:
         raise ValueError(
-            "the GEPA engine is serial in the MVP: set concurrency.parallel_operators=1"
+            "the GEPA engine is serial in the MVP: set concurrency.parallel_agents=1"
         )
     return params

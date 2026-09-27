@@ -37,6 +37,15 @@ load and say where they went.
 - `hillclimb.sdk`: the one import a climber needs.
 
 ### Changed
+- **The agent is the agent; the operator is the move.** The coding agent that
+  runs the operators (draft, debug, improve, ensemble) is `--agent claude-code
+  | codex | pi | dummy` and `agent:` / `agent_auth:` in config.yaml and the
+  `routing:` block; it was `--backend`. The agents a search keeps busy at once
+  are `--parallel-agents` and `concurrency.parallel_agents` (with
+  `concurrency.machine_max_agents`); they were counted as operators. The
+  package is `hillclimb.agents`, the protocol `Agent`. Every old spelling
+  still loads: the flags as aliases, config keys and suite specs on read,
+  `search.yaml` and journals written before the rename.
 - climber.yaml / config.yaml: `memory: knowledge-graph` → `memory: files`
   (the memory is the YAML under `hillclimb/knowledge/`; the graph is a derived
   index over it). The old spelling still loads; `hillclimb climber check`

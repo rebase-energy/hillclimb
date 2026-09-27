@@ -8,9 +8,9 @@
 │ --help  -h        Show this message and exit.                                                                        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ claude      Claude Code as the operator backend, billed to your Claude subscription.                                 │
-│ codex       The Codex CLI as the operator backend.                                                                   │
+│ claude      Claude Code as the operator agent, billed to your Claude subscription.                                   │
+│ codex       The Codex CLI as the operator agent.                                                                     │
 │ openrouter  OpenRouter credits as the bill for codex or pi operators.                                                │
-│ pi          The pi coding agent as the operator backend — the one that can sample.                                   │
+│ pi          The pi coding agent as the operator agent — the one that can sample.                                     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 

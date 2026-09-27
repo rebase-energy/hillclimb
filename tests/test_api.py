@@ -1,5 +1,5 @@
 """Public programmatic API: run_search creates the Run/Search layout and
-returns a SearchOutcome (dummy backend, no agent spend)."""
+returns a SearchOutcome (dummy agent, no agent spend)."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ def test_run_search_end_to_end(config):
         budget_s=10,
         name="api-test",
         config=config,
-        backend="dummy",
+        agent="dummy",
         holdout=False,
         log=logs.append,
     )
@@ -180,7 +180,7 @@ def test_fleet_argv_carries_every_engine_option(tmp_path):
     run_dir = tmp_path / "runs" / "20260909-120000-solar"
     argv = fleet_argv(
         "emflow://gefcom2014:solar", run_dir, "solar",
-        budget=900, backend="dummy", model="sonnet", climber="gepa", parallel_operators=2,
+        budget=900, agent="dummy", model="sonnet", climber="gepa", parallel_agents=2,
         n_replicates=3, holdout=False, learning=False, seed_from=tmp_path / "seed.py",
         knowledge_context_file=tmp_path / "kc.md", overrides=["search.num_drafts=2"],
     )
@@ -188,7 +188,7 @@ def test_fleet_argv_carries_every_engine_option(tmp_path):
     assert argv[argv.index("--budget") + 1] == "900s"
     assert fleet_argv("cp", run_dir, "cp", budget="2h")[-1] == "2h"
     assert argv[argv.index("--climber") + 1] == "gepa"
-    assert argv[argv.index("--parallel-operators") + 1] == "2"
+    assert argv[argv.index("--parallel-agents") + 1] == "2"
     assert "--no-holdout" in argv and "--no-learning" in argv
     assert argv[argv.index("--seed-from") + 1] == str(tmp_path / "seed.py")
     assert argv[argv.index("--knowledge-context-file") + 1] == str(tmp_path / "kc.md")
@@ -221,7 +221,7 @@ def test_run_fleet_spawns_one_engine_per_search(config, monkeypatch):
 
     monkeypatch.setattr(api, "spawn_search_proc", fake_spawn)
 
-    fleet = api.run_fleet("circle-packing", config=config, parallel_searches=3, budget="1m", backend="dummy")
+    fleet = api.run_fleet("circle-packing", config=config, parallel_searches=3, budget="1m", agent="dummy")
 
     assert venv_calls == ["evaluator"] or len(venv_calls) == 1
     assert load_run_meta(fleet.run_dir) is not None
@@ -235,11 +235,11 @@ def test_run_fleet_spawns_one_engine_per_search(config, monkeypatch):
 def test_mixed_fleet_names_arms_after_policies_and_repeats_them():
     from hillclimb.api import FleetEngine, mixed_fleet
 
-    engines = mixed_fleet(["greedy", "openevolve", "gepa"], arm_overrides={"gepa": ["search.parallel_operators=1"]})
+    engines = mixed_fleet(["greedy", "openevolve", "gepa"], arm_overrides={"gepa": ["search.parallel_agents=1"]})
     assert engines == [
         FleetEngine(arm="greedy", climber="greedy"),
         FleetEngine(arm="openevolve", climber="openevolve"),
-        FleetEngine(arm="gepa", climber="gepa", overrides=("search.parallel_operators=1",)),
+        FleetEngine(arm="gepa", climber="gepa", overrides=("search.parallel_agents=1",)),
     ]
     # a repeated policy is a second arm; repeats clone every arm, repeat-major
     twice = mixed_fleet(["greedy", "greedy"], repeats=2)
@@ -284,12 +284,12 @@ def test_run_fleet_mixed_engines_get_their_own_policy_and_overrides(config, monk
 
     monkeypatch.setattr(api, "spawn_search_proc", fake_spawn)
     engines = api.mixed_fleet(
-        ["greedy", "gepa"], arm_overrides={"gepa": ["search.parallel_operators=1"]}
+        ["greedy", "gepa"], arm_overrides={"gepa": ["search.parallel_agents=1"]}
     )
 
     fleet = api.run_fleet(
-        "circle-packing", config=config, parallel_searches=7, budget="1m", backend="dummy",
-        parallel_operators=3, overrides=["learning.enabled=false"], engines=engines,
+        "circle-packing", config=config, parallel_searches=7, budget="1m", agent="dummy",
+        parallel_agents=3, overrides=["learning.enabled=false"], engines=engines,
     )
 
     assert [(index, slug) for index, slug, _ in spawned] == [(1, "circle-packing-greedy"), (2, "circle-packing-gepa")]
@@ -297,12 +297,12 @@ def test_run_fleet_mixed_engines_get_their_own_policy_and_overrides(config, monk
     for argv in (greedy, gepa):
         assert argv[1:3] == ["--run-id", fleet.run_id]
         assert argv[argv.index("--experiment") + 1] == fleet.run_id  # default experiment: the run id
-        assert argv[argv.index("--parallel-operators") + 1] == "3"
+        assert argv[argv.index("--parallel-agents") + 1] == "3"
         assert "--repeat" not in argv
     assert greedy[greedy.index("--arm") + 1] == "greedy" and greedy[greedy.index("--climber") + 1] == "greedy"
     assert gepa[gepa.index("--arm") + 1] == "gepa" and gepa[gepa.index("--climber") + 1] == "gepa"
     sets = [argv[i + 1] for i, tok in enumerate(gepa) if tok == "--set"]
-    assert sets == ["learning.enabled=false", "search.parallel_operators=1"]  # the arm's override last, so it wins
+    assert sets == ["learning.enabled=false", "search.parallel_agents=1"]  # the arm's override last, so it wins
     assert [argv[i + 1] for i, tok in enumerate(greedy) if tok == "--set"] == ["learning.enabled=false"]
 
     api.run_fleet(

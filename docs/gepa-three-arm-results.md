@@ -22,15 +22,15 @@ optimizer is better — only that all three run correctly end to end.
 | openevolve | 0.3.2 |
 | Python | 3.12.12 |
 | platform | macOS-15.5-arm64 (10 cores) |
-| backend / model | `claude-code` / `sonnet` |
-| authentication | subscription mode — `backends/claude_code.py:subscription_env` drops `ANTHROPIC_API_KEY` from the child env so calls bill the Max subscription, not the API |
+| agent / model | `claude-code` / `sonnet` |
+| authentication | subscription mode — `agents/claude_code.py:subscription_env` drops `ANTHROPIC_API_KEY` from the child env so calls bill the Max subscription, not the API |
 | experiment spec | `hillclimb/experiments/gepa-vs-openevolve-vs-greedy.yaml`, sha256 `f682d9c31378` |
 | shared seed | `hillclimb/experiments/seeds/circle-packing.py`, sha256 `217003dfdf96` |
 | run id | `20260901-193739-gepa-vs-openevolve-vs-greedy` |
 | wall clock | 2026-09-01 19:37 → 22:36 BST |
 | total model cost | $12.08 |
 
-Every arm shared: 15-minute budget, `search.n_trials=1`, `search.parallel_operators=1`,
+Every arm shared: 15-minute budget, `search.n_trials=1`, `search.parallel_agents=1`,
 `learning.enabled=false`, the same verifier, the same metric direction (higher is
 better), and the same seed file and hash. Only `search.policy` and
 `search.policy_params` varied.
@@ -86,7 +86,7 @@ separate privacy gate, and pass).
 All searches are under `runs/20260901-193739-gepa-vs-openevolve-vs-greedy/searches/<search>/`.
 
 GEPA candidates appear as ordinary journaled candidates with parent lineage and
-backend accounting; GEPA's own state, proposals and identity live beside them in
+agent accounting; GEPA's own state, proposals and identity live beside them in
 `gepa/{state,proposals,identity.json}`.
 
 ## Per-arm comparison
@@ -164,7 +164,7 @@ here supports a claim that any engine is better or worse.
 
 What the experiment does establish is the Phase 9 gate: all three engines run to
 `done` under identical conditions, GEPA produces canonical journaled candidates
-with correct lineage and backend accounting, and its budget behaves as designed.
+with correct lineage and agent accounting, and its budget behaves as designed.
 
 Two observations that are *not* results but are worth following up:
 

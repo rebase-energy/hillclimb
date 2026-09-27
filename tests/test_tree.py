@@ -11,7 +11,7 @@ import pytest
 from rich.style import Style
 
 from hillclimb.harness.candidate import Candidate
-from hillclimb.tui.chart import build_detail_plot, detail_layout
+from hillclimb.tui.chart import ChartPlotWidget, build_detail_plot, detail_layout
 from hillclimb.config import Config
 from hillclimb.harness.journal import Journal
 from hillclimb.tui.tree import (
@@ -564,8 +564,8 @@ async def test_tree_app_mounts_selects_scrubs_and_opens(tree_workspace):
         assert canvas._plot.camera_state()[:2] == (0.0, 0.0)
         await pilot.press("f")
         assert canvas._plot.camera_state()[2] == 1.0
-        # b selects the best and opens its detail
-        await pilot.press("b")
+        # * selects the best and opens its detail
+        await pilot.press("asterisk")
         await pilot.pause()
         assert canvas.selected == "c007"
         assert app.screen.query_one("#node-detail").styles.display == "block"
@@ -618,7 +618,7 @@ async def test_tree_app_drag_pans_and_switches_searches(tree_workspace):
         assert "(1/2, n/p to switch)" in str(app.screen.query_one("#treeline").render())
         # a plain drag pans by exactly the cells the pointer moved, and the
         # camera stays face-on
-        await pilot.press("b")
+        await pilot.press("asterisk")
         await pilot.pause()
         before = canvas._plot.camera_state()
         await pilot.mouse_down("#tree-canvas", offset=(40, 20))
@@ -691,15 +691,29 @@ async def test_chart_defaults_to_holdout_when_the_search_scores_one(tree_workspa
     journal.candidate_result(Candidate(
         candidate_id="c100", operator="draft", status="passing",
         trials=[mk_trial(val_score=0.5, holdout_score=0.6)],
+        finished_at="2026-08-22T10:02:00+00:00",  # a landed candidate: the plot is built
     ))
     app = ChartApp(config, "r1/circle-packing")
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        # the y axis says which score is plotted; the header line stays terse
+        assert app.screen.holdout is True
         line = str(app.screen.query_one("#chartline").render())
-        assert "holdout" in line
+        assert "holdout" not in line and "circle-packing" in line
+        for _ in range(20):  # the plot widget mounts a frame after the refresh
+            await pilot.pause(0.05)
+            if app.screen.query(ChartPlotWidget):
+                break
+        widget = app.screen.query_one(ChartPlotWidget)
+        assert widget._plot.y_title() == "holdout score (higher is better)"
         await pilot.press("h")
-        line = str(app.screen.query_one("#chartline").render())
-        assert "holdout" not in line  # toggled to the validation view
+        assert app.screen.holdout is False  # toggled to the validation view
+        for _ in range(20):
+            await pilot.pause(0.05)
+            widget = app.screen.query_one(ChartPlotWidget)
+            if widget._plot.y_title() == "score (higher is better)":
+                break
+        assert widget._plot.y_title() == "score (higher is better)"
 
 
 @pytest.mark.asyncio

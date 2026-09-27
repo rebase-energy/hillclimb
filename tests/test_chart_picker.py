@@ -28,7 +28,7 @@ def _search(
     (search_dir / "candidates").mkdir(parents=True)
     write_search_meta(search_dir, SearchMeta(
         search_id=search_id, run_id=run_id, problem=problem_id, problem_id=problem_id,
-        backend="dummy", model="m", metric="score", higher_is_better=True,
+        agent="dummy", model="m", metric="score", higher_is_better=True,
         started_at=started, arm=arm, experiment="exp" if arm else None,
     ))
     journal = Journal(search_dir / "journal.jsonl")

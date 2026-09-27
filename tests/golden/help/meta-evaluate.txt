@@ -1,0 +1,19 @@
+                                                                                                                        
+ Usage: root meta evaluate [OPTIONS]                                                                                    
+                                                                                                                        
+ Run the inner searches of a meta-problem with CLIMBER and report the gap they closed — the verifier of a problem whose 
+ solution is a climber.                                                                                                 
+                                                                                                                        
+ Reads the hillclimb dir it runs under (`$HILLCLIMB_DIR`, set by the                                                    
+ engine for every verifier) for the user's agent, model and problems,                                                   
+ runs one `hillclimb run` per inner problem and repeat in a nested                                                      
+ hillclimb dir under the working directory, and writes the score.                                                       
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --climber          PATH  The one-file climber to score (default: $HILLCLIMB_SOLUTION)                                │
+│ --spec             PATH  meta.yaml: inner problems, budget, repeats [default: problem/meta.yaml]                     │
+│ --result           PATH  Where to write {score, instances} (default: $HILLCLIMB_RESULT, else stdout)                 │
+│ --workdir          PATH  Where the inner searches run (default: cwd)                                                 │
+│ --help     -h            Show this message and exit.                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

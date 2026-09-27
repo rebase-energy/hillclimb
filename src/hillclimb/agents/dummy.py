@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from hillclimb.backends.base import OperatorRequest, OperatorResult
+from hillclimb.agents.base import OperatorRequest, OperatorResult
 
 # Generic tabular solver used for quota-free end-to-end testing. It infers the
 # id/target columns from sample_submission.csv, so it works on spaceship-titanic
@@ -86,14 +86,14 @@ print("dummy solution")
 print(round(0.5 + 0.01 * int(os.environ.get("HILLCLIMB_REPLICATE_SEED", 0)) + P["offset"], 4))
 '''
 
-# one declared knob so `hillclimb run --backend dummy` exercises tune jobs
+# one declared knob so `hillclimb run --agent dummy` exercises tune jobs
 # end to end (the score moves with `offset`, so a tuner has something to find)
 PARAMS_TEMPLATE = '''\
 {"offset": {"type": "float", "low": 0.0, "high": 0.05, "default": 0.0}}
 '''
 
 
-class DummyBackend:
+class DummyAgent:
     """Emits canned sklearn scripts so the whole loop can run without an LLM.
     The first draft is intentionally buggy to exercise the DEBUG path."""
 

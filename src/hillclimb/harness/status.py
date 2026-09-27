@@ -94,7 +94,7 @@ class SearchStatus(BaseModel):
     updated_at: str = Field(default_factory=utcnow)
     heartbeat_interval_s: int = HEARTBEAT_INTERVAL_S
     budget: BudgetStatus = Field(default_factory=BudgetStatus)
-    # cumulative agent spend (sum of per-candidate backend cost); the hosted
+    # cumulative agent spend (sum of per-candidate agent cost); the hosted
     # platform settles credits from this at completion via the GCS state sync
     cost_usd: float = 0.0
     candidates: CandidateCounts = Field(default_factory=CandidateCounts)
@@ -257,7 +257,7 @@ class StatusWriter:
                 self._write()
 
     def _refresh_agent_pid(self) -> None:
-        """Pick up the operator backends' child pids by filesystem convention."""
+        """Pick up the operator agents' child pids by filesystem convention."""
         for current in self.status.current:
             pid_file = Path(current.candidate_dir) / "agent.pid"
             try:

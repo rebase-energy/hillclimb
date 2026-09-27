@@ -16,6 +16,14 @@ from textual.binding import Binding
 from textual.widgets import Static
 
 KEYS_BINDING = Binding("question_mark", "toggle_keys", "keys")
+
+
+def back_binding(action: str = "back") -> Binding:
+    """The one way back on every screen: esc or b, shown as `esc/b back`
+    in the footer. `action` is the screen's own back action (some close a
+    detail or a panel first)."""
+    return Binding("escape,b", action, "back", key_display="esc/b")
+
 QUIT_BINDINGS = [
     Binding("q", "app.quit", "quit"),
     # Textual maps ctrl+c to a "press ctrl+q to quit" hint; people expect it

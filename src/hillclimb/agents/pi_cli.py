@@ -1,4 +1,4 @@
-"""pi coding-agent operator backend.
+"""pi coding-agent operator agent.
 
 One Hillclimb operator call is one headless ``pi`` process.  pi's JSON event
 stream is kept verbatim for diagnostics while this module extracts the small
@@ -18,8 +18,8 @@ import threading
 import time
 from pathlib import Path
 
-from hillclimb.backends.base import OperatorRequest, OperatorResult
-from hillclimb.backends.claude_code import (
+from hillclimb.agents.base import OperatorRequest, OperatorResult
+from hillclimb.agents.claude_code import (
     PID_FILE,
     RATE_LIMIT_MARKERS,
     STREAM_FILE,
@@ -117,11 +117,11 @@ def pi_env(auth: str = "subscription", models_file: Path | None = None) -> dict[
 
     env = os.environ.copy()
     if auth not in {"subscription", "api-key", "openrouter"}:
-        raise RuntimeError(f"unknown pi backend_auth: {auth!r}")
+        raise RuntimeError(f"unknown pi agent_auth: {auth!r}")
     if auth == "openrouter":
         if not env.get("OPENROUTER_API_KEY"):
             raise RuntimeError(
-                "backend_auth: openrouter needs OPENROUTER_API_KEY — export it "
+                "agent_auth: openrouter needs OPENROUTER_API_KEY — export it "
                 "or put it in a .env beside config.yaml"
             )
         env.pop("ANTHROPIC_API_KEY", None)
@@ -246,7 +246,7 @@ class _PiStreamReader(threading.Thread):
                         self.reader_error = f"invalid pi stream event: {exc}"
 
 
-class PiCliBackend:
+class PiCliAgent:
     """Run Hillclimb operators through an isolated local pi CLI."""
 
     name = "pi"

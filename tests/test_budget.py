@@ -16,3 +16,13 @@ def test_spent_seed():
 def test_remaining_str():
     assert BudgetManager(total_s=7200, stop_margin_s=0).remaining_str().startswith("2h")
     assert "minutes" in BudgetManager(total_s=600, stop_margin_s=0).remaining_str()
+
+
+def test_clock_str_is_fixed_shape_for_the_log_gutter():
+    from hillclimb.harness.budget import format_clock
+
+    assert format_clock(582) == "9:42"
+    assert format_clock(600) == "10:00"
+    assert format_clock(3900) == "1:05:00"
+    assert format_clock(0) == "0:00" and format_clock(-3) == "0:00"
+    assert BudgetManager(total_s=600, stop_margin_s=0).clock_str().startswith(("10:00", "9:5"))

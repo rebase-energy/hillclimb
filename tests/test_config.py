@@ -8,25 +8,25 @@ from hillclimb.config import Config
 
 def test_defaults_load():
     config = Config.load()
-    assert config.backend == "claude-code"
+    assert config.agent == "claude-code"
     assert config.climber.ref == "greedy" and config.climber.params == {}  # the manifest holds the defaults
 
 
 def test_overrides():
-    config = Config.load(backend="dummy", model="opus", **{"budget.total_s": 60})
-    assert config.backend == "dummy"
+    config = Config.load(agent="dummy", model="opus", **{"budget.total_s": 60})
+    assert config.agent == "dummy"
     assert config.model == "opus"
     assert config.budget.total_s == 60
 
 
 def test_none_overrides_ignored():
-    config = Config.load(backend=None)
-    assert config.backend == "claude-code"
+    config = Config.load(agent=None)
+    assert config.agent == "claude-code"
 
 
 def test_missing_file_uses_defaults(tmp_path: Path):
     config = Config.load(path=tmp_path / "nope.yaml")
-    assert config.climber.ref == "greedy" and config.concurrency.parallel_operators == 1
+    assert config.climber.ref == "greedy" and config.concurrency.parallel_agents == 1
 
 
 def test_policy_and_routing_defaults():
@@ -41,7 +41,7 @@ def test_routing_block_round_trip(tmp_path: Path):
     cfg_file.write_text(
         """
 routing:
-  draft: {backend: claude-code, model: opus-4.8}
+  draft: {agent: claude-code, model: opus-4.8}
   improve: {model: haiku}
 search:
   policy: greedy
@@ -49,9 +49,9 @@ search:
 """
     )
     config = Config.load(path=cfg_file)
-    assert config.routing["draft"].backend == "claude-code"
+    assert config.routing["draft"].agent == "claude-code"
     assert config.routing["draft"].model == "opus-4.8"
-    assert config.routing["improve"].backend is None  # inherits global backend
+    assert config.routing["improve"].agent is None  # inherits global agent
     assert config.routing["improve"].model == "haiku"
     assert config.climber.ref == "greedy"
     assert config.climber.params == {"beam": 3}
@@ -63,7 +63,7 @@ def test_policy_dotted_override():
 
 
 def test_subscription_env_strips_api_key(monkeypatch):
-    from hillclimb.backends.claude_code import subscription_env
+    from hillclimb.agents.claude_code import subscription_env
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "keep-me")
@@ -113,59 +113,59 @@ def test_dotenv_is_found_one_level_above_the_hillclimb_dir(tmp_path: Path, monke
     assert os.environ["OPENROUTER_API_KEY"] == "from-repo-root"
 
 
-def test_openrouter_auth_requires_the_codex_backend():
+def test_openrouter_auth_requires_the_codex_agent():
     import pytest
 
-    with pytest.raises(ValueError, match="needs backend: codex"):
-        Config(backend="claude-code", backend_auth="openrouter")
+    with pytest.raises(ValueError, match="needs agent: codex"):
+        Config(agent="claude-code", agent_auth="openrouter")
     with pytest.raises(ValueError, match="routing.draft"):
         Config(
-            backend="codex",
-            backend_auth="openrouter",
-            routing={"draft": {"backend": "claude-code"}},
+            agent="codex",
+            agent_auth="openrouter",
+            routing={"draft": {"agent": "claude-code"}},
         )
     # a route that names its own auth is fine
     Config(
-        backend="codex",
-        backend_auth="openrouter",
-        routing={"draft": {"backend": "claude-code", "backend_auth": "subscription"}},
+        agent="codex",
+        agent_auth="openrouter",
+        routing={"draft": {"agent": "claude-code", "agent_auth": "subscription"}},
     )
     # pi implements OpenRouter natively as well.
-    Config(backend="pi", backend_auth="openrouter")
+    Config(agent="pi", agent_auth="openrouter")
 
 
-def test_unknown_backend_auth_is_rejected():
+def test_unknown_agent_auth_is_rejected():
     import pytest
 
-    with pytest.raises(ValueError, match="unknown backend_auth"):
-        Config(backend_auth="open-router")
+    with pytest.raises(ValueError, match="unknown agent_auth"):
+        Config(agent_auth="open-router")
 
 
 def test_sampling_requires_pi_and_rejects_route_typos():
     import pytest
 
     Config(
-        backend="pi",
+        agent="pi",
         routing={"draft": {"sampling": {"temperature": 0.9, "top_p": 0.95}}},
     )
     Config(
-        backend="claude-code",
-        routing={"default": {"backend": "pi"}, "draft": {"sampling": {"temperature": 0.9}}},
+        agent="claude-code",
+        routing={"default": {"agent": "pi"}, "draft": {"sampling": {"temperature": 0.9}}},
     )
-    with pytest.raises(ValueError, match="sampling needs backend: pi"):
+    with pytest.raises(ValueError, match="sampling needs agent: pi"):
         Config(routing={"draft": {"sampling": {"temperature": 0.9}}})
     with pytest.raises(ValueError, match="samplids"):
-        Config(routing={"draft": {"backend": "pi", "samplids": {"temperature": 0.9}}})
+        Config(routing={"draft": {"agent": "pi", "samplids": {"temperature": 0.9}}})
 
 
 def test_sampling_dotted_override_is_revalidated():
-    config = Config(backend="pi")
+    config = Config(agent="pi")
     config.apply_overrides({"routing.draft.sampling.temperature": 0.7})
 
     assert config.routing["draft"].sampling == {"temperature": 0.7}
 
     config = Config()
-    with pytest.raises(ValueError, match="sampling needs backend: pi"):
+    with pytest.raises(ValueError, match="sampling needs agent: pi"):
         config.apply_overrides({"routing.draft.sampling.temperature": 0.7})
 
 
@@ -186,27 +186,27 @@ def test_sampling_validation_checks_inherited_routes_and_action_override():
 
     with pytest.raises(ValueError, match="routing.improve: sampling"):
         Config(routing={
-            "default": {"backend": "pi", "sampling": {"temperature": 0.8}},
-            "improve": {"backend": "codex"},
+            "default": {"agent": "pi", "sampling": {"temperature": 0.8}},
+            "improve": {"agent": "codex"},
         })
     config = Config(routing={
-        "default": {"backend": "pi", "sampling": {"temperature": 0.8}},
-        "improve": {"backend": "codex", "sampling": {}},
+        "default": {"agent": "pi", "sampling": {"temperature": 0.8}},
+        "improve": {"agent": "codex", "sampling": {}},
     })
     assert Router(config).resolve("improve").sampling == {}
-    with pytest.raises(ValueError, match="sampling needs backend"):
-        Router(config).resolve("draft", Route(backend="codex"))
+    with pytest.raises(ValueError, match="sampling needs agent"):
+        Router(config).resolve("draft", Route(agent="codex"))
 
 
 def test_sampling_overrides_are_atomic_and_keep_integer_parameters():
     from hillclimb.config import RouteConfig
 
-    config = Config(backend="pi", routing={"draft": RouteConfig()})
+    config = Config(agent="pi", routing={"draft": RouteConfig()})
     config.apply_overrides({"routing.draft.sampling.top_k": 40})
     assert type(config.routing["draft"].sampling["top_k"]) is int
     with pytest.raises(ValueError):
-        config.apply_overrides({"backend": "codex"})
-    assert config.backend == "pi"
+        config.apply_overrides({"agent": "codex"})
+    assert config.agent == "pi"
     with pytest.raises(ValueError, match="finite"):
         config.apply_overrides({"routing.draft.sampling.temperature": float("nan")})
     assert config.routing["draft"].sampling == {"top_k": 40}
@@ -262,7 +262,7 @@ def test_a_config_file_written_for_0_3_still_loads():
     }
     assert config.climber.operators == {"draft": {"retrieval": False}}
     assert config.learning.tool is False
-    assert (config.concurrency.parallel_operators, config.evaluation.n_replicates, config.evaluation.noise_k) == (3, 4, 2.0)
+    assert (config.concurrency.parallel_agents, config.evaluation.n_replicates, config.evaluation.noise_k) == (3, 4, 2.0)
     assert not hasattr(config, "search") and not hasattr(config, "ensemble")
 
 
@@ -272,11 +272,11 @@ def test_legacy_set_overrides_keep_working_and_removed_keys_say_what_to_do():
     config = Config()
     config.apply_overrides(parse_set_overrides(
         ["search.policy=openevolve", "search.policy_params.population_size=9", "ensemble.top_k=5",
-         "search.parallel_operators=2", "operators.improve_ablation=false"]
+         "search.parallel_agents=2", "operators.improve_ablation=false"]
     ))
     assert config.climber.ref == "openevolve"
     assert config.climber.params == {"population_size": 9, "ensemble_top_k": 5}
-    assert config.concurrency.parallel_operators == 2
+    assert config.concurrency.parallel_agents == 2
     assert config.climber.operators == {"improve": {"ablation": False}}
     assert current_setting("budget.total_s") == "budget.total_s"  # today's keys pass through
     with pytest.raises(KeyError, match="prompts belong to a climber now"):
@@ -322,3 +322,31 @@ def test_the_users_graph_module_wins_and_reading_memory_survives_a_broken_climbe
     notes = []
     assert build_graph_module(config, log=notes.append).name == "knowledge-graph"
     assert notes and "using knowledge-graph" in notes[0]
+
+
+def test_user_level_dotenv_is_read_under_the_folders(tmp_path: Path, monkeypatch):
+    """`hillclimb connect` stores keys beside the user config by default;
+    every folder reads that file, its own `.env` wins, the shell wins over
+    both — the same order as the config files."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    user_dir = tmp_path / "xdg" / "hillclimb"
+    user_dir.mkdir(parents=True)
+    (user_dir / ".env").write_text("OPENROUTER_API_KEY=sk-user\nONLY_USER=u\n")
+    # the folder sits beside, not above, the "no folder" cwd used below, so
+    # the upward search from there cannot find it
+    hillclimb_dir = tmp_path / "proj" / "hillclimb"
+    hillclimb_dir.mkdir(parents=True)
+    (hillclimb_dir / "config.yaml").write_text("model: sonnet\n")
+    (hillclimb_dir / ".env").write_text("OPENROUTER_API_KEY=sk-folder\n")
+    for name in ("OPENROUTER_API_KEY", "ONLY_USER"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HILLCLIMB_DIR", str(hillclimb_dir))
+    Config.load()
+    assert os.environ["OPENROUTER_API_KEY"] == "sk-folder"
+    assert os.environ["ONLY_USER"] == "u"
+    # no folder at all: the user file alone
+    monkeypatch.delenv("OPENROUTER_API_KEY")
+    monkeypatch.delenv("HILLCLIMB_DIR")
+    monkeypatch.chdir(tmp_path / "xdg")
+    Config.load(require_dir=False)
+    assert os.environ["OPENROUTER_API_KEY"] == "sk-user"

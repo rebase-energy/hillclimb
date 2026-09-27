@@ -75,7 +75,7 @@ class Outcome:
     # discarded    a tune trial was dropped (its candidate changed or was pruned)
     # cut_off      killed at the budget wall — not shown to be wrong
     # agent_failed the agent call failed · no_solution it wrote no solution
-    # aborted      stopped mid-attempt · parked the backend hit a limit
+    # aborted      stopped mid-attempt · parked the agent hit a limit
     # unchanged    the agent left the parent's solution as it was (`require_change`)
     # crashed      the harness's own worker failed · rejected nothing was started
     kind: str
