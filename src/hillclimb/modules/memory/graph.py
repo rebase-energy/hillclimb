@@ -488,26 +488,42 @@ def _knowledge_mtime(knowledge_dir: Path) -> float:
     return latest
 
 
-def load_or_build_graph(knowledge_dir: Path, *, force: bool = False) -> KnowledgeGraph:
+def load_or_build_graph(
+    knowledge_dir: Path, *, force: bool = False, module: GraphModule | None = None
+) -> KnowledgeGraph:
     """The one entry point viewers/retrieval should use: reuses graph.json
-    when it is newer than every YAML input, else rebuilds (pinning the
-    previous layout) and rewrites it."""
+    when the same module built it and it is newer than every YAML input,
+    else rebuilds through `module.build` (pinning the previous layout, when
+    it is that module's) and rewrites it. None = the built-in module."""
+    module = module or KnowledgeGraphBuilder()
+    key = module.key or module.name
     path = graph_path(knowledge_dir)
     previous = load_graph(path)
+    same = previous is not None and previous.builder == key
     if (
         not force
-        and previous is not None
+        and same
         and path.exists()
         and path.stat().st_mtime >= _knowledge_mtime(knowledge_dir)
     ):
         return previous
-    graph = build_graph(knowledge_dir, previous)
+    graph = module.build(knowledge_dir, previous if same else None)
+    if graph.nodes and all(node.pos is None and node.pos3 is None for node in graph.nodes):
+        # a module that leaves placement to the harness: the viewers (and the
+        # site's generate_graph.py) need pos3, so lay it out here
+        pinned = previous if same else None
+        pos = compute_layout(graph.nodes, graph.edges, pinned)
+        pos3 = compute_layout(graph.nodes, graph.edges, pinned, dim=3)
+        for node in graph.nodes:
+            node.pos = pos.get(node.id)
+            node.pos3 = pos3.get(node.id)
+    graph.builder = key
     write_graph(path, graph)
     return graph
 
 
-def rebuild_graph(knowledge_dir: Path) -> KnowledgeGraph:
-    return load_or_build_graph(knowledge_dir, force=True)
+def rebuild_graph(knowledge_dir: Path, module: GraphModule | None = None) -> KnowledgeGraph:
+    return load_or_build_graph(knowledge_dir, force=True, module=module)
 
 
 def retrieve_claims(
@@ -694,3 +710,21 @@ def graph_stats(graph: KnowledgeGraph) -> str:
         retired = sum(1 for n in tracked if n.data.get("retired"))
         lines.append(f"{len(tracked)} claim(s) with a track record, {retired} retired by record")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# the built-in graph module
+
+
+class KnowledgeGraphBuilder(GraphModule):
+    """The built-in graph (`knowledge-graph`): cards, claims, the registries,
+    papers and consolidated claims folded into one index, supersession and
+    the credit fold applied, a pinned spring layout; the concept-bridged
+    claim walk for retrieval; the fuzzy lookup for query."""
+
+    name = DEFAULT_GRAPH
+    description = "cards, claims and registries folded into one index; concept-bridged retrieval"
+    key = DEFAULT_GRAPH
+
+    def build(self, knowledge_dir: Path, previous: KnowledgeGraph | None = None) -> KnowledgeGraph:
+        return build_graph(knowledge_dir, previous)

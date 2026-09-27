@@ -66,6 +66,11 @@ _LAZY = {
     "SimilarityScore": ("hillclimb.modules.similarity.base", "SimilarityScore"),
     "SimilarityUnavailable": ("hillclimb.modules.similarity.base", "SimilarityUnavailable"),
     "Solution": ("hillclimb.modules.similarity.base", "Solution"),
+    # cross-search memory: the graph module and the model it builds
+    "GraphModule": ("hillclimb.modules.memory.base", "GraphModule"),
+    "KnowledgeGraph": ("hillclimb.modules.memory.base", "KnowledgeGraph"),
+    "GraphNode": ("hillclimb.modules.memory.base", "GraphNode"),
+    "GraphEdge": ("hillclimb.modules.memory.base", "GraphEdge"),
 }
 
 __all__ = sorted(_LAZY)
@@ -121,5 +126,6 @@ if TYPE_CHECKING:  # eager for type checkers and editors only
         SearchPolicy,
     )
     from hillclimb.modules.similarity.base import SimilarityScore, SimilarityUnavailable, Solution
+    from hillclimb.modules.memory.base import GraphEdge, GraphModule, GraphNode, KnowledgeGraph
     from hillclimb.harness.glue import ParkedSearch
     from hillclimb.modules.tuners.base import Observation, Tuner
