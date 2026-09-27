@@ -38,7 +38,7 @@ Routing is the user's: a climber manifest may not carry a `routing:` block
 (see [climbers.md](climbers.md)). Which agents can be routed to, and how
 they are paid for, is in [agents.md](agents.md).
 
-## Cross-search memory: the knowledge graph
+## Cross-search memory: the files, and the graph over them
 
 hillclimb learns across searches, and the memory is file-based and
 git-versionable — it lives in your hillclimb dir, under `knowledge/`:
@@ -87,8 +87,21 @@ git-versionable — it lives in your hillclimb dir, under `knowledge/`:
   (`learning.enabled: false`) answers it on holdout; see
   [experiments.md](experiments.md).
 
-A climber's manifest says whether it uses the memory (`memory:
-knowledge-graph | none`; `climber.memory` in config overrides it).
+A climber's manifest says whether it uses the memory (`memory: files |
+none`; `climber.memory` in config overrides it; `knowledge-graph` is the
+pre-0.4 spelling of `files` and still loads) and which **graph module**
+indexes it (`graph: knowledge-graph`, the built-in and the default;
+`climber.graph` in config overrides it). The memory is the YAML files; the
+knowledge graph is a derived, rebuildable index over them, and a climber may
+build and traverse it differently: a `file.py` next to its manifest or a
+`package.module:Class` subclassing `hillclimb.sdk.GraphModule` — `build`
+folds the knowledge dir into a `KnowledgeGraph`, `retrieve` picks the claim
+nodes a search is shown, `query` answers `hillclimb knowledge query`. The
+last two default to the built-in claim walk, so a module that only changes
+the structure writes `build` alone, as long as it keeps the claim-node
+convention `modules/memory/base.py` spells out. `graph.json` records which
+module built it (`builder`), so switching modules, or editing a file
+module, rebuilds it.
 
 Explore it interactively with `hillclimb knowledge graph` (or `g` inside
 `hillclimb watch`): a true-3D scene rendered by [plotui](https://pypi.org/project/plotui/) (Rust

@@ -190,11 +190,15 @@ part is a file you can edit: a bundled `module:Class` policy is copied in as
 `file.py[:Class]` relative to the climber dir, so files may import each
 other. The manifest names exactly one of `policy:` or `loop:`, plus `params`,
 `operators` (built-in names or `file.py:Class`, each optionally with params
-such as `- draft: {retrieval: true}`), `memory`, `tuner`/`tuner_params`,
+such as `- draft: {retrieval: true}`), `memory: files | none` (whether it
+reads and writes the cross-search memory), `graph` (the module that indexes
+that memory: `knowledge-graph`, the built-in, or a `file.py` / `module:Class`
+subclassing `hillclimb.sdk.GraphModule` — see
+[operators-and-memory.md](operators-and-memory.md)), `tuner`/`tuner_params`,
 `similarity` and `prompts`; `routing` is reserved — which backend and model
 run is the user's choice in `config.yaml`, never a climber's. The user's
-`climber.params`, `climber.operators`, `climber.tuner` and `climber.memory`
-lay over the manifest without copying it.
+`climber.params`, `climber.operators`, `climber.tuner`, `climber.memory` and
+`climber.graph` lay over the manifest without copying it.
 
 ## GEPA: a climber with its own loop (optional extra)
 

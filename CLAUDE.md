@@ -209,7 +209,13 @@ places they are imported.
   `ClimberLoadError` naming the file and the fix. `ClimberManifest`
   (`extra="forbid"`): `name`, exactly one of `policy` | `loop`, `params`,
   `operators` (built-in names or `file.py:Class` / `module:Class`, each
-  optionally `- draft: {retrieval: true}`), `memory: knowledge-graph | none`,
+  optionally `- draft: {retrieval: true}`), `memory: files | none`
+  (`knowledge-graph` is the pre-0.4 spelling, mapped on read, never rewritten
+  on disk — the snapshot's hash is the climber's identity), `graph`
+  (the GraphModule over the memory: `knowledge-graph`, a `file.py` in the
+  climber dir, or `module:Class`; `modules/memory/base.py` is the contract,
+  `graphs.py` the resolver, `glue.build_graph_module` the one place consumers
+  ask; graph.json records its `builder` and is rebuilt on a mismatch),
   `tuner`/`tuner_params`, `similarity`, `prompts` (a dir that shadows built-in
   OPERATOR templates by name), `holdout_timing: after`; `routing` is RESERVED
   and refused (the model is the user's choice). Module refs inside a manifest

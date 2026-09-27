@@ -126,7 +126,7 @@ is spent on it.
 | Path | What it is |
 |---|---|
 | `src/hillclimb/harness/` | The fixed core every search runs on: `core.py` (the Harness), the loop, evaluation and the executor, the journal, candidates and the store, budgets, slots and the control queue. Never a research surface. |
-| `src/hillclimb/modules/` | What a climber exchanges, one subpackage per kind, each with its contract in `base.py`: `policies/` (what to try next), `operators/` (how one attempt is made), `tuners/` (which parameter values), `similarity/` (how alike two solutions are), `memory/` (the knowledge graph). Implementations import only `hillclimb.sdk`. |
+| `src/hillclimb/modules/` | What a climber exchanges, one subpackage per kind, each with its contract in `base.py`: `policies/` (what to try next), `operators/` (how one attempt is made), `tuners/` (which parameter values), `similarity/` (how alike two solutions are), `memory/` (the file-based memory, and the graph module that indexes it). Implementations import only `hillclimb.sdk`. |
 | `src/hillclimb/sdk/` | The one import a climber needs: the contracts and the read-only views of the search. |
 | `src/hillclimb/climbers/` | The bundled climbers, `greedy`, `openevolve` and `gepa`, each a `climber.yaml` naming its modules and prompts. `hillclimb climber new` copies one for you to edit. |
 | `src/hillclimb/tui/` | Every terminal view (`watch`, `chart`, `tree`, `archive`, `surface`, `similarity`, `graph`) and the layout it draws. Reads the store, imported by nothing else. |

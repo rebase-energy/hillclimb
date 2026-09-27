@@ -8,6 +8,13 @@ touches changed spelling once, in this release; old spellings are mapped on
 load and say where they went.
 
 ### Added
+- **Pluggable knowledge graph.** `graph:` in a climber manifest (or
+  `climber.graph` in config.yaml) names the module that builds
+  `knowledge/graph.json`, ranks the claims a search is shown and answers
+  `hillclimb knowledge query`: `knowledge-graph` (the built-in, the default),
+  or a `file.py` / `package.module:Class` subclassing `hillclimb.sdk.GraphModule`.
+  `graph.json` records its builder, so switching (or editing a file module)
+  rebuilds it. `hillclimb climber check` resolves `graph:` too.
 - **Climbers.** `hillclimb run <problem> --climber greedy | openevolve | gepa |
   hillclimb/climbers/<name> | file.py`. `hillclimb climber list` shows what is
   available, `hillclimb climber new <name> --from greedy` copies a climber
@@ -30,6 +37,10 @@ load and say where they went.
 - `hillclimb.sdk`: the one import a climber needs.
 
 ### Changed
+- climber.yaml / config.yaml: `memory: knowledge-graph` → `memory: files`
+  (the memory is the YAML under `hillclimb/knowledge/`; the graph is a derived
+  index over it). The old spelling still loads; `hillclimb climber check`
+  points it out.
 - config.yaml: `search.policy`/`search.policy_params` → one `climber:` block
   (`climber: greedy` or `climber: {ref, params, tuner, memory}`);
   `search.n_replicates`/`noise_k`/`min_improvement` → `evaluation:`;

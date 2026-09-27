@@ -34,6 +34,36 @@ computed at graph-build time (two temporal rules in
 `graph.compute_supersessions`) instead of writing `superseded_by` into old
 cards — cards stay immutable once written.
 
+## Pluggable graph (0.4)
+
+The memory is the files; the graph is one view over them, and since 0.4 a
+climber may bring its own. `modules/memory/base.py` holds the contract,
+`GraphModule`: `build(knowledge_dir, previous) -> KnowledgeGraph`,
+`retrieve(graph, *, family, problem_id, concepts, limit) -> list[GraphNode]`,
+`query(graph, terms, *, family, limit) -> list[dict]`. The built-in
+(`graph.KnowledgeGraphBuilder`, registry name `knowledge-graph`) wraps
+`build_graph` / `retrieve_claims` / `query_graph`; `modules/memory/graphs.py`
+resolves a module the way similarity scores are resolved (registry name, a
+`.py` file, `module:Class`), and `harness/glue.build_graph_module` is the one
+place consumers ask — the user's `climber.graph`, else the climber's `graph:`
+(from the search's snapshot when there is one).
+
+What the harness relies on — the **claim-node convention** — is stated in the
+contract's docstring: a claim is a node with `type == "claim"` and id
+`claim:<claim_id>` (the credit key), `data` carrying `subject / relation /
+object / scope / confidence / evidence` (optionally `track`), ISO-8601
+`first_seen` / `superseded_at` compared lexicographically by the scrubber.
+`retrieve` and `query` default to the built-in walk over that convention;
+consolidation walks it too and is not part of the contract yet (a graph
+without claim nodes consolidates to nothing, with a log line). The viewers
+read only the model: unknown node types draw white discs, and a module that
+sets no positions has them laid out by the harness so `pos3` is always there.
+
+`graph.json` gained `builder` (schema stays v2): the key of the module that
+built it — the registry name, `file.py#<sha12>` for a file module, or the
+dotted spec. `load_or_build_graph` never serves an index another key built
+and never pins a layout across keys.
+
 ## Roadmap steps 2-4 + benchmark (added 2026-07-10)
 
 - **A/B benchmark** (`bench.py`): `hillclimb bench run <problem> --pairs N`
