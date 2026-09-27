@@ -23,5 +23,6 @@ operators:
   - debug
   - improve: {ablation: true}     # ask for, and pass on, ablation findings
   - ensemble
-memory: knowledge-graph
+memory: files
+# graph: knowledge-graph          # the default; a file.py or module:Class brings your own
 tuner: random

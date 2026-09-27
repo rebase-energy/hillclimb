@@ -9,6 +9,6 @@ params:
   max_metric_calls: 50
 operators:
   - hillclimb.integrations.gepa.operator:GepaReflectOperator
-memory: knowledge-graph
+memory: files
 tuner: random
 holdout_timing: after    # gepa's state never meets a holdout value, not even a failed hidden split

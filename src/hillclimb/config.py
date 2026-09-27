@@ -15,6 +15,7 @@ from hillclimb.project import (
     user_config_path,
     HillclimbDirNotFound,
 )
+from hillclimb.modules.memory.base import MemoryKind
 
 
 class BudgetConfig(BaseModel):
@@ -118,7 +119,7 @@ class ClimberConfig(BaseModel):
     operators: dict[str, dict] = Field(default_factory=dict)
     tuner: str | None = None  # None = the manifest's (random | optuna)
     tuner_params: dict = Field(default_factory=dict)
-    memory: Literal["knowledge-graph", "none"] | None = None  # None = the manifest's
+    memory: MemoryKind | None = None  # None = the manifest's; `knowledge-graph` still loads
 
     @model_validator(mode="before")
     @classmethod

@@ -42,6 +42,7 @@ from hillclimb._moved import modernize
 from hillclimb.harness.loop import PolicyLoop, SearchLoop
 from hillclimb.modules.operators import Operator
 from hillclimb.modules.operators.builtin import BUILTIN_OPERATORS
+from hillclimb.modules.memory.base import MemoryKind
 
 MANIFEST = "climber.yaml"
 BUNDLED_DIR = Path(__file__).parent / "climbers"
@@ -70,7 +71,7 @@ class ClimberManifest(BaseModel):
     # operator names (built-in) or `file.py:Class` / `module:Class`, each
     # optionally with params: `- draft: {retrieval: true}`
     operators: list[str | dict[str, dict[str, Any]]] = Field(default_factory=lambda: list(DEFAULT_OPERATORS))
-    memory: Literal["knowledge-graph", "none"] = "knowledge-graph"
+    memory: MemoryKind = "files"  # `knowledge-graph` (pre-0.4) still loads
     tuner: str = "random"
     tuner_params: dict[str, Any] = Field(default_factory=dict)
     similarity: list[str] = Field(default_factory=list)

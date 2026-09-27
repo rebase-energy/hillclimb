@@ -237,6 +237,14 @@ def test_climber_block_and_its_shorthand():
     assert config.climber.params == {"num_drafts": 1} and config.climber.ref == "gepa"
     with pytest.raises(ValueError):
         Config.model_validate({"climber": {"ref": "greedy", "polcy": "x"}})  # a typo is not silently ignored
+    # the memory kind: `files` (the YAML under hillclimb/knowledge/), its pre-0.4
+    # spelling `knowledge-graph` mapped on read, anything else refused by name
+    assert Config.model_validate({"climber": {"memory": "knowledge-graph"}}).climber.memory == "files"
+    config = Config()
+    config.apply_overrides(parse_set_overrides(["climber.memory=knowledge-graph"]))
+    assert config.climber.memory == "files"
+    with pytest.raises(ValueError, match="memory"):
+        Config.model_validate({"climber": {"memory": "sqlite"}})
 
 
 def test_a_config_file_written_for_0_3_still_loads():
@@ -290,7 +298,7 @@ def test_the_users_operator_overlay_reaches_the_operators():
         build_operators(config)
     # memory: the manifest's, the user's override, and the master switch
     config = Config()
-    assert effective_memory(config) == "knowledge-graph"
+    assert effective_memory(config) == "files"
     config.climber.memory = "none"
     assert effective_memory(config) == "none"
     config.climber.memory = None

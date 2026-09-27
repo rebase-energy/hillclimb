@@ -13,5 +13,5 @@ operators:
   - debug
   - improve: {ablation: true}
   - ensemble
-memory: knowledge-graph
+memory: files
 tuner: random

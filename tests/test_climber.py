@@ -327,3 +327,33 @@ def test_a_search_snapshot_with_a_pre_move_ref_still_resumes(task, config, tmp_p
     manifest.write_text(text)
     loop = load_snapshot(search_dir, name="greedy").build_loop()
     assert isinstance(loop.policy, GreedyPolicy)
+
+
+def test_memory_is_files_and_the_old_spelling_still_loads(tmp_path):
+    """`memory: knowledge-graph` named the storage after its view; it now
+    reads as `files`, and nothing on disk is rewritten to say so."""
+    root = write_climber(tmp_path / "old", manifest="policy: policy.py\nmemory: knowledge-graph\n")
+    climber = load_climber(str(root))
+    assert climber.manifest.memory == "files"
+    assert climber.manifest.model_dump()["memory"] == "files"
+    assert "memory: knowledge-graph" in (root / "climber.yaml").read_text()  # left as written
+    assert load_climber(str(write_climber(tmp_path / "new", manifest="policy: policy.py\nmemory: files\n"))).manifest.memory == "files"
+    one_file = write_climber(tmp_path / "solo") / "policy.py"
+    assert load_climber(str(one_file)).manifest.memory == "files"  # the model default
+
+
+def test_a_search_snapshot_with_the_old_memory_spelling_still_resumes(task, config, tmp_path):
+    from hillclimb import api
+    from hillclimb.climber import load_snapshot
+    from hillclimb.harness.glue import effective_memory
+    from hillclimb.harness.run import RunMeta
+
+    run_dir = api.create_run(config, RunMeta(run_id="r1", name="r1", kind="problem", target="t", problem_ids=[task.problem_id]))
+    search_dir = api.create_search(config, task, run_dir, "r1", 600)
+    manifest = search_dir / "climber" / "climber.yaml"
+    manifest.write_text(manifest.read_text().replace("memory: files", "memory: knowledge-graph"))
+    assert "memory: knowledge-graph" in manifest.read_text()
+    before = tree_sha256(search_dir / "climber")
+    assert load_snapshot(search_dir, name="greedy").manifest.memory == "files"
+    assert effective_memory(config, search_dir) == "files"
+    assert tree_sha256(search_dir / "climber") == before  # resume never rewrites the snapshot

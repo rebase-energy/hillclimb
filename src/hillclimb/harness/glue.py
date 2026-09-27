@@ -93,7 +93,7 @@ def build_operators(config: Config, search_dir=None) -> OperatorSet:
 
 
 def effective_memory(config: Config, search_dir=None) -> str:
-    """`knowledge-graph` or `none`: the user's `climber.memory`, else the
+    """`files` or `none`: the user's `climber.memory`, else the
     manifest's — and always `none` when learning is switched off."""
     if not config.learning.enabled:
         return "none"
