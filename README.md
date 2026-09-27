@@ -121,6 +121,28 @@ live copy never changes a running search, and `hillclimb climber check`
 replays recorded journals through an edited climber before an agent hour
 is spent on it.
 
+## What is where
+
+| Path | What it is |
+|---|---|
+| `src/hillclimb/harness/` | The fixed core every search runs on: `core.py` (the Harness), the loop, evaluation and the executor, the journal, candidates and the store, budgets, slots and the control queue. Never a research surface. |
+| `src/hillclimb/modules/` | What a climber exchanges, one subpackage per kind, each with its contract in `base.py`: `policies/` (what to try next), `operators/` (how one attempt is made), `tuners/` (which parameter values), `similarity/` (how alike two solutions are), `memory/` (the knowledge graph). Implementations import only `hillclimb.sdk`. |
+| `src/hillclimb/sdk/` | The one import a climber needs: the contracts and the read-only views of the search. |
+| `src/hillclimb/climbers/` | The bundled climbers, `greedy`, `openevolve` and `gepa`, each a `climber.yaml` naming its modules and prompts. `hillclimb climber new` copies one for you to edit. |
+| `src/hillclimb/tui/` | Every terminal view (`watch`, `chart`, `tree`, `archive`, `surface`, `similarity`, `graph`) and the layout it draws. Reads the store, imported by nothing else. |
+| `src/hillclimb/cli/` | The `hillclimb` command, one module per command group. |
+| `src/hillclimb/backends/` | The agents that write code: Claude Code, Codex, pi, and the dummy and fake backends for tests. |
+| `src/hillclimb/integrations/` | Problem providers and libraries that bring their own loop: emflow, MLE-bench, Einstein Arena, GEPA. |
+| `src/hillclimb/prompts/` | The operator prompt templates. A climber may shadow them by name. |
+| `src/hillclimb/runtime/` | The managed venv the verifier and the solution run in, and the shim that makes `hillclimb.spaces` importable there. |
+| `src/hillclimb/demo/` | The starter problems as package data, so `hillclimb problem get` works from a bare install. |
+| `src/hillclimb/spaces.py` | The output-format contract a problem's `interface.py` is written in, and the `params.json` contract. Stdlib only, byte-copied into runtime venvs. |
+| `src/hillclimb/{api,config,problem,climber,experiment,connect}.py` | The public surface: run a search, the config schema, load a problem or a climber, experiments, and connecting an agent. |
+| `problems/` | The starter problems' source of truth, one `make_<family>.py` generator per family; the bundled copies under `demo/` are stamped from here. |
+| `hillclimb/` | This repo's own hillclimb dir: `config.yaml`, `experiments/` (specs and seeds), `knowledge/` (the graph, cards, credit, playbooks). |
+| `tests/` | The suite (`uv run pytest`). `test_layout.py` pins which package may import which, `test_sdk_imports.py` that climber code imports only the sdk, `golden/` the prompt bytes and every `--help` screen. |
+| `docs/` | The topic docs linked below, and the dated design plans. |
+
 ## Docs
 
 - [Problems](docs/problems.md) — the verifier contract, floors, unit tests, tunable parameters, per-instance scores, noise
