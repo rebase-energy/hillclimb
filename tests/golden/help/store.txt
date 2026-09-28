@@ -1,7 +1,7 @@
                                                                                                                         
  Usage: root store [OPTIONS] COMMAND [ARGS]...                                                                          
                                                                                                                         
- The record store behind the cross-run views (`store.backend` in config.yaml: files | sqlite)                           
+ The record store behind the cross-run views (`store.backend` in hillclimb.yaml: files | sqlite)                        
                                                                                                                         
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --help  -h        Show this message and exit.                                                                        │

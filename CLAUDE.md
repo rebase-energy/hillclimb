@@ -16,7 +16,7 @@ declared parameter space have exactly one trial (`params={}`); pre-split
 journals fold their flat `trials` list into one trial on load. The problem
 is an *attribute* of a search, not a
 level: a run may hold searches on different problems (MLE-bench) or several
-on one (the demo). Search ids are `<problem-id>`, then `<problem-id>-2`, `-3`
+on one (`--parallel-searches`). Search ids are `<problem-id>`, then `<problem-id>-2`, `-3`
 (atomic mkdir allocation); `search.yaml` carries `problem_key` — the
 canonical cross-run identity (`emflow://…`, `mlebench://…`, or the local
 problem id; backfilled on read like hillclimb-go's `EffectiveProblemKey`) —
@@ -78,9 +78,13 @@ runtime venvs, so it stays), `sdk/`, `demo/`, `agents/`, `integrations/`, `promp
 `runtime/`, `climbers/`. `_moved.py` maps pre-move `module:Class` refs at the two
 places they are imported.
 
-- The hillclimb dir: all data lives in a `hillclimb/` folder (config.yaml
-  marker, problems/, runs/) found by upward search; this repo overrides
-  runs/problems to its legacy top-level dirs in `hillclimb/config.yaml`.
+- The hillclimb dir: any folder holding a `hillclimb.yaml` (the config and
+  the marker), found by upward search; problems/, runs/, knowledge/,
+  climbers/, experiments/ and store.sqlite sit beside it and relative config
+  paths resolve against it. `init [DIR]` makes the CWD (or DIR) one and
+  refuses a folder with its own problems/ or runs/; `reset` deletes only
+  those hillclimb-owned entries (`common.owned_paths`), never the folder.
+  This repo's root is its own hillclimb dir.
 - Every run carries its spec: `api.write_run_spec` writes `runs/<run-id>/spec.yaml`
   (one `SuiteEntry` per search as resolved — `spec_entry`; entries carry `climber`
   and `set` too) from every launch path (foreground run, suite, fleet, experiment),
@@ -99,7 +103,7 @@ places they are imported.
   Machine-scoped state (shared venvs, emflow cache, agent slots) lives in
   `~/.cache/hillclimb/`.
 - Tests: `uv run pytest`
-- New problem: `hillclimb init` scaffolds `problems/example/`; check a
+- New problem: copy a bundled one (`hillclimb problem get <problem>`); check a
   verifier with `hillclimb verify <problem> --repeat 5` (the spread it prints
   is the noise floor — improvements below it are not real)
 - Noisy metrics: a trial's score is the MEDIAN of its replicates;
@@ -137,7 +141,7 @@ places they are imported.
 - Agent billing: `agent_auth` picks who pays — `subscription` (the Claude or
   ChatGPT login), `api-key`, or `openrouter`, which points codex or pi at
   OpenRouter (`wire_api: responses`; the key comes from the environment or a
-  `.env` beside config.yaml) and bills OpenRouter credits instead. Every codex
+  `.env` beside hillclimb.yaml) and bills OpenRouter credits instead. Every codex
   call runs under an isolated `CODEX_HOME` in
   `~/.cache/hillclimb/codex-home/<auth>/`, so personal `~/.codex` settings
   change neither a search's results nor its token bill; a provider 402 parks
@@ -153,7 +157,7 @@ places they are imported.
   (`connect.ping`) and pins `agent`/`agent_auth` with a line-level edit of
   a config.yaml that keeps its comments — the USER level
   (`~/.config/hillclimb/config.yaml`, so `connect` precedes `init`; a folder's
-  config.yaml overrides it, `--local` writes there) and only when no agent is
+  hillclimb.yaml overrides it, `--local` writes there) and only when no agent is
   pinned yet, unless `--default`. Keys live in a `.env` (user-level beside the
   user config, read under the folder's own by `Config.load`), never in `Config`.
   Connection states: `logged-out` / `logged-in` / `ready` (`no-key` /
@@ -169,7 +173,7 @@ places they are imported.
   run/search metadata, the append-only journal (`Journal(store.journal(key))`,
   append order is the replay contract), the status record, and the stop/prune
   command queue. Agents: `FileDataStore` (default; `runs/` as today) and
-  `SqliteDataStore` (`store.backend: sqlite` → `hillclimb/store.sqlite`, WAL,
+  `SqliteDataStore` (`store.backend: sqlite` → `store.sqlite`, WAL,
   multi-process, writes no yaml). `open_store(config)` picks it; `resolve_search`/
   `latest_search`/`running_searches` replace dir walking; `SearchRecord.state`
   is derived at read time (`status.derive_state`, pid + heartbeat). `key_for(search_dir)`
@@ -467,7 +471,7 @@ places they are imported.
   (repo only, NOT in the bundled catalog; baseline `greedy.py` byte-identical
   to `modules/policies/greedy.py`, `tests/test_meta.py` enforces).
   Deferred: directory-shaped candidates, parallel inner runs, replay/ReplayHarness
-- Experiments (`experiment.py`): a spec (`hillclimb/experiments/<name>.yaml`)
+- Experiments (`experiment.py`): a spec (`experiments/<name>.yaml`)
   is problems × named arms (dotted config overrides, `Config.apply_overrides`)
   × repeats; searches are tagged in `SearchMeta` (`experiment`, `arm`,
   `repeat`, `arm_overrides`) and the report groups on those tags through the
@@ -572,9 +576,9 @@ places they are imported.
   opts out); `tui/similarity.py` pure layer with fingerprint caches,
   `tui/similarityview.py` the screens; no usable reference = prints why and
   returns), `graph` (knowledge graph)
-- `hillclimb demo`: zero-setup demo (N parallel detached `hillclimb run`s, `stop --all` ends it) — bundled circle-packing problem in
-  `src/hillclimb/demo/` (package data, a copy of `problems/circle-packing`
-  with a lean `requirements.txt`); keep the two in sync
+- Bundled problems in `src/hillclimb/demo/` (package data for `problem get`;
+  copies of `problems/`, circle-packing with a lean `requirements.txt`); keep
+  the two in sync
 - Driving runs from chat: use the `hillclimb` skill (`.claude/skills/hillclimb/SKILL.md`)
 
 ## Run-state rules
@@ -587,7 +591,7 @@ route through the store's command queue when the engine is live. The journal
 is append-only; replay keeps the last record per candidate. What stays on disk
 in every backend: `candidates/`, `best/`, agent streams/logs, `injected_claims.json`.
 
-`hillclimb/knowledge/graph.json` is a **derived index** (gitignored) rebuilt
+`knowledge/graph.json` is a **derived index** (gitignored) rebuilt
 deterministically from the knowledge YAML (cards, entities.yaml,
 concepts.yaml, credit/, consolidated.yaml, papers/) — never hand-edit it;
 `hillclimb knowledge rebuild` regenerates it. The YAML files are the source

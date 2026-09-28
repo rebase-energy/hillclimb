@@ -34,7 +34,7 @@ def knowledge_backfill():
     config = common.load_config()
     knowledge_dir = resolve_knowledge_dir(config)
     if knowledge_dir is None:
-        fail("learning is disabled or no [path]hillclimb/knowledge[/] dir resolvable")
+        fail("learning is disabled or no [path]knowledge/[/] dir resolvable")
         raise typer.Exit(1)
     written = 0
     store = open_store(config)
@@ -120,7 +120,7 @@ def knowledge_show(target: str = typer.Argument(..., help="Problem target, e.g. 
     config = common.load_config()
     knowledge_dir = resolve_knowledge_dir(config)
     if knowledge_dir is None:
-        fail("learning is disabled or no [path]hillclimb/knowledge[/] dir resolvable")
+        fail("learning is disabled or no [path]knowledge/[/] dir resolvable")
         raise typer.Exit(1)
     problem = load_problem(target, config)
     cards = load_cards(
@@ -161,7 +161,7 @@ def knowledge_distill(
     config = common.load_config()
     knowledge_dir = resolve_knowledge_dir(config)
     if knowledge_dir is None:
-        fail("learning is disabled or no [path]hillclimb/knowledge[/] dir resolvable")
+        fail("learning is disabled or no [path]knowledge/[/] dir resolvable")
         raise typer.Exit(1)
 
     if backfill:
@@ -259,7 +259,7 @@ def knowledge_query(
     config = common.load_config()
     knowledge_dir = resolve_knowledge_dir(config)
     if knowledge_dir is None:
-        fail("learning is disabled or no [path]hillclimb/knowledge[/] dir resolvable")
+        fail("learning is disabled or no [path]knowledge/[/] dir resolvable")
         raise typer.Exit(1)
     module = _graph_module(config)
     hits = module.query(load_or_build_graph(knowledge_dir, module=module), terms, family=family, limit=limit)
@@ -288,7 +288,7 @@ def knowledge_consolidate(
     config = common.load_config()
     knowledge_dir = resolve_knowledge_dir(config)
     if knowledge_dir is None:
-        fail("learning is disabled or no [path]hillclimb/knowledge[/] dir resolvable")
+        fail("learning is disabled or no [path]knowledge/[/] dir resolvable")
         raise typer.Exit(1)
     summary = consolidate(knowledge_dir, config, _log, dry_run=dry_run)
     verb = "would generalize" if dry_run else "generalized"
@@ -314,7 +314,7 @@ def knowledge_rebuild():
     config = common.load_config()
     knowledge_dir = resolve_knowledge_dir(config)
     if knowledge_dir is None:
-        fail("learning is disabled or no [path]hillclimb/knowledge[/] dir resolvable")
+        fail("learning is disabled or no [path]knowledge/[/] dir resolvable")
         raise typer.Exit(1)
     module = _graph_module(config)
     graph = rebuild_graph(knowledge_dir, module=module)
@@ -337,7 +337,7 @@ def _paper_knowledge_dir() -> tuple[Config, Path]:
     config = common.load_config()
     knowledge_dir = resolve_knowledge_dir(config)
     if knowledge_dir is None:
-        fail("learning is disabled or no [path]hillclimb/knowledge[/] dir resolvable")
+        fail("learning is disabled or no [path]knowledge/[/] dir resolvable")
         raise typer.Exit(1)
     return config, knowledge_dir
 
@@ -415,7 +415,7 @@ def knowledge_graph(
     config = common.load_config()
     knowledge_dir = resolve_knowledge_dir(config)
     if knowledge_dir is None:
-        fail("learning is disabled or no [path]hillclimb/knowledge[/] dir resolvable")
+        fail("learning is disabled or no [path]knowledge/[/] dir resolvable")
         raise typer.Exit(1)
     if stats:
         module = _graph_module(config)

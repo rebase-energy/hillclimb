@@ -3,7 +3,7 @@
 One staircase per problem: the best validation score so far across every
 search of it, against the number of tested candidate solutions, with every
 scored candidate as a dot on the same axes — bright where it set a new best,
-dim where it missed. The demo's three parallel searches are one climb, not
+dim where it missed. Three parallel searches on a problem are one climb, not
 three; a search only gets its own line in an experiment, where the arms are
 the comparison (build_plot) — and there the chart stays inside the anchor's
 run, so two runs of one experiment on the same problem never overlay each
@@ -950,6 +950,9 @@ def _add_chart_baselines(
     off never recolours the others out from under the legend."""
     right = max(origin + 1.0, extent)
     xs = [origin + step for step in range(int(right - origin) + 1)]
+    # dashed, so a reference reads as a reference and not as a series
+    # (hillclimb.sh draws them the same way); solid on an older plotui
+    dash = {"dash": BENCHMARK_DASH} if _plot_supports("dash") else {}
     for index, (label, value) in enumerate(baselines.items()):
         if label in hidden:
             continue
@@ -959,6 +962,7 @@ def _add_chart_baselines(
             color=CHART_BASELINE_PALETTE[index % len(CHART_BASELINE_PALETTE)],
             width=1.0,
             name=label,
+            **dash,
         )
 
 
@@ -1034,10 +1038,15 @@ def _plot_supports_axis() -> bool:
     """Whether the installed plotui has right-hand axes (0.3.0+). Checked the
     way themed_plot feature-guards set_chrome, so the chart still renders —
     minus the overlay — against an older wheel."""
+    return _plot_supports("axis")
+
+
+def _plot_supports(parameter: str) -> bool:
+    """Whether the installed plotui's `add_line` takes `parameter`."""
     import inspect
 
     try:
-        return "axis" in inspect.signature(Plot.add_line).parameters
+        return parameter in inspect.signature(Plot.add_line).parameters
     except (TypeError, ValueError):  # builtins without introspectable signatures
         return False
 
@@ -1207,11 +1216,13 @@ def build_detail_plot(
 LegendEntry = tuple[str, tuple[int, int, int], str] | tuple[str, tuple[int, int, int], str, str]
 
 BENCHMARKS_GROUP = "Benchmarks"
+# benchmark lines: 4px drawn, 3px skipped; the legend echoes it with "╌"
+BENCHMARK_DASH = (4.0, 3.0)
 
 
 def _baseline_legend(baselines: Mapping[str, float]) -> list[LegendEntry]:
     return [
-        (label, CHART_BASELINE_PALETTE[index % len(CHART_BASELINE_PALETTE)], "─", BENCHMARKS_GROUP)
+        (label, CHART_BASELINE_PALETTE[index % len(CHART_BASELINE_PALETTE)], "╌", BENCHMARKS_GROUP)
         for index, label in enumerate(baselines)
     ]
 

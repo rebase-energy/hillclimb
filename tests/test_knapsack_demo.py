@@ -59,12 +59,11 @@ def test_fetch_knapsack_installs_and_lists_problem_files(
 ):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
-    monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
 
     with pytest.raises(SystemExit) as exc:
         cli_main(["problem", "get", "knapsack"])
     assert exc.value.code == 0
-    problem_dir = tmp_path / "hillclimb" / "problems" / "knapsack"
+    problem_dir = tmp_path / "problems" / "knapsack"
     assert (problem_dir / "baseline.py").exists()
     assert (problem_dir / "verifier.sh").exists()
     output = capsys.readouterr().out

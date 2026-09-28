@@ -73,7 +73,7 @@ def codex_env(auth: str = "subscription") -> dict[str, str]:
         if not env.get("OPENROUTER_API_KEY"):
             raise RuntimeError(
                 "agent_auth: openrouter needs OPENROUTER_API_KEY — export it "
-                "or put it in a .env beside config.yaml"
+                "or put it in a .env beside hillclimb.yaml"
             )
         # billing must not fall back to an inherited OpenAI account
         env.pop("OPENAI_API_KEY", None)

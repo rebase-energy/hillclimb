@@ -29,7 +29,6 @@ def _no_pinned_dir(tmp_path: Path, monkeypatch):
     its record — is the test's too, so no test marks the developer's
     machine as connected."""
     monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
-    monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
     monkeypatch.setenv("HILLCLIMB_CACHE_DIR", str(tmp_path / "cache"))
 
 
@@ -95,7 +94,7 @@ def test_write_env_key_is_owner_only(tmp_path: Path):
 def test_env_file_is_the_user_level_one_unless_local(tmp_path: Path):
     """Keys go beside the user config by default — every folder reads that
     file under its own — and `local` picks this folder's: the `.env` beside
-    config.yaml, or the repo-root one already in use."""
+    hillclimb.yaml."""
     user_env = tmp_path / "xdg" / "hillclimb" / ".env"
     config = Config()
     config.hillclimb_dir = tmp_path / "hillclimb"
@@ -103,10 +102,6 @@ def test_env_file_is_the_user_level_one_unless_local(tmp_path: Path):
     assert connect.env_file(config) == user_env
     assert connect.env_file(Config()) == user_env
     assert connect.env_file(config, local=True) == config.hillclimb_dir / ".env"
-    # Config.load reads the parent's .env when the folder has none; writing
-    # anywhere else would store a key nothing loads
-    (tmp_path / ".env").write_text("HF_TOKEN=abc\n")
-    assert connect.env_file(config, local=True) == tmp_path / ".env"
     assert connect.env_file(Config(), local=True) is None
 
 
@@ -239,7 +234,7 @@ def test_status_rows_marks_the_configured_agent(monkeypatch):
 def _hillclimb_dir(tmp_path: Path) -> Path:
     folder = tmp_path / "hillclimb"
     folder.mkdir()
-    (folder / "config.yaml").write_text(INIT_SHAPED)
+    (folder / "hillclimb.yaml").write_text(INIT_SHAPED)
     return folder
 
 
@@ -275,12 +270,12 @@ def test_connect_a_agent_checks_stages_and_pins(monkeypatch, tmp_path):
     # the defaults land at the user level — every folder on the machine —
     # and the folder's own config.yaml is left as `init` wrote it
     assert _user_config(tmp_path).read_text() == "agent: codex\nagent_auth: subscription\n"
-    assert (folder / "config.yaml").read_text() == INIT_SHAPED
+    assert (folder / "hillclimb.yaml").read_text() == INIT_SHAPED
 
     # `--local` pins this folder instead: the override for it alone
     result = CliRunner().invoke(cli.app, ["connect", "claude", "--no-probe", "--local"])
     assert result.exit_code == 0, result.output
-    text = (folder / "config.yaml").read_text()
+    text = (folder / "hillclimb.yaml").read_text()
     assert "agent: claude-code" in text and "agent_auth: subscription" in text
     assert _user_config(tmp_path).read_text() == "agent: codex\nagent_auth: subscription\n"
 
@@ -307,11 +302,11 @@ def test_connect_leaves_a_config_that_already_pins_a_agent(monkeypatch, tmp_path
 
     # a folder that pins its own agent keeps overriding the user default,
     # and connect says so rather than leaving the reader to wonder
-    (folder / "config.yaml").write_text("agent: pi\n")
+    (folder / "hillclimb.yaml").write_text("agent: pi\n")
     result = CliRunner().invoke(cli.app, ["connect", "codex", "--no-probe", "--default"])
     assert result.exit_code == 0, result.output
     assert "keeps overriding the user default" in result.output
-    assert (folder / "config.yaml").read_text() == "agent: pi\n"
+    assert (folder / "hillclimb.yaml").read_text() == "agent: pi\n"
 
 
 def test_connect_stops_on_a_missing_cli(monkeypatch, tmp_path):
@@ -363,7 +358,7 @@ def test_connect_fails_when_the_ping_fails(monkeypatch, tmp_path):
     assert result.exit_code == 1
     assert "model not supported" in result.output
     # a route that does not work must not become the default
-    assert not connect.pins_agent((folder / "config.yaml").read_text())
+    assert not connect.pins_agent((folder / "hillclimb.yaml").read_text())
 
 
 def test_connect_openrouter_validates_before_storing(monkeypatch, tmp_path):

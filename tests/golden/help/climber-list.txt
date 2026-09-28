@@ -2,7 +2,7 @@
  Usage: root climber list [OPTIONS]                                                                                     
                                                                                                                         
  The climbers `hillclimb run --climber` accepts: the bundled ones and every directory or one-file climber under         
- hillclimb/climbers/.                                                                                                   
+ climbers/.                                                                                                             
                                                                                                                         
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --json            Machine-readable output                                                                            │

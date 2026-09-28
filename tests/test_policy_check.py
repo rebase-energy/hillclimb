@@ -231,13 +231,10 @@ def test_cli_replays_the_stores_journals(tmp_path, monkeypatch, capsys):
     from hillclimb.harness.run import RunMeta
     from tests.test_cli import write_problem
 
-    root = tmp_path / "hillclimb"
-    root.mkdir()
-    (root / "config.yaml").write_text("paths:\n  problems_dir: problems\n")
+    (tmp_path / "hillclimb.yaml").write_text("")
     write_problem(tmp_path / "problems", "p")
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
-    monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
     config = Config.load()
     run_dir = create_run(config, RunMeta(run_id="r1", name="r1", kind="problem", target="p", problem_ids=["p"]))
     search_dir = create_search(config, load_problem("p", config), run_dir, "r1", 600)
@@ -266,16 +263,15 @@ def test_cli_checks_a_file_policy_relative_to_the_hillclimb_dir(tmp_path, monkey
     from hillclimb.cli import main as cli_main
     from tests.test_policy import FILE_POLICY
 
-    root = tmp_path / "hillclimb"
+    root = tmp_path
     (root / "policies").mkdir(parents=True)
-    (root / "config.yaml").write_text("")
+    (root / "hillclimb.yaml").write_text("")
     (root / "policies" / "drafts_only.py").write_text(FILE_POLICY)
-    monkeypatch.chdir(tmp_path / "hillclimb")  # any subdirectory resolves the same dir
+    monkeypatch.chdir(root / "policies")  # any subdirectory resolves the same dir
     monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
-    monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
 
     with pytest.raises(SystemExit) as exc:
-        cli_main(["climber", "check", "--climber", "hillclimb/policies/drafts_only.py", "--json"])
+        cli_main(["climber", "check", "--climber", "policies/drafts_only.py", "--json"])
     assert exc.value.code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
@@ -287,11 +283,11 @@ def test_cli_checks_a_file_policy_relative_to_the_hillclimb_dir(tmp_path, monkey
         "    def observe(self, view, candidate):\n        pass\n"
     )
     with pytest.raises(SystemExit) as exc:
-        cli_main(["climber", "check", "--climber", "hillclimb/policies/stalls.py"])
+        cli_main(["climber", "check", "--climber", "policies/stalls.py"])
     assert exc.value.code == 1
     assert "never start" in capsys.readouterr().out
 
     with pytest.raises(SystemExit) as exc:
-        cli_main(["policy", "check", "--policy", "hillclimb/policies/missing.py"])  # the old spelling still works
+        cli_main(["policy", "check", "--policy", "policies/missing.py"])  # the old spelling still works
     assert exc.value.code == 2
     assert "climber file not found" in capsys.readouterr().err

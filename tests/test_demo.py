@@ -3,6 +3,7 @@ from __future__ import annotations
 from tests.factories import trial as mk_trial
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -45,7 +46,7 @@ def test_every_bundled_problem_mirrors_the_repo_problem():
     """The wheel ships a copy of each starter problem; the repo's problems/
     is what the generators stamp and the tests exercise. The two must not
     drift — circle-packing is the one deliberate exception (a lean runtime
-    and a short budget so `hillclimb demo` starts in seconds)."""
+    so a first run starts in seconds)."""
     from hillclimb.demo import STARTER_PROBLEM_IDS
 
     for problem_id in STARTER_PROBLEM_IDS:
@@ -112,67 +113,25 @@ def test_climb_curves_groups_by_problem_oldest_first(tmp_path):
     assert climb_curves(runs, "other") == []
 
 
-def test_demo_preflight_names_the_missing_tool(monkeypatch):
-    from hillclimb.cli.run import _demo_preflight
+def test_agent_preflight_names_the_missing_tool(monkeypatch):
+    from hillclimb.cli.run import _agent_preflight
     import typer
 
     monkeypatch.setattr("shutil.which", lambda name: None if name == "claude" else "/usr/bin/x")
     with pytest.raises(typer.Exit):
-        _demo_preflight("claude-code")
-    _demo_preflight("dummy")
-
-
-def test_demo_launches_parallel_detached_searches(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
-    monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
-    launched = []
-
-    class FakeProc:
-        pid = 4242
-
-    def fake_popen(cmd, **kwargs):
-        launched.append((cmd, kwargs))
-        return FakeProc()
-
-    monkeypatch.setattr("hillclimb.cli.run._demo_preflight", lambda agent: None)
-    monkeypatch.setattr("subprocess.Popen", fake_popen)
-    with pytest.raises(SystemExit) as exc:
-        cli_main([
-            "demo", "--budget", "5m", "--parallel-searches", "2", "--parallel-agents", "3",
-            "--agent", "dummy", "--model", "haiku",
-        ])
-    assert exc.value.code == 0
-    assert (tmp_path / "hillclimb" / "config.yaml").exists()
-    assert (tmp_path / "hillclimb" / "problems" / DEMO_PROBLEM_ID / "verifier.sh").exists()
-    assert len(launched) == 2
-    from hillclimb.harness.run import iter_run_dirs, load_run_meta
-
-    (run_dir,) = iter_run_dirs(tmp_path / "hillclimb" / "runs")
-    assert load_run_meta(run_dir).name == "demo"
-    for index, (cmd, kwargs) in enumerate(launched, 1):
-        # one run, N searches on the same problem: they share live knowledge
-        assert cmd[1:] == [
-            "-m", "hillclimb.cli", "run", DEMO_PROBLEM_ID, "--run-id", run_dir.name, "--run-name", "demo",
-            "--budget", "5m", "--agent", "dummy", "--model", "haiku", "--parallel-agents", "3",
-        ]
-        assert kwargs["start_new_session"] is True
-        assert kwargs["env"]["HILLCLIMB_DIR"] == str(tmp_path / "hillclimb")
-        assert kwargs["cwd"] == tmp_path
-    assert sorted(p.name for p in (run_dir / "logs").iterdir()) == [
-        f"01-{DEMO_PROBLEM_ID}.log", f"02-{DEMO_PROBLEM_ID}.log",
-    ]
+        _agent_preflight("claude-code")
+    _agent_preflight("dummy")
 
 
 def test_problem_get_installs_the_problem_and_lists_its_files(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
-    monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
     with pytest.raises(SystemExit) as exc:
         cli_main(["problem", "get", DEMO_PROBLEM_ID])
     assert exc.value.code == 0
     out = capsys.readouterr().out
-    assert (tmp_path / "hillclimb" / "problems" / DEMO_PROBLEM_ID / "verifier.sh").exists()
+    assert (tmp_path / "problems" / DEMO_PROBLEM_ID / "verifier.sh").exists()
+    assert (tmp_path / "hillclimb.yaml").exists()  # this folder became the hillclimb dir
     assert "Fetched circle-packing" in out and "verifier.sh" in out and "verify.py" in out
     # getting it again never overwrites; `fetch` stays as a deprecated alias
     with pytest.raises(SystemExit):
@@ -188,7 +147,6 @@ def test_problem_get_installs_the_problem_and_lists_its_files(tmp_path, monkeypa
 def test_problem_list_shows_every_bundled_problem_without_a_project(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
-    monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
 
     with pytest.raises(SystemExit) as exc:
         cli_main(["problem", "list"])
@@ -201,13 +159,12 @@ def test_problem_list_shows_every_bundled_problem_without_a_project(tmp_path, mo
     assert "heilbronn-convex-13" in output and "normalized-min-triangle-area" in output
     assert "knapsack" in output and "mean-percent-of-upper-bound" in output
     assert "hillclimb problem get <problem>" in output
-    assert not (tmp_path / "hillclimb").exists()
+    assert not (tmp_path / "hillclimb.yaml").exists()
 
 
 def test_run_parallel_searches_spawns_detached_engines(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
-    monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
     with pytest.raises(SystemExit):
         cli_main(["problem", "get", DEMO_PROBLEM_ID])
     launched = []
@@ -216,6 +173,8 @@ def test_run_parallel_searches_spawns_detached_engines(tmp_path, monkeypatch):
         pid = 4242
 
     monkeypatch.setattr("subprocess.Popen", lambda cmd, **kw: launched.append(cmd) or FakeProc())
+    # the fleet pre-builds the problem's venv; a cold cache must not make this test build one
+    monkeypatch.setattr("hillclimb.api.ensure_runtime_venv", lambda *a, **k: Path(sys.executable))
     with pytest.raises(SystemExit) as exc:
         cli_main([
             "run", DEMO_PROBLEM_ID, "--budget", "10m",
@@ -225,7 +184,7 @@ def test_run_parallel_searches_spawns_detached_engines(tmp_path, monkeypatch):
     assert len(launched) == 3
     from hillclimb.harness.run import iter_run_dirs, load_run_meta
 
-    (run_dir,) = iter_run_dirs(tmp_path / "hillclimb" / "runs")
+    (run_dir,) = iter_run_dirs(tmp_path / "runs")
     assert load_run_meta(run_dir).name == DEMO_PROBLEM_ID
     # the fleet's own spec: one entry per search, with what it launched with
     import yaml
@@ -470,21 +429,38 @@ def test_build_climb_plot_renders_steps_and_dots(tmp_path):
 def test_problem_get_asks_before_creating_a_hillclimb_dir(tmp_path, monkeypatch):
     """Outside a hillclimb dir, `problem get` says what it would create and
     asks; a decline creates nothing and points at `hillclimb init`. A yes
-    (or no terminal to ask on) creates the minimal dir: no example problem."""
+    (or no terminal to ask on) creates the dir with only that problem."""
     from typer.testing import CliRunner
 
     from hillclimb import cli
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
-    monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
     monkeypatch.setattr("hillclimb.cli.problem._stdin_is_tty", lambda: True)
     result = CliRunner().invoke(cli.app, ["problem", "get", "golomb-20"], input="n\n")
     assert result.exit_code == 1 and "hillclimb init" in result.output
-    assert not (tmp_path / "hillclimb").exists()
+    assert not (tmp_path / "hillclimb.yaml").exists() and not (tmp_path / "problems").exists()
 
     result = CliRunner().invoke(cli.app, ["problem", "get", "golomb-20"], input="y\n")
     assert result.exit_code == 0, result.output
-    assert (tmp_path / "hillclimb" / "problems" / "golomb-20" / "interface.py").exists()
-    assert not (tmp_path / "hillclimb" / "problems" / "example").exists()
-    assert not (tmp_path / "hillclimb" / "specs" / "example.yaml").exists()
+    assert (tmp_path / "hillclimb.yaml").exists()
+    assert (tmp_path / "problems" / "golomb-20" / "interface.py").exists()
+    assert not (tmp_path / "problems" / "example").exists()
+    assert not (tmp_path / "specs" / "example.yaml").exists()
+
+
+def test_problem_get_wont_mix_into_a_folders_own_problems(tmp_path, monkeypatch):
+    """A folder with its own problems/ (and no hillclimb.yaml) is refused
+    before anything is asked or written."""
+    from typer.testing import CliRunner
+
+    from hillclimb import cli
+
+    (tmp_path / "problems").mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
+    result = CliRunner().invoke(cli.app, ["problem", "get", "golomb-20"])
+    assert result.exit_code == 1
+    assert "hillclimb init hillclimb" in result.output
+    assert not (tmp_path / "hillclimb.yaml").exists()
+    assert list((tmp_path / "problems").iterdir()) == []

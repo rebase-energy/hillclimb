@@ -215,25 +215,25 @@ def say_no_hillclimb_dir(exc) -> None:
     """The no-hillclimb-dir hint in the CLI's voice, on stderr: the same
     words as the exception's, with the path, the command and the env var
     marked up."""
-    from hillclimb.project import MARKER_DIR, MARKER_FILE
+    from hillclimb.project import MARKER_FILE
 
-    say(f"[head]No hillclimb/ dir found[/] from [path]{_m(exc.start)}[/] upward.", err=True)
+    say(f"[head]No {MARKER_FILE} found[/] from [path]{_m(exc.start)}[/] upward.", err=True)
     say(
-        f"Run [cmd]hillclimb init[/] to create one [note](makes ./{MARKER_DIR}/{MARKER_FILE})[/], "
+        f"Run [cmd]hillclimb init[/] to make this folder a hillclimb dir [note](writes ./{MARKER_FILE})[/], "
         "or set [path]HILLCLIMB_DIR[/] to an existing one.",
         err=True,
     )
 
 
 INIT_CONFIG = """\
-# hillclimb config — this file marks the hillclimb dir; commands work from
-# any subdirectory below it. Precedence: CLI flags > this file >
+# hillclimb config — this file marks the hillclimb dir (problems/ and runs/
+# sit beside it); commands work from any subdirectory below it. Precedence: CLI flags > this file >
 # ~/.config/hillclimb/config.yaml > built-in defaults.
 
 model: sonnet
 # agent: claude-code
 
-# climber: greedy          # HOW to climb: greedy | openevolve | gepa | hillclimb/climbers/<name>
+# climber: greedy          # HOW to climb: greedy | openevolve | gepa | climbers/<name>
 # climber:                 # ...or with your overrides on the climber's own params
 #   ref: greedy
 #   params: {num_drafts: 3}
@@ -264,7 +264,7 @@ model: sonnet
 #     api-calls: {}
 
 # learning:
-#   enabled: true        # knowledge cards in hillclimb/knowledge/ inform new searches
+#   enabled: true        # knowledge cards in knowledge/ inform new searches
 #   max_cards: 3
 #   complexity_prior: false
 #   live: true           # concurrent searches in one run share discoveries mid-flight
@@ -274,101 +274,58 @@ model: sonnet
 """
 
 
-INIT_PROBLEM_YAML = """\
-problem_id: example
-metric: score
-higher_is_better: true
-description: description.md
-time_budget_s: 900
-# verifier: verifier.sh   # the default; a problem IS its verifier
-# holdout: true           # engine also runs `verifier.sh --holdout`
-# unit_tests:             # optional frozen correctness gate, run once per trial
-#   root: tests
-#   command: ["{python}", "-m", "pytest", "-q", "{tests}"]
-# baseline: baseline.py   # scored at t=0 as the floor to beat (or a number, e.g. 0.5)
-# requirements: requirements.txt
-# interface: interface.py  # optional machine-checked I/O declaration (hillclimb spaces)
-"""
-
-
-INIT_PROBLEM_DESCRIPTION = """\
-# Example problem
-
-Replace this with what the solution has to do, what data it gets, and how it
-is judged. The agent reads this file verbatim.
-
-The toy objective below: write `solution.py` that prints a number. Bigger wins.
-"""
-
-
-INIT_PROBLEM_VERIFIER = """\
-#!/usr/bin/env bash
-# A problem is defined by this file. hillclimb runs it in the candidate's
-# working directory (./solution.py, ./problem/ and ./data/ are present) and
-# reads one thing back: the score.
-#
-#   exit 0                -> the candidate is valid
-#   $HILLCLIMB_RESULT     -> where the score goes: a bare number, or
-#                            {"score": <float>, "report": {...}}
-#
-# Also available: $HILLCLIMB_PYTHON (the managed venv interpreter — use it
-# instead of bare `python`), $HILLCLIMB_SOLUTION, $HILLCLIMB_SPLIT,
-# $HILLCLIMB_REPLICATE_SEED. `--holdout` is passed when scoring the hidden split.
-set -euo pipefail
-
-"$HILLCLIMB_PYTHON" "$HILLCLIMB_SOLUTION" > solution_out.txt
-
-# Score whatever the solution produced. Do the real checking here: a verifier
-# that cannot fail is a verifier the search will learn to cheat.
-tail -n 1 solution_out.txt > "$HILLCLIMB_RESULT"
-"""
-
-
-# What `hillclimb init` adds to the folder's .gitignore. The RECORD of every
-# run is committed — run.yaml, spec.yaml, each search's search.yaml, journal,
-# status, knowledge card, climber snapshot, and the best solution — so `git
-# log` explains every run and `hillclimb chart` works on a fresh clone. The
-# BULK is not: candidates (agent streams, replicate outputs, runtime data),
-# engine logs, the control queue, the rest of best/ (a submission can be
-# large), the sqlite store and the derived knowledge graph. Keys never are.
+# What `hillclimb init` adds to the hillclimb dir's .gitignore. The RECORD
+# of every run is committed — run.yaml, spec.yaml, each search's search.yaml,
+# journal, status, knowledge card, climber snapshot, and the best solution —
+# so `git log` explains every run and `hillclimb chart` works on a fresh
+# clone. The BULK is not: candidates (agent streams, replicate outputs,
+# runtime data), engine logs, the control queue, the rest of best/ (a
+# submission can be large), the sqlite store and the derived knowledge graph.
+# Keys never are. Leading slashes anchor each rule at the hillclimb dir.
 INIT_GITIGNORE = (
     "# hillclimb: the record of every run is committed, its bulk is not",
-    "hillclimb/.env",
-    "hillclimb/runs/*/logs/",
-    "hillclimb/runs/*/searches/*/candidates/",
-    "hillclimb/runs/*/searches/*/control/",
-    "hillclimb/runs/*/searches/*/best/*",
-    "!hillclimb/runs/*/searches/*/best/solution.py",
-    "!hillclimb/runs/*/searches/*/best/params.json",
-    "hillclimb/store.sqlite*",
-    "hillclimb/knowledge/graph.json",
+    "/.env",
+    "/runs/*/logs/",
+    "/runs/*/searches/*/candidates/",
+    "/runs/*/searches/*/control/",
+    "/runs/*/searches/*/best/*",
+    "!/runs/*/searches/*/best/solution.py",
+    "!/runs/*/searches/*/best/params.json",
+    "/store.sqlite*",
+    "/knowledge/graph.json",
 )
 
+# The folders `init` creates beside hillclimb.yaml.
+SCAFFOLD_DIRS = ("problems", "runs")
 
-def scaffold_hillclimb_dir(root: Path, *, example: bool = True) -> Path:
-    """Create `<root>/hillclimb/` with config, the example problem, and the
-    gitignore rules that keep run artifacts and keys out of git while the
-    record of every run goes in (`INIT_GITIGNORE`). `example=False` (what
-    `problem get` does when it has to create the dir) leaves out the example
-    problem: the user asked for one bundled problem, not a scaffold.
-    Idempotent on the folder layout; never overwrites an existing config,
-    only adds ignore rules that are missing."""
-    from hillclimb.project import MARKER_DIR, MARKER_FILE
 
-    folder = root / MARKER_DIR
-    for sub in ("problems", "runs"):
+def scaffold_blockers(folder: Path) -> list[Path]:
+    """What stops `folder` from becoming a hillclimb dir: a problems/ or
+    runs/ that is already there and not hillclimb's (a code repo's own).
+    Empty when the folder is free or already a hillclimb dir."""
+    from hillclimb.project import MARKER_FILE
+
+    if (folder / MARKER_FILE).exists():
+        return []
+    return [folder / sub for sub in SCAFFOLD_DIRS if (folder / sub).exists()]
+
+
+def scaffold_hillclimb_dir(folder: Path) -> Path:
+    """Make `folder` (created if missing) a hillclimb dir: hillclimb.yaml,
+    empty problems/ and runs/ beside it, and the gitignore rules that keep
+    run artifacts and keys out of git while the record of every run goes in
+    (`INIT_GITIGNORE`). No problem is added: picking one (`hillclimb problem
+    get`) is the user's first real choice. Idempotent on the folder layout;
+    never overwrites an existing config, only adds ignore rules that are
+    missing. Callers check `scaffold_blockers` first."""
+    from hillclimb.project import MARKER_FILE
+
+    for sub in SCAFFOLD_DIRS:
         (folder / sub).mkdir(parents=True, exist_ok=True)
         (folder / sub / ".gitkeep").touch()
     if not (folder / MARKER_FILE).exists():
         (folder / MARKER_FILE).write_text(INIT_CONFIG)
-    if example:
-        example_dir = folder / "problems" / "example"
-        example_dir.mkdir(parents=True, exist_ok=True)
-        (example_dir / "problem.yaml").write_text(INIT_PROBLEM_YAML)
-        (example_dir / "description.md").write_text(INIT_PROBLEM_DESCRIPTION)
-        (example_dir / "verifier.sh").write_text(INIT_PROBLEM_VERIFIER)
-        (example_dir / "verifier.sh").chmod(0o755)
-    gitignore = root / ".gitignore"
+    gitignore = folder / ".gitignore"
     existing_ignore = gitignore.read_text() if gitignore.exists() else ""
     present = existing_ignore.splitlines()
     missing = [line for line in INIT_GITIGNORE if line not in present]
@@ -382,6 +339,33 @@ def scaffold_hillclimb_dir(root: Path, *, example: bool = True) -> Path:
             + "\n"
         )
     return folder
+
+
+def owned_paths(root: Path, config) -> list[Path]:
+    """What `hillclimb reset` deletes from the hillclimb dir `root`: the
+    config and everything hillclimb writes beside it, and nothing else — a
+    hillclimb dir may be a code repo's root. A configured runs_dir or
+    problems_dir counts only when it lies inside `root`."""
+    from hillclimb.experiment import EXPERIMENTS_DIRNAME
+    from hillclimb.project import MARKER_FILE
+
+    candidates = [
+        root / MARKER_FILE,
+        config.paths.problems_dir,
+        config.paths.runs_dir,
+        root / "knowledge",
+        root / "climbers",  # cli/climber.py's LOCAL_CLIMBERS_DIRNAME (common imports no command module)
+        root / EXPERIMENTS_DIRNAME,
+        *sorted(config.store.sqlite_path.parent.glob(config.store.sqlite_path.name + "*")),
+    ]
+    owned: list[Path] = []
+    resolved_root = root.resolve()
+    for path in candidates:
+        if path.resolve() == resolved_root or not path.resolve().is_relative_to(resolved_root):
+            continue
+        if (path.exists() or path.is_symlink()) and path not in owned:
+            owned.append(path)
+    return owned
 
 
 def parse_budget(value: str) -> int:
@@ -407,11 +391,11 @@ def resolve_search_dir(config: Config, ref: str | None) -> Path:
 
 
 def _spec_provenance(config: Config, suite_path: Path) -> str:
-    """Spec path recorded in run.yaml, relative to the folder holding the
-    hillclimb dir (absolute if the spec lives outside it)."""
+    """Spec path recorded in run.yaml, relative to the hillclimb dir
+    (absolute if the spec lives outside it)."""
     if config.hillclimb_dir is not None:
         try:
-            return str(suite_path.relative_to(config.hillclimb_dir.parent))
+            return str(suite_path.relative_to(config.hillclimb_dir))
         except ValueError:
             pass
     return str(suite_path)

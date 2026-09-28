@@ -1,13 +1,15 @@
                                                                                                                         
  Usage: root init [OPTIONS] [DIRECTORY]                                                                                 
                                                                                                                         
- Create a hillclimb dir.                                                                                                
+ Make a folder a hillclimb dir.                                                                                         
                                                                                                                         
- A hillclimb/ folder holding config, problems, and runs — plus the                                                      
- gitignore rules that commit the record of every run and not its bulk.                                                  
+ Writes hillclimb.yaml (the config) with problems/ and runs/ beside it,                                                 
+ plus the gitignore rules that commit the record of every run and not                                                   
+ its bulk. The current folder by default; `hillclimb init hillclimb`                                                    
+ keeps it all in a subfolder instead.                                                                                   
                                                                                                                         
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│   [directory]      PATH  Where to create the hillclimb/ dir [default: .]                                             │
+│   [directory]      PATH  Folder to make a hillclimb dir (created if missing) [default: .]                            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --force            Create one even inside an existing hillclimb dir                                                  │

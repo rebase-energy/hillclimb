@@ -442,6 +442,11 @@ class TestChartDetail:
             ([1.0, 2.0], [0.7, 0.7], "OpenEvolve best"),
             ([1.0, 2.0], [0.8, 0.8], "AlphaEvolve best"),
         ]
+        # dashed, so a reference never reads as a series (when plotui can)
+        from hillclimb.tui.chart import BENCHMARK_DASH, _plot_supports
+
+        if _plot_supports("dash"):
+            assert {options.get("dash") for _xs, _ys, options in plot.lines} == {BENCHMARK_DASH}
 
         # ChartScreen draws its legend in a dedicated Textual band, so the
         # in-canvas box is switched off — but the traces keep their names,
@@ -463,14 +468,14 @@ class TestChartDetail:
         # each entry carries its trace's glyph: reference lines and dots; the
         # references open their own row under a dim heading
         rendered_legend = legend_text(entries).plain
-        assert "─ baseline" in rendered_legend and "● new best" in rendered_legend
+        assert "╌ baseline" in rendered_legend and "● new best" in rendered_legend
         assert rendered_legend.splitlines() == [
             "● new best",
-            "Benchmarks: ─ baseline   ─ OpenEvolve best   ─ AlphaEvolve best",
+            "Benchmarks: ╌ baseline   ╌ OpenEvolve best   ╌ AlphaEvolve best",
         ]
         # the hotkeys run on across the group, in legend order
         numbered = legend_text(entries, interactive=True).plain
-        assert "1 ● new best" in numbered and "2 ─ baseline" in numbered
+        assert "1 ● new best" in numbered and "2 ╌ baseline" in numbered
         wrapped = legend_text([
             ("attempt", (1, 2, 3)),
             ("best so far", (4, 5, 6)),

@@ -24,8 +24,39 @@ typer.rich_utils.STYLE_USAGE = "bold cyan"
 typer.rich_utils.STYLE_TYPES = "cyan"
 
 
+# The top-level commands `hillclimb --help` lists: the README's get-started
+# flow. Every other command still runs; `hillclimb --help --all` lists it.
+CORE_COMMANDS = frozenset({
+    "init", "connect", "problem", "verify", "run", "watch", "chart", "tree",
+    "stop", "resume", "summit", "climber", "experiment",
+})
+
+
 class HillclimbGroup(typer.core.TyperGroup):
     """Command listing and the completion flags, the way this CLI wants them."""
+
+    # Set by `main()` for `hillclimb --help --all`.
+    show_all = False
+
+    def format_help(self, ctx, formatter) -> None:
+        """At the top level, list only CORE_COMMANDS unless `--all` asked for
+        every one, and say in a footer that there are more."""
+        if ctx.parent is not None or HillclimbGroup.show_all:
+            return super().format_help(ctx, formatter)
+        extra = [c for name, c in self.commands.items() if name not in CORE_COMMANDS and not c.hidden]
+        for command in extra:
+            command.hidden = True
+        try:
+            super().format_help(ctx, formatter)
+        finally:
+            for command in extra:
+                command.hidden = False
+        # Printed here rather than as the epilog: typer pads the epilog with a
+        # blank line below, and click's echo of the (empty) help text adds a
+        # second one before the prompt. `end=""` leaves that echo to close the line.
+        console = typer.rich_utils._get_rich_console()
+        console.print()
+        console.print(typer.rich_utils.highlighter(f" {len(extra)} more commands: hillclimb --help --all"), end="")
 
     # `ctx` is a click Context and get_params returns click Parameters, but
     # typer >=0.27 vendors click as `typer._click` and hillclimb does not
@@ -57,3 +88,21 @@ app = typer.Typer(
     # `-h` works on every command in the tree, not just the top level.
     context_settings={"help_option_names": ["--help", "-h"]},
 )
+
+
+def _print_version(value: bool) -> None:
+    if value:
+        from hillclimb import __version__
+
+        typer.echo(f"hillclimb {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def _root(
+    version: bool = typer.Option(
+        False, "--version", "-V", callback=_print_version, is_eager=True,
+        help="Show hillclimb's version and exit.",
+    ),
+) -> None:
+    pass

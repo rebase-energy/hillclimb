@@ -1,7 +1,7 @@
 """Bundled problems shipped as package data.
 
-Keeping these inside the wheel makes `hillclimb fetch` and `hillclimb demo`
-work from a bare `pip install hillclimb` with no repository checkout.
+Keeping these inside the wheel makes `hillclimb problem get` work from a bare
+`pip install hillclimb` with no repository checkout.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ DEMO_PROBLEM_ID = "circle-packing"
 # does not saturate. Every family is stamped by a generator in problems/
 # (`make_<family>.py`) into both problems/ and this package; the two copies
 # must stay identical (tests/test_demo.py). circle-packing is the one
-# deliberate exception: a lean runtime and a short budget for `hillclimb demo`.
+# deliberate exception: a lean runtime so a first run starts in seconds.
 STARTER_PROBLEM_IDS = (
     DEMO_PROBLEM_ID, "circle-packing-32",
     "heilbronn-11", "heilbronn-14", "heilbronn-17", "heilbronn-convex-13",

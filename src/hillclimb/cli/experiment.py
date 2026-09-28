@@ -36,7 +36,7 @@ app.add_typer(experiment_app, name="experiment")
 
 @experiment_app.command("run")
 def experiment_run(
-    spec: str = typer.Argument(..., help="Spec YAML path, or a name under hillclimb/experiments/"),
+    spec: str = typer.Argument(..., help="Spec YAML path, or a name under experiments/"),
     budget: str = typer.Option(None, "--budget", help="Per-search budget, e.g. 10m (overrides the spec)"),
     repeats: int = typer.Option(None, "--repeats", help="Override the spec's repeat count"),
     parallel: bool = typer.Option(

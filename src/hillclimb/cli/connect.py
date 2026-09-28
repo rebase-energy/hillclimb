@@ -86,7 +86,7 @@ def _write_defaults(
     """Persist `agent`/`agent_auth`, unless the config already pins a
     agent on purpose — connecting a second agent to try it out must not
     silently repoint an existing setup. A user-level write also says so
-    when this folder's config.yaml pins something else and keeps winning."""
+    when this folder's hillclimb.yaml pins something else and keeps winning."""
     from hillclimb import connect as connect_mod
     from hillclimb.project import MARKER_FILE, user_config_path
 
@@ -260,7 +260,7 @@ def connect(
     agent's own login, stages the credentials searches will read, pings the
     route with one tool-free call, and pins the defaults in
     `~/.config/hillclimb/config.yaml` — every folder on this machine, so it
-    works before `hillclimb init`; a folder's own config.yaml overrides them
+    works before `hillclimb init`; a folder's own hillclimb.yaml overrides them
     (`--local` writes there instead). `hillclimb smoke` is the next step up
     — a whole DRAFT on a real problem.
     """
@@ -304,7 +304,7 @@ def connect(
         common.say(
             "  [note]no hillclimb dir here — connecting pins the defaults in[/] "
             f"[path]{common._m(user_config_path())}[/] [note]for every folder;[/] "
-            "[cmd]hillclimb init[/] [note]makes a folder whose config.yaml can override them[/]"
+            "[cmd]hillclimb init[/] [note]makes a folder whose hillclimb.yaml can override them[/]"
         )
     common.say()
 
@@ -384,8 +384,8 @@ def connect_openrouter(
     The only credential hillclimb stores itself: the key is validated against
     OpenRouter (one unbilled call), then written to a `.env` — the user-level
     one in `~/.config/hillclimb/`, or with `--local` the one beside this
-    folder's config.yaml that `hillclimb init` gitignores — never into
-    config.yaml, where it could be journaled. `--agent codex` also pins
+    folder's hillclimb.yaml that `hillclimb init` gitignores — never into
+    hillclimb.yaml, where it could be journaled. `--agent codex` also pins
     the route.
     """
     from hillclimb import connect as connect_mod
@@ -435,7 +435,7 @@ def connect_openrouter(
     )
 
 
-@app.command("disconnect")
+@app.command("disconnect", short_help="Undo `hillclimb connect <target>`: unpin it and forget its credentials.")
 def disconnect(
     target: str = typer.Argument(..., help="claude | codex | pi | openrouter"),
     local: bool = _CONNECT_LOCAL,

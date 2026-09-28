@@ -3,7 +3,7 @@
 For one-shot calls that are not operators (no agent, no tools, no
 candidate dir) — the solution-card similarity score is the first user. The
 key is read from `OPENROUTER_API_KEY` at call time (config loading puts a
-`.env` beside config.yaml into the environment), never passed around or
+`.env` beside hillclimb.yaml into the environment), never passed around or
 stored. Operators still reach OpenRouter through the codex/pi agents.
 """
 
@@ -26,7 +26,7 @@ def api_key() -> str:
     key = os.environ.get("OPENROUTER_API_KEY")
     if not key:
         raise OpenRouterError(
-            "OPENROUTER_API_KEY is not set — export it or put it in a .env beside config.yaml"
+            "OPENROUTER_API_KEY is not set — export it or put it in a .env beside hillclimb.yaml"
         )
     return key
 

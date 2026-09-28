@@ -6,8 +6,8 @@
  The only credential hillclimb stores itself: the key is validated against                                              
  OpenRouter (one unbilled call), then written to a `.env` — the user-level                                              
  one in `~/.config/hillclimb/`, or with `--local` the one beside this                                                   
- folder's config.yaml that `hillclimb init` gitignores — never into                                                     
- config.yaml, where it could be journaled. `--agent codex` also pins                                                    
+ folder's hillclimb.yaml that `hillclimb init` gitignores — never into                                                  
+ hillclimb.yaml, where it could be journaled. `--agent codex` also pins                                                 
  the route.                                                                                                             
                                                                                                                         
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮

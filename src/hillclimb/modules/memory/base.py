@@ -2,7 +2,7 @@
 module that turns the knowledge directory into a graph, picks the claims a
 search is shown, and answers `hillclimb knowledge query`.
 
-Memory is the YAML under `hillclimb/knowledge/` — cards per finished search,
+Memory is the YAML under `knowledge/` — cards per finished search,
 the claims written into them, the entity and concept registries, credit,
 playbooks, papers, skills. A climber names it `memory: files | none`
 (`knowledge-graph` is the pre-0.4 spelling of `files` and still loads).

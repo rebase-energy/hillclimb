@@ -73,7 +73,7 @@ def test_shared_seed_reads_n_from_the_problem(config: Config, tmp_path, n):
     candidate_dir = tmp_path / "cand"
     candidate_dir.mkdir()
     (candidate_dir / "problem").symlink_to(spec.problem_dir, target_is_directory=True)
-    seed = REPO / "hillclimb" / "experiments" / "seeds" / "heilbronn.py"
+    seed = REPO / "experiments" / "seeds" / "heilbronn.py"
     run = subprocess.run([sys.executable, str(seed)], cwd=candidate_dir, capture_output=True, text=True)
     assert run.returncode == 0, run.stderr
     rows = (candidate_dir / "submission.csv").read_text().splitlines()

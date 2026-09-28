@@ -78,27 +78,29 @@ def problem_get(
         help="A bundled problem id (see: hillclimb problem list)",
     ),
 ):
-    """Copy a ready-made problem into hillclimb/problems/.
+    """Copy a ready-made problem into problems/.
 
-    Creates the hillclimb/ dir here if there is none, then copies the
+    Makes this folder a hillclimb dir if there is none, then copies the
     problem's files in and lists them — read them before you run: the
     verifier IS the problem. An existing folder is never overwritten.
     """
     from hillclimb.demo import BUNDLED_PROBLEM_IDS, install_demo_problem
-    from hillclimb.project import MARKER_DIR, find_hillclimb_dir
+    from hillclimb.project import MARKER_FILE, find_hillclimb_dir
 
     if problem not in BUNDLED_PROBLEM_IDS:
         available = ", ".join(BUNDLED_PROBLEM_IDS)
         fail(f"error: no bundled problem {_m(repr(problem))} [note](available: {_m(available)})[/]")
         raise typer.Exit(1)
     if find_hillclimb_dir() is None:
-        say(f"[head]No hillclimb dir here.[/] {_m(problem)} needs one: a [path]hillclimb/[/] folder holding")
-        say("[path]config.yaml[/], [path]problems/[/] [note](where the problem goes)[/] and [path]runs/[/] [note](where searches land)[/].")
-        if _stdin_is_tty() and not typer.confirm(f"Create {Path.cwd() / MARKER_DIR}?", default=True):
+        here = Path.cwd().resolve()
+        say(f"[head]No hillclimb dir here.[/] {_m(problem)} needs one: a folder holding")
+        say(f"[path]{MARKER_FILE}[/], [path]problems/[/] [note](where the problem goes)[/] and [path]runs/[/] [note](where searches land)[/].")
+        _refuse_blocked(here)
+        if _stdin_is_tty() and not typer.confirm(f"Make {here} a hillclimb dir?", default=True):
             say("Not created. Run [cmd]hillclimb init[/] where you want it, then [cmd]hillclimb problem get[/] again.")
             raise typer.Exit(1)
-        folder = common.scaffold_hillclimb_dir(Path.cwd(), example=False)
-        say(f"Created [path]{_m(folder)}[/] [note](config.yaml, problems/, runs/)[/]")
+        folder = common.scaffold_hillclimb_dir(here)
+        say(f"Initialized [path]{_m(folder)}[/] [note]({MARKER_FILE}, problems/, runs/)[/]")
     config = common.load_config()
     problem_dir, created = install_demo_problem(config.paths.problems_dir, problem)
     verb = "Fetched" if created else "Already have"
@@ -142,38 +144,54 @@ PROBLEM_FILES = (
 
 @app.command()
 def init(
-    directory: Path = typer.Argument(Path("."), help="Where to create the hillclimb/ dir"),
+    directory: Path = typer.Argument(Path("."), help="Folder to make a hillclimb dir (created if missing)"),
     force: bool = typer.Option(False, "--force", help="Create one even inside an existing hillclimb dir"),
 ):
-    """Create a hillclimb dir.
+    """Make a folder a hillclimb dir.
 
-    A hillclimb/ folder holding config, problems, and runs — plus the
-    gitignore rules that commit the record of every run and not its bulk.
+    Writes hillclimb.yaml (the config) with problems/ and runs/ beside it,
+    plus the gitignore rules that commit the record of every run and not
+    its bulk. The current folder by default; `hillclimb init hillclimb`
+    keeps it all in a subfolder instead.
     """
-    from hillclimb.project import MARKER_DIR, MARKER_FILE, find_hillclimb_dir
+    from hillclimb.project import MARKER_FILE, find_hillclimb_dir
 
-    root = directory.resolve()
-    existing = find_hillclimb_dir(root)
+    folder = directory.resolve()
+    existing = find_hillclimb_dir(folder)
     if existing is not None and not force:
-        where = "This already has" if existing.parent == root else f"{existing.parent} already has"
+        where = "This is already" if existing == folder else f"{existing} is already"
         fail(f"{_m(where)} a hillclimb dir [note]({_m(existing / MARKER_FILE)} exists)[/].")
         next_steps([
-            ("hillclimb verify example", "use it"),
+            ("hillclimb problem get <problem>", "add a problem to it"),
             ("hillclimb init --force", "nest another one here"),
         ])
         raise typer.Exit(1)
-    folder = common.scaffold_hillclimb_dir(root)
+    _refuse_blocked(folder)
+    common.scaffold_hillclimb_dir(folder)
     say(f"[head]Initialized hillclimb dir[/] at [path]{_m(folder)}[/]")
     legend([
-        (f"{MARKER_DIR}/{MARKER_FILE}", "config (edit defaults here)"),
-        (f"{MARKER_DIR}/problems/", "problem definitions (example/ is a working one)"),
-        (f"{MARKER_DIR}/runs/", "one folder per run (records committed, artifacts gitignored)"),
+        (MARKER_FILE, "config (edit defaults here)"),
+        ("problems/", "problem definitions (empty until you pick one)"),
+        ("runs/", "one folder per run (records committed, artifacts gitignored)"),
     ])
     next_steps([
+        *([(f"cd {_m(directory)}", "commands find the dir from inside it")] if folder != Path.cwd().resolve() else []),
         ("hillclimb connect", "which agent runs the operators, and who pays"),
-        ("hillclimb problem get heilbronn-11", "a bundled problem; `problem list` shows them all"),
-        ("hillclimb verify example", "or your own: edit problems/example, then run it"),
+        ("hillclimb problem list", "the bundled problems to choose from"),
+        ("hillclimb problem get <problem>", "copy one into problems/"),
     ])
+
+
+def _refuse_blocked(folder: Path) -> None:
+    """Exit when `folder` already has a problems/ or runs/ that is not
+    hillclimb's — scaffolding there would mix hillclimb's into it."""
+    blockers = common.scaffold_blockers(folder)
+    if not blockers:
+        return
+    names = " and ".join(f"{path.name}/" for path in blockers)
+    fail(f"{_m(str(folder))} already has {_m(names)}, and it isn't a hillclimb dir.")
+    next_steps([("hillclimb init hillclimb", "keep hillclimb in its own subfolder instead")])
+    raise typer.Exit(1)
 
 
 @app.command()
@@ -362,10 +380,10 @@ def summit(
         None, help="Problem key; defaults to the only problem in the hillclimb dir"
     ),
     to: Path = typer.Option(
-        None, "--to", help="Destination folder (default: the folder holding hillclimb/)"
+        None, "--to", help="Destination folder (default: the hillclimb dir)"
     ),
 ):
-    """Copy the best solution found so far next to your hillclimb/ folder.
+    """Copy the best solution found so far into your hillclimb dir.
 
     Ranks every search of the problem, across all runs, by its selected
     candidate and copies that search's solution.py plus its declared output
@@ -373,7 +391,7 @@ def summit(
     mid-climb — you always get the best discovered so far.
     """
     config = common.load_config()
-    dest = (to or config.hillclimb_dir.parent).resolve()
+    dest = (to or config.hillclimb_dir).resolve()
     already_there = (
         {path.name for path in dest.iterdir() if path.is_file()} if dest.is_dir() else set()
     )

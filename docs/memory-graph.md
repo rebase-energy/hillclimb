@@ -125,7 +125,7 @@ watch TUI.
 ## Where we are
 
 Knowledge today (`src/hillclimb/modules/memory/knowledge.py`, cards under
-`hillclimb/knowledge/<family>/`) is purely statistical: operator stats, top
+`knowledge/<family>/`) is purely statistical: operator stats, top
 approaches with libraries, failure modes. Retrieval is "most recent N cards by
 problem family" rendered as a prose block into operator prompts. There is no
 semantic layer (no claims like "technique X helps on family Y"), so a graph
@@ -179,7 +179,7 @@ claims:
 
 - Claims live in the card (or a sibling `claims:` block) — YAML, append-only,
   git-diffable.
-- **Entity canonicalization**: `hillclimb/knowledge/entities.yaml` slug
+- **Entity canonicalization**: `knowledge/entities.yaml` slug
   registry with alias lists ("GBDT"/"gradient boosting" → one node); new
   entities go through an LLM merge-or-create step against existing slugs.
   This is the hard problem — dedup quality decides whether the graph
@@ -191,7 +191,7 @@ claims:
 
 ### 2. Graph index — derived, rebuildable
 
-`hillclimb/knowledge/graph.json` (versioned schema), built deterministically
+`knowledge/graph.json` (versioned schema), built deterministically
 from cards + claims, exactly like journal replay — never a second source of
 truth. Nodes: problem, family, search, technique, library, model, operator,
 claim. Edges: ran_on, used, improved, failed_with, supports, contradicts,

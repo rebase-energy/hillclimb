@@ -1,7 +1,7 @@
 """Cross-search learning: knowledge cards distilled from finished searches.
 
 Every completed search writes a compact, human-readable card — what won, what
-failed, what it cost — into the candidate_dir's `hillclimb/knowledge/` folder
+failed, what it cost — into the hillclimb dir's `knowledge/` folder
 (git-versionable: the repo accumulates learning). New searches on the same
 problem or problem family retrieve recent cards and inject a "prior
 experience" section into draft prompts, so agents start from what already

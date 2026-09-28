@@ -75,7 +75,7 @@ def test_subscription_env_strips_api_key(monkeypatch):
 def test_dotenv_beside_config_is_loaded(tmp_path: Path, monkeypatch):
     hillclimb_dir = tmp_path / "hillclimb"
     hillclimb_dir.mkdir()
-    (hillclimb_dir / "config.yaml").write_text("model: sonnet\n")
+    (hillclimb_dir / "hillclimb.yaml").write_text("model: sonnet\n")
     (hillclimb_dir / ".env").write_text("# a comment\n\nOPENROUTER_API_KEY=sk-or-test\nQUOTED='sk-quoted'\n")
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.delenv("QUOTED", raising=False)
@@ -90,7 +90,7 @@ def test_dotenv_beside_config_is_loaded(tmp_path: Path, monkeypatch):
 def test_dotenv_never_overrides_a_real_env_var(tmp_path: Path, monkeypatch):
     hillclimb_dir = tmp_path / "hillclimb"
     hillclimb_dir.mkdir()
-    (hillclimb_dir / "config.yaml").write_text("model: sonnet\n")
+    (hillclimb_dir / "hillclimb.yaml").write_text("model: sonnet\n")
     (hillclimb_dir / ".env").write_text("OPENROUTER_API_KEY=from-file\n")
     monkeypatch.setenv("OPENROUTER_API_KEY", "from-shell")
     monkeypatch.chdir(hillclimb_dir)
@@ -98,19 +98,6 @@ def test_dotenv_never_overrides_a_real_env_var(tmp_path: Path, monkeypatch):
     Config.load()
 
     assert os.environ["OPENROUTER_API_KEY"] == "from-shell"
-
-
-def test_dotenv_is_found_one_level_above_the_hillclimb_dir(tmp_path: Path, monkeypatch):
-    hillclimb_dir = tmp_path / "hillclimb"
-    hillclimb_dir.mkdir()
-    (hillclimb_dir / "config.yaml").write_text("model: sonnet\n")
-    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=from-repo-root\n")
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    monkeypatch.chdir(hillclimb_dir)
-
-    Config.load()
-
-    assert os.environ["OPENROUTER_API_KEY"] == "from-repo-root"
 
 
 def test_openrouter_auth_requires_the_codex_agent():
@@ -169,15 +156,15 @@ def test_sampling_dotted_override_is_revalidated():
         config.apply_overrides({"routing.draft.sampling.temperature": 0.7})
 
 
-def test_pi_models_file_resolves_from_project_root(tmp_path: Path, monkeypatch):
+def test_pi_models_file_resolves_from_the_hillclimb_dir(tmp_path: Path, monkeypatch):
     hillclimb_dir = tmp_path / "hillclimb"
     hillclimb_dir.mkdir()
-    (hillclimb_dir / "config.yaml").write_text("pi:\n  models_file: models.json\n")
+    (hillclimb_dir / "hillclimb.yaml").write_text("pi:\n  models_file: models.json\n")
     monkeypatch.chdir(hillclimb_dir)
 
     config = Config.load()
 
-    assert config.pi.models_file == tmp_path / "models.json"
+    assert config.pi.models_file == hillclimb_dir / "models.json"
 
 
 def test_sampling_validation_checks_inherited_routes_and_action_override():
@@ -336,7 +323,7 @@ def test_user_level_dotenv_is_read_under_the_folders(tmp_path: Path, monkeypatch
     # the upward search from there cannot find it
     hillclimb_dir = tmp_path / "proj" / "hillclimb"
     hillclimb_dir.mkdir(parents=True)
-    (hillclimb_dir / "config.yaml").write_text("model: sonnet\n")
+    (hillclimb_dir / "hillclimb.yaml").write_text("model: sonnet\n")
     (hillclimb_dir / ".env").write_text("OPENROUTER_API_KEY=sk-folder\n")
     for name in ("OPENROUTER_API_KEY", "ONLY_USER"):
         monkeypatch.delenv(name, raising=False)

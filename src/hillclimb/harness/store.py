@@ -9,7 +9,7 @@ command queue. A *DataStore* is the backend that holds all four:
   `runs/<run>/run.yaml`, `searches/<search>/{search.yaml, journal.jsonl,
   status.json, control/}`. Byte-compatible with every run dir written so far.
 - `SqliteDataStore` — one database file (`store.backend: sqlite`). Safe for
-  the demo's N concurrent engines (WAL + busy timeout) and the engine's
+  N concurrent engines of a parallel run (WAL + busy timeout) and the engine's
   worker threads (one connection behind a lock).
 
 The engine is the single writer of a search's records whatever the backend;

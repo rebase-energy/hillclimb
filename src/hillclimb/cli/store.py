@@ -11,7 +11,7 @@ from hillclimb.harness.journal import Journal
 
 store_app = typer.Typer(
     cls=HillclimbGroup,
-    help="The record store behind the cross-run views (`store.backend` in config.yaml: files | sqlite)",
+    help="The record store behind the cross-run views (`store.backend` in hillclimb.yaml: files | sqlite)",
 )
 
 

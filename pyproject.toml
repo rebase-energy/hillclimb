@@ -12,7 +12,7 @@ dependencies = [
     "pyyaml>=6.0",
     "pandas>=3.0.3",
     "scikit-learn>=1.9.0",
-    # `hillclimb demo` must work from a bare `pip install hillclimb`: the
+    # A first run must work from a bare `pip install hillclimb`: the
     # TUIs (watch/chart/graph) and the venv builder are core, not extras.
     "uv>=0.5",
     "textual>=1.0",

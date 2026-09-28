@@ -77,7 +77,7 @@ class TestSpec:
         spec = write_spec(hillclimb_dir / "experiments" / "ab.yaml")
         assert resolve_experiment_path("ab", hillclimb_dir) == spec.resolve()
         assert resolve_experiment_path(str(spec), None) == spec.resolve()
-        with pytest.raises(FileNotFoundError, match="hillclimb/experiments"):
+        with pytest.raises(FileNotFoundError, match="experiments/"):
             resolve_experiment_path("nope", hillclimb_dir)
 
     def test_flatten_keeps_dict_valued_settings_whole(self):

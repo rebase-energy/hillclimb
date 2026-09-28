@@ -249,11 +249,10 @@ class HoldoutConfig(BaseModel):
 
 
 class PathsConfig(BaseModel):
-    # Relative runs_dir/problems_dir resolve at load time against the folder
-    # holding the hillclimb dir; everything hillclimb writes stays inside the
-    # hillclimb/ folder by default.
-    runs_dir: Path = Path("hillclimb/runs")
-    problems_dir: Path = Path("hillclimb/problems")
+    # Relative runs_dir/problems_dir resolve at load time against the
+    # hillclimb dir (the folder holding hillclimb.yaml).
+    runs_dir: Path = Path("runs")
+    problems_dir: Path = Path("problems")
     # None = shared machine venv under ~/.cache/hillclimb/venvs/, keyed by a
     # hash of the requirements (+ emflow source). Set explicitly to pin.
     runtime_python: Path | None = None
@@ -270,7 +269,7 @@ class StoreConfig(BaseModel):
     `hillclimb store sync` rebuilds from the folder."""
 
     backend: str = "files"  # files | sqlite
-    sqlite_path: Path = Path("hillclimb/store.sqlite")
+    sqlite_path: Path = Path("store.sqlite")
 
 
 class LearningConfig(BaseModel):
@@ -514,7 +513,7 @@ class Config(BaseModel):
         **overrides,
     ) -> Config:
         """Resolve configuration. Precedence (highest wins): keyword
-        overrides > the hillclimb dir's `config.yaml` > user
+        overrides > the hillclimb dir's `hillclimb.yaml` > user
         `~/.config/hillclimb/config.yaml` > built-in defaults.
 
         An explicit `path` reads only that file (no discovery, no user
@@ -537,13 +536,8 @@ class Config(BaseModel):
                 data = _deep_merge(data, _read_yaml(found / MARKER_FILE))
             config = cls.model_validate(data)
             config.hillclimb_dir = found
-            if found is not None:
-                # a repo keeps .env at its root, a standalone hillclimb dir
-                # beside config.yaml
-                for env_file in (found / ".env", found.parent / ".env"):
-                    if env_file.exists():
-                        _load_dotenv(env_file)
-                        break
+            if found is not None and (found / ".env").exists():
+                _load_dotenv(found / ".env")
             # The user-level .env last: `_load_dotenv` never overrides, so
             # the shell wins over the folder's file, which wins over this
             # one — the same order as the config files.
@@ -610,8 +604,8 @@ class Config(BaseModel):
 
 
     def _resolve_paths(self) -> None:
-        """Anchor relative runs_dir/problems_dir at the folder holding the
-        hillclimb dir, so commands work from any subdirectory. Without one
+        """Anchor relative runs_dir/problems_dir at the hillclimb dir, so
+        commands work from any subdirectory. Without one
         (explicit-path loads, embedders) relative paths keep their CWD
         meaning."""
         if self.hillclimb_dir is None:
@@ -624,7 +618,7 @@ class Config(BaseModel):
         ):
             value: Path = getattr(section, name)
             if value is not None and not value.is_absolute():
-                setattr(section, name, self.hillclimb_dir.parent / value)
+                setattr(section, name, self.hillclimb_dir / value)
 
 
 def _coerce(value: object, annotation: object) -> object:

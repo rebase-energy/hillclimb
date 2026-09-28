@@ -144,7 +144,7 @@ def resolve_experiment_path(target: str | Path, hillclimb_dir: Path | None) -> P
             if candidate.is_file():
                 return candidate.resolve()
     raise FileNotFoundError(
-        f"No experiment spec {target!r} (a YAML path, or a name under hillclimb/{EXPERIMENTS_DIRNAME}/)"
+        f"No experiment spec {target!r} (a YAML path, or a name under {EXPERIMENTS_DIRNAME}/)"
     )
 
 

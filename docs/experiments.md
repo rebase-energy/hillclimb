@@ -5,7 +5,7 @@ Which setup wins: a problem times named arms of config overrides times repeats, 
 Every knob — the climber, its params, the model, cross-search memory,
 replicate count — is a config setting, so "does X help?" is one experiment: a
 problem × named *arms* (sets of config overrides) × N repeats. A spec lives
-in `hillclimb/experiments/<name>.yaml`:
+in `experiments/<name>.yaml`:
 
 ```yaml
 problems: [circle-packing]
@@ -48,7 +48,7 @@ A spec may name one shared executable seed — `seed_from: seeds/foo.py`,
 resolved against the spec's directory — which rides `--seed-from` into every
 child search, so arms are compared from identical source (the dry run prints
 the resolved path and its sha256). Mandatory for climbers that require a seed
-(GEPA); see `hillclimb/experiments/gepa-vs-openevolve-vs-greedy.yaml` for the
+(GEPA); see `experiments/gepa-vs-openevolve-vs-greedy.yaml` for the
 three-climber comparison this shipped with, and
 `gepa-vs-openevolve-vs-greedy-heilbronn.yaml` for the same three climbers
 across a difficulty ladder (`problems/heilbronn-{11,14,17}`, stamped by

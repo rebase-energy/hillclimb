@@ -17,7 +17,7 @@ touches it.
 | `gepa` | [GEPA](https://github.com/gepa-ai/gepa) owns the whole loop — reflective mutation over evaluation feedback and Pareto selection over the verifier's per-instance scores — while hillclimb evaluates, journals, and holds the private holdout. A climber that brings its own `SearchLoop`, not a policy (see below). `pip install 'hillclimb[gepa]'` |
 
 ```yaml
-# config.yaml — OpenEvolve's quality-diversity search over hillclimb's operators
+# hillclimb.yaml — OpenEvolve's quality-diversity search over hillclimb's operators
 climber:
   ref: openevolve
   params:
@@ -41,7 +41,7 @@ climber (a repeated climber becomes `greedy-2`):
 ```bash
 uv run hillclimb run circle-packing --budget 30m \
   --climber greedy --climber openevolve --climber gepa \
-  --seed-from hillclimb/experiments/seeds/circle-packing.py \
+  --seed-from experiments/seeds/circle-packing.py \
   --arm-set gepa:concurrency.parallel_agents=1 \
   --arm-set gepa:climber.params.max_metric_calls=60
 uv run hillclimb watch                          # the three searches side by side, arm in the problem column
@@ -100,7 +100,7 @@ one-file climber, relative to the folder holding the hillclimb dir (like
 `paths.runs_dir`):
 
 ```python
-# hillclimb/climbers/drafts_only.py
+# climbers/drafts_only.py
 from hillclimb.modules.policies.greedy import GreedyPolicy
 from hillclimb.sdk import Action
 
@@ -116,9 +116,9 @@ class DraftsOnly(GreedyPolicy):
 ```
 
 ```bash
-uv run hillclimb climber check --climber hillclimb/climbers/drafts_only.py   # before spending budget
-uv run hillclimb run circle-packing --climber hillclimb/climbers/drafts_only.py
-uv run hillclimb run circle-packing --climber greedy --climber hillclimb/climbers/drafts_only.py  # fleet: arm "drafts_only"
+uv run hillclimb climber check --climber climbers/drafts_only.py   # before spending budget
+uv run hillclimb run circle-packing --climber climbers/drafts_only.py
+uv run hillclimb run circle-packing --climber greedy --climber climbers/drafts_only.py  # fleet: arm "drafts_only"
 ```
 
 The file exposes its policy as the one class it defines with `propose`
@@ -172,11 +172,11 @@ only when their climber hashes agree.
 ## Starting your own
 
 ```bash
-hillclimb climber list                          # the bundled climbers and every one under hillclimb/climbers/
-hillclimb climber new mine --from greedy        # copy one into hillclimb/climbers/mine/
-hillclimb climber check --climber hillclimb/climbers/mine          # replay recorded journals through it
-hillclimb climber check --climber hillclimb/climbers/mine --problem circle-packing --smoke   # + one dummy-agent search
-hillclimb run circle-packing --climber hillclimb/climbers/mine
+hillclimb climber list                          # the bundled climbers and every one under climbers/
+hillclimb climber new mine --from greedy        # copy one into climbers/mine/
+hillclimb climber check --climber climbers/mine          # replay recorded journals through it
+hillclimb climber check --climber climbers/mine --problem circle-packing --smoke   # + one dummy-agent search
+hillclimb run circle-packing --climber climbers/mine
 ```
 
 A local climber is named by its path, relative to the folder holding the
@@ -196,7 +196,7 @@ that memory: `knowledge-graph`, the built-in, or a `file.py` / `module:Class`
 subclassing `hillclimb.sdk.GraphModule` — see
 [operators-and-memory.md](operators-and-memory.md)), `tuner`/`tuner_params`,
 `similarity` and `prompts`; `routing` is reserved — which agent and model
-run is the user's choice in `config.yaml`, never a climber's. The user's
+run is the user's choice in `hillclimb.yaml`, never a climber's. The user's
 `climber.params`, `climber.operators`, `climber.tuner`, `climber.memory` and
 `climber.graph` lay over the manifest without copying it.
 

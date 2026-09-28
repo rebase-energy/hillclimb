@@ -38,7 +38,7 @@ def _load_config_or_reap_orphans(all_: bool) -> Config:
             common.say_no_hillclimb_dir(exc)
             say("No orphaned engines running either.")
             raise typer.Exit(1)
-        say("[head]No hillclimb/ dir found[/], but engines whose hillclimb dir was deleted are still running:")
+        say("[head]No hillclimb.yaml found[/], but engines whose hillclimb dir was deleted are still running:")
         for engine in orphans:
             say(f"  pid [path]{engine.pid}[/]  [note](was {_m(engine.hillclimb_dir)})[/]")
         forced = kill_engines(orphans)
@@ -109,7 +109,7 @@ def stop(
     """Gracefully stop a running engine.
 
     It finishes the current operator call, then parks. Resume later with
-    `hillclimb resume`. `--all` stops every running search (e.g. the demo).
+    `hillclimb resume`. `--all` stops every running search (e.g. a parallel run).
     """
     config = _load_config_or_reap_orphans(all_)
     store, targets = _search_targets(config, search, all_)
@@ -181,14 +181,16 @@ def kill(
 def reset(
     yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask for confirmation"),
 ):
-    """Kill every engine of THIS hillclimb dir and delete the dir.
+    """Kill every engine of THIS hillclimb dir and delete what hillclimb made in it.
 
     The hillclimb dir is the one found from the current directory (or
     `HILLCLIMB_DIR`). Only engines pinned to that exact dir are signalled —
-    their agents and verifiers go with them — then the folder is removed.
-    Searches of other folders on the machine are untouched. `runs_dir` or
-    `problems_dir` configured outside the hillclimb dir are left in place and
-    reported.
+    their agents and verifiers go with them — then hillclimb.yaml and the
+    folders beside it that hillclimb owns (problems/, runs/, knowledge/,
+    climbers/, experiments/, the sqlite store) are removed. Anything else in
+    the folder — your code, .env, .gitignore — stays. Searches of other
+    folders on the machine are untouched. `runs_dir` or `problems_dir`
+    configured outside the hillclimb dir are left in place and reported.
     """
     import shutil
 
@@ -203,7 +205,10 @@ def reset(
     mine = engines_for(root, engines)
     unknown = [e for e in engines if e.hillclimb_dir is None]
 
-    say(f"[head]Will delete[/] [path]{_m(root)}[/]")
+    owned = common.owned_paths(root, config)
+    say(f"[head]Will delete[/] from [path]{_m(root)}[/]:")
+    for path in owned:
+        say(f"  [path]{_m(path.relative_to(root))}{'/' if path.is_dir() else ''}[/]")
     if mine:
         say(f"and terminate {len(mine)} engine(s) running against it [note](with their agents and verifiers)[/]:")
         for engine in mine:
@@ -232,5 +237,9 @@ def reset(
             f"[head]Terminated[/] {len(mine)} engine process tree(s)"
             + (f"; {len(forced)} needed SIGKILL." if forced else ".")
         )
-    shutil.rmtree(root)
-    say(f"[head]Deleted[/] [path]{_m(root)}[/]")
+    for path in owned:
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    say(f"[head]Reset[/] [path]{_m(root)}[/] [note](it is no longer a hillclimb dir)[/]")

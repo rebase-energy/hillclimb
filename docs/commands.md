@@ -33,9 +33,8 @@ the run has a single search), or `latest` (the default).
 | command | what it does |
 |---|---|
 | `problem list` | the bundled example problems, with the best known value and who found it |
-| `problem get <problem>` | copy a bundled problem into `hillclimb/problems/` (creates the `hillclimb/` dir if needed) and list its files (`fetch` is a deprecated alias) |
-| `demo [--budget 10m] [--parallel-searches 3] [--parallel-agents 3]` | `problem get` + `run --parallel-searches` in one command |
-| `init [dir]` | create the `hillclimb/` dir (config, problems/, runs/) with an example problem, and the gitignore rules that commit each run's record but not its bulk |
+| `problem get <problem>` | copy a bundled problem into `problems/` (makes the current folder a hillclimb dir if there is none) and list its files (`fetch` is a deprecated alias) |
+| `init [dir]` | make the current folder (or `dir`) a hillclimb dir: `hillclimb.yaml`, an empty `problems/` and `runs/`, and the gitignore rules that commit each run's record but not its bulk; refuses a folder with its own `problems/` or `runs/` (`init hillclimb` keeps it in a subfolder) |
 | `connect` | which agents this machine can run operators with, and who pays — each credential read through the same environment an operator gets |
 | `connect <claude\|codex\|pi\|openrouter> [--auth ...] [--model ...] [--no-probe] [--default] [--local]` | run that agent's login, stage the credentials searches read, ping the route with one tool-free call, pin `agent`/`agent_auth` in `~/.config/hillclimb/config.yaml` (every folder; `--local` pins this folder's config.yaml as its override) |
 | `verify <problem> [--repeat N] [--holdout] [--solution FILE]` | run a problem's verifier once, outside a search; `--repeat` measures the noise floor |
@@ -59,11 +58,11 @@ the run has a single search), or `latest` (the default).
 | `tree2 [search]` | the same tree drawn like the Darwin Gödel Machine's archive: the candidate number inside each circle, fill = score (viridis, bright = best; hollow = no working solution), ring = what the search did with it (white expanded — the spine the policy walked / none a scored, scored and left / red failed), star = best, bold white path = the best's lineage; circles are sized to the zoom so they never overlap, numbers appear as they grow; the legend toggles each stage, the best and the lineage (`1`-`5` or click) |
 | `archive [search]` | the `tree2` archive tree on the left and the progress chart on the right — every scored candidate at (candidate number, score), the best-so-far staircase, and the lineage of the final best as a thick line, the same parent chain drawn bold in the tree; `j`/`k` scrub both panels together, click a node to ring its dot on the chart; the chart's legend sits in the corner the climb leaves empty and toggles its series (`6`-`9` or click), the hover readout keeps off it |
 | `surface [search]` | live 3D fitness surface: the search's candidates on the problem's terrain (needs a `landscape.py` in the problem; `problems/fitness-landscape/` is the reference) |
-| `summit [problem] [--to DIR]` | copy the best solution found so far across every run of a problem next to your `hillclimb/` folder; works mid-climb |
-| `disconnect <claude\|codex\|pi\|openrouter> [--local]` | undo a connect on hillclimb's side: comment the pin out of the same config.yaml, remove the staged homes under `~/.cache/hillclimb/`, drop an OpenRouter key from the `.env`; the agent's own login is never touched |
+| `summit [problem] [--to DIR]` | copy the best solution found so far across every run of a problem into your hillclimb dir; works mid-climb |
+| `disconnect <claude\|codex\|pi\|openrouter> [--local]` | undo a connect on hillclimb's side: comment the pin out of the same config file, remove the staged homes under `~/.cache/hillclimb/`, drop an OpenRouter key from the `.env`; the agent's own login is never touched |
 | `smoke [problem]` | one real agent call end-to-end (auth / contract check) |
-| `climber list` | the climbers `run --climber` accepts: the bundled ones and every one under `hillclimb/climbers/` |
-| `climber new <name> [--from REF]` | copy a climber (manifest, policy source, prompts) into `hillclimb/climbers/<name>/` for editing |
+| `climber list` | the climbers `run --climber` accepts: the bundled ones and every one under `climbers/` |
+| `climber new <name> [--from REF]` | copy a climber (manifest, policy source, prompts) into `climbers/<name>/` for editing |
 | `climber check [--climber REF] [--set k=v] [--problem P] [--smoke] [--json]` | conformance check for a climber over the store's recorded journals; `--smoke` adds a dummy-agent search |
 | `store searches [--problem KEY]` / `store sync` | list what the record store holds / import the folder's searches into the configured store |
 | `knowledge graph [--stats]` | interactive knowledge-graph TUI (or a text summary) |
@@ -81,12 +80,12 @@ the run has a single search), or `latest` (the default).
 
 Exit code `2` from `run`/`resume` means the search parked or was stopped — resume it.
 
-`hillclimb stop --all` ends a demo (the best solutions stay in `runs/`);
-`hillclimb reset` ends it AND deletes this folder's `hillclimb/` dir — only
+`hillclimb stop --all` ends a parallel run (the best solutions stay in `runs/`);
+`hillclimb reset` ends it AND deletes what hillclimb made in this folder (`hillclimb.yaml`, `problems/`, `runs/`, …; nothing else) — only
 engines pinned to that dir are killed, never another folder's. 3 searches x 3
 operators is 9 agents, capped machine-wide by
 `concurrency.machine_max_agents`; each search's engine log is under
-`hillclimb/runs/<run-id>/logs/`.
+`runs/<run-id>/logs/`.
 
 ## Local optimization demo suite
 
@@ -107,5 +106,3 @@ uv run hillclimb run problems/demo-suite.yaml --name "Optimization demo" --budge
 uv run hillclimb watch
 ```
 
-`hillclimb demo` is the one-command version: `problem get` + three
-parallel detached searches on circle-packing.

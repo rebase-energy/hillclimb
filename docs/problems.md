@@ -14,8 +14,8 @@ problems/my-problem/
 └── data/                  # optional runtime inputs
 ```
 
-`hillclimb init` scaffolds a working `problems/example/`; `hillclimb problem
-get <problem>` copies a bundled example problem to edit.
+`hillclimb problem get <problem>` copies a bundled problem into `problems/`;
+start your own by copying one and editing it.
 
 Minimum `problem.yaml`:
 

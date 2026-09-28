@@ -22,6 +22,7 @@ climber_app = typer.Typer(
         "Climbers — the shareable bundle that decides HOW to hillclimb (policy, operators, "
         "prompts, tuner): list them, start your own, check one before spending budget on it"
     ),
+    short_help="Climbers, the swappable search methods: list, copy, check.",
 )
 
 
@@ -55,7 +56,7 @@ def _climber_ref(path: Path, base_dir: Path | None) -> str:
 @climber_app.command("list")
 def climber_list(as_json: bool = typer.Option(False, "--json", help="Machine-readable output")):
     """The climbers `hillclimb run --climber` accepts: the bundled ones and
-    every directory or one-file climber under hillclimb/climbers/."""
+    every directory or one-file climber under climbers/."""
     from hillclimb.climber import ClimberLoadError, bundled_climbers, load_climber
     from hillclimb.modules.policies import policy_base_dir
 
@@ -99,7 +100,7 @@ _COPIED_MODULE_KEYS = ("policy", "loop")
 
 @climber_app.command("new")
 def climber_new(
-    name: str = typer.Argument(..., help="Name of the new climber (becomes hillclimb/climbers/<name>/)"),
+    name: str = typer.Argument(..., help="Name of the new climber (becomes climbers/<name>/)"),
     from_: str = typer.Option(
         "greedy", "--from", help="Climber to copy: a bundled name, a directory holding climber.yaml, or a .py file"
     ),
@@ -107,7 +108,7 @@ def climber_new(
     """Start your own climber from a copy of an existing one.
 
     Copies the manifest, the policy (or loop) source and the prompts into
-    hillclimb/climbers/<name>/ so every part is a file you can edit, then
+    climbers/<name>/ so every part is a file you can edit, then
     prints how to check and run it. A bundled climber's `module:Class`
     policy is copied in as `<module>.py:Class` — edit that file.
     """

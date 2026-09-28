@@ -122,7 +122,7 @@ def pi_env(auth: str = "subscription", models_file: Path | None = None) -> dict[
         if not env.get("OPENROUTER_API_KEY"):
             raise RuntimeError(
                 "agent_auth: openrouter needs OPENROUTER_API_KEY — export it "
-                "or put it in a .env beside config.yaml"
+                "or put it in a .env beside hillclimb.yaml"
             )
         env.pop("ANTHROPIC_API_KEY", None)
         env.pop("OPENAI_API_KEY", None)

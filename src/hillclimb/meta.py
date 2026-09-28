@@ -51,6 +51,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from hillclimb.config import Config
+from hillclimb.project import MARKER_FILE
 
 DEFAULT_SPEC = "meta.yaml"
 NESTED_DIRNAME = "hillclimb"  # the inner searches' hillclimb dir, under the verifier's cwd
@@ -240,7 +241,7 @@ class MetaResult:
 
 
 def nested_config(outer: Config, climber: Path, spec: MetaSpec, nested_dir: Path) -> dict:
-    """The inner searches' config.yaml: the user's agent, model, routing,
+    """The inner searches' hillclimb.yaml: the user's agent, model, routing,
     concurrency and problems; the candidate as the climber; its own runs and
     store; learning off (every candidate meets the same world)."""
     data = outer.model_dump(mode="json")
@@ -327,7 +328,7 @@ def _read_inner(nested_dir: Path, problem_id: str) -> tuple[float | None, dict, 
     from hillclimb.harness.store import open_store
     from hillclimb.problem import load_problem
 
-    config = Config.load(path=nested_dir / "config.yaml")
+    config = Config.load(path=nested_dir / MARKER_FILE)
     problem = load_problem(problem_id, config)
     with closing(open_store(config)) as store:
         records = store.searches(problem_key=problem.problem_key)
@@ -370,15 +371,15 @@ def evaluate(
         raise MetaError(
             f"meta.yaml needs {needed}s of inner search ({len(spec.problems)} problem(s) × "
             f"{spec.repeats} repeat(s) × {spec.budget_s}s + start-up) but budget.exec_timeout_s "
-            f"is {outer.budget.exec_timeout_s} — raise it in config.yaml or shorten the spec"
+            f"is {outer.budget.exec_timeout_s} — raise it in hillclimb.yaml or shorten the spec"
         )
     nested_dir = workdir / NESTED_DIRNAME
     nested_dir.mkdir(parents=True, exist_ok=True)
-    (nested_dir / "config.yaml").write_text(
+    (nested_dir / MARKER_FILE).write_text(
         "# written by `hillclimb meta evaluate`: the inner searches' hillclimb dir\n"
         + yaml.safe_dump(nested_config(outer, climber, spec, nested_dir), sort_keys=False)
     )
-    inner_config = Config.load(path=nested_dir / "config.yaml")
+    inner_config = Config.load(path=nested_dir / MARKER_FILE)
     # measure before spending: every inner problem must load, have a target
     # and a floor (the spec's, else scored here once)
     targets: dict[str, tuple[float, float, bool]] = {}

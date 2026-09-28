@@ -65,7 +65,7 @@ searches read (`~/.cache/hillclimb/codex-home/…`, `pi-home/…`), pings the ro
 with one tool-free agent call — which is where a model the account cannot use
 fails, in seconds instead of mid-search — and pins `agent`/`agent_auth` in
 `~/.config/hillclimb/config.yaml`: the user level, every folder on the machine,
-so `connect` works before `hillclimb init`. A folder's own `config.yaml`
+so `connect` works before `hillclimb init`. A folder's own `hillclimb.yaml`
 overrides it, and `--local` writes there instead — the override for that folder
 alone. It leaves a config that already pins a agent alone unless you pass
 `--default`. `--no-probe` skips the ping, `--auth api-key|openrouter` picks a
@@ -74,13 +74,13 @@ different bill.
 `hillclimb connect openrouter` is the one credential hillclimb stores itself:
 the key is validated against OpenRouter (one unbilled call) and written to a
 `.env` — the user-level one beside `~/.config/hillclimb/config.yaml`, or with
-`--local` the one beside the folder's `config.yaml` that `hillclimb init`
-gitignores — never into `config.yaml`, where it could be journaled. A folder's
+`--local` the one beside the folder's `hillclimb.yaml` that `hillclimb init`
+gitignores — never into `hillclimb.yaml`, where it could be journaled. A folder's
 `.env` wins over the user's, the shell over both. `--agent codex --model
 qwen/qwen3-coder` pins the route in the same command.
 
 `hillclimb disconnect <target>` undoes it on hillclimb's side: the pin is
-commented out of the same `config.yaml` (`--local` for the folder's), the staged
+commented out of the same config file (`--local` for the folder's `hillclimb.yaml`), the staged
 homes under `~/.cache/hillclimb/` are removed, an OpenRouter key leaves the
 `.env`. The agent's own login stays: hillclimb may start a login it needs, it
 never ends one — your Claude, Codex or pi account is yours, not hillclimb's.
@@ -96,7 +96,7 @@ model: qwen/qwen3-coder          # any OpenRouter model id
 ```
 
 `OPENROUTER_API_KEY` comes from the environment or a `.env` beside
-`config.yaml`. Routing mixes providers per operator, and a `models:` pool lets
+`hillclimb.yaml`. Routing mixes providers per operator, and a `models:` pool lets
 the bandit learn which cheap model actually earns improvements (see
 [operators-and-memory.md](operators-and-memory.md)):
 
@@ -123,7 +123,7 @@ arm tags (see [experiments.md](experiments.md)).
 Install pi and select a provider-qualified model. Subscription mode copies
 the credentials from pi's own `/login` (`~/.pi/agent/auth.json`); `api-key`
 uses provider environment variables such as `ANTHROPIC_API_KEY`. OpenRouter
-requires `OPENROUTER_API_KEY` in the environment or `.env` beside `config.yaml`:
+requires `OPENROUTER_API_KEY` in the environment or `.env` beside `hillclimb.yaml`:
 
 ```yaml
 agent: pi
@@ -176,7 +176,7 @@ config-file load they resolve beside that config. Provider/model support
 determines which sampling fields are accepted. Use the preflight to check
 compatibility; reasoning effort remains a separate follow-up.
 
-`hillclimb/experiments/temperature.yaml` compares temperatures 0.2, 0.7 and
+`experiments/temperature.yaml` compares temperatures 0.2, 0.7 and
 1.0 on circle-packing, with three repeats and three concurrent searches.
 Run `hillclimb experiment run temperature --dry-run` to inspect the jobs;
 `hillclimb experiment report temperature --json` reports the arm verdicts

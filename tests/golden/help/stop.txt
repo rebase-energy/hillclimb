@@ -4,7 +4,7 @@
  Gracefully stop a running engine.                                                                                      
                                                                                                                         
  It finishes the current operator call, then parks. Resume later with                                                   
- `hillclimb resume`. `--all` stops every running search (e.g. the demo).                                                
+ `hillclimb resume`. `--all` stops every running search (e.g. a parallel run).                                          
                                                                                                                         
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │   [search]      TEXT  [default: latest]                                                                              │

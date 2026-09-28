@@ -188,10 +188,10 @@ def test_sync_imports_the_folder_into_sqlite_once(tmp_path: Path):
 
 
 def test_config_store_section_and_open_store(tmp_path: Path, monkeypatch):
-    hc = tmp_path / "proj" / "hillclimb"
+    hc = tmp_path / "proj"
     hc.mkdir(parents=True)
-    (hc / "config.yaml").write_text("store:\n  backend: sqlite\n")
-    monkeypatch.chdir(tmp_path / "proj")
+    (hc / "hillclimb.yaml").write_text("store:\n  backend: sqlite\n")
+    monkeypatch.chdir(hc)
     config = Config.load()
     assert config.store.backend == "sqlite"
     assert config.store.sqlite_path == hc / "store.sqlite"  # anchored like runs_dir
@@ -210,10 +210,10 @@ def test_store_cli_sync_and_searches(tmp_path: Path, monkeypatch):
 
     folder = tmp_path / "runs"
     _populate(FileDataStore(folder))
-    hc = tmp_path / "hillclimb"
+    hc = tmp_path / "hc"
     hc.mkdir()
-    (hc / "config.yaml").write_text(f"store:\n  backend: sqlite\npaths:\n  runs_dir: {folder}\n")
-    monkeypatch.chdir(tmp_path)
+    (hc / "hillclimb.yaml").write_text(f"store:\n  backend: sqlite\npaths:\n  runs_dir: {folder}\n")
+    monkeypatch.chdir(hc)
     runner = CliRunner()
     result = runner.invoke(app, ["store", "sync"])
     assert result.exit_code == 0, result.output
@@ -222,7 +222,7 @@ def test_store_cli_sync_and_searches(tmp_path: Path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert "r2/p" in result.output and "r1/p" in result.output and "r2/q" not in result.output
 
-    (hc / "config.yaml").write_text(f"paths:\n  runs_dir: {folder}\n")
+    (hc / "hillclimb.yaml").write_text(f"paths:\n  runs_dir: {folder}\n")
     result = runner.invoke(app, ["store", "sync"])
     assert result.exit_code == 0 and "nothing to import" in result.output
 

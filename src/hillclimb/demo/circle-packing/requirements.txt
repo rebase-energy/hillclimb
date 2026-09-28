@@ -1,5 +1,5 @@
-# Solution-runtime packages for the circle-packing demo. Kept small so the
-# first `hillclimb demo` builds its venv in seconds, not minutes.
+# Solution-runtime packages for circle-packing. Kept small so a first run
+# builds its venv in seconds, not minutes.
 numpy
 scipy
 pandas

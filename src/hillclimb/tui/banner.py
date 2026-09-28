@@ -44,8 +44,10 @@ BANNER_WIDTH = max(len(line) for line in BANNER_LINES)
 
 
 
-def print_banner() -> None:
-    """Print the mark + wordmark; drop the mark, then the art, as the terminal narrows."""
+def print_banner(trailing_blank: bool = True) -> None:
+    """Print the mark + wordmark; drop the mark, then the art, as the terminal narrows.
+
+    `trailing_blank=False` when the next output (the help screen) brings its own top padding."""
     from rich.console import Console
 
     console = Console(highlight=False)
@@ -58,4 +60,5 @@ def print_banner() -> None:
         lines = ["hillclimb"]
     for line in lines:
         console.print(line, style=BANNER_STYLE)
-    console.print()
+    if trailing_blank:
+        console.print()

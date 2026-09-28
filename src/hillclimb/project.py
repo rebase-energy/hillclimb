@@ -1,9 +1,9 @@
 """Finding the hillclimb dir, and the machine-scoped directories beside it.
 
-The **hillclimb dir** is a folder named `hillclimb/` with a `config.yaml`
-inside — config, problems, specs and runs all live in that one folder, so
-hillclimb data never mingles with the rest of a repo. Commands find it by
-upward search from the CWD, like git finding `.git/`.
+The **hillclimb dir** is any folder holding a `hillclimb.yaml` — config,
+problems/ and runs/ live right beside it (`hillclimb init` sets up the
+current folder; `hillclimb init DIR` another). Commands find it by upward
+search from the CWD, like git finding `.git/`.
 
 Machine-scoped state (shared runtime venvs, the emflow problem cache, the
 agent-concurrency semaphore) lives under XDG-style user directories, shared
@@ -15,38 +15,28 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-MARKER_DIR = "hillclimb"
-MARKER_FILE = "config.yaml"
+MARKER_FILE = "hillclimb.yaml"
 
 
 class HillclimbDirNotFound(Exception):
     def __init__(self, start: Path):
         super().__init__(
-            f"No hillclimb/ dir found from {start} upward.\n"
-            f"Run `hillclimb init` to create one (makes ./{MARKER_DIR}/{MARKER_FILE}), "
+            f"No {MARKER_FILE} found from {start} upward.\n"
+            f"Run `hillclimb init` to make this folder a hillclimb dir (writes ./{MARKER_FILE}), "
             "or set HILLCLIMB_DIR to an existing one."
         )
         self.start = start
 
 
 def find_hillclimb_dir(start: Path | None = None) -> Path | None:
-    """The nearest `hillclimb/` dir at or above `start` (default CWD).
-
-    Standing inside the hillclimb/ folder itself also resolves. `HILLCLIMB_DIR`
-    pins it and skips the search; `HILLCLIMB_WORKSPACE` is the pre-rename name
-    for the folder's *parent* and is still honored.
-    """
+    """The nearest folder at or above `start` (default CWD) holding a
+    `hillclimb.yaml`. `HILLCLIMB_DIR` pins it and skips the search."""
     pinned = os.environ.get("HILLCLIMB_DIR")
     if pinned:
         return Path(pinned).expanduser().resolve()
-    legacy = os.environ.get("HILLCLIMB_WORKSPACE")
-    if legacy:
-        return Path(legacy).expanduser().resolve() / MARKER_DIR
     current = (start or Path.cwd()).resolve()
     for ancestor in (current, *current.parents):
-        if (ancestor / MARKER_DIR / MARKER_FILE).is_file():
-            return ancestor / MARKER_DIR
-        if ancestor.name == MARKER_DIR and (ancestor / MARKER_FILE).is_file():
+        if (ancestor / MARKER_FILE).is_file():
             return ancestor
     return None
 

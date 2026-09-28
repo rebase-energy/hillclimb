@@ -21,14 +21,14 @@ Two things make a check trustworthy here:
   `openrouter` is a billing route for codex and pi, and is the one credential
   hillclimb stores itself: in a `.env` — the user-level one beside
   `~/.config/hillclimb/config.yaml`, or with `--local` the one beside the
-  folder's `config.yaml` that `hillclimb init` already gitignores. Keys never
+  folder's `hillclimb.yaml` that `hillclimb init` already gitignores. Keys never
   enter `Config`, so they cannot be journaled.
 
 Connecting writes at most two things: that `.env` line, and the `agent` /
-`agent_auth` defaults in a `config.yaml`. Both land at the USER level by
+`agent_auth` defaults in a config file. Both land at the USER level by
 default — `~/.config/hillclimb/` — so one login serves every folder on the
 machine and `hillclimb connect` works before `hillclimb init`; a folder's
-own `config.yaml`/`.env` overrides them (`--local` writes there instead).
+own `hillclimb.yaml`/`.env` overrides them (`--local` writes there instead).
 Everything else lives where the agent's own CLI put it.
 """
 
@@ -600,21 +600,16 @@ def pins_agent(text: str) -> bool:
 def env_file(config, *, local: bool = False) -> Path | None:
     """Where a provider key belongs: the user-level `.env` beside
     `~/.config/hillclimb/config.yaml` (every folder reads it, under its
-    own), or with `local` this folder's — the `.env` beside `config.yaml`,
-    or the repo-root one already in use (`Config.load` reads the hillclimb
-    dir's first, then its parent's — writing anywhere else would store a
-    key nothing loads). `local` without a hillclimb dir is None."""
+    own), or with `local` this folder's — the `.env` beside
+    `hillclimb.yaml`, the one `Config.load` reads. `local` without a
+    hillclimb dir is None."""
     from hillclimb.project import user_env_path
 
     if not local:
         return user_env_path()
     if config.hillclimb_dir is None:
         return None
-    beside = config.hillclimb_dir / ".env"
-    parent = config.hillclimb_dir.parent / ".env"
-    if not beside.exists() and parent.exists():
-        return parent
-    return beside
+    return config.hillclimb_dir / ".env"
 
 
 def upsert_env(text: str, key: str, value: str) -> str:

@@ -173,11 +173,11 @@ class TestCostOverlay:
         lines = legend_text(entries).plain.splitlines()
         assert lines == [
             "● new best",
-            "Benchmarks: ─ OpenEvolve",
+            "Benchmarks: ╌ OpenEvolve",
             f"Cost: ─ {COST_TOKENS_LABEL}   ─ {COST_CPU_LABEL}   ─ {COST_WALL_LABEL}",
         ]
         numbered = legend_text(entries, interactive=True).plain
-        assert "2 ─ OpenEvolve" in numbered and f"3 ─ {COST_TOKENS_LABEL}" in numbered
+        assert "2 ╌ OpenEvolve" in numbered and f"3 ─ {COST_TOKENS_LABEL}" in numbered
         # no benchmarks: the cost row still opens its own row
         assert legend_text(climb_legend(one_step_climb(), {}, sample_cost())).plain.splitlines()[1].startswith("Cost: ")
 

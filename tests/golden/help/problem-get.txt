@@ -1,9 +1,9 @@
                                                                                                                         
  Usage: root problem get [OPTIONS] [PROBLEM]                                                                            
                                                                                                                         
- Copy a ready-made problem into hillclimb/problems/.                                                                    
+ Copy a ready-made problem into problems/.                                                                              
                                                                                                                         
- Creates the hillclimb/ dir here if there is none, then copies the                                                      
+ Makes this folder a hillclimb dir if there is none, then copies the                                                    
  problem's files in and lists them — read them before you run: the                                                      
  verifier IS the problem. An existing folder is never overwritten.                                                      
                                                                                                                         

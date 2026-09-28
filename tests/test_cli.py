@@ -488,8 +488,21 @@ def test_bare_invocation_prints_banner_and_command_list(capsys):
     out = capsys.readouterr().out
     assert WORDMARK_LINES[0] in out
     assert "Usage: hillclimb" in out
-    for command in ("run", "status", "watch", "knowledge", "experiment"):
-        assert command in out
+    listed = {line.split()[1] for line in out.splitlines() if line.startswith("│ ") and len(line.split()) > 1}
+    for command in ("init", "run", "watch", "experiment"):
+        assert command in listed
+    for command in ("status", "knowledge", "tree2"):  # still runs, just not on the first screen
+        assert command not in listed
+    assert "more commands: hillclimb --help --all" in out
+
+
+def test_help_all_lists_every_command(capsys):
+    with pytest.raises(SystemExit):
+        cli_main(["--help", "--all"])
+    out = capsys.readouterr().out
+    listed = {line.split()[1] for line in out.splitlines() if line.startswith("│ ") and len(line.split()) > 1}
+    assert {"status", "knowledge", "tree2", "run"} <= listed
+    assert "--help --all" not in out
 
 
 def test_help_flags_print_the_banner_too(capsys):
@@ -620,7 +633,6 @@ def test_stop_all_without_a_dir_reaps_orphaned_engines(tmp_path, monkeypatch, ca
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
-    monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
     gone = tmp_path / "deleted" / "hillclimb"
     killed = []
     monkeypatch.setattr("hillclimb.harness.orphans.orphan_engines", lambda: [Engine(pid=7, pgid=7, hillclimb_dir=gone)])
@@ -653,17 +665,25 @@ def test_engines_for_matches_only_this_hillclimb_dir(tmp_path, monkeypatch):
     assert [e.pid for e in orphans.engines_for(mine, engines)] == [21, 24]  # 24: same dir via symlink
 
 
-def test_reset_kills_this_dirs_engines_and_deletes_it(tmp_path, monkeypatch, capsys):
+def test_reset_kills_this_dirs_engines_and_deletes_what_hillclimb_made(tmp_path, monkeypatch, capsys):
+    """The hillclimb dir may be a code repo's root: reset removes
+    hillclimb.yaml and hillclimb's folders beside it, and nothing else."""
     from hillclimb.harness.orphans import Engine
 
-    root = tmp_path / "hillclimb"
+    root = tmp_path / "proj"
     root.mkdir()
-    (root / "config.yaml").write_text("")
-    (root / "runs").mkdir()
-    other = tmp_path / "elsewhere" / "hillclimb"
-    monkeypatch.chdir(tmp_path)
+    (root / "hillclimb.yaml").write_text("")
+    for owned in ("runs/r1", "problems/p", "knowledge", "climbers", "experiments"):
+        (root / owned).mkdir(parents=True)
+    (root / "store.sqlite").write_text("x")
+    (root / "store.sqlite-wal").write_text("x")
+    mine = ("main.py", ".env", ".gitignore", "src/lib.py", "config.yaml")
+    for name in mine:
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text("keep")
+    other = tmp_path / "elsewhere"
+    monkeypatch.chdir(root)
     monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
-    monkeypatch.delenv("HILLCLIMB_WORKSPACE", raising=False)
     engines = [
         Engine(pid=31, pgid=31, hillclimb_dir=root),
         Engine(pid=32, pgid=32, hillclimb_dir=other),
@@ -685,7 +705,8 @@ def test_reset_kills_this_dirs_engines_and_deletes_it(tmp_path, monkeypatch, cap
     assert exc.value.code == 0
     out = capsys.readouterr().out
     assert [e.pid for e in killed] == [31]  # not the other folder's engine, not the unreadable one
-    assert not root.exists()
+    assert root.exists()
+    assert sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()) == sorted(mine)
     assert "pid 33" in out and "left alone" in out
 
 
@@ -1141,3 +1162,13 @@ def test_engine_lines_split_into_a_clock_gutter_and_a_message():
         "", "  [head]new selection:[/] [path]c001[/] val=0.028911"
     )
     assert split_engine_line("learning: 5 claim(s) distilled") == ("", "[head]learning:[/] 5 claim(s) distilled")
+
+
+def test_version_flag_prints_the_version(capsys):
+    from hillclimb import __version__
+
+    for flag in ("--version", "-V"):
+        with pytest.raises(SystemExit) as exc:
+            cli_main([flag])
+        assert exc.value.code == 0
+        assert capsys.readouterr().out.strip() == f"hillclimb {__version__}"

@@ -25,13 +25,14 @@ yet? Add `--agent dummy` to any `run` below: it climbs with no LLM at all.
 **2. Make a hillclimb dir, get a problem, read it.**
 
 ```bash
-hillclimb init                         # hillclimb/ here: config.yaml, problems/, runs/
+hillclimb init                         # this folder: hillclimb.yaml, problems/, runs/
 hillclimb problem list                 # the bundled example problems, with the best known value
 hillclimb problem get heilbronn-11
 ```
 
-Everything hillclimb writes lives under that one `hillclimb/` folder. The
-problem lands in `hillclimb/problems/heilbronn-11/`. Open `verify.py`: the
+Everything hillclimb writes lives beside `hillclimb.yaml` (`hillclimb init
+hillclimb` keeps it all in a subfolder instead). The problem lands in
+`problems/heilbronn-11/`. Open `verify.py`: the
 verifier *is* the problem. Everything the agents will be told is in
 `description.md`.
 
@@ -63,7 +64,7 @@ hillclimb chart      # best score so far against time, every candidate a dot
 hillclimb tree       # the exploration tree: what was expanded, what was left
 ```
 
-The result is `hillclimb/runs/<run-id>/searches/heilbronn-11/best/`:
+The result is `runs/<run-id>/searches/heilbronn-11/best/`:
 `solution.py` and the `submission.csv` it wrote.
 
 **6. Stop everything.**
@@ -74,11 +75,11 @@ hillclimb stop --all
 
 **7. Next.**
 
-- **Your own problem.** Copy an example problem and edit `verify.py`, or `hillclimb init`
-  for a blank scaffold. See [docs/problems.md](docs/problems.md).
+- **Your own problem.** Copy a bundled problem and edit `verify.py`.
+  See [docs/problems.md](docs/problems.md).
 - **Another climber.** `hillclimb run heilbronn-11 --climber openevolve`.
   `hillclimb climber list` shows the bundled ones; `hillclimb climber new mine
-  --from greedy` copies one into `hillclimb/climbers/mine/` for editing. See
+  --from greedy` copies one into `climbers/mine/` for editing. See
   [docs/climbers.md](docs/climbers.md).
 - **Compare two.** `hillclimb run heilbronn-11 --climber greedy --climber
   openevolve --parallel-searches 2`, then `hillclimb experiment report <run-id>`.
@@ -141,7 +142,7 @@ is spent on it.
 | `src/hillclimb/spaces.py` | The output-format contract a problem's `interface.py` is written in, and the `params.json` contract. Stdlib only, byte-copied into runtime venvs. |
 | `src/hillclimb/{api,config,problem,climber,experiment,connect}.py` | The public surface: run a search, the config schema, load a problem or a climber, experiments, and connecting an agent. |
 | `problems/` | The example problems' source of truth, one `make_<family>.py` generator per family; the bundled copies under `demo/` are stamped from here. |
-| `hillclimb/` | This repo's own hillclimb dir: `config.yaml`, `experiments/` (specs and seeds), `knowledge/` (the graph, cards, credit, playbooks). |
+| `hillclimb.yaml`, `experiments/`, `knowledge/` | This repo is itself a hillclimb dir: its config, experiment specs and seeds, and learning (the graph, cards, credit, playbooks), beside `problems/` and `runs/`. |
 | `tests/` | The suite (`uv run pytest`). `test_layout.py` pins which package may import which, `test_sdk_imports.py` that climber code imports only the sdk, `golden/` the prompt bytes and every `--help` screen. |
 | `docs/` | The topic docs linked below, and the dated design plans. |
 

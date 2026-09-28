@@ -17,7 +17,7 @@
  parked, else 0. Real agent runs — the repeat count is your cost dial.                                                  
                                                                                                                         
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ *    spec      TEXT  Spec YAML path, or a name under hillclimb/experiments/ [required]                               │
+│ *    spec      TEXT  Spec YAML path, or a name under experiments/ [required]                                         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --budget                              TEXT                  Per-search budget, e.g. 10m (overrides the spec)         │

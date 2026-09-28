@@ -1067,7 +1067,7 @@ def run_search(
 
 # -- fleets: N detached engines under one run -----------------------------------
 #
-# The demo's shape and the hosted platform's: independent searches on one
+# `run --parallel-searches` and the hosted platform: independent searches on one
 # problem, each its own engine process, sharing discoveries through the run
 # dir's live knowledge cards. Processes, not threads: status.json carries the
 # engine's pid, so two searches in one process would be indistinguishable to
@@ -1075,10 +1075,10 @@ def run_search(
 
 
 def child_launch_context(config: Config) -> tuple[Path, dict[str, str]]:
-    """(cwd, env) for a child `hillclimb run`: rooted at the hillclimb dir's
-    parent with HILLCLIMB_DIR pinned, so the child never has to search."""
-    root = config.hillclimb_dir.parent if config.hillclimb_dir else Path.cwd()
-    return root, {**os.environ, "HILLCLIMB_DIR": str(config.hillclimb_dir or root / "hillclimb")}
+    """(cwd, env) for a child `hillclimb run`: rooted at the hillclimb dir
+    with HILLCLIMB_DIR pinned, so the child never has to search."""
+    root = config.hillclimb_dir or Path.cwd()
+    return root, {**os.environ, "HILLCLIMB_DIR": str(root)}
 
 
 def spawn_search_proc(
@@ -1086,7 +1086,7 @@ def spawn_search_proc(
 ) -> tuple[subprocess.Popen, Path]:
     """Start a detached `hillclimb run <run_argv...>` as one search of
     `run_dir`, logging to <run>/logs/NN-<slug>.log. The one launcher behind
-    suites, the demo and fleets. Returns (child, log path)."""
+    suites and fleets. Returns (child, log path)."""
     log_dir = run_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"{index:02d}-{slug}.log"

@@ -1,4 +1,4 @@
-"""`hillclimb run`, `resume`, `demo`, `smoke`: starting searches and fleets."""
+"""`hillclimb run`, `resume`, `smoke`: starting searches and fleets."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from hillclimb.api import (
 )
 from hillclimb.agents import get_agent
 from hillclimb.cli import common
-from hillclimb.cli._app import app, print_banner
+from hillclimb.cli._app import app
 from hillclimb.cli.common import _m, fail, next_steps, say, warn
 from hillclimb.config import Config, RouteConfig
 from hillclimb.harness.budget import BudgetManager
@@ -581,7 +581,7 @@ def resume(
     )
 
 
-def _demo_preflight(agent: str) -> None:
+def _agent_preflight(agent: str) -> None:
     """Fail fast, with the fix, on the two tools the engine shells out to."""
     import shutil
 
@@ -606,82 +606,6 @@ def _demo_preflight(agent: str) -> None:
         raise typer.Exit(1)
 
 
-def _print_demo_intro(folder: Path, parallel_searches: int, parallel_agents: int, budget: str) -> None:
-    from rich.panel import Panel
-    from rich.table import Table
-
-    # the shared console: the panel speaks in the same styles as every
-    # other line the CLI prints
-    console = common._console()
-    table = Table.grid(padding=(0, 2))
-    table.add_column(style="cmd")
-    table.add_column()
-    for command, what in DEMO_COMMANDS:
-        table.add_row(command, what)
-    body = Table.grid(padding=(0, 0))
-    body.add_row(
-        f"Circle packing: 26 circles in the unit square, maximize the sum of radii.\n"
-        f"{parallel_searches} searches of {_m(budget)} are climbing in parallel in [path]{_m(folder)}[/],\n"
-        f"each running {parallel_agents} operators at a time, "
-        f"starting from a one-circle baseline (sum of radii 0.5).\n"
-    )
-    body.add_row("They run in the background — watch them from this terminal:\n")
-    body.add_row(table)
-    body.add_row("\n[cmd]hillclimb stop --all[/] ends the demo; the best solutions stay in runs/.")
-    console.print(Panel(body, title="hillclimb demo", border_style="cyan", expand=False))
-    console.print()
-
-
-DEMO_COMMANDS = (
-    ("hillclimb watch candidates", "one search's candidates: agents drafting, debugging, improving"),
-    ("hillclimb watch", "all the searches side by side"),
-    ("hillclimb chart", "the hillclimb curve: best score vs candidates, live"),
-    ("hillclimb tree", "one search's exploration tree: expanded vs discontinued lineages"),
-    ("hillclimb graph", "the knowledge graph growing as searches finish"),
-)
-
-
-@app.command()
-def demo(
-    budget: str = typer.Option("10m", help="Wall-clock budget per search, e.g. 10m"),
-    parallel_searches: int = typer.Option(3, "--parallel-searches", min=1, help="Searches to run at once"),
-    parallel_agents: int = typer.Option(
-        3, "--parallel-agents", "--parallel-operators", min=1,
-        help="Concurrent agents (one candidate each) per search",
-    ),
-    model: str = typer.Option(None, help="Model the agent runs, e.g. sonnet / opus"),
-    agent: str = typer.Option(
-        None, "--agent", "--backend",
-        help="The coding agent that runs the operators: claude-code | codex | pi | dummy (--backend is the old spelling)",
-    ),
-):
-    """Try hillclimb in one command: agents climb the circle-packing problem.
-
-    Creates a hillclimb/ dir here if there is none, installs the bundled
-    problem, starts several searches in parallel in the background, and
-    prints the commands that show them live — run those right here.
-    """
-    from hillclimb.demo import DEMO_PROBLEM_ID, install_demo_problem
-    from hillclimb.project import find_hillclimb_dir
-
-    print_banner()
-    if find_hillclimb_dir() is None:
-        folder = common.scaffold_hillclimb_dir(Path.cwd())
-        say(f"[head]Created hillclimb dir[/] at [path]{_m(folder)}[/]")
-    config = common.load_config(agent=agent, model=model)
-    problem_dir, created = install_demo_problem(config.paths.problems_dir)
-    if created:
-        say(f"[head]Installed the {_m(DEMO_PROBLEM_ID)} problem[/] at [path]{_m(problem_dir)}[/]")
-    _demo_preflight(config.agent)
-    run_dir = _run_problem_fleet(
-        DEMO_PROBLEM_ID, config, budget, parallel_searches, "demo",
-        agent=agent, model=model, climber=None, parallel_agents=parallel_agents,
-        n_replicates=None, holdout=True, learning=True, set_=[],
-    )
-    _print_demo_intro(config.hillclimb_dir, parallel_searches, parallel_agents, budget)
-    say(f"Engine logs in [path]{_m(run_dir / 'logs')}[/]")
-
-
 @app.command()
 def smoke(
     target: str = typer.Argument("circle-packing"),
@@ -698,7 +622,7 @@ def smoke(
     """
     config = common.load_config(agent=agent, model=model)
     problem = load_problem(target, config)
-    _demo_preflight(config.agent)
+    _agent_preflight(config.agent)
     version_cmd = {
         "claude-code": ["claude", "-v"],
         "codex": ["codex", "--version"],

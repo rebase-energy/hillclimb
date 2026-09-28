@@ -386,7 +386,7 @@ def tree2(
     Tree2App(common.load_config(), search).run()
 
 
-@app.command()
+@app.command(short_help="Archive tree beside the progress chart, live, for one search.")
 def archive(
     search: str = typer.Argument(None, help="latest (default), <run-id>, or <run-id>/<search-id>"),
 ):

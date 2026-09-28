@@ -4,12 +4,12 @@
  Start your own climber from a copy of an existing one.                                                                 
                                                                                                                         
  Copies the manifest, the policy (or loop) source and the prompts into                                                  
- hillclimb/climbers/<name>/ so every part is a file you can edit, then                                                  
+ climbers/<name>/ so every part is a file you can edit, then                                                            
  prints how to check and run it. A bundled climber's `module:Class`                                                     
  policy is copied in as `<module>.py:Class` — edit that file.                                                           
                                                                                                                         
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ *    name      TEXT  Name of the new climber (becomes hillclimb/climbers/<name>/) [required]                         │
+│ *    name      TEXT  Name of the new climber (becomes climbers/<name>/) [required]                                   │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --from          TEXT  Climber to copy: a bundled name, a directory holding climber.yaml, or a .py file               │

@@ -236,14 +236,13 @@ def test_improver_draft_prompt_matches_golden(task, config, tmp_path):
 def _meta_hillclimb_dir(tmp_path: Path, budget: str = "20s") -> Path:
     """A standalone hillclimb dir holding heilbronn-11 and a meta-problem over
     it, on the dummy agent and the dev interpreter (no venv build)."""
-    root = tmp_path / "folder"
-    hc = root / "hillclimb"
+    hc = tmp_path / "folder"
     problems = hc / "problems"
     shutil.copytree(REPO / "problems" / "heilbronn-11", problems / "heilbronn-11",
                     ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copytree(META_PROBLEM, problems / "meta-heilbronn", ignore=shutil.ignore_patterns("__pycache__"))
     (problems / "meta-heilbronn" / "meta.yaml").write_text(f"problems: [heilbronn-11]\nbudget: {budget}\n")
-    (hc / "config.yaml").write_text(yaml.safe_dump({
+    (hc / "hillclimb.yaml").write_text(yaml.safe_dump({
         "agent": "dummy",
         "paths": {"runtime_python": sys.executable},
         "budget": {"exec_timeout_s": 600},
@@ -257,7 +256,7 @@ def _meta_hillclimb_dir(tmp_path: Path, budget: str = "20s") -> Path:
 def test_verify_scores_the_reference_meta_problem_with_inner_dummy_searches(tmp_path, monkeypatch):
     hc = _meta_hillclimb_dir(tmp_path)
     monkeypatch.setenv("HILLCLIMB_DIR", str(hc))
-    monkeypatch.chdir(hc.parent)
+    monkeypatch.chdir(hc)
     result = CliRunner().invoke(app, ["verify", "meta-heilbronn"], catch_exceptions=False)
     assert result.exit_code == 0, result.output
     # the dummy agent copies the floor, so the inner search closes no gap —
@@ -271,7 +270,7 @@ def test_a_climber_that_does_not_load_makes_the_meta_verifier_fail(tmp_path, mon
     broken = tmp_path / "broken.py"
     broken.write_text("from hillclimb.sdk import Action\nclass P:\n    def propose(self, view): return None\n")
     monkeypatch.setenv("HILLCLIMB_DIR", str(hc))
-    monkeypatch.chdir(hc.parent)
+    monkeypatch.chdir(hc)
     result = CliRunner().invoke(app, ["verify", "meta-heilbronn", "--solution", str(broken)])
     assert result.exit_code == 1
     assert "FAILED" in result.output

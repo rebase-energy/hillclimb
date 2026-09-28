@@ -21,7 +21,7 @@ the search's tuner (`cNNN(tune/exec/tK)` in `watch`; `hillclimb show` lists
 them with their params).
 
 All commands: `uv run hillclimb <command>` from anywhere inside a hillclimb
-dir (found by upward search for `hillclimb/config.yaml`). Search-addressing
+dir (found by upward search for `hillclimb.yaml`). Search-addressing
 commands accept `<run-id>/<search-id>`, a bare `<run-id>` (when the run has one
 search), or `latest` (the default).
 
@@ -116,7 +116,7 @@ uv run hillclimb tree <search>     # render the exploration tree to <search>/tre
 
 ## Cross-search memory
 
-Finished searches feed a file-based memory under `hillclimb/knowledge/`:
+Finished searches feed a file-based memory under `knowledge/`:
 statistical cards plus LLM-distilled claims (entities classified into a
 concept ontology), all folded into a derived temporal graph index.
 
@@ -125,7 +125,7 @@ uv run hillclimb knowledge graph --stats        # text summary of the graph
 uv run hillclimb knowledge graph                # interactive TUI (zoom/pan/click/scrub) — don't run headless (alias: hillclimb graph)
 uv run hillclimb watch candidates [search]      # TUI straight on a search's candidates — don't run headless
 uv run hillclimb stop --all                     # stop every running search (e.g. a demo)
-uv run hillclimb reset --yes                  # kill this folder's engines AND delete its hillclimb/ dir (other folders untouched)
+uv run hillclimb reset --yes                  # kill this folder's engines AND delete what hillclimb made here (hillclimb.yaml, problems/, runs/, …; other files and folders untouched)
 uv run hillclimb chart                          # live hillclimb curve TUI (best score vs time; several charts = a picker table first, enter/esc) — don't run headless
 uv run hillclimb chart --detail [search]        # same, one search with its exploration tree on the curve — don't run headless
 uv run hillclimb tree [search]                  # exploration tree TUI (expanded / discontinued / failed lineages) — don't run headless
@@ -138,10 +138,10 @@ uv run hillclimb paper add <pdf> --problem <t>  # distill a PDF paper into claim
 uv run hillclimb paper list                     # ingested papers with scope and claim counts
 uv run hillclimb experiment run <spec> [--dry-run] [--parallel]  # arms × problems × repeats (real searches; --dry-run lists jobs)
 uv run hillclimb experiment report [spec]       # compare the arms on holdout, gap vs control judged against the noise floor (--json: gaps + verdicts as data)
-uv run hillclimb climber list                     # bundled climbers (greedy | openevolve | gepa) + hillclimb/climbers/* — the `--climber` refs
-uv run hillclimb climber new mine --from greedy   # copy a climber into hillclimb/climbers/mine/ (manifest + policy source + prompts) to edit
-uv run hillclimb climber check [--climber hillclimb/climbers/mine] [--set climber.params.k=v] [--problem P --smoke]  # replay recorded journals through the climber's policy (no agent): resume-determinism, dangling ids, writes, prompt lint; exit 1 on a breach
-uv run hillclimb run <problem> --climber hillclimb/climbers/mine  # a climber dir (climber.yaml) or one .py file (a SearchPolicy class, or POLICY=...) instead of a bundled name; search.yaml records climber_sha256 and snapshots it
+uv run hillclimb climber list                     # bundled climbers (greedy | openevolve | gepa) + climbers/* — the `--climber` refs
+uv run hillclimb climber new mine --from greedy   # copy a climber into climbers/mine/ (manifest + policy source + prompts) to edit
+uv run hillclimb climber check [--climber climbers/mine] [--set climber.params.k=v] [--problem P --smoke]  # replay recorded journals through the climber's policy (no agent): resume-determinism, dangling ids, writes, prompt lint; exit 1 on a breach
+uv run hillclimb run <problem> --climber climbers/mine  # a climber dir (climber.yaml) or one .py file (a SearchPolicy class, or POLICY=...) instead of a bundled name; search.yaml records climber_sha256 and snapshots it
 uv run hillclimb run <problem> --set climber.ref=openevolve --experiment E --arm A  # one arm by hand (counts in the report)
 uv run hillclimb run <problem> --climber greedy --climber openevolve --climber gepa --arm-set gepa:concurrency.parallel_operators=1  # mixed fleet: one search per climber under one run; `experiment report <run-id>` compares
 ```
@@ -152,7 +152,7 @@ uv run hillclimb run <problem> --climber greedy --climber openevolve --climber g
   `pi.models_file` for local providers. OpenRouter uses
   `backend: pi`, `backend_auth: openrouter`, a provider-qualified model
   such as `openrouter/deepseek/deepseek-v3.2`, and `OPENROUTER_API_KEY` in
-  the environment or `.env` beside config.yaml. Search startup runs cheap
+  the environment or `.env` beside hillclimb.yaml. Search startup runs cheap
   no-tools preflights; a failed preflight means fix that model/sampling
   combination before retrying. Pi errors can exit 0: use Hillclimb's parsed
   status and `agent_stream.jsonl`. The `temperature` experiment spec compares
@@ -160,7 +160,7 @@ uv run hillclimb run <problem> --climber greedy --climber openevolve --climber g
   then use `experiment report temperature --json` for the verdicts.
 
 - **Never edit `journal.jsonl`, `status.json`, or `control/` by hand.**
-  With `store.backend: sqlite` those records live in `hillclimb/store.sqlite`
+  With `store.backend: sqlite` those records live in `store.sqlite`
   instead of the search dir — use `hillclimb status` / `store searches` rather
   than reading files.
   The engine is the single writer of search state; use the CLI commands, which

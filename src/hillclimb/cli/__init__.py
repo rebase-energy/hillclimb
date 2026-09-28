@@ -67,14 +67,20 @@ def main(argv: list[str] | None = None) -> None:
 
         args = [arg for arg in args if arg != "--skip-intro"]
         mark_intro_shown()
-    elif not args or args[0] != "intro":  # `hillclimb intro` plays it itself
+    elif not args or args[0] not in ("intro", "--version", "-V"):  # `intro` plays it itself; a version check is a quick lookup
         from hillclimb.tui.intro import maybe_play_intro
 
         maybe_play_intro()
-    if not args or args in (["--help"], ["-h"]):
-        print_banner()
+    if args and set(args) <= {"--help", "-h", "--all"} and "--all" in args:
+        HillclimbGroup.show_all = True  # every top-level command, not just the core ones
         args = ["--help"]
-    app(args=args, prog_name="hillclimb")
+    if not args or args in (["--help"], ["-h"]):
+        print_banner(trailing_blank=False)  # the help screen opens with its own blank line
+        args = ["--help"]
+    try:
+        app(args=args, prog_name="hillclimb")
+    finally:
+        HillclimbGroup.show_all = False
 
 
 __all__ = ["app", "main", "HillclimbGroup", "BANNER_LINES", "LOGO_LINES", "WORDMARK_LINES",

@@ -8,9 +8,9 @@ __pycache__/
 tasks/data/**/*.csv
 tasks/data/**/*.zip
 .gstack/
-hillclimb/knowledge/graph.json
-hillclimb/store.sqlite*
-hillclimb/knowledge/.distill/
-hillclimb/knowledge/.consolidate/
+/knowledge/graph.json
+/store.sqlite*
+/knowledge/.distill/
+/knowledge/.consolidate/
 .env
 .env.*

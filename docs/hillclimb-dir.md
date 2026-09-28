@@ -4,26 +4,37 @@ Where hillclimb keeps its config, problems, climbers and runs, how a run is laid
 
 ## The hillclimb dir
 
-All hillclimb data lives in one `hillclimb/` folder inside your project, so it
-never mingles with the rest of the repo. `hillclimb init` creates it:
+The hillclimb dir is any folder with a `hillclimb.yaml` in it. `hillclimb
+init` makes the current folder one:
 
 ```
 my-project/
-└── hillclimb/
-    ├── config.yaml     # defaults, and the marker that makes this the hillclimb dir
-    ├── problems/       # problem definitions
-    └── runs/           # one folder per run: its spec, its records, its artifacts
+├── hillclimb.yaml      # defaults, and the marker that makes this the hillclimb dir
+├── problems/           # problem definitions
+└── runs/               # one folder per run: its spec, its records, its artifacts
 ```
 
-`hillclimb climber new <name>` adds `hillclimb/climbers/<name>/` beside them
-(see [climbers.md](climbers.md)).
+`hillclimb init DIR` makes `DIR` (created if missing) the hillclimb dir
+instead — `hillclimb init hillclimb` keeps everything in a `hillclimb/`
+subfolder of a repo. `init` refuses a folder that already has a `problems/`
+or `runs/` of its own and suggests the subfolder. `hillclimb problem get`
+in a folder with no hillclimb dir offers to make the current folder one.
+
+`hillclimb climber new <name>` adds `climbers/<name>/` beside them (see
+[climbers.md](climbers.md)); learning writes `knowledge/`, experiments live in
+`experiments/`.
 
 Commands work from any subdirectory — the hillclimb dir is found by upward
-search for `hillclimb/config.yaml` (like git). Without one, commands error and
-point you at `hillclimb init`; `HILLCLIMB_DIR` pins it explicitly.
+search for `hillclimb.yaml` (like git). Without one, commands error and point
+you at `hillclimb init`; `HILLCLIMB_DIR` pins it explicitly.
 
 Config precedence, highest first: CLI flags → the hillclimb dir's
-`config.yaml` → user `~/.config/hillclimb/config.yaml` → built-in defaults.
+`hillclimb.yaml` → user `~/.config/hillclimb/config.yaml` → built-in defaults.
+
+`hillclimb reset` stops this dir's engines and deletes what hillclimb made in
+it — `hillclimb.yaml`, `problems/`, `runs/`, `knowledge/`, `climbers/`,
+`experiments/` and the sqlite store — and nothing else, since the hillclimb
+dir may be your repo's root.
 
 Machine-scoped state is shared across hillclimb dirs under `~/.cache/hillclimb/`
 (honors `XDG_CACHE_HOME`; `HILLCLIMB_CACHE_DIR` overrides): solution-runtime
@@ -43,8 +54,8 @@ experiment (the header names the file it was launched from). So the recipe
 lives with the record and the artifacts, git explains every run, and
 
 ```bash
-uv run hillclimb run hillclimb/runs/<run-id>/spec.yaml          # exactly as it ran
-uv run hillclimb run hillclimb/runs/<run-id>/spec.yaml --model sonnet   # ad-hoc override
+uv run hillclimb run runs/<run-id>/spec.yaml                    # exactly as it ran
+uv run hillclimb run runs/<run-id>/spec.yaml --model sonnet     # ad-hoc override
 ```
 
 runs it again. The same format is a run spec you can write by hand and commit
@@ -57,8 +68,10 @@ same keys. CLI flags override a spec's values.
 
 ### What git tracks
 
-`hillclimb init` adds rules to the folder's `.gitignore` so that the *record*
-of every run is committed and its *bulk* is not:
+`hillclimb init` adds rules to the hillclimb dir's `.gitignore` (anchored
+with a leading `/`, so they hold whether the dir is a repo's root or a
+subfolder) so that the *record* of every run is committed and its *bulk* is
+not:
 
 - committed: `run.yaml`, `spec.yaml`, each search's `search.yaml`,
   `journal.jsonl`, `status.json`, `knowledge_card.yaml`, the `climber/`
@@ -67,10 +80,10 @@ of every run is committed and its *bulk* is not:
 - ignored: `candidates/` (agent streams, replicate outputs, runtime data),
   the run's `logs/`, the `control/` queue, the rest of `best/` (a submission
   can be large), `store.sqlite`, the derived `knowledge/graph.json`, and
-  `hillclimb/.env` (keys, never).
+  `.env` (keys, never).
 
-A `.gitignore` that already ignores `hillclimb/runs/` as a whole keeps doing
-so; delete that line to get the finer rules.
+A `.gitignore` that already ignores `runs/` as a whole keeps doing so; delete
+that line to get the finer rules.
 
 ### The budget is a gate, not a wall
 
@@ -79,7 +92,7 @@ margin; by default (`budget.deadline: graceful`) whatever is still in flight
 finishes and is committed, so a search can overrun by up to one operator. The
 duration column in `hillclimb watch` keeps counting and says by how much:
 `1h 04m 16s (budget: 1h, 4m 16s over)`. Pass `--set budget.deadline=hard` (or
-set it in `config.yaml`) to cut in-flight operators off at the deadline
+set it in `hillclimb.yaml`) to cut in-flight operators off at the deadline
 instead; they are journaled `abandoned` ("cut off at the budget deadline").
 
 The clock is one dimension of the budget: `budget.max_evaluations` (verifier
@@ -120,20 +133,20 @@ by hand.
 `run.yaml`, `search.yaml`, `journal.jsonl`, `status.json` and `control/` are
 the *file backend's* representation of a search's records. The engine, the
 CLI and the TUIs all read and write those records through one abstraction —
-the **DataStore** (`src/hillclimb/harness/store.py`) — and `hillclimb/config.yaml`
-picks the agent:
+the **DataStore** (`src/hillclimb/harness/store.py`) — and `hillclimb.yaml`
+picks the backend:
 
 ```yaml
 store:
   backend: files        # default — the folder above; nothing to set up, git-versionable
-  # backend: sqlite     # one database file instead: hillclimb/store.sqlite
-  # sqlite_path: hillclimb/store.sqlite
+  # backend: sqlite     # one database file instead: store.sqlite
+  # sqlite_path: store.sqlite
 ```
 
 With `sqlite`, a search dir holds only what has to be files (`candidates/`,
 `best/`, logs) and everything else lives in the database — cross-run views
 (the chart, `store searches`, experiments) query it instead of walking run dirs,
-and N concurrent engines (the demo) write it safely. The single-writer rule
+and N concurrent engines (`--parallel-searches`) write it safely. The single-writer rule
 is unchanged: the engine owns a search's records whichever agent holds
 them; `stop`/`prune` go through the store's command queue.
 

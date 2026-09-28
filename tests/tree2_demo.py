@@ -5,7 +5,7 @@ figure: ~80 iterations, a few deep lineages, many dead ends — in a
 throwaway hillclimb folder, then:
 
     uv run python tests/tree2_demo.py [/tmp/tree2-demo] [80]
-    HILLCLIMB_DIR=/tmp/tree2-demo/hillclimb uv run hillclimb tree2
+    HILLCLIMB_DIR=/tmp/tree2-demo uv run hillclimb tree2
 
 Seeded, so the same folder comes out every time. `tree` works on it too.
 """
@@ -28,9 +28,9 @@ from tests.factories import trial as mk_trial
 root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("/tmp/tree2-demo")
 n_iter = int(sys.argv[2]) if len(sys.argv) > 2 else 80
 rng = random.Random(7)
-hc = root / "hillclimb"
+hc = root
 hc.mkdir(parents=True, exist_ok=True)
-(hc / "config.yaml").write_text("# tree2 demo hillclimb dir\n")
+(hc / "hillclimb.yaml").write_text("# tree2 demo hillclimb dir\n")
 run_id, search_id = "20260915-demo", "archive-demo"
 run_dir = hc / "runs" / run_id
 search_dir = run_dir / "searches" / search_id

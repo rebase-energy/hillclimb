@@ -1,7 +1,7 @@
                                                                                                                         
  Usage: root summit [OPTIONS] [PROBLEM]                                                                                 
                                                                                                                         
- Copy the best solution found so far next to your hillclimb/ folder.                                                    
+ Copy the best solution found so far into your hillclimb dir.                                                           
                                                                                                                         
  Ranks every search of the problem, across all runs, by its selected                                                    
  candidate and copies that search's solution.py plus its declared output                                                
@@ -12,7 +12,7 @@
 │   [problem]      TEXT  Problem key; defaults to the only problem in the hillclimb dir                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ --to            PATH  Destination folder (default: the folder holding hillclimb/)                                    │
+│ --to            PATH  Destination folder (default: the hillclimb dir)                                                │
 │ --help  -h            Show this message and exit.                                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 

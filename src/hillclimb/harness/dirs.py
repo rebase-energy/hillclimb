@@ -27,7 +27,7 @@ def allocate_search_dir(run_dir: Path, problem_id: str) -> Path:
     The problem is an attribute of the search, not its name: the first
     search on a problem in a run is `<problem-id>` (so refs from before
     suffixes stay valid), the next are `<problem-id>-2`, `-3`, ... The claim
-    is an atomic mkdir, so engines started in parallel for one run (a demo,
+    is an atomic mkdir, so engines started in parallel for one run (`--parallel-searches`,
     a suite with a problem listed twice) never share a dir."""
     root = run_dir / SEARCHES_DIRNAME
     root.mkdir(parents=True, exist_ok=True)

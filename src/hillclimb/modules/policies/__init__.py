@@ -153,10 +153,9 @@ def get_policy(
 
 
 def policy_base_dir(config) -> Path | None:
-    """Where a relative policy path resolves from: the folder holding the
-    hillclimb dir (like `paths.runs_dir`), None when no dir is known."""
-    hillclimb_dir = getattr(config, "hillclimb_dir", None)
-    return hillclimb_dir.parent if hillclimb_dir is not None else None
+    """Where a relative policy path resolves from: the hillclimb dir (like
+    `paths.runs_dir`), None when no dir is known."""
+    return getattr(config, "hillclimb_dir", None)
 
 
 def policy_label(name: str) -> str:
