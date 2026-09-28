@@ -1,6 +1,6 @@
 [project]
 name = "hillclimb"
-version = "0.4.0"
+version = "0.5.0"
 description = "Auto-hillclimbing CLI for ML engineering tasks: deterministic greedy search over agent-drafted solutions"
 readme = "README.md"
 license = "MIT"

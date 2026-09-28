@@ -1,6 +1,43 @@
 # Changelog
 
-## 0.4.0 — unreleased
+## 0.5.0 — 2026-09-28
+
+### Added
+- **No bash needed on Windows.** `hillclimb problem get` writes the verifier
+  for the machine that fetches the problem: `verifier.sh` on macOS and Linux,
+  as before, and on Windows a `verifier.py` with the same steps in Python. The
+  engine runs it with its own interpreter. A problem with only a `verifier.sh`
+  still runs on Windows through Git for Windows' bash.
+- **Multidimensional knapsack ladder:** `mknap-100-5` and `mknap-250-10`,
+  Chu & Beasley's OR-Library instances, with the best feasible values as
+  reference lines.
+- `best-known/` (in the repo): the best construction we have for each example
+  problem, with its value, provenance and reference; `check.py` re-scores
+  every file.
+
+### Changed
+- **The agent is the agent; the operator is the move.** The coding agent that
+  runs the operators (draft, debug, improve, ensemble) is `--agent claude-code
+  | codex | pi | dummy` and `agent:` / `agent_auth:` in config.yaml and the
+  `routing:` block; it was `--backend`. The agents a search keeps busy at once
+  are `--parallel-agents` and `concurrency.parallel_agents` (with
+  `concurrency.machine_max_agents`); they were counted as operators. The
+  package is `hillclimb.agents`, the protocol `Agent`. Every old spelling
+  still loads: the flags as aliases, config keys and suite specs on read,
+  `search.yaml` and journals written before the rename.
+- **The hillclimb dir is the folder holding `hillclimb.yaml`.** `hillclimb
+  init [DIR]` makes the current folder (or DIR) one in place; `problems/`,
+  `runs/`, `knowledge/`, `climbers/` and `experiments/` sit beside the file
+  instead of under a nested `hillclimb/` folder. `init` writes `.gitignore`
+  rules that commit each run's record and ignore its bulk.
+- `hillclimb --help` lists the core commands; `hillclimb --help --all` lists
+  every one.
+- CPU accounting: a trial's `cpu_s` counts the solution run (the starter
+  verifiers no longer `exec` their scorer, which dropped it on macOS), agent
+  calls journal their own CPU, and a group killed at a timeout adds what its
+  running descendants had burned.
+
+## 0.4.0 — 2026-09-28
 
 The method is now a **climber**: a shareable bundle (a search policy or loop,
 operators, prompts, a tuner) that the fixed **harness** runs. Everything a user
@@ -35,17 +72,12 @@ load and say where they went.
 - `hillclimb verify` scores a problem whose floor is a set of files
   (`baseline_files`) as the engine does.
 - `hillclimb.sdk`: the one import a climber needs.
+- **Native Windows.** `pip install hillclimb` works on Windows (plotui 0.5.1
+  ships a Windows wheel). File locks, process groups, `hillclimb ps`/`stop`/
+  `reset`, venvs and directory links have Windows equivalents
+  (`harness/oscompat.py`); `.sh` verifiers run through Git for Windows' bash.
 
 ### Changed
-- **The agent is the agent; the operator is the move.** The coding agent that
-  runs the operators (draft, debug, improve, ensemble) is `--agent claude-code
-  | codex | pi | dummy` and `agent:` / `agent_auth:` in config.yaml and the
-  `routing:` block; it was `--backend`. The agents a search keeps busy at once
-  are `--parallel-agents` and `concurrency.parallel_agents` (with
-  `concurrency.machine_max_agents`); they were counted as operators. The
-  package is `hillclimb.agents`, the protocol `Agent`. Every old spelling
-  still loads: the flags as aliases, config keys and suite specs on read,
-  `search.yaml` and journals written before the rename.
 - climber.yaml / config.yaml: `memory: knowledge-graph` → `memory: files`
   (the memory is the YAML under `hillclimb/knowledge/`; the graph is a derived
   index over it). The old spelling still loads; `hillclimb climber check`
