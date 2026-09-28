@@ -135,6 +135,7 @@ PROBLEM_FILES = (
     ("contract.md", "the interface solution.py must implement"),
     ("interface.py", "the output format, machine-checked (hillclimb spaces)"),
     ("verifier.sh", "the ONLY process hillclimb starts: drives solution.py and reports the score"),
+    ("verifier.py", "the ONLY process hillclimb starts (Windows edition of verifier.sh, no bash needed)"),
     ("verify.py", "the scorer — writes the score to $HILLCLIMB_RESULT"),
     ("baseline.py", "the starting solution scored at t=0"),
     ("sample_submission.csv", "a valid, weak submission: the floor the search starts from"),

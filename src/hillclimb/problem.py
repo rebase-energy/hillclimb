@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -360,12 +361,25 @@ def load_interface_fields(problem_dir: Path, meta: dict) -> tuple[Path | None, s
     return interface_path, spaces.describe_interface(module)
 
 
+def windows_edition(path: Path, windows: bool | None = None) -> Path:
+    """On Windows, a shell verifier's `.py` sibling when the problem ships one
+    (`hillclimb problem get` writes verifier.py there instead of verifier.sh),
+    so no bash is needed; otherwise `path` itself."""
+    if windows is None:
+        windows = sys.platform == "win32"
+    if windows and path.suffix == ".sh":
+        sibling = path.with_suffix(".py")
+        if sibling.exists():
+            return sibling
+    return path
+
+
 def _verifier_argv(problem_yaml: Path, problem_dir: Path, meta: dict) -> list[str]:
     """The problem's verifier, as argv. Absolute: a relative program path is
     resolved against the ENGINE's cwd, not the candidate dir the command runs in
     (subprocess does not search cwd for the executable)."""
     name = str(meta.get("verifier", "verifier.sh"))
-    path = (problem_dir / name).resolve()
+    path = windows_edition((problem_dir / name).resolve())
     if not path.exists():
         raise FileNotFoundError(
             f"{problem_yaml}: verifier not found: {path} — a problem is defined by its "

@@ -579,6 +579,20 @@ places they are imported.
 - Bundled problems in `src/hillclimb/demo/` (package data for `problem get`;
   copies of `problems/`, circle-packing with a lean `requirements.txt`); keep
   the two in sync
+- Native Windows (`harness/oscompat.py`, the ONE place POSIX assumptions
+  meet Windows; `tests/test_oscompat.py`): msvcrt locks, CREATE_NEW_PROCESS_GROUP
+  + `taskkill /T /F` as the group kill, psutil (Windows-only dep) for liveness
+  and the `ps` listings — `os.kill(pid, 0)` KILLS on Windows, never call it —
+  `Scripts/python.exe` venvs, junctions when symlinks need privileges, `.cmd`
+  agents resolved through PATHEXT, forward-slash `$HILLCLIMB_*` paths, and a
+  UTF-8-mode relaunch of the CLI (`ensure_utf8_mode`). `problem get` writes the
+  verifier for the fetching OS: verifier.py on Windows (the problem's own, else
+  `demo/windows_verifier.py`), verifier.sh elsewhere; `problem.windows_edition`
+  picks the `.py` sibling at load time; a `.sh`-only problem runs through Git
+  Bash. `tests/test_windows_verifier.py` holds every bundled verifier.sh
+  without its own verifier.py to the standard shape and both editions to one
+  score. `.github/workflows/quickstart.yml` walks the quickstart on
+  ubuntu/macos/windows
 - Driving runs from chat: use the `hillclimb` skill (`.claude/skills/hillclimb/SKILL.md`)
 
 ## Run-state rules

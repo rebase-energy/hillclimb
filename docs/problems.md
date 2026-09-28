@@ -82,6 +82,14 @@ without one is a contract violation rather than a silent zero. Reading the
 score from a file rather than stdout is what keeps it honest — agent-authored
 code runs inside the verifier and shares its stdout.
 
+**On Windows** the bundled problems need no bash: `hillclimb problem get`
+writes a `verifier.py` there instead of `verifier.sh`, the same steps in
+Python (`src/hillclimb/demo/windows_verifier.py`, or a problem's own), and the
+engine runs it with its own interpreter. A problem that has only a
+`verifier.sh` still runs on Windows, through Git for Windows' bash
+(`HILLCLIMB_BASH` points at another). A `verifier.py` must run the solution as
+a subprocess, never import it: in-process, agent code could reach the scorer.
+
 The command runs with cwd = the candidate's working dir (`solution.py`, plus
 `./problem/` and `./data/` symlinks). Validation runs get a
 credential-scrubbed environment; `--holdout` runs in a directory agents never

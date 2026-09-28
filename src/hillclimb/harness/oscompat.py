@@ -15,8 +15,10 @@ the nearest equivalent:
 - venv interpreters live in `bin/python` / `Scripts/python.exe`;
 - directory links are symlinks, falling back to junctions on Windows (a
   symlink needs admin or developer mode there, a junction does not);
-- a `.sh` verifier runs through Git for Windows' bash (Claude Code on Windows
-  needs it too); `HILLCLIMB_BASH` points at another.
+- a problem fetched on Windows carries verifier.py instead of verifier.sh
+  (`problem.windows_edition`), run by this interpreter; a `.sh` verifier
+  that has no `.py` edition runs through Git for Windows' bash
+  (`HILLCLIMB_BASH` points at another).
 """
 
 from __future__ import annotations
@@ -229,13 +231,16 @@ def find_bash() -> str:
 
 def runnable(cmd: list[str]) -> list[str]:
     """`cmd` as the OS can start it: unchanged on POSIX (a script's shebang
-    decides), a `.sh` first token run through bash on Windows, and a bare
+    decides); on Windows a `.sh` first token runs through bash, a `.py` one
+    through this interpreter (a verifier.py needs only the stdlib), and a bare
     program name resolved through PATHEXT there (npm installs `codex` and
     `pi` as `.cmd` shims, which CreateProcess never finds by bare name)."""
     if not IS_WINDOWS or not cmd:
         return cmd
     if cmd[0].lower().endswith(".sh"):
         return [find_bash(), Path(cmd[0]).as_posix(), *cmd[1:]]
+    if cmd[0].lower().endswith(".py"):  # no shebangs: the engine's interpreter runs it
+        return [sys.executable, *cmd]
     if not any(sep in cmd[0] for sep in "/\\"):
         found = shutil.which(cmd[0])
         if found:
