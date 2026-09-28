@@ -12,6 +12,6 @@ hillclimb verify heilbronn-convex-13
 run_help=$(COLUMNS=200 hillclimb run --help)
 extra=()
 if grep -q -- --no-detach <<<"$run_help"; then extra+=(--no-detach); fi
-hillclimb run heilbronn-convex-13 --budget 20s --backend dummy "${extra[@]}"
+hillclimb run heilbronn-convex-13 --budget 20s --backend dummy ${extra[@]+"${extra[@]}"}
 hillclimb summit
 test -f solution.py
