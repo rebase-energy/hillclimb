@@ -480,7 +480,11 @@ def _play() -> None:
     samples = _surface_samples()
     paths = tuple(_ascent_path(x, y) for x, y in CLIMBER_STARTS)
     out = sys.stdout
-    interactive = sys.stdin.isatty()
+    # Windows has no termios/select on a console: the intro plays through
+    # without input there (Ctrl-C still skips it)
+    interactive = sys.stdin.isatty() and sys.platform != "win32"
+    if sys.platform == "win32":
+        os.system("")  # turns on the console's VT processing for the escapes below
     saved = None
     inp = None
     if interactive:

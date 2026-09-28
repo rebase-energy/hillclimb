@@ -193,7 +193,9 @@ def describe_key(info: dict) -> str:
 
 
 def _run(cmd: list[str], env: dict[str, str]) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=60)
+    from hillclimb.harness.oscompat import runnable
+
+    return subprocess.run(runnable(cmd), capture_output=True, text=True, env=env, timeout=60)
 
 
 def _check_claude(auth: str) -> Status:

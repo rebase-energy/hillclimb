@@ -25,6 +25,7 @@ from hillclimb.agents.claude_code import (
     STREAM_FILE,
     usage_total_tokens,
 )
+from hillclimb.harness.oscompat import new_group_kwargs, runnable
 from hillclimb.harness.pricing import cost_usd
 from hillclimb.harness.procs import Reaper
 
@@ -341,14 +342,14 @@ class PiCliAgent:
             with stderr_path.open("w") as stderr_sink:
                 try:
                     proc = subprocess.Popen(
-                        cmd,
+                        runnable(cmd),
                         stdin=subprocess.PIPE,
                         stdout=subprocess.PIPE,
                         stderr=stderr_sink,
                         text=True,
                         cwd=candidate_dir,
                         env=child_env,
-                        start_new_session=True,
+                        **new_group_kwargs(),
                     )
                 except OSError as exc:
                     spawn_error = str(exc)

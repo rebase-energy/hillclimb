@@ -53,6 +53,7 @@ from typing import IO, NamedTuple, Protocol
 from pydantic import BaseModel
 
 from hillclimb.harness.procs import Reaper
+from hillclimb.harness.oscompat import env_path, link_dir, new_group_kwargs, runnable
 
 RESULT_FILE = "eval_result.json"
 
@@ -267,9 +268,9 @@ def verifier_env(
 ) -> dict[str, str]:
     """The `$HILLCLIMB_*` contract a verifier command reads."""
     env = {
-        "HILLCLIMB_PYTHON": str(python),
-        "HILLCLIMB_SOLUTION": str(solution),
-        "HILLCLIMB_RESULT": str(result),
+        "HILLCLIMB_PYTHON": env_path(python),
+        "HILLCLIMB_SOLUTION": env_path(solution),
+        "HILLCLIMB_RESULT": env_path(result),
         "HILLCLIMB_SPLIT": split,
         # the engine's own interpreter, where hillclimb itself is importable
         # (the runtime venv above only carries the interface shim): what a
@@ -280,7 +281,7 @@ def verifier_env(
         env["HILLCLIMB_REPLICATE_SEED"] = str(seed)
         env["HILLCLIMB_TRIAL_SEED"] = str(seed)  # pre-rename spelling, still read by harvested skills
     if params is not None:
-        env["HILLCLIMB_PARAMS"] = str(params)  # the trial's params.json (spaces.params() follows it)
+        env["HILLCLIMB_PARAMS"] = env_path(params)  # the trial's params.json (spaces.params() follows it)
     return env
 
 
@@ -320,12 +321,12 @@ def run_logged(
     cannot say.
     """
     proc = subprocess.Popen(
-        cmd,
+        runnable(cmd),
         cwd=candidate_dir,
         stdout=out,
         stderr=err,
         env=env,
-        start_new_session=True,
+        **new_group_kwargs(),
     )
     reaper = Reaper(proc)
     deadline = time.monotonic() + timeout_s
@@ -453,7 +454,7 @@ class CommandHoldoutScorer:
         for name, target in (("problem", self.problem_dir), ("data", self.data_dir)):
             link = eval_dir / name
             if not link.exists():
-                link.symlink_to(Path(target).resolve(), target_is_directory=True)
+                link_dir(link, Path(target).resolve())
         result_path = eval_dir / RESULT_FILE
         result_path.unlink(missing_ok=True)
         env = dict(os.environ)  # full env: credentials flow

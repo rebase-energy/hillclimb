@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import signal
 
 import typer
@@ -172,7 +171,9 @@ def kill(
             say(f"[head]Search [path]{_m(ref)}[/] is {_m(state)}[/]; nothing to kill.")
             raise typer.Exit(1)
         engine_pid = store.read_status(record.key).pid
-        os.kill(engine_pid, signal.SIGTERM)
+        from hillclimb.harness.oscompat import signal_pid
+
+        signal_pid(engine_pid, signal.SIGTERM)
         say(f"[head]Sent SIGTERM[/] to engine pid {engine_pid} ([path]{_m(ref)}[/]).")
         say(f"Resume with: [cmd]hillclimb resume {_m(ref)}[/]")
 

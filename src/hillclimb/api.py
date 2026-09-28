@@ -39,6 +39,7 @@ from hillclimb.harness.glue import (
     holdout_timing,
     search_climber,
 )
+from hillclimb.harness.oscompat import KILL_SIGNAL, new_group_kwargs, signal_group
 from hillclimb.harness.status import SearchStatus, StatusWriter
 from hillclimb.harness.store import key_for, open_store
 from hillclimb.harness.dirs import allocate_search_dir, create_run_dir
@@ -81,17 +82,18 @@ def default_venv_python(config: Config, kind: str, requirements: Path | None = N
     requirement sets share one venv."""
     import hashlib
 
+    from hillclimb.harness.oscompat import venv_python
     from hillclimb.project import machine_cache_dir
     from hillclimb.runtime import runtime_packages
 
     if requirements is not None:
         digest = hashlib.sha256(requirements.read_bytes()).hexdigest()[:12]
-        return machine_cache_dir() / "venvs" / f"problem-{digest}" / "bin" / "python"
+        return venv_python(machine_cache_dir() / "venvs" / f"problem-{digest}")
     text = "\n".join(runtime_packages(kind))
     if kind == "emflow":
         text += f"\n{config.emflow.source}"
     digest = hashlib.sha256(text.encode()).hexdigest()[:12]
-    return machine_cache_dir() / "venvs" / f"{kind}-{digest}" / "bin" / "python"
+    return venv_python(machine_cache_dir() / "venvs" / f"{kind}-{digest}")
 
 
 def ensure_runtime_venv(
@@ -102,9 +104,9 @@ def ensure_runtime_venv(
     default is a shared hash-keyed venv under the machine cache dir. A
     problem-supplied `requirements` file gets its own content-keyed venv
     (the config path overrides stay kind-scoped and do not apply)."""
-    import fcntl
     from importlib import resources
 
+    from hillclimb.harness.oscompat import lock_file
     from hillclimb.runtime import requirements_resource
 
     if requirements is not None:
@@ -120,7 +122,7 @@ def ensure_runtime_venv(
     venv_dir.parent.mkdir(parents=True, exist_ok=True)
     # concurrent searches on a cold machine must not race the build
     with open(f"{venv_dir}.lock", "w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        lock_file(lock)
         if python.exists():
             return python
         log(f"Creating {kind} runtime venv at {venv_dir} ...")
@@ -1096,7 +1098,7 @@ def spawn_search_proc(
         proc = subprocess.Popen(
             cmd, cwd=cwd, env=env,
             stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
-            start_new_session=True,
+            **new_group_kwargs(detached=True),
         )
     return proc, log_path
 
@@ -1250,12 +1252,12 @@ class FleetHandle:
         while self.alive() and time.monotonic() < deadline:
             time.sleep(0.2)
         for proc in self.alive():
-            _signal_group(proc, signal.SIGKILL)
+            _signal_group(proc, KILL_SIGNAL)
 
 
 def _signal_group(proc: subprocess.Popen, sig: int) -> None:
     try:
-        os.killpg(proc.pid, sig)
+        signal_group(proc.pid, sig)
     except ProcessLookupError:
         pass
     except PermissionError:

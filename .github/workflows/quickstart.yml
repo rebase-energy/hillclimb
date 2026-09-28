@@ -1,0 +1,38 @@
+name: quickstart
+# The website quickstart on every OS: install the wheel with plain pip, as a
+# user would, then walk the steps with the dummy agent (no login, no tokens).
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  quickstart:
+    name: ${{ matrix.os }} / py${{ matrix.python }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.12", "3.14"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@v6
+      - name: Build the wheel
+        run: uv build --wheel
+      - name: pip install hillclimb
+        run: python -m pip install dist/*.whl pytest
+      - name: OS layer tests
+        run: python -m pytest -q -p no:cacheprovider tests/test_oscompat.py
+      - name: Walk the quickstart
+        run: |
+          mkdir "$RUNNER_TEMP/qs" && cd "$RUNNER_TEMP/qs"
+          bash "$GITHUB_WORKSPACE/scripts/quickstart-smoke.sh"

@@ -7,7 +7,6 @@ same small stream format consumed by Hillclimb's live candidate viewer.
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import shutil
@@ -26,6 +25,7 @@ from hillclimb.agents.claude_code import (
 )
 from hillclimb.harness.candidate import utcnow
 from hillclimb.harness.procs import Reaper
+from hillclimb.harness.oscompat import lock_file, new_group_kwargs, runnable
 from hillclimb.harness.pricing import cost_usd
 
 
@@ -350,17 +350,17 @@ class CodexCliAgent:
                 # processes; calls run concurrently once their thread starts.
                 start_lock = Path(tempfile.gettempdir()) / "hillclimb-codex-start.lock"
                 with start_lock.open("w") as lock:
-                    fcntl.flock(lock, fcntl.LOCK_EX)
+                    lock_file(lock)
                     try:
                         proc = subprocess.Popen(
-                            cmd,
+                            runnable(cmd),
                             stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE,
                             stderr=stderr_sink,
                             text=True,
                             cwd=candidate_dir,
                             env=child_env,
-                            start_new_session=True,
+                            **new_group_kwargs(),
                         )
                     except OSError as exc:
                         spawn_error = str(exc)

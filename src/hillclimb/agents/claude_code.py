@@ -10,6 +10,7 @@ from pathlib import Path
 from hillclimb.harness.procs import Reaper
 from hillclimb.harness import quota
 from hillclimb.harness.candidate import utcnow
+from hillclimb.harness.oscompat import new_group_kwargs, runnable
 from hillclimb.agents.base import OperatorRequest, OperatorResult
 
 
@@ -241,14 +242,14 @@ class ClaudeCodeAgent:
         try:
             with stderr_path.open("w") as stderr_sink:
                 proc = subprocess.Popen(
-                    cmd,
+                    runnable(cmd),
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=stderr_sink,
                     text=True,
                     cwd=request.candidate_dir,
                     env=subscription_env(self.auth),
-                    start_new_session=True,  # own process group → killable as a unit
+                    **new_group_kwargs(),  # own process group → killable as a unit
                 )
                 reaper = Reaper(proc)  # reaps through wait4: the call's CPU rides along
                 pid_path.write_text(str(proc.pid))

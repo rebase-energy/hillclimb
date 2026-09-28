@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from hillclimb.harness.budget import BudgetManager
 from hillclimb.harness.candidate import utcnow
+from hillclimb.harness.oscompat import replace_file
 
 STATUS_FILE = "status.json"
 
@@ -108,7 +109,7 @@ def write_status(search_dir: Path, status: SearchStatus) -> None:
     """Atomic write so readers never see a half-written file."""
     tmp = search_dir / (STATUS_FILE + ".tmp")
     tmp.write_text(status.model_dump_json(indent=2))
-    os.replace(tmp, search_dir / STATUS_FILE)
+    replace_file(tmp, search_dir / STATUS_FILE)
 
 
 def read_status(search_dir: Path) -> SearchStatus | None:
@@ -148,15 +149,9 @@ def live_spent_s(status: "SearchStatus", state: str) -> float:
 
 
 def pid_alive(pid: int | None) -> bool:
-    if not pid:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True  # exists, owned by someone else
-    return True
+    from hillclimb.harness.oscompat import pid_alive as alive
+
+    return alive(pid)
 
 
 def _age_s(iso: str) -> float:

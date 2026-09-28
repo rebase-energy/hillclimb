@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +10,7 @@ from pydantic import BaseModel, Field
 from hillclimb.harness.candidate import utcnow
 from hillclimb.harness.dirs import PARAMS_FILE, trial_dir
 from hillclimb.harness.journal import Journal
+from hillclimb.harness.oscompat import replace_file
 from hillclimb.harness.status import derive_state
 
 if TYPE_CHECKING:
@@ -38,7 +38,7 @@ def write_command(search_dir: Path, cmd: ControlCommand) -> Path:
     tmp = control_dir / (name + ".tmp")
     tmp.write_text(cmd.model_dump_json(indent=2))
     path = control_dir / name
-    os.replace(tmp, path)
+    replace_file(tmp, path)
     return path
 
 

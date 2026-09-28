@@ -20,6 +20,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from hillclimb.harness.oscompat import IS_WINDOWS, KILL_SIGNAL, pid_alive, signal_pid
+
 # the launcher's argv: `<python> -m hillclimb.cli run|resume ...` (anchored,
 # so a shell whose command line merely mentions it is not an engine)
 ENGINE_RE = re.compile(r"^\S*python\S*\s+-m\s+hillclimb\.cli\s+(?:run|resume)\b")
@@ -38,14 +40,50 @@ class Engine:
 
 
 def _ps(args: list[str]) -> str:
+    if IS_WINDOWS:
+        return _ps_windows(args)
     try:
         return subprocess.run(["ps", *args], capture_output=True, text=True, check=False).stdout
     except OSError:
         return ""
 
 
+def _ps_windows(args: list[str]) -> str:
+    """The `ps` listings this module reads, synthesized from psutil (Windows
+    has no ps). The engine leads its own process group, so pgid = pid."""
+    import psutil
+
+    if args[:1] == ["-Ewwo"]:  # one pid's environment
+        try:
+            env = psutil.Process(int(args[-1])).environ()
+        except (psutil.Error, OSError, ValueError):
+            return ""
+        return " ".join(f"{k}={v}" for k, v in env.items() if k == "HILLCLIMB_DIR")
+    fields = args[1].rstrip("=").split("=,")
+    rows = []
+    for proc in psutil.process_iter(["pid", "ppid", "cmdline", "cpu_percent", "memory_info", "create_time"]):
+        info = proc.info
+        cmdline = info.get("cmdline") or []
+        command = " ".join([Path(cmdline[0]).name, *cmdline[1:]]) if cmdline else "?"
+        memory = info.get("memory_info")
+        elapsed = int(time.time() - (info.get("create_time") or time.time()))
+        values = {
+            "pid": info["pid"],
+            "ppid": info.get("ppid") or 0,
+            "pgid": info["pid"],
+            "%cpu": f"{info.get('cpu_percent') or 0.0:.1f}",
+            "rss": (memory.rss // 1024) if memory else 0,
+            "etime": f"{elapsed // 3600:02d}:{elapsed // 60 % 60:02d}:{elapsed % 60:02d}",
+            "command": command,
+        }
+        rows.append(" ".join(str(values[name]) for name in fields))
+    return "\n".join(rows)
+
+
 def _environ_dir(pid: int) -> Path | None:
-    if sys.platform == "linux":
+    if IS_WINDOWS:
+        text = _ps(["-Ewwo", "command=", "-p", str(pid)])
+    elif sys.platform == "linux":
         try:
             raw = Path(f"/proc/{pid}/environ").read_bytes().decode(errors="replace")
         except OSError:
@@ -163,16 +201,14 @@ def engine_trees(table: dict[int, Proc] | None = None) -> list[tuple[Engine, lis
 
 
 def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+    return pid_alive(pid)
 
 
 def _signal_tree(engine: Engine, pids: list[int], sig: int) -> None:
+    if IS_WINDOWS:  # taskkill /T takes the tree; survivors that left it go one by one
+        for pid in (engine.pid, *pids):
+            signal_pid(pid, sig)
+        return
     groups = {engine.pgid}
     for pid in pids:
         try:
@@ -207,5 +243,5 @@ def kill_engines(engines: list[Engine], grace_s: float = 5.0) -> list[Engine]:
         time.sleep(0.2)
     forced = [e for e in engines if survivors(e)]
     for engine in forced:
-        _signal_tree(engine, trees[engine.pid], signal.SIGKILL)
+        _signal_tree(engine, trees[engine.pid], KILL_SIGNAL)
     return forced

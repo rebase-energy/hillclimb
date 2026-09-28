@@ -23,9 +23,10 @@ report `cpu_s=None`.
 from __future__ import annotations
 
 import os
-import signal
 import subprocess
 import time
+
+from hillclimb.harness.oscompat import IS_WINDOWS, kill_group
 
 
 def parse_ps_time(text: str) -> float:
@@ -50,7 +51,9 @@ def parse_ps_time(text: str) -> float:
 def descendant_cpu_s(pid: int) -> float:
     """CPU seconds of every live descendant of `pid`, read from `ps` — what
     a process-group kill is about to throw away. Zero when `ps` is missing
-    or says nothing."""
+    or says nothing (Windows: no `ps`, so the orphans' CPU goes uncounted)."""
+    if IS_WINDOWS:
+        return 0.0
     try:
         listing = subprocess.run(
             ["ps", "-A", "-o", "pid=,ppid=,time="],
@@ -133,10 +136,7 @@ class Reaper:
         if proc.returncode is not None:
             return proc.returncode
         orphans = descendant_cpu_s(proc.pid)
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
+        kill_group(proc.pid)
         code = self.wait()
         if orphans > 0.0:
             self.cpu_s = (self.cpu_s or 0.0) + orphans

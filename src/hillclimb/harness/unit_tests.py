@@ -18,6 +18,7 @@ from hillclimb.harness.executor import (
     scrubbed_env,
     verifier_env,
 )
+from hillclimb.harness.oscompat import env_path, link_dir, lock_file
 from hillclimb.problem import ProblemSpec, UnitTestSpec
 
 BUNDLES_DIR = "test-bundles"
@@ -82,14 +83,12 @@ def freeze_for_run(problem: ProblemSpec, run_dir: Path) -> UnitTestSpec | None:
         verify_frozen(source)
         return source
 
-    import fcntl
-
     root = run_dir / BUNDLES_DIR
     root.mkdir(parents=True, exist_ok=True)
     bundle = root / problem.problem_id
     lock_path = root / f".{problem.problem_id}.lock"
     with lock_path.open("a+") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        lock_file(lock)
         if not (bundle / MANIFEST_FILE).exists():
             _validate_links(source.root)
             temporary = Path(tempfile.mkdtemp(prefix=f".{problem.problem_id}-", dir=root))
@@ -209,7 +208,7 @@ class UnitTestRunner:
         for link_name in ("data", "problem"):
             source = candidate_dir / link_name
             if source.exists():
-                (work_dir / link_name).symlink_to(source.resolve(), target_is_directory=True)
+                link_dir(work_dir / link_name, source.resolve())
         for source in [solution, *candidate_dir.glob("candidate_*.py")]:
             if source.exists():
                 shutil.copy(source, work_dir / source.name)
@@ -233,7 +232,7 @@ class UnitTestRunner:
                 params=params_path if params_path.exists() else None,
             )
         )
-        env["HILLCLIMB_TESTS"] = str(test_root.absolute())
+        env["HILLCLIMB_TESTS"] = env_path(test_root.absolute())
         prepend_pythonpath(env, self.pythonpath)
         values = {
             "python": str(self.python),
