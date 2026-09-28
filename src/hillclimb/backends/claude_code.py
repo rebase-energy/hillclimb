@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import signal
 import subprocess
 import threading
 import time
@@ -10,6 +9,7 @@ from pathlib import Path
 
 from hillclimb.harness import quota
 from hillclimb.harness.candidate import utcnow
+from hillclimb.harness.oscompat import kill_group, new_group_kwargs, runnable
 from hillclimb.backends.base import OperatorRequest, OperatorResult
 
 
@@ -122,10 +122,7 @@ class _StreamReader(threading.Thread):
 
 
 def _kill_group(proc: subprocess.Popen) -> None:
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
+    kill_group(proc.pid)
     proc.wait()
 
 
@@ -248,14 +245,14 @@ class ClaudeCodeBackend:
         try:
             with stderr_path.open("w") as stderr_sink:
                 proc = subprocess.Popen(
-                    cmd,
+                    runnable(cmd),
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=stderr_sink,
                     text=True,
                     cwd=request.candidate_dir,
                     env=subscription_env(self.auth),
-                    start_new_session=True,  # own process group → killable as a unit
+                    **new_group_kwargs(),  # own process group → killable as a unit
                 )
                 pid_path.write_text(str(proc.pid))
                 reader = _StreamReader(proc.stdout, stream_path)

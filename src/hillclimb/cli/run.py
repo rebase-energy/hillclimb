@@ -32,6 +32,7 @@ from hillclimb.config import Config, RouteConfig
 from hillclimb.harness.budget import BudgetManager
 from hillclimb.harness.core import Harness
 from hillclimb.harness.journal import Journal
+from hillclimb.harness.oscompat import new_group_kwargs, runnable
 from hillclimb.harness.run import RunMeta, search_ref
 from hillclimb.harness.store import SearchRecord, key_for, open_store
 from hillclimb.modules.policies.base import Action
@@ -448,7 +449,7 @@ def _spawn_resume(config: Config, record: SearchRecord) -> tuple[int, Path]:
         proc = subprocess.Popen(
             cmd, cwd=cwd, env=env,
             stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
-            start_new_session=True,
+            **new_group_kwargs(detached=True),
         )
     return proc.pid, log_path
 
@@ -661,7 +662,7 @@ def smoke(
     }.get(config.backend)
     if version_cmd:
         version = subprocess.run(
-            version_cmd, capture_output=True, text=True
+            runnable(version_cmd), capture_output=True, text=True
         ).stdout.strip()
         typer.echo(f"{config.backend} version: {version}")
     run_id = f"smoke-{datetime.now():%Y%m%d-%H%M%S}"

@@ -2,19 +2,20 @@
 
 Caps concurrent agent calls across every search process sharing a runs_dir
 (suites spawn one process per search; each may run several workers). Slots
-are `flock`ed files — the lock dies with the process, so crashes free their
-slot with no reclamation logic. Caveat: advisory flock is unreliable on NFS
+are locked files (flock; msvcrt on Windows) — the lock dies with the
+process, so crashes free their slot with no reclamation logic. Caveat: advisory flock is unreliable on NFS
 mounts; keep runs_dir on a local filesystem.
 """
 
 from __future__ import annotations
 
-import fcntl
 import os
 import threading
 import time
 from pathlib import Path
 from typing import Callable
+
+from hillclimb.harness.oscompat import lock_fd
 
 RETRY_INTERVAL_S = 2.0
 
@@ -25,7 +26,7 @@ class SlotHandle:
 
     def release(self) -> None:
         if self._fd is not None:
-            os.close(self._fd)  # closing drops the flock
+            os.close(self._fd)  # closing drops the lock
             self._fd = None
 
     def __enter__(self) -> "SlotHandle":
@@ -52,9 +53,7 @@ class MachineSlots:
             return SlotHandle(None)
         for index in range(self.limit):
             fd = os.open(self.root / f"slot-{index:02d}", os.O_CREAT | os.O_RDWR, 0o644)
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except OSError:
+            if not lock_fd(fd, blocking=False):
                 os.close(fd)
                 continue
             os.ftruncate(fd, 0)

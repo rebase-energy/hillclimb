@@ -10,6 +10,7 @@ without driving Textual.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -840,6 +841,9 @@ def open_in_file_manager(path: Path) -> None:
     Detached: the TUI must not wait on it."""
     import subprocess
 
+    if sys.platform == "win32":
+        os.startfile(path)  # Explorer
+        return
     opener = ["open"] if sys.platform == "darwin" else ["xdg-open"]
     subprocess.Popen(
         [*opener, str(path)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL

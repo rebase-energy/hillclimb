@@ -5,6 +5,7 @@ import os
 import shutil
 from pathlib import Path
 
+from hillclimb.harness.oscompat import link_dir
 from hillclimb.harness.run import SEARCHES_DIRNAME
 
 
@@ -52,7 +53,7 @@ def _link_and_copy(source_dir: Path, target_dir: Path, extra: tuple[str, ...] = 
         source = source_dir / link_name
         link = target_dir / link_name
         if source.exists() and not link.exists():
-            link.symlink_to(source.resolve(), target_is_directory=True)
+            link_dir(link, source.resolve())
     names = ["solution.py", *(p.name for p in source_dir.glob("candidate_*.py")), *extra]
     for name in names:
         source = source_dir / name
@@ -120,10 +121,10 @@ def create_candidate_dir(
     candidate_dir.mkdir(parents=True, exist_ok=True)
     link = candidate_dir / "data"
     if not link.exists():
-        link.symlink_to(data_dir.resolve(), target_is_directory=True)
+        link_dir(link, data_dir.resolve())
     problem_link = candidate_dir / "problem"
     if not problem_link.exists():
-        problem_link.symlink_to(problem_dir.resolve(), target_is_directory=True)
+        link_dir(problem_link, problem_dir.resolve())
     if parent_solution and parent_solution.exists():
         shutil.copy(parent_solution, candidate_dir / "solution.py")
     if unit_tests_dir is not None:

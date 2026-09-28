@@ -364,6 +364,17 @@ def _enter_pressed(timeout: float) -> bool:
     """Wait up to `timeout` for Enter on a cbreak stdin, swallowing any other
     keys without echoing them into the picture. EOF counts as Enter so a
     closed stdin can never hang the intro."""
+    if sys.platform == "win32":  # msvcrt reads keys unechoed, no cbreak needed
+        import msvcrt
+
+        deadline = time.monotonic() + timeout
+        while True:
+            while msvcrt.kbhit():
+                if msvcrt.getwch() in ("\r", "\n"):
+                    return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.02)
     import select
 
     fd = sys.stdin.fileno()
@@ -387,7 +398,9 @@ def _play() -> None:
     out = sys.stdout
     interactive = sys.stdin.isatty()
     saved = None
-    if interactive:
+    if sys.platform == "win32":
+        os.system("")  # turns on the console's VT processing for the escapes below
+    elif interactive:
         # cbreak for the whole playback: Enter skips at any point, and ISIG
         # is kept so Ctrl-C still raises KeyboardInterrupt and skips too.
         import termios

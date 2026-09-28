@@ -19,6 +19,8 @@ dependencies = [
     "pydot>=4.0.1",
     "networkx>=3.0",
     "plotui>=0.2",
+    # Windows has no `ps`/`os.kill(pid, 0)`: process listing and liveness go through psutil there
+    "psutil>=5.9; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

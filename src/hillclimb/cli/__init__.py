@@ -60,6 +60,9 @@ def main(argv: list[str] | None = None) -> None:
     typer's "Missing command".
     """
     args = list(sys.argv[1:] if argv is None else argv)
+    from hillclimb.harness.oscompat import ensure_utf8_mode
+
+    ensure_utf8_mode(args)
     if "--skip-intro" in args:
         # Opt out of the first-run intro for good; `hillclimb intro` still plays it.
         from hillclimb.tui.intro import mark_intro_shown
