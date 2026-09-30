@@ -15,9 +15,13 @@ agent, verifier or venv, and reports every contract breach it can see:
                       same action at every budget point (resume contract)
 - `idempotent`        asking one instance twice gives the same answer
                       (`propose` must not consume state)
+- `resume`            an instance that saw the journal GROW, result by result
+                      as a live search shows it, proposes what one that was
+                      shown the finished journal at once proposes — what a
+                      resumed search does
 - `references`        every target / inspiration id exists, the operator is
-                      one the harness runs, and operators that need a target
-                      carry one
+                      one this search may run (the climber's own operators
+                      included), and operators that need a target carry one
 - `read-only`         the journal's candidates and the search dir's files are
                       byte-identical after the policy ran
 - `templates`         the prompt override dir lints clean (render.py)
@@ -30,6 +34,7 @@ follow up with a dummy-agent smoke search.
 from __future__ import annotations
 
 import os
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Sequence
@@ -38,17 +43,33 @@ from hillclimb.harness.evaluation import accept_band
 from hillclimb.modules.operators import get_operator, operator_names
 from hillclimb.config import Config
 from hillclimb.harness.journal import Journal
-from hillclimb.modules.policies.base import TUNE_ACTION, Action, BudgetView, PolicyInput, SearchPolicy
+from hillclimb.modules.policies.base import INJECT_ACTION, TUNE_ACTION, Action, BudgetView, PolicyInput, SearchPolicy
 
 # Fractions of the budget still remaining at which every journal is
 # probed: fresh, mid-search, and inside the ensemble window.
 BUDGET_POINTS: tuple[float, ...] = (1.0, 0.5, 0.05)
+# the `resume` check shows a policy the journal at most this many times as it
+# grows (each step costs a holdout-blind copy of the prefix)
+RESUME_STEPS = 60
+# what the harness runs itself: no operator class, no prompt
+HARNESS_ACTIONS = frozenset({TUNE_ACTION, INJECT_ACTION})
 
 
+class _BuiltinOperators:
+    """The built-in catalogue, for a check that was handed no operator set."""
 
-def known_operators() -> frozenset[str]:
-    """What the harness can run: every registered operator, plus `tune`."""
-    return frozenset(operator_names()) | {TUNE_ACTION}
+    def names(self) -> tuple[str, ...]:
+        return tuple(operator_names())
+
+    def get(self, name: str):
+        return get_operator(name)
+
+
+def known_operators(operators=None) -> frozenset[str]:
+    """What this search can run: its operators (the climber's `OperatorSet`;
+    the built-in catalogue when none is given), plus the harness's own
+    `tune` and `inject`."""
+    return frozenset((operators or _BuiltinOperators()).names()) | HARNESS_ACTIONS
 
 
 @dataclass(frozen=True)
@@ -131,6 +152,33 @@ def _replayed(make_policy: Callable[[], SearchPolicy], case: JournalCase, config
     return policy
 
 
+def _prefix(journal: Journal, n: int) -> Journal:
+    """The journal as it stood when its n-th candidate had landed."""
+    prefix = Journal.__new__(Journal)
+    prefix.backend = _NullBackend()
+    prefix.lock = threading.RLock()
+    prefix.candidates = dict(list(journal.candidates.items())[:n])
+    return prefix
+
+
+def _grown(make_policy: Callable[[], SearchPolicy], case: JournalCase, config: Config) -> SearchPolicy:
+    """A fresh policy that watched the journal grow: shown each new result
+    through a view of the journal as it stood then — what `PolicyLoop.observe`
+    does during a live search. (Long journals grow in `RESUME_STEPS` strides.)"""
+    policy = make_policy()
+    ids = list(case.journal.candidates)
+    stride = max(1, -(-len(ids) // RESUME_STEPS))
+    shown = 0
+    while shown < len(ids):
+        upto = min(len(ids), shown + stride)
+        grown = JournalCase(case.label, _prefix(case.journal, upto), case.higher_is_better, case.total_s)
+        view = _view(grown, config, 1.0)
+        for candidate_id in ids[shown:upto]:
+            policy.observe(view, view.journal.candidates[candidate_id])
+        shown = upto
+    return policy
+
+
 def _snapshot_journal(journal: Journal) -> list[tuple[str, str]]:
     return [(cid, c.model_dump_json()) for cid, c in journal.candidates.items()]
 
@@ -163,9 +211,10 @@ def _describe(action: Action | None) -> str:
     return " ".join(parts)
 
 
-def _reference_problems(action: Action, journal: Journal) -> list[str]:
+def _reference_problems(action: Action, journal: Journal, operators=None) -> list[str]:
     problems: list[str] = []
-    known = known_operators()
+    operators = operators or _BuiltinOperators()
+    known = known_operators(operators)
     if action.operator not in known:
         problems.append(f"unknown operator {action.operator!r} (harness runs {sorted(known)})")
     for cid in (action.target_id, *action.inspiration_ids):
@@ -182,10 +231,10 @@ def _reference_problems(action: Action, journal: Journal) -> list[str]:
                 problems.append(f"tune targets unscored {target.candidate_id}")
             if not target.tunable:
                 problems.append(f"tune targets {target.candidate_id} which declares no params.json")
-    elif action.operator in known:
+    elif action.operator in known and action.operator not in HARNESS_ACTIONS:
         # the operator's own rule — the same one the harness applies before
         # it creates or spends anything
-        reason = get_operator(action.operator).valid_target(target)
+        reason = operators.get(action.operator).valid_target(target)
         if reason:
             problems.append(reason)
     return problems
@@ -198,10 +247,14 @@ def check_policy(
     *,
     budget_points: Sequence[float] = BUDGET_POINTS,
     prompts_dir: Path | None = None,
+    operators=None,
 ) -> CheckReport:
     """Run every conformance check over `cases` (plus a synthetic empty
     journal). `make_policy` must return a NEW instance each call — the
-    replay check depends on it. Never writes; never runs an agent."""
+    replay check depends on it. `operators` is the search's operator set
+    (`Climber.operator_set()`), so a climber's own operators are known;
+    without one the built-in catalogue stands in. Never writes; never runs
+    an agent."""
     from hillclimb.prompts.render import lint_overrides
 
     findings: list[Finding] = []
@@ -242,10 +295,11 @@ def check_policy(
         try:
             a = _replayed(make_policy, case, config)
             b = _replayed(make_policy, case, config)
+            live = _grown(make_policy, case, config)
         except Exception as exc:  # noqa: BLE001
             findings.append(Finding("replay", False, f"observe raised {type(exc).__name__}: {exc}", case.label))
             continue
-        replay_ok, idem_ok, view_mutated = True, True, False
+        replay_ok, idem_ok, resume_ok, view_mutated = True, True, True, False
         proposals: list[str] = []
         for fraction in budget_points:
             try:
@@ -257,6 +311,7 @@ def check_policy(
                 view_mutated = view_mutated or _snapshot_journal(view.journal) != handed
                 y = b.propose(_view(case, config, fraction))
                 x_again = a.propose(_view(case, config, fraction))
+                z = live.propose(_view(case, config, fraction))
             except Exception as exc:  # noqa: BLE001
                 findings.append(
                     Finding("replay", False, f"propose raised at {fraction:.0%} budget: {type(exc).__name__}: {exc}", case.label)
@@ -282,13 +337,25 @@ def check_policy(
                         case.label,
                     )
                 )
+            if x == y and x != z:
+                resume_ok = False
+                findings.append(
+                    Finding(
+                        "resume", False,
+                        f"a resumed search would diverge at {fraction:.0%} budget: the policy that watched "
+                        f"the journal grow proposes {_describe(z)}, one shown the finished journal {_describe(x)}",
+                        case.label,
+                    )
+                )
             if x is not None:
-                for problem in _reference_problems(x, case.journal):
+                for problem in _reference_problems(x, case.journal, operators):
                     findings.append(Finding("references", False, f"at {fraction:.0%} budget: {problem}", case.label))
         if replay_ok:
             findings.append(Finding("replay", True, "; ".join(proposals), case.label))
         if idem_ok and replay_ok:
             findings.append(Finding("idempotent", True, "propose is stable", case.label))
+        if resume_ok and replay_ok:
+            findings.append(Finding("resume", True, "live and resumed state agree", case.label))
         if not any(f.check == "references" and f.journal == case.label for f in findings):
             findings.append(Finding("references", True, "every id resolves", case.label))
         journal_same = _snapshot_journal(case.journal) == before_journal and not view_mutated
@@ -319,7 +386,7 @@ def check_policy(
 
 
 class _NullBackend:
-    """An empty, write-rejecting journal agent for the synthetic case."""
+    """An empty, write-rejecting journal backend for the synthetic case."""
 
     path = None
 

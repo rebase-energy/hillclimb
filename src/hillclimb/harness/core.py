@@ -1334,8 +1334,10 @@ class Harness:
             if job.kind == "tune" and job.candidate.candidate_id == target.candidate_id
         ]
         index = len(target.trials) + len(pending)
+        # the tuner the search was built with holds the merged params (the
+        # climber's, with the user's on top) — the seed is one of them
         seed = tune_seed(
-            int(self.config.climber.tuner_params.get("seed", 0)), target.candidate_id, index
+            int((getattr(self.tuner, "params", None) or {}).get("seed", 0)), target.candidate_id, index
         )
         try:
             values = self.tuner.ask(

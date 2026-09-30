@@ -166,3 +166,92 @@ def test_openevolve_policy_drives_search_end_to_end(task, config):
     # better score) rather than piling up alongside it
     assert policy.db.get_best_program().id == "c003"
     assert "c002" not in policy.db.programs
+
+
+# --- live vs resume -----------------------------------------------------------
+#
+# A resumed search rebuilds the database by replaying the journal through
+# `PolicyLoop.catch_up`; it must end up with the database the live run had,
+# or the two would propose differently from the same journal.
+
+
+def _catch_up(journal: Journal, config, params=PARAMS):
+    """A fresh policy brought up to date the way a resumed search does it."""
+    from types import SimpleNamespace
+
+    from hillclimb.harness.loop import PolicyLoop
+
+    policy = get_policy("openevolve", params)
+    PolicyLoop(policy).catch_up(SimpleNamespace(view=lambda: make_view(journal, config)))
+    return policy
+
+
+def _observe_live(policy, journal: Journal, config, cid: str) -> None:
+    """What `PolicyLoop.observe` does when a result lands: a fresh view."""
+    view = make_view(journal, config)
+    policy.observe(view, view.journal.candidates[cid])
+
+
+def _pending(journal: Journal, cid: str, op: str, parent_id: str | None = None) -> None:
+    journal.candidate_created(
+        Candidate(candidate_id=cid, operator=op, status="pending", parent_id=parent_id)
+    )
+
+
+def _db_state(policy) -> dict:
+    db = policy.db
+    return {
+        "iteration_found": {pid: p.iteration_found for pid, p in sorted(db.programs.items())},
+        "fitness": {pid: p.metrics["combined_score"] for pid, p in sorted(db.programs.items())},
+        "islands": [sorted(island) for island in db.islands],
+        "cells": [dict(sorted(cells.items())) for cells in db.island_feature_maps],
+    }
+
+
+def _next(policy, journal: Journal, config):
+    action = policy.propose(make_view(journal, config))
+    return action.operator, action.target_id, action.inspiration_ids, action.policy_meta
+
+
+LANDED = [
+    ("c000", "baseline", 0.10, None, "pass\n"),
+    ("c001", "draft", 0.50, None, "a = 1\n" * 10),
+    ("c002", "draft", 0.70, None, "b = 2\n" * 30),
+    ("c003", "improve", 0.72, "c002", "b = 3\n" * 45),
+    ("c004", "improve", 0.64, "c001", "a = 4\n" * 70),
+]
+
+
+def test_resumed_database_is_the_live_one(config, tmp_path):
+    journal = Journal(tmp_path / "j.jsonl")
+    live = get_policy("openevolve", PARAMS)
+    for cid, op, score, parent, code in LANDED:
+        scored(journal, tmp_path, cid, op, score, parent_id=parent, code=code)
+        _observe_live(live, journal, config, cid)
+    resumed = _catch_up(Journal(tmp_path / "j.jsonl"), config)
+    assert _db_state(resumed) == _db_state(live)
+    assert _next(resumed, journal, config) == _next(live, journal, config)
+
+
+def test_resumed_database_ignores_the_order_results_landed_in(config, tmp_path):
+    journal = Journal(tmp_path / "j.jsonl")
+    live = get_policy("openevolve", PARAMS)
+    _pending(journal, "c001", "draft")
+    _pending(journal, "c002", "draft")
+    for cid, score, code in (("c002", 0.7, "b = 2\n" * 30), ("c001", 0.5, "a = 1\n" * 10)):
+        scored(journal, tmp_path, cid, "draft", score, code=code)  # c002 lands first
+        _observe_live(live, journal, config, cid)
+    resumed = _catch_up(Journal(tmp_path / "j.jsonl"), config)
+    assert _db_state(resumed) == _db_state(live)
+
+
+def test_resumed_database_matches_after_a_tune_trial(config, tmp_path):
+    journal = Journal(tmp_path / "j.jsonl")
+    live = get_policy("openevolve", PARAMS)
+    for cid, score in (("c001", 0.5), ("c002", 0.6)):
+        scored(journal, tmp_path, cid, "draft", score, code=f"v = '{cid}'\n" * 10)
+        _observe_live(live, journal, config, cid)
+    scored(journal, tmp_path, "c001", "draft", 0.9, code="v = 'c001'\n" * 10)  # its best trial moved
+    _observe_live(live, journal, config, "c001")
+    resumed = _catch_up(Journal(tmp_path / "j.jsonl"), config)
+    assert _db_state(resumed) == _db_state(live)

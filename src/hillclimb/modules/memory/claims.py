@@ -51,6 +51,8 @@ ENTITY_KINDS = ("technique", "library", "model_family", "feature", "practice")
 # the distill pass is cheap summarization work; route it to the small model
 # unless the user's routing block says otherwise
 DEFAULT_DISTILL_MODEL = "haiku"
+# the journal audit line a memory pass leaves with what its own agent call spent
+MEMORY_AGENT_CALL = "memory_agent_call"
 
 
 class Claim(BaseModel):
@@ -459,6 +461,7 @@ def _distill(
     knowledge_dir: Path,
     config: Config,
     log,
+    on_result=None,
 ) -> list[Claim]:
     concepts = ensure_concepts(knowledge_dir)
     entities = load_entities(knowledge_dir)
@@ -485,6 +488,8 @@ def _distill(
         timeout_s=config.learning.claims_timeout_s,
         default_model=DEFAULT_DISTILL_MODEL,
     )
+    if on_result is not None:
+        on_result(result)
     if not result.ok:
         log(f"learning: distill agent failed ({result.error_kind}): {result.error_message}")
         return []
@@ -532,9 +537,30 @@ def distill_claims(
     knowledge_dir: Path,
     config: Config,
     log,
+    record_cost: bool = False,
 ) -> list[Claim]:
     """The post-search LLM pass: journal + winning solution -> typed claims.
-    Best effort by contract — callers treat [] as 'nothing learned'."""
+    Best effort by contract — callers treat [] as 'nothing learned'.
+
+    `record_cost` (the engine's own pass, never a CLI re-distill: the engine
+    is the journal's single writer) leaves a `memory_agent_call` audit line
+    with what the pass spent. It is memory's spend, not the search's: budgets
+    and `journal_spend` count candidates only."""
+
+    def record(result) -> None:
+        try:
+            journal.audit_event(
+                MEMORY_AGENT_CALL,
+                memory_pass="distill",
+                ok=result.ok,
+                model=result.model_id,
+                cost_usd=result.cost_usd,
+                total_tokens=result.total_tokens,
+                duration_s=result.duration_s,
+            )
+        except Exception as exc:  # noqa: BLE001 - an audit line never costs the claims
+            log(f"learning: could not record the distill pass's cost: {exc}")
+
     claims = _distill(
         card=card,
         digest=_search_digest(journal, problem, card),
@@ -543,6 +569,7 @@ def distill_claims(
         knowledge_dir=knowledge_dir,
         config=config,
         log=log,
+        on_result=record if record_cost else None,
     )
     return backdate_claims(claims, journal)
 

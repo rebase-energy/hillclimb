@@ -568,6 +568,7 @@ def _distill_knowledge(
                     knowledge_dir=knowledge_dir,
                     config=config,
                     log=log,
+                    record_cost=True,  # this engine is the journal's writer
                 )
                 if card.claims:
                     log(f"learning: {len(card.claims)} claim(s) distilled")

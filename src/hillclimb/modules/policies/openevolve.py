@@ -83,13 +83,20 @@ class OpenEvolvePolicy:
         db_kwargs["db_path"] = None
         self.db_config = DatabaseConfig(**db_kwargs)
         self.feature_dimensions = list(self.db_config.feature_dimensions)
+        self._ProgramDatabase = ProgramDatabase
+        self._reset()
+
+    def _reset(self) -> None:
         with self._seeded(0):  # ProgramDatabase.__init__ seeds the global RNG
-            self.db = ProgramDatabase(self.db_config)
+            self.db = self._ProgramDatabase(self.db_config)
         self._added = 0  # programs added, drives island round-robin for drafts
+        # what the database was built from, in journal order: (id, score)
+        self._synced: list[tuple[str, float]] = []
 
     # --- SearchPolicy protocol ---
 
     def propose(self, view: PolicyInput) -> Action | None:
+        self._sync(view)
         if self.debug_enabled:
             tip = self._greedy.debuggable_tip(view)
             if tip is not None:
@@ -103,10 +110,35 @@ class OpenEvolvePolicy:
         """Bin every scored candidate into the grid. Buggy/abandoned ones are
         not programs (OpenEvolve drops failed evaluations too); the debug
         chain is hillclimb's way of recovering them."""
-        if candidate.val_score is None or candidate.candidate_id in self.db.programs:
-            return
-        if candidate.operator == "baseline" and not _improvable(candidate):
-            return  # a declared floor has no code to evolve from
+        self._sync(view)
+
+    def _sync(self, view: PolicyInput) -> None:
+        """Bring the database up to date with the journal. The database is a
+        function of the journal alone — the scored candidates in JOURNAL
+        order, each added at its own position — never of the order results
+        landed in or of when this was called, so a resumed search rebuilds
+        exactly the database the live one had. A result that lands out of
+        order, or a tune trial that moves a score already binned, rebuilds it."""
+        wanted = [
+            (position, candidate)
+            for position, candidate in enumerate(view.journal.candidates.values(), 1)
+            if self._is_program(candidate)
+        ]
+        signature = [(c.candidate_id, float(c.val_score)) for _, c in wanted]
+        if signature[: len(self._synced)] != self._synced:
+            self._reset()
+        for position, candidate in wanted[len(self._synced):]:
+            self._add(view, candidate, position)
+            self._synced.append((candidate.candidate_id, float(candidate.val_score)))
+
+    @staticmethod
+    def _is_program(candidate: Candidate) -> bool:
+        if candidate.val_score is None:
+            return False
+        # a declared floor has no code to evolve from
+        return not (candidate.operator == "baseline" and not _improvable(candidate))
+
+    def _add(self, view: PolicyInput, candidate: Candidate, position: int) -> None:
         metrics = self._metrics(view, candidate)
         missing = [
             dim for dim in self.feature_dimensions
@@ -127,7 +159,7 @@ class OpenEvolvePolicy:
             parent_id=parent.id if parent is not None else None,
             generation=parent.generation + 1 if parent is not None else 0,
             timestamp=_timestamp(candidate.finished_at or candidate.created_at),
-            iteration_found=len(view.journal.candidates),
+            iteration_found=position,
             metrics=metrics,
             metadata={"candidate_id": candidate.candidate_id, "operator": candidate.operator},
         )
@@ -139,7 +171,7 @@ class OpenEvolvePolicy:
                 else self._added % self.db_config.num_islands
             )
         island = int(island) % self.db_config.num_islands
-        with self._seeded(len(view.journal.candidates)):
+        with self._seeded(position):
             self.db.add(program, iteration=program.iteration_found, target_island=island)
             self.db.increment_island_generation(island_idx=island)
             if self.db.should_migrate():
@@ -188,9 +220,9 @@ class OpenEvolvePolicy:
                 # the sampler may return a code-less floor or a pruned lineage;
                 # fall back to the island's best improvable program
                 parent = self._best_in(pool, island) or parent
+            cell = self._cell(parent)  # inside the window: the grid lookup may draw
         inspirations = [p for p in inspirations if p.id != parent.id and p.id in pool]
         island = int(parent.metadata.get("island", island))
-        cell = self._cell(parent)
         context = self._render_context(view, parent, inspirations, island, cell)
         return Action(
             operator="improve",

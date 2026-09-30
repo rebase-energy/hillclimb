@@ -41,6 +41,21 @@
   and `FleetEngine` take the new names, and `load_experiment` /
   `ExperimentSpec` are `load_study` / `StudySpec`.
 
+### Fixed
+- **A resumed `openevolve` search has the database the live one had.** The
+  MAP-Elites database is now rebuilt from the journal alone (scored
+  candidates in journal order), so it no longer depends on the order results
+  landed in, on a tune trial moving a score already binned, or on a resume
+  showing every candidate the finished journal.
+- **`hillclimb climber check` has a `resume` finding** that catches exactly
+  that class of bug: a policy that watched the journal grow must propose what
+  one shown the finished journal proposes. The check also knows a climber's
+  own operators now (it reported them as unknown), and `inject`.
+- **A tuner seed set by the climber seeds the tuner.** Only a seed the user
+  overlaid in `climber.tuner_params` was used.
+- **The claim-distill pass records what it spent**: a `memory_agent_call`
+  audit line in the journal. It stays outside the search's budget.
+
 ## 0.5.0 — 2026-09-28
 
 ### Added

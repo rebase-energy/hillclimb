@@ -44,7 +44,7 @@ def test_greedy_conforms(config, tmp_path):
     assert report.ok, report.render()
     assert report.policy == "greedy"
     checks = {f.check for f in report.findings}
-    assert checks == {"constructs", "starts", "replay", "idempotent", "references", "read-only", "templates"}
+    assert checks == {"constructs", "starts", "replay", "idempotent", "resume", "references", "read-only", "templates"}
     # the synthetic empty journal is always probed, before the recorded ones
     assert [f.journal for f in report.findings if f.check == "replay"] == ["empty", "t/one"]
     assert "draft (minimal)" in _by_check(report, "starts")[0].detail
@@ -162,6 +162,59 @@ def test_consuming_propose_is_a_breach(config, tmp_path):
     report = check_policy(CountingPolicy, _cases(tmp_path), config)
     failed = [f for f in _by_check(report, "idempotent") if not f.ok]
     assert failed and "asking twice" in failed[0].detail
+
+
+class JournalSizePolicy:
+    """Keeps what the journal looked like when each result was shown — the
+    shape of the OpenEvolve bug: a live search shows a journal that grows,
+    a resumed one the finished journal for every candidate."""
+
+    name, params = "journal-size", {}
+
+    def __init__(self):
+        self.seen = 0
+
+    def propose(self, view):
+        return Action(operator="draft", args={"complexity": str(self.seen)})
+
+    def observe(self, view, candidate):
+        self.seen += len(view.journal.candidates)
+
+
+def test_state_that_depends_on_when_a_result_was_shown_is_a_breach(config, tmp_path):
+    report = check_policy(JournalSizePolicy, _cases(tmp_path), config)
+    failed = [f for f in _by_check(report, "resume", "t/one") if not f.ok]
+    assert failed and "a resumed search would diverge" in failed[0].detail
+    assert all(f.ok for f in _by_check(report, "replay"))  # two replays agree: only `resume` sees it
+
+
+class CrossoverPolicy:
+    name, params = "crossover", {}
+
+    def propose(self, view):
+        return Action(operator="crossover")
+
+    def observe(self, view, candidate):
+        pass
+
+
+def test_a_climbers_own_operator_is_known_to_the_check(config, tmp_path):
+    from hillclimb.climber import OperatorSet
+    from hillclimb.modules.operators import Operator
+    from hillclimb.modules.operators.base import Preparation
+
+    class Crossover(Operator):
+        name, role = "crossover", "combine"
+
+        def prepare(self, ctx):
+            return Preparation(prompt="cross")
+
+    cases = _cases(tmp_path)
+    report = check_policy(CrossoverPolicy, cases, config)
+    assert any("unknown operator 'crossover'" in f.detail for f in _by_check(report, "references") if not f.ok)
+    operators = OperatorSet({"crossover": (Crossover, {})})
+    report = check_policy(CrossoverPolicy, cases, config, operators=operators)
+    assert report.ok, report.render()
 
 
 def test_dangling_and_missing_targets_are_breaches(config, tmp_path):

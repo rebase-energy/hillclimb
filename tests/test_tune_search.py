@@ -309,3 +309,28 @@ class TestGreedyTuneRule:
         a = GreedyPolicy(params=params).propose(make_view(journal, config))
         b = GreedyPolicy(params=params).propose(make_view(Journal(tmp_path / "journal.jsonl"), config))
         assert a == b
+
+
+def test_tune_seed_comes_from_the_tuner_the_search_was_built_with(task, config):
+    """A seed the climber sets (merged into the tuner's params by
+    `glue.build_tuner`) must seed the asks, not only one the user overlays."""
+    from hillclimb.modules.tuners.base import tune_seed
+    from hillclimb.modules.tuners.random_search import RandomTuner
+
+    seeds: list[int] = []
+
+    class Recording(RandomTuner):
+        def ask(self, space, history, *, higher_is_better, seed):
+            seeds.append(seed)
+            return super().ask(space, history, higher_is_better=higher_is_better, seed=seed)
+
+    agent = FakeAgent()
+    agent.queue(script=TUNED_SCRIPT, notes="tunable draft\n", files={"params.json": PARAMS})
+    agent.queue(script=ok_script(0.3), notes="worse improve\n")
+    searcher, journal, _ = make_searcher(task, config, agent)
+    searcher.tuner = Recording({"seed": 7})  # what build_tuner hands the harness
+    config.climber.tuner_params = {}  # the user overlaid nothing
+    searcher.run()
+
+    assert len(journal.get("c001").trials) == 3
+    assert seeds == [tune_seed(7, "c001", 1), tune_seed(7, "c001", 2)]

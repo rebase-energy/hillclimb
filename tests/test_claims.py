@@ -200,6 +200,32 @@ class TestDistillPass:
         }
         # prompt written next to the pass's artifacts
         assert (search_dir / "distill" / "prompt.md").exists()
+        # a re-distill from the CLI never writes to the journal
+        assert not [r for r in journal.backend.records() if r.get("event") == "memory_agent_call"]
+
+    def test_the_engines_distill_pass_records_what_it_spent(self, tmp_path, monkeypatch):
+        """The pass runs outside the harness, so its cost is in no candidate:
+        it leaves an audit line instead — memory's spend, never the search's."""
+        from hillclimb.harness.budget import journal_spend
+
+        journal = make_journal(tmp_path, [scored("c001", "draft", 0.74, "baseline GBM", str(tmp_path))])
+        card = self._card(journal)
+        agent = FakeAgent()
+        agent.queue(operator="distill", files={"claims.yaml": CLAIMS_YAML}, cost_usd=0.07)
+        monkeypatch.setattr("hillclimb.api.get_agent", lambda *a, **k: agent)
+        search_dir = tmp_path / "search"
+        search_dir.mkdir()
+        before = journal_spend(journal)
+        distill_claims(
+            journal, problem=FakeProblem(), card=card, search_dir=search_dir,
+            knowledge_dir=tmp_path / "knowledge", config=Config(), log=lambda m: None,
+            record_cost=True,
+        )
+        [line] = [r for r in journal.backend.records() if r.get("event") == "memory_agent_call"]
+        assert line["memory_pass"] == "distill" and line["ok"] is True
+        assert line["cost_usd"] == 0.07
+        assert journal_spend(journal) == before  # budgets count candidates only
+        assert list(Journal(journal.path).candidates) == ["c001"]  # replay skips the line
 
     def test_distill_route_override(self, tmp_path, monkeypatch):
         journal = make_journal(tmp_path, [scored("c001", "draft", 0.7)])

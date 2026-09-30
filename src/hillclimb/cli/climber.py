@@ -256,7 +256,9 @@ def climber_check(
                     search_dir=record.search_dir,
                 )
             )
-    report = check_policy(make_policy, cases, config, prompts_dir=loaded.prompts_dir)
+    report = check_policy(
+        make_policy, cases, config, prompts_dir=loaded.prompts_dir, operators=loaded.operator_set()
+    )
     if report.ok:
         resolved = getattr(make_policy(), "resolved_params", None)
         resolved_params = resolved() if callable(resolved) else params
