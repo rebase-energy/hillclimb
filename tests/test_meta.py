@@ -343,3 +343,28 @@ def test_inner_env_drops_the_outer_verifiers_contract(monkeypatch, tmp_path):
     assert "PYTHONPATH" not in env, "the outer shim would shadow hillclimb for the inner engine"
     assert env["HILLCLIMB_DIR"] == str(tmp_path)
     assert env["HILLCLIMB_CACHE_DIR"] == "/cache"
+
+
+def test_meta_check_runs_the_import_rule_then_the_climber_check(tmp_path, monkeypatch, capsys):
+    """`hillclimb meta check` end to end through the CLI: the reference
+    improver candidate passes; a file that reaches past the sdk is refused
+    before anything is imported."""
+    import json
+
+    from hillclimb.cli import main as cli_main
+
+    (tmp_path / "hillclimb.yaml").write_text("")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
+    with pytest.raises(SystemExit) as exc:
+        cli_main(["meta", "check", "--climber", str(GREEDY_SOURCE), "--json"])
+    assert exc.value.code == 0
+    assert json.loads(capsys.readouterr().out)["ok"] is True
+
+    sneaky = tmp_path / "solution.py"
+    sneaky.write_text("from hillclimb.harness.journal import Journal\n" + GREEDY_SOURCE.read_text())
+    with pytest.raises(SystemExit) as exc:
+        cli_main(["meta", "check", "--climber", str(sneaky)])
+    assert exc.value.code == 1
+    assert "hillclimb.harness.journal" in capsys.readouterr().err
+

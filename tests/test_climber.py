@@ -352,6 +352,15 @@ def test_a_run_folder_written_by_0_5_still_loads(tmp_path):
     assert block["tuner"] == "random" and block["tuner_params"] == {"seed": 3}
     assert "description" not in block and "similarity" not in block
     ClimberSpec.model_validate(block)  # it is a block
+    # a record without a manifest (v2, or a v3 run folder that predates it): the
+    # name and the params over it — and openevolve's MAP-Elites settings go to the selector
+    old = SearchMeta.model_validate({
+        "schema_version": 2, "search_id": "s", "run_id": "r", "problem": "p", "problem_id": "p",
+        "agent": "claude-code", "model": "sonnet", "metric": "m",
+        "policy": "openevolve", "policy_params": {"random_seed": 42, "num_drafts": 2},
+    })
+    assert old.climber_spec["select"] == "map-elites" and old.climber_spec["select_params"] == {"random_seed": 42}
+    assert old.climber_spec["params"] == {"ensemble": False, "tune_budget": 0, "num_drafts": 2}
     # a 0.6 record is left as it is
     current = SearchMeta.model_validate({**meta.model_dump(), "climber_ref": None})
     assert current.climber_spec == block and current.climber_ref is None

@@ -4,8 +4,6 @@ live, publish, record — and the user keeps the switch."""
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from hillclimb.agents.fake import FakeAgent

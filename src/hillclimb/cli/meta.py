@@ -86,13 +86,13 @@ def meta_evaluate(
 
 @meta_app.command("check")
 def meta_check(
-    ctx: typer.Context,
     climber: Path = typer.Option(Path("solution.py"), "--climber", help="The one-file climber to check"),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
 ):
     """The cheap pre-verifier for an improver's candidate: the file may
-    import only hillclimb.sdk, hillclimb.spaces and the standard library,
-    and then everything `hillclimb climber check` verifies — it loads, has
+    import only hillclimb.sdk, hillclimb.spaces, the prebuilt blocks
+    (hillclimb.policies and its siblings) and the standard library, and
+    then everything `hillclimb climber check` verifies — it loads, has
     exactly one policy, replays recorded searches deterministically and
     never writes. Exit 1 on any breach; no agent, no verifier, no inner search.
     """
@@ -110,6 +110,6 @@ def meta_check(
     if not as_json:
         say("[ok]imports: OK[/] (hillclimb.sdk and the standard library only)")
     climber_check(
-        ctx, climber=str(climber), policy=None, problem=None, set_=[], limit=20,
+        spec=None, climber=str(climber), problem=None, set_=[], limit=20,
         smoke=False, smoke_budget="2m", as_json=as_json,
     )

@@ -4,7 +4,7 @@ does the rest. Needs the `openevolve` extra."""
 
 from __future__ import annotations
 
-from tests.factories import make_policy, trial as mk_trial, name_climber
+from tests.factories import make_policy, trial as mk_trial
 
 import random
 from pathlib import Path

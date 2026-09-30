@@ -1,9 +1,10 @@
                                                                                                                         
  Usage: root meta check [OPTIONS]                                                                                       
                                                                                                                         
- The cheap pre-verifier for an improver's candidate: the file may import only hillclimb.sdk, hillclimb.spaces and the   
- standard library, and then everything `hillclimb climber check` verifies — it loads, has exactly one policy, replays   
- recorded searches deterministically and never writes. Exit 1 on any breach; no agent, no verifier, no inner search.    
+ The cheap pre-verifier for an improver's candidate: the file may import only hillclimb.sdk, hillclimb.spaces, the      
+ prebuilt blocks (hillclimb.policies and its siblings) and the standard library, and then everything `hillclimb climber 
+ check` verifies — it loads, has exactly one policy, replays recorded searches deterministically and never writes. Exit 
+ 1 on any breach; no agent, no verifier, no inner search.                                                               
                                                                                                                         
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --climber          PATH  The one-file climber to check [default: solution.py]                                        │

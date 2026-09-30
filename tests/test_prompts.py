@@ -1,7 +1,6 @@
 from hillclimb.modules.operators.builtin import COMPLEXITY_CUES
 from hillclimb.prompts.render import render
 import pytest
-from tests.factories import name_climber
 
 
 def test_render_replaces_tokens():

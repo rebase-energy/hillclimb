@@ -48,7 +48,7 @@ _OPENEVOLVE_SCHEDULE_KNOBS = (
 )
 
 
-def _from_05_config(data: dict) -> dict:
+def block_from_05(data: dict) -> dict:
     """The `climber:` block hillclimb.yaml held in 0.4/0.5 named a climber
     (`ref:`) and what the user laid over it; `operators:` was that overlay,
     a mapping by operator name; `graph:` sat beside `memory:`. Same settings,
@@ -155,7 +155,7 @@ class ClimberSpec(BaseModel):
         for key, advice in _GONE.items():
             if key in data:
                 raise ValueError(f"`{key}`: {advice}")
-        return _from_05_config(data)
+        return block_from_05(data)
 
     @model_validator(mode="after")
     def _one_brain(self) -> ClimberSpec:

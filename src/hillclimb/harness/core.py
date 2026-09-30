@@ -35,7 +35,6 @@ from hillclimb.modules.operators import (
 from hillclimb.prompts.render import render
 from hillclimb.harness.routing import AgentPool, ResolvedRoute, Router
 from hillclimb.harness.sandbox import agent_policy
-from hillclimb.harness.run import SEARCHES_DIRNAME
 from hillclimb.harness.glue import ParkedSearch, StopRequested
 from hillclimb.harness.slots import MachineSlots
 from hillclimb.spaces import describe_params as spaces_describe, with_values

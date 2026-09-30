@@ -180,16 +180,20 @@ class SearchMeta(BaseModel):
             if value is not None and key not in ("description", "similarity", "holdout_timing")
         }
         if not manifest and isinstance(data.get("climber"), str):
-            # v2 kept no manifest: the name is all there is (a preset, a file)
-            from hillclimb.modules.spec import expand_name
+            # no manifest was kept: the name is all there is (a preset, a
+            # file), with the params laid over it — the 0.5 config shape, and
+            # read the same way (an openevolve search's MAP-Elites settings
+            # among them go to the selector)
+            from hillclimb.modules.spec import block_from_05
 
             try:
-                block = expand_name(data["climber"])
+                block = block_from_05({"ref": data["climber"], "params": dict(overlay)})
             except ValueError:
-                block = {}
-        params = {**(block.get("params") or {}), **overlay}
-        if params:
-            block["params"] = params
+                block = {"params": dict(overlay)} if overlay else {}
+        else:
+            params = {**(block.get("params") or {}), **overlay}
+            if params:
+                block["params"] = params
         if tuner:
             block["tuner"] = tuner
         merged_tuner_params = {**(manifest.get("tuner_params") or {}), **tuner_params}

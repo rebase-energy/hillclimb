@@ -20,7 +20,6 @@ import pytest
 
 from hillclimb.agents.fake import FakeAgent
 from tests.test_parallel_search import GOLDEN_SCENARIOS, make_searcher
-from tests.factories import name_climber
 
 GOLDEN_DIR = Path(__file__).parent / "golden" / "prompts"
 UPDATE = os.environ.get("HILLCLIMB_UPDATE_GOLDENS") == "1"
