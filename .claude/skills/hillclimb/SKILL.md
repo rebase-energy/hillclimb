@@ -139,11 +139,13 @@ uv run hillclimb paper add <pdf> --problem <t>  # distill a PDF paper into claim
 uv run hillclimb paper list                     # ingested papers with scope and claim counts
 uv run hillclimb experiment run <spec> [--dry-run] [--parallel]  # a study: experiments × problems × repeats (real searches; --dry-run lists jobs)
 uv run hillclimb experiment report [spec]       # compare the experiments on holdout, gap vs control judged against the noise floor (--json: gaps + verdicts as data)
-uv run hillclimb climber list                     # bundled climbers (greedy | openevolve | gepa) + climbers/* — the `--climber` refs
-uv run hillclimb climber new mine --from greedy   # copy a climber into climbers/mine/ (manifest + policy source + prompts) to edit
-uv run hillclimb climber check [--climber climbers/mine] [--set climber.params.k=v] [--problem P --smoke]  # replay recorded journals through the climber's policy (no agent): resume-determinism, dangling ids, writes, prompt lint; exit 1 on a breach
-uv run hillclimb run <problem> --climber climbers/mine  # a climber dir (climber.yaml) or one .py file (a Policy class, or POLICY=...) instead of a bundled name; search.yaml records climber_sha256 and snapshots it
-uv run hillclimb run <problem> --set climber.ref=openevolve --study S --experiment E  # one experiment by hand (counts in the report)
+uv run hillclimb climber list                     # presets (greedy | openevolve | gepa), one-file climbers under climbers/, and the registered building blocks per slot
+uv run hillclimb climber show [NAME]              # a climber as the `climber:` block a run config takes (a preset, a .py file, this folder's; a pre-0.6 climber dir comes out as its block)
+uv run hillclimb climber new mine --from greedy   # copy greedy's source into climbers/mine.py and print the block that runs it
+uv run hillclimb climber check [SPEC.yaml] [--climber NAME] [--set climber.params.k=v] [--problem P --smoke]  # resolve every module, then replay recorded journals through the policy (no agent): resume-determinism, dangling ids, writes, prompt lint; a spec checks every entry's climber; exit 1 on a breach
+uv run hillclimb run <problem> --climber climbers/mine.py  # a preset's name or one .py file (a Policy class, or POLICY=...); replaces the folder's `climber:` block. search.yaml records climber_sha256 and the block, and snapshots it
+uv run hillclimb run run.yaml                     # a run spec: each entry's `climber:` block DEFINES that search's climber (policy/loop, select, operators, tuner, memory, params); a top-level `climber:` is the entries' default
+uv run hillclimb run <problem> --set climber=openevolve --set climber.select_params.num_islands=3 --study S --experiment E  # one experiment by hand (counts in the report); `climber=` names the block, `climber.<field>` edits it
 uv run hillclimb run <problem> --climber greedy --climber openevolve --climber gepa --experiment-set gepa:concurrency.parallel_agents=1  # mixed fleet: one search per climber under one run; `experiment report <run-id>` compares
 ```
 

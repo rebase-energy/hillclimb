@@ -26,8 +26,8 @@ the design rationale; the shipped surface is:
   bindings are `show=False` and the footer stays legible). Positions come from a 3D
   spring layout cached in graph.json (`pos3`, schema v2; the 2D `pos`
   stays for hillclimb-go). Screenshot: `graph-tui.png`.
-- Config: `learning.claims`, `learning.claims_timeout_s`,
-  `learning.graph_retrieval`; CLI: `knowledge distill|rebuild|graph`.
+- Config: the climber's `memory_params` (`claims`, `graph_retrieval`) and the
+  user's `learning.claims_timeout_s`; CLI: `knowledge distill|rebuild|graph`.
 
 One deliberate deviation from the sketch below: claim supersession is
 computed at graph-build time (two temporal rules in
@@ -45,7 +45,7 @@ climber may bring its own. `modules/memory/base.py` holds the contract,
 `build_graph` / `retrieve_claims` / `query_graph`; `modules/memory/graphs.py`
 resolves a module the way similarity scores are resolved (registry name, a
 `.py` file, `module:Class`), and `harness/glue.build_graph_module` is the one
-place consumers ask — the user's `climber.graph`, else the climber's `graph:`
+place consumers ask — the climber's `memory_params.graph`
 (from the search's snapshot when there is one).
 
 What the harness relies on — the **claim-node convention** — is stated in the
@@ -80,14 +80,14 @@ and never pins a layout across keys.
   one agent call per concept with 3+ live claims rewrites
   `knowledge/playbooks/<concept>.md` — reviewable git diffs. Draft prompts
   inject a matching playbook INSTEAD of the raw claims block
-  (`learning.playbooks`), and credit flows to the playbook's
+  (`memory_params.playbooks`), and credit flows to the playbook's
   `source_claims`, keeping the loop closed through the rewrite.
 - **Skill library** (`modules/memory/skills.py`): scored non-baseline winners are harvested
   verbatim into `knowledge/skills/<family>--<run-ref>/` (2 best per family,
   direction-aware). The next search's FIRST draft gets the best match
   (same-family by score, else concept-sibling by recency) as
   `reference_solution.py` plus a starter cue; later drafts stay
-  reference-free (`learning.skills`).
+  reference-free (`memory_params.skills`).
 - **Memory as a tool**: `hillclimb knowledge query "<terms>" [--json]` is an
   LLM-free graph lookup (entities lead with their live claims, track
   records, retirement status). All operator contracts advertise it via a
@@ -111,7 +111,7 @@ Beta-style smoothing so one bad search can't kill a claim. Retrieval ranks
 by adjusted confidence when a record exists; a claim injected ≥3 times whose
 adjusted confidence sinks below 0.15 is retired through the supersession
 machinery (gone from retrieval and live views, still visible in scrubber
-history). Gated by `learning.credit` (default on).
+history). Gated by `memory_params.credit` (default on).
 
 Known coarseness, accepted for v1: attribution is per-search — every
 injected claim shares the same reward, since claims reach only the draft

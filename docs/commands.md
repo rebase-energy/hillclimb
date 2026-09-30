@@ -62,7 +62,8 @@ the run has a single search), or `latest` (the default).
 | `disconnect <claude\|codex\|pi\|openrouter> [--local]` | undo a connect on hillclimb's side: comment the pin out of the same config file, remove the staged homes under `~/.cache/hillclimb/`, drop an OpenRouter key from the `.env`; the agent's own login is never touched |
 | `smoke [problem]` | one real agent call end-to-end (auth / contract check) |
 | `climber list` | the climbers `run --climber` accepts: the bundled ones and every one under `climbers/` |
-| `climber new <name> [--from REF]` | copy a climber (manifest, policy source, prompts) into `climbers/<name>/` for editing |
+| `climber show [NAME]` | print a climber (a preset, a `.py` file, this folder's, a pre-0.6 directory) as the block a run config takes |
+| `climber new <name> [--from NAME]` | copy a policy's source into `climbers/<name>.py` and print the block that runs it |
 | `climber check [--climber REF] [--set k=v] [--problem P] [--smoke] [--json]` | conformance check for a climber over the store's recorded journals; `--smoke` adds a dummy-agent search |
 | `store searches [--problem KEY]` / `store sync` | list what the record store holds / import the folder's searches into the configured store |
 | `knowledge graph [--stats]` | interactive knowledge-graph TUI (or a text summary) |

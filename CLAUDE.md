@@ -66,17 +66,24 @@ shim).
 import directions): `hillclimb.harness` is the fixed core — `core.py` plus everything
 that scores, records or spends (evaluation, executor, journal, candidate, store, run,
 budget, slots, control) and `glue.py`, config → climber → loop; `hillclimb.modules` is
-everything a climber exchanges, one subpackage per kind with its contract in `base.py`
-(`policies/`, `operators/`, `tuners/`, `similarity/`, `memory/`), implementations
-importing only `hillclimb.sdk`; `hillclimb.tui` is every terminal view and its layout
+everything a climber is built from, one subpackage per kind with its contract in
+`base.py` (`policies/`, `selectors/`, `operators/`, `tuners/`, `memory/`,
+`similarity/`), implementations importing only `hillclimb.sdk`, plus `refs.py` (the ONE
+resolver of a module's name) and `spec.py` (`ClimberSpec`, the `climber:` block — light
+enough for `config.py` to import); `hillclimb.tui` is every terminal view and its layout
 (never imported by the harness or the modules); `hillclimb.cli` is one module per
 command group with `common.py` for what commands share (reached as `common.x()` so
 one patch covers every command) and `__main__.py` for the engine children. The flat
-top level is the public surface only: `api`, `config`, `problem`, `project`,
-`benchmark_providers`, `climber`, `experiment`, `connect`, `spaces` (byte-copied into
-runtime venvs, so it stays), `sdk/`, `demo/`, `agents/`, `providers/`, `prompts/`,
-`runtime/`, `climbers/`. `_moved.py` maps pre-move `module:Class` refs at the two
-places they are imported.
+top level is the public surface only: `api` (incl. `run` / `run_spec`), `config`,
+`problem`, `project`, `benchmark_providers`, `climber`, `experiment`, `connect`,
+`spaces` (byte-copied into runtime venvs, so it stays), the six facades `policies`,
+`selectors`, `operators`, `tuners`, `memory`, `loops` (lazy single modules:
+`hillclimb.policies.Greedy`; never packages — `_moved.py` owns the
+`hillclimb.policies.` prefix of pre-move refs), `sdk/`, `demo/`, `agents/`,
+`providers/` (emflow, mlebench, einsteinarena), `prompts/`, `runtime/`, `climbers/`
+(climber libraries that bring several modules: `gepa/`). `_moved.py` maps pre-move
+module prefixes (`MOVED`) and renamed classes (`RENAMED`) wherever a `module:Class`
+ref is imported.
 
 - The hillclimb dir: any folder holding a `hillclimb.yaml` (the config and
   the marker), found by upward search; problems/, runs/, knowledge/,
@@ -86,12 +93,13 @@ places they are imported.
   those hillclimb-owned entries (`common.owned_paths`), never the folder.
   This repo's root is its own hillclimb dir.
 - Every run carries its spec: `api.write_run_spec` writes `runs/<run-id>/spec.yaml`
-  (one `SuiteEntry` per search as resolved — `spec_entry`; entries carry `climber`
-  and `set` too) from every launch path (foreground run, suite, fleet, experiment),
-  so `hillclimb run <run_dir>/spec.yaml` reruns it; `init` writes no `specs/` any
-  more and its `.gitignore` rules (`common.INIT_GITIGNORE`) commit a run's record
-  and ignore its bulk (candidates/, logs/, control/, best/ except solution.py +
-  params.json, store.sqlite, knowledge/graph.json, .env)
+  (one `SuiteEntry` per search as resolved — `spec_entry`; entries carry the FULL
+  `climber:` block and `set`) from every launch path (foreground run, suite, fleet,
+  experiment, `api.run` / `run_spec`), so `hillclimb run <run_dir>/spec.yaml` reruns
+  it; `init` writes no `specs/` any more and its `.gitignore` rules
+  (`common.INIT_GITIGNORE`) commit a run's record and ignore its bulk (candidates/,
+  logs/, control/, best/ except solution.py + params.json, store.sqlite,
+  knowledge/graph.json, .env)
 - Directory vocabulary: every level is `<level>_dir` — `run_dir`,
   `search_dir`, `candidate_dir` (`searches/<id>/candidates/<cid>/`, where the
   agent works), `trial_dir` (`candidates/<cid>/trials/t<i>/`, holds the
@@ -246,66 +254,98 @@ places they are imported.
   directly (`agents/openrouter.py`, `OPENROUTER_API_KEY`); its card noise is ~0.02.
   `similarity.scores` (config) lists the defaults for `hillclimb similarity
   scores [search] [-s name] [-c ids] [-f file…] [--explain] [--json]`
-- Harness + climber restructure (in progress on branch `harness-climber`;
-  vocabulary: **Harness** = the fixed core, **Climber** = the shareable
-  bundle of exchangeable modules, **Policy** = the pure what-next
-  decision, **Loop** = control flow, plus **Operator**, **Memory**,
-  **Tuner**, **SimilarityScore**). `hillclimb.sdk` is the one import a
-  climber needs — a lazy facade, so modules it re-exports may import it back;
-  `tests/test_sdk_imports.py` AST-scans the bundled climber modules
-  (`CLIMBER_MODULES`) and carries a shrinking `ALLOWED` list of exceptions,
-  each naming the phase that removes it. `tests/test_prompt_golden.py` pins
-  every prompt byte (greedy scenarios, openevolve, GEPA proposer;
+- Vocabulary (0.6; clean-break renames, persisted records mapped on read):
+  **Harness** = the fixed core, **Climber** = the block of exchangeable
+  modules, **Policy** = the pure what-next decision, **Selector** = which
+  candidate it expands, **Loop** = control flow, plus **Operator**, **Tuner**,
+  **Memory**, **SimilarityScore**. `SearchState` is what a policy reads,
+  `JournalView` its journal, `Attempt` what an operator returns,
+  `AgentRequest`/`AgentResult` an agent call, `climber_meta` a policy's note
+  on a candidate (journal key `policy_meta` mapped by
+  `Candidate._legacy_policy_meta_key`). `hillclimb.sdk` is the contracts
+  import a climber's file needs (a lazy facade; it raises an ImportError
+  naming the new spelling for each renamed name); `tests/test_sdk_imports.py`
+  AST-scans the bundled modules (`CLIMBER_MODULES`), `tests/test_vocabulary.py`
+  bans the pre-0.6 names. `tests/test_prompt_golden.py` pins every prompt
+  byte (greedy scenarios, openevolve, GEPA proposer;
   `HILLCLIMB_UPDATE_GOLDENS=1` regenerates — review the diff)
-- Climbers (`climber.py`, bundled manifests in `src/hillclimb/climbers/<name>/climber.yaml`):
-  the shareable unit. `load_climber(ref, base_dir)` resolves a bundled name
-  (`greedy | openevolve | gepa`), a directory holding `climber.yaml`, or ONE
-  `.py` file (a one-file climber: the single Policy — duck-typed
-  `propose`+`observe`, or `POLICY = …` — or Loop subclass it defines,
-  plus any `Operator` subclasses in it); every failure is a
-  `ClimberLoadError` naming the file and the fix. `ClimberManifest`
-  (`extra="forbid"`): `name`, exactly one of `policy` | `loop`, `params`,
-  `operators` (built-in names or `file.py:Class` / `module:Class`, each
-  optionally `- draft: {retrieval: true}`), `memory: files | none`
-  (`knowledge-graph` is the pre-0.4 spelling, mapped on read, never rewritten
-  on disk — the snapshot's hash is the climber's identity), `graph`
-  (the GraphModule over the memory: `knowledge-graph`, a `file.py` in the
-  climber dir, or `module:Class`; `modules/memory/base.py` is the contract,
-  `graphs.py` the resolver, `glue.build_graph_module` the one place consumers
-  ask; graph.json records its `builder` and is rebuilt on a mismatch),
-  `tuner`/`tuner_params`, `similarity`, `prompts` (a dir that shadows built-in
-  OPERATOR templates by name), `holdout_timing: after`; `routing` is RESERVED
-  and refused (the model is the user's choice). Module refs inside a manifest
-  are `file.py[:Class]` relative to the climber dir (imported as one
-  digest-named package, so files may import each other and versions coexist)
-  or `package.module:Class`. `Climber.build_loop(params=<user overlay>,
-  complexity_start, parallelism, log)` constructs the policy/loop with
-  whichever of those kwargs its signature accepts; `operator_set()` returns a
-  per-search `OperatorSet` (the harness's `operators=` — an operator the
-  climber did not list is refused; the global `operators._OPERATORS` is only
-  the built-in catalogue); `prompts_dir` is bound to the search
-  (`render(..., _override=dir)`), and `lint_prompts()` refuses harness-owned
-  templates (`contract_*`, the clauses, the knowledge passes) and unknown
-  tokens. `sha256` = `tree_sha256(root)` (no `__pycache__`/dotfiles) or the
-  one file's hash. `climber.ref` (config; `--climber` on the CLI) IS the climber
-  ref: `harness.glue.search_climber/build_loop/build_operators/
-  holdout_timing` are the glue (`_user_params` lays only what the user
-  actually set over the manifest's params)
-- Run folders record the climber (`harness/run.py`, `SCHEMA_VERSION = 3`):
-  `SearchMeta.climber` (the ref as written), `climber_sha256`,
-  `climber_manifest` (as loaded), `climber_params` (the USER's overlay),
-  `hillclimb_version`, `tuner`/`tuner_params` (the user's override; None =
-  the manifest's). `create_search` loads the climber BEFORE allocating a dir
-  (an unloadable one costs nothing) and `climber.snapshot_climber` copies its
-  files into `<search_dir>/climber/`; the engine — and a resume — load THAT
-  (`harness.glue.search_climber(config, search_dir)` → `load_snapshot`),
-  so editing the live dir never changes a started search. `resume` notes a
-  changed live hash, and refuses only when the climber is gone AND there is
-  no snapshot. v2 records stay readable in every store backend:
-  `SearchMeta._from_v2` (a before-validator) maps `policy*` → `climber*` and
-  drops `templates_*`; `_load_meta` accepts `READABLE_SCHEMA_VERSIONS = (2, 3)`
-  and hides anything else. `harness.glue.build_tuner` wires the
-  manifest's tuner (user's `climber.tuner` wins) into the Harness
+- The climber is a BLOCK in the run config (`modules/spec.py` `ClimberSpec`,
+  `hillclimb/climber.py`; `docs/climbers.md`). There is no `climber.yaml`
+  to point at and no reference/overlay split: `climber:` DEFINES it —
+  `policy` xor `loop` (neither = greedy), `params`, `select` +
+  `select_params`, `operators` (names/refs, each optionally `- draft:
+  {retrieval: true}`) + `operator_params` (by operator name), `tuner` +
+  `tuner_params`, `memory` + `memory_params`, `prompts`, `name` (a label,
+  not identity); `routing`, `description`, `similarity`, `holdout_timing`
+  are refused with advice (`routing` is the user's). The SAME block is a
+  run-spec entry's `climber:`, the spec's top-level `climber:` (default for
+  its entries) and `hillclimb.yaml`'s (`Config.climber`, the folder default).
+  Precedence: layers REPLACE the block whole (user config < folder < spec
+  default < entry < `--climber NAME`); `--set climber.<field>` and
+  experiment overrides then EDIT the chosen block (`climber=<name|block>`
+  replaces it; `climber.policy`/`climber.loop` drop each other;
+  `climber.operators.<name>.<k>` addresses `operator_params`). A bare string
+  is a preset (`spec.PRESETS`: `greedy = {policy: greedy}`, `gepa = {loop:
+  gepa}`, `openevolve = {policy: greedy, select: map-elites, params:
+  {ensemble: false, tune_budget: 0}}`) or one `.py` file (its one policy or
+  Loop, plus the Operator subclasses in it). Defaults live on the CLASSES
+  (`Policy.DEFAULTS`, a loop's `operators` / `holdout_timing`), so a preset
+  is a one-line block. 0.5 shapes still load: `climber: {ref: X, ...}`,
+  `operators` as a mapping, `graph:`, `--set climber.ref=X`, and
+  `learning.<behaviour flag>` (→ `memory_params`); an openevolve `ref`'s
+  MAP-Elites settings are sorted into `select_params`
+- Module refs (`modules/refs.py`): every slot is named the same three ways —
+  a registry name, `file.py[:Class]` (relative to the file the block is
+  written in; anchored absolute by `ClimberSpec.anchored` at each boundary),
+  or `package.module:Class`. `resolve_ref(ref, kind)`; `KINDS` = policy,
+  select, loop, operator, tuner, memory, graph, similarity (each with its
+  registry, module attribute — `POLICY`, `SELECTOR`, … — and base class or
+  duck-typed methods; a kind's `home` package registers its built-ins on
+  import). `FileScope` imports a climber's local files as ONE synthetic
+  package rooted at their common dir and named by the digest of their bytes
+  (relative imports followed by `source_closure`, so a file only reached by
+  import is part of identity). `ClimberLoadError` lives here. `construct`
+  passes only the kwargs a constructor takes; `**knobs` is the by-keyword
+  form for people (`Greedy(num_drafts=3)`) and never takes what the loader
+  offers
+- `Climber` (`hillclimb/climber.py`): `resolve_climber(block, base_dir)` /
+  `Climber.from_spec` — or composed in Python, `Climber(policy=…, select=…,
+  operators=[…], tuner=…, memory=…)` from names, classes or instances (an
+  instance = its class + `.params`; written the most portable way:
+  registry name > `module:Class` > `its_file.py:Class` > `live:Name`, the
+  last making it not `portable`: `to_spec()`/resume/fleets raise
+  `NotPortableError`, `api.run` still runs it via `Config._live_climber`).
+  `.brain` (lazy), `.selector()`, `.operator_set()` (per-search
+  `OperatorSet`; an operator the climber did not list is refused),
+  `.tuner()`, `.memory()`, `.graph_module()`, `.build_loop(priors=…)`
+  (a param the policy's `DEFAULTS` lacks is a `ClimberLoadError`;
+  `priors` — what memory learned, e.g. `complexity_start` — sit UNDER the
+  block's params and are recorded in `SearchMeta.memory_priors` at first
+  run), `.holdout_timing` (the loop class's). `sha256` (`identity`) = the
+  block without `name` + the FileScope digest + `tree_sha256(prompts)`,
+  independent of where files are. `load_climber(str)` = preset | one file |
+  a pre-0.6 directory (read as the block it is — `hillclimb climber show
+  <dir>` is the migration). `harness.glue.search_climber/build_loop/
+  build_operators/build_tuner/build_memory/holdout_timing` are the glue
+  (snapshots memoized per file+mtime)
+- Run folders record the climber (`harness/run.py`, `SCHEMA_VERSION = 4`):
+  `SearchMeta.climber` (its label), `climber_sha256`, `climber_spec` (the
+  block as launched), `climber_ref` (how a pre-0.6 search named it),
+  `memory_priors`, `climber_portable`, `hillclimb_version`. `create_search`
+  resolves every module and builds the loop BEFORE allocating a dir (a bad
+  climber costs nothing), `climber.snapshot_climber` writes
+  `<search_dir>/climber/` = `climber.yaml` (`snapshot: 2`, the block) +
+  `files/` + `prompts/` and checks the snapshot reproduces the identity; the
+  engine — and `resume`, which restores the WHOLE block — load THAT
+  (`glue.search_climber(config, search_dir)`), so editing live files never
+  changes a started search. `load_snapshot` still reads what 0.4/0.5 left
+  (a manifest, one file; frozen fixtures in
+  `tests/fixtures/legacy_snapshots/`). v2/v3 records stay readable in every
+  store backend: ONE before-validator (`SearchMeta._from_older_schemas`)
+  folds `policy*` and `climber_manifest`/`climber_params`/`tuner*` into the
+  block; `_load_meta` accepts `READABLE_SCHEMA_VERSIONS = (2, 3, 4)`. A child
+  engine gets a block as `--set climber=<json>` ahead of the other pairs
+  (`api.climber_argv`), a name as `--climber`
 - Harness + loop (`harness/core.py`, `harness/loop.py`): `Harness` is the fixed core
   (candidate dirs, agent calls, trials, the journal's single writer, `best/`,
   accept band, budgets, control queue, crash recovery, holdout) and knows no
@@ -383,50 +423,52 @@ places they are imported.
   vocabulary `climber check` and the pi route preflight derive from.
   `baseline`/`seed`/`tune` stay harness-native (no prompt). Inspiration files
   are named by `sdk.inspiration_filename(i)`, never a literal
-- Search policies (`modules/policies/`): `greedy` (default) and `openevolve`
-  (OpenEvolve's MAP-Elites database as the what-next brain; optional extra,
-  `climber.params` pass through to its `DatabaseConfig`). A policy
-  owns only `propose`/`observe` and is holdout-blind: `SearchState` wraps
-  whatever journal it is given in `journal.JournalView` (snapshot of
-  `Candidate.holdout_blind()` copies — no holdout fields, no `is_selected`,
-  no `path`, writes raise), and `observe()` receives the candidate from that
-  view, so `holdout.selection` decides what ships and never what a policy
-  expands. It must stay replay-deterministic — the
-  openevolve policy seeds/restores the global RNG around every OpenEvolve call
-  because that library samples via the `random` module. The exploration
-  process is ONE dict: a policy's knobs arrive through its constructor's
-  `params` and nothing else — `SearchState` carries NO config (it has
-  `journal`, `inflight`, `budget`, `higher_is_better`, `accept_band`; a
-  policy agrees with the harness on "better" via `view.accept_band`).
-  `GreedyPolicy.DEFAULTS` lists every greedy knob (`num_drafts`,
-  `max_debug_depth`, `ensemble*`, `tune_*`); `param(name)` =
-  `params.get(name, DEFAULTS[name])`, `resolved_params()` the resolved dict.
-  Until a climber manifest carries params, `policies.ConfigBackedParams(config)`
-  (harness-side glue, a live Mapping: `search.policy_params` over the old
-  `search.num_drafts` / `search.max_debug_depth` / `ensemble.*` blocks) is
-  what `build_loop`, `climber check` and `SearchRig` hand the policy.
-  File policies: a `climber.ref` ending in `.py` is loaded from that path
-  (`policies.load_policy_file`; relative to the folder holding the
-  hillclimb dir via `policy_base_dir(config)`, the `runs_dir` anchor); the
-  file exposes `POLICY` (class or `(params, *, complexity_start)` factory)
-  or exactly one class with `propose`+`observe`. `SearchMeta.policy` keeps
-  the path as written, `policy_sha256` its hash (`create_search` fails
-  before allocating a dir if the file is unreadable; `resume` warns on a
-  changed hash). Arm/display names use `policy_label` (the file stem).
-  `hillclimb climber check` (`modules/policies/check.py`, pure: no agent, verifier or
-  writes) is the cheap pre-verifier for an edited process: replays the
-  store's recorded journals plus an empty one through the policy and
-  reports contract breaches (stall on empty journal, replay/idempotence
-  divergence, dangling or wrong-status targets, journal/file writes,
-  shared-instance factory, dirty prompt overrides); `--smoke` adds a
-  dummy-agent search; engines in `_ENGINES` are out of scope (exit 2)
-- Prompt overrides: `paths.prompts_dir` (default `<hillclimb dir>/prompts/`)
-  shadows package templates by name (`prompts/render.py`: `set_override_dir`
-  is activated once per engine process in `api.execute_search`, refusing to
-  start on `lint_overrides` findings — an override may drop `{{tokens}}`,
-  never add unknown ones); `templates_digest` hashes the effective set into
-  `SearchMeta.templates_sha256` + `templates_overridden` at `create_search`.
-  Tests that activate an override dir must restore the previous setting
+- Policies and selectors (`modules/policies/`, `modules/selectors/`):
+  `Policy` is a base class (`DEFAULTS` merged over the MRO, `param()`,
+  `resolved_params()`, `self.selector`, `debuggable_tip`,
+  `prospective_branches`, `draft_complexity`, `top_distinct`; a duck-typed
+  class with `propose`+`observe` still runs). `Greedy` is the one bundled
+  schedule (debug > ensemble window > draft to `num_drafts` > tune > EXPAND
+  what the selector picks); `greedy.py` must stay byte-identical to
+  `problems/meta-heilbronn/greedy.py`. A `Selector` (`sync(state)`,
+  `select(state, busy=) -> Selection(target_id, inspiration_ids,
+  prompt_context, meta)`, `creation_meta`) picks the parent: `best`
+  (greedy's ranking + busy-target rule) and `map-elites` (OpenEvolve's
+  database; its state is a function of the JOURNAL — scored candidates in
+  journal order, rebuilt when a result lands out of order or a tune trial
+  moves a binned score — and it seeds/restores the global RNG around every
+  OpenEvolve call). `policies/compat.py` holds `OpenEvolvePolicy` only so
+  pre-0.6 snapshots resume. A policy is holdout-blind: `SearchState` wraps
+  its journal in `journal.JournalView` (`Candidate.holdout_blind()` copies,
+  writes raise), so `holdout.selection` decides what ships and never what a
+  policy expands; it carries NO config (`journal`, `inflight`, `budget`,
+  `higher_is_better`, `accept_band`). The exploration process is ONE dict:
+  the block's `params`. `hillclimb climber check [SPEC]`
+  (`modules/policies/check.py`, pure: no agent, verifier or writes) resolves
+  every module, then replays the store's journals plus an empty one and
+  reports contract breaches (stall on empty journal, `replay` /
+  `idempotent` / `resume` divergence — the last compares a policy that
+  watched the journal grow with one shown the finished journal — dangling
+  or wrong-status targets, an operator the climber lacks, journal/file
+  writes, shared-instance factory, dirty prompts); `--smoke` adds a
+  dummy-agent search; a loop climber is out of scope (exit 2)
+- Memory (`modules/memory/`): a module the block names (`memory: files |
+  none | file | module:Class`, `memory_params`). `Memory` (base.py) = five
+  no-op-by-default steps — `bind(env)`, `retrieve() -> Retrieved(text,
+  reference, reference_note, priors)`, `live()`, `publish(journal, …)`,
+  `record(journal, …)` — plus `agent_passes()` (routes to preflight) and
+  `graph_module()`. `FilesMemory` (files.py) is the knowledge/ directory
+  (its `DEFAULTS`: `max_cards`, `live`, `complexity_prior`, `claims`,
+  `graph_retrieval`, `credit`, `playbooks`, `skills`, `graph`); `NoMemory`
+  keeps nothing (a search still gets its own card). The harness takes
+  `memory=` + `retrieved=`. The USER keeps `learning.enabled` (the switch
+  over any climber; `--no-learning`), `learning.dir`, `learning.tool`,
+  `learning.claims_timeout_s`
+- Prompts: `prompts:` in the block names a dir that shadows built-in
+  OPERATOR templates by name (`render(..., _override=dir)`, bound per
+  search); `Climber.lint_prompts()` refuses harness-owned templates
+  (`contract_*`, the clauses, the knowledge passes) and unknown tokens, and
+  `create_search` refuses to start on a finding
 - GEPA (`climbers/gepa/`, extra `hillclimb[gepa]`): a climber that
   brings its own `Loop`. gepa drives proposal order, Pareto selection
   and its checkpoint; everything that costs or counts is `harness.run(...)`:
@@ -471,7 +513,7 @@ places they are imported.
   (+ `params_cue_climber`, both harness-owned) and `create_search` derives
   `SearchMeta.role` (`solver` | `improver`, default solver so every old
   record loads; `watch` labels only improvers). The role is the PROBLEM's
-  doing, never a manifest key — the same bundle runs at either level. Its
+  doing, never a key of the block — the same climber runs at either level. Its
   verifier is `hillclimb meta evaluate` (hidden group) on
   `$HILLCLIMB_ENGINE_PYTHON` (new verifier env key: the engine's interpreter;
   `api.build_executor` also exports `$HILLCLIMB_DIR`): reads `meta.yaml`
@@ -490,7 +532,7 @@ places they are imported.
   run that exits non-zero fails the verifier (→ buggy → debug target); a
   spec the outer `budget.exec_timeout_s` cannot fit is refused before
   spending. `hillclimb meta check` = import allow-list (`hillclimb.sdk`,
-  `hillclimb.spaces`, stdlib; `check_climber_source`, the v1 permissions
+  `hillclimb.spaces`, the six facades, stdlib; `check_climber_source`, the v1 permissions
   rule) + `climber check`. Reference meta-problem `problems/meta-heilbronn/`
   (repo only, NOT in the bundled catalog; baseline `greedy.py` byte-identical
   to `modules/policies/greedy.py`, `tests/test_meta.py` enforces).

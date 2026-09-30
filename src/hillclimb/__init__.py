@@ -15,7 +15,7 @@ The Python front door (lazy — `import hillclimb` stays dependency-light):
     hc.run_search, hc.Config            the lower-level entry and the config
 """
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __all__ = [
     "__version__",

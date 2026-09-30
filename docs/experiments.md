@@ -16,9 +16,9 @@ schedule: sequential        # sequential | parallel
 max_concurrent: 8           # parallel only: searches alive at once
 noise_floor: 0.02           # from `hillclimb verify circle-packing --repeat 5`
 experiments:
-  greedy:       {climber.ref: greedy}             # first experiment = the control
-  greedy-nomem: {climber.ref: greedy, learning.enabled: false}
-  openevolve:   {climber.ref: openevolve, climber.params: {population_size: 50}}
+  greedy:       {climber: greedy}                 # first experiment = the control
+  greedy-nomem: {climber: greedy, learning.enabled: false}
+  openevolve:   {climber: openevolve, climber.select_params: {population_size: 50}}
 ```
 
 `hillclimb experiment run <name>` launches the matrix: sequentially by

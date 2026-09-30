@@ -78,8 +78,9 @@ hillclimb stop --all
 - **Your own problem.** Copy a bundled problem and edit `verify.py`.
   See [docs/problems.md](docs/problems.md).
 - **Another climber.** `hillclimb run heilbronn-11 --climber openevolve`.
-  `hillclimb climber list` shows the bundled ones; `hillclimb climber new mine
-  --from greedy` copies one into `climbers/mine/` for editing. See
+  `hillclimb climber show openevolve` prints it as the block it is;
+  `hillclimb climber new mine --from greedy` copies greedy's source into
+  `climbers/mine.py` for editing. See
   [docs/climbers.md](docs/climbers.md).
 - **Compare two.** `hillclimb run heilbronn-11 --climber greedy --climber
   openevolve --parallel-searches 2`, then `hillclimb experiment report <run-id>`.
@@ -114,24 +115,46 @@ documented in [docs/providers.md](docs/providers.md).
 
 ## Climbers
 
-A climber is a directory with a `climber.yaml` naming a search policy (or a
-whole loop), the operators it may use, their prompts and a tuner. Three are
-bundled: `greedy` (debug failing tips, draft a few branches, improve the
-best), `openevolve` (MAP-Elites over hillclimb's operators) and `gepa`
-(reflective Pareto search, brings its own loop). A one-file climber is a
-`.py` with one policy class. A search snapshots its climber, so editing the
-live copy never changes a running search, and `hillclimb climber check`
-replays recorded journals through an edited climber before an agent hour
-is spent on it.
+A climber is one block of config, defined where the run is defined — in a
+run spec, or in `hillclimb.yaml` as the folder's default:
+
+```yaml
+climber:
+  policy: greedy                  # what to try next (or `loop:` for the whole control flow)
+  select: map-elites              # which candidate it expands
+  operators: [draft, debug, improve, crossover.py:Crossover]
+  tuner: optuna
+  memory: files
+  params: {num_drafts: 5}
+```
+
+Every slot names a prebuilt module, a `.py` file of your own, or
+`package.module:Class`. Three presets stand for whole blocks: `greedy`
+(debug failing tips, draft a few branches, improve the best), `openevolve`
+(the same schedule over a MAP-Elites archive) and `gepa` (reflective Pareto
+search, brings its own loop). The same building blocks compose in Python:
+
+```python
+import hillclimb as hc
+
+climber = hc.Climber(policy=hc.policies.Greedy(num_drafts=5), select=hc.selectors.MapElites(), tuner="optuna")
+hc.run("heilbronn-11", climber=climber, budget="10m")
+```
+
+A run records the block it ran, a search snapshots its climber (so editing
+the live files never changes a running search), and `hillclimb climber
+check` replays recorded journals through an edited climber before an agent
+hour is spent on it.
 
 ## What is where
 
 | Path | What it is |
 |---|---|
 | `src/hillclimb/harness/` | The fixed core every search runs on: `core.py` (the Harness), the loop, evaluation and the executor, the journal, candidates and the store, budgets, slots and the control queue. Never a research surface. |
-| `src/hillclimb/modules/` | What a climber exchanges, one subpackage per kind, each with its contract in `base.py`: `policies/` (what to try next), `operators/` (how one attempt is made), `tuners/` (which parameter values), `similarity/` (how alike two solutions are), `memory/` (the file-based memory, and the graph module that indexes it). Implementations import only `hillclimb.sdk`. |
+| `src/hillclimb/modules/` | What a climber is built from, one subpackage per kind, each with its contract in `base.py`: `policies/` (what to try next), `selectors/` (which candidate to expand), `operators/` (how one attempt is made), `tuners/` (which parameter values), `memory/` (what a search knows from others, and the graph module that indexes it), `similarity/` (how alike two solutions are). `refs.py` resolves a module's name, `spec.py` is the `climber:` block. Implementations import only `hillclimb.sdk`. |
 | `src/hillclimb/sdk/` | The one import a climber needs: the contracts and the read-only views of the search. |
-| `src/hillclimb/climbers/` | The bundled climbers, `greedy`, `openevolve` and `gepa`, each a `climber.yaml` naming its modules and prompts. `hillclimb climber new` copies one for you to edit. |
+| `src/hillclimb/climbers/` | Climber libraries that bring more than one module: `gepa/` (its loop, its operator, its scoring view). |
+| `src/hillclimb/{policies,selectors,operators,tuners,memory,loops}.py` | The prebuilt building blocks by name, for composing in Python (`hillclimb.policies.Greedy`): lazy windows onto `modules/`. |
 | `src/hillclimb/tui/` | Every terminal view (`watch`, `chart`, `tree`, `archive`, `surface`, `similarity`, `graph`) and the layout it draws. Reads the store, imported by nothing else. |
 | `src/hillclimb/cli/` | The `hillclimb` command, one module per command group. |
 | `src/hillclimb/agents/` | The agents that write code: Claude Code, Codex, pi, and the dummy and fake agents for tests. |
@@ -140,7 +163,7 @@ is spent on it.
 | `src/hillclimb/runtime/` | The managed venv the verifier and the solution run in, and the shim that makes `hillclimb.spaces` importable there. |
 | `src/hillclimb/demo/` | The example problems as package data, so `hillclimb problem get` works from a bare install. |
 | `src/hillclimb/spaces.py` | The output-format contract a problem's `interface.py` is written in, and the `params.json` contract. Stdlib only, byte-copied into runtime venvs. |
-| `src/hillclimb/{api,config,problem,climber,experiment,connect}.py` | The public surface: run a search, the config schema, load a problem or a climber, experiments, and connecting an agent. |
+| `src/hillclimb/{api,config,problem,climber,experiment,connect}.py` | The public surface: run a search (`run`, `run_spec`), the config schema, load a problem, compose or resolve a climber, experiments, and connecting an agent. |
 | `problems/` | The example problems' source of truth, one `make_<family>.py` generator per family; the bundled copies under `demo/` are stamped from here. |
 | `hillclimb.yaml`, `experiments/`, `knowledge/` | This repo is itself a hillclimb dir: its config, experiment specs and seeds, and learning (the graph, cards, credit, playbooks), beside `problems/` and `runs/`. |
 | `tests/` | The suite (`uv run pytest`). `test_layout.py` pins which package may import which, `test_sdk_imports.py` that climber code imports only the sdk, `golden/` the prompt bytes and every `--help` screen. |
@@ -149,7 +172,7 @@ is spent on it.
 ## Docs
 
 - [Problems](docs/problems.md) — the verifier contract, floors, unit tests, tunable parameters, per-instance scores, noise
-- [Climbers](docs/climbers.md) — bundled climbers, the manifest, one-file climbers, mixed fleets, `climber check`, GEPA
+- [Climbers](docs/climbers.md) — the `climber:` block, presets, your own policy / selector / operator / loop, composing in Python, `climber check`, mixed fleets, GEPA
 - [Agents](docs/agents.md) — Claude Code, Codex, pi; `connect`; billing through OpenRouter; sampling
 - [The sandbox](docs/sandbox.md) — what agents and solutions can write, read and reach; agents without internet
 - [Experiments](docs/experiments.md) — studies of experiments, repeats, matched budgets, the report

@@ -20,7 +20,7 @@ subfolder of a repo. `init` refuses a folder that already has a `problems/`
 or `runs/` of its own and suggests the subfolder. `hillclimb problem get`
 in a folder with no hillclimb dir offers to make the current folder one.
 
-`hillclimb climber new <name>` adds `climbers/<name>/` beside them (see
+`hillclimb climber new <name>` adds `climbers/<name>.py` beside them (see
 [climbers.md](climbers.md)); learning writes `knowledge/`, experiments live in
 `experiments/`.
 
@@ -47,8 +47,9 @@ project dir — safe to delete.
 
 Each run writes `runs/<run-id>/spec.yaml` next to `run.yaml`: one `problems:`
 entry per search it launched, with every parameter the launch resolved to —
-target, budget, agent, model, climber, parallelism, replicates, the seed
-(as an absolute path) and any `--set` overrides. It is generated from what
+target, budget, agent, model, the climber (its full `climber:` block),
+parallelism, replicates, the seed (as an absolute path) and any `--set`
+overrides. It is generated from what
 actually ran, whether the run came from the CLI, a spec file, a fleet or an
 experiment (the header names the file it was launched from). So the recipe
 lives with the record and the artifacts, git explains every run, and
@@ -65,6 +66,22 @@ parameter dicts — `target`, `name`, `budget` (`2h` / `30m` / seconds),
 `seed_from` (relative to the spec file) and `set` (a list of `key=value`
 overrides) — or the single-search form with a top-level `target:` plus the
 same keys. CLI flags override a spec's values.
+
+`climber` is where the search's climber is **defined**: the block (a policy
+or loop, its selector, operators, tuner and memory — see
+[climbers.md](climbers.md)), or a preset's name. A `climber:` at the top of
+the spec, beside `problems:`, is the default for entries that name none; an
+entry without one in a spec without one uses the folder's, from
+`hillclimb.yaml`. File refs in a block are relative to the spec file.
+
+```yaml
+climber: {policy: greedy, params: {num_drafts: 5}}      # for every entry below that names none
+problems:
+  - heilbronn-11
+  - target: heilbronn-14
+    budget: 1h
+    climber: {policy: greedy, select: map-elites, tuner: optuna}
+```
 
 ### What git tracks
 

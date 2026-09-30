@@ -192,7 +192,7 @@ The engine then spends verifier runs, not agent turns, on that code: the
 climber's search policy proposes *tune* actions on promising candidates, each one a
 new **trial** of the same `solution.py` with values from the tuner
 (`random` by default, `optuna` with `pip install 'hillclimb[optuna]'`; the
-climber manifest's `tuner`, overridden by `climber.tuner` in config), and
+climber's block: `tuner`, `tuner_params`), and
 the candidate is scored by its best trial. The
 greedy climber's knobs live in its `params` (`climber.params` overrides
 them): `tune_budget` (extra

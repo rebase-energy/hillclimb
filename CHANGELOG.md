@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 — unreleased
+
+The climber becomes something you compose. It is one block of config,
+defined where the run is defined, built from prebuilt or your own modules —
+a policy, a selector, operators, a tuner, a memory — each named the same
+way and each with a base class; the same blocks compose in Python
+(`hillclimb.Climber`, `hillclimb.run`). The SDK's names were tidied without
+aliases: a climber written for 0.5 needs the edits listed under "Renamed"
+and "Migrating from 0.5". Run folders are not affected — every recorded
+search still loads, and resumes.
 
 ### Added
 - **A sandbox, on by default.** Agents and verifier runs are confined by the
@@ -117,6 +126,30 @@ problems:
   hillclimb.yaml.
 - **`Tuner` is a base class** too, and a tuner can be a file
   (`tuner: anneal.py`).
+- **Compose a climber in Python.** The building blocks are importable by
+  name — `hillclimb.policies`, `.selectors`, `.operators`, `.tuners`,
+  `.memory`, `.loops` — and take their params by keyword:
+
+  ```python
+  import hillclimb as hc
+
+  climber = hc.Climber(
+      policy=hc.policies.Greedy(num_drafts=3),
+      select=hc.selectors.MapElites(num_islands=2),
+      operators=[hc.operators.Draft(retrieval=False), hc.operators.Debug(), MyCrossover],
+      tuner="optuna",
+      memory=hc.memory.FilesMemory(max_cards=1),
+  )
+  hc.run("heilbronn-11", climber=climber, budget="10m")   # one search, in this process
+  hc.run_spec("run.yaml")                                 # every entry of a spec
+  climber.write("climber.yaml")                           # the same climber, as its block
+  ```
+
+  A composed climber IS the block: your own classes are written down by
+  registry name, `module:Class`, or `their_file.py:Class`. A class that
+  exists only in the running process (a notebook cell) still runs with
+  `hc.run`, but such a climber cannot be written down, resumed or handed to a
+  detached engine, and says so (`NotPortableError`).
 
 **Migrating from 0.5**
 - A directory climber (`climbers/mine/climber.yaml`) is no longer a
@@ -136,6 +169,9 @@ problems:
   and `climber.graph` is `climber.memory_params.graph`. The old keys still
   load, in config files and in `--set`.
 - `RandomTuner` and `OptunaTuner` are `RandomSearch` and `Optuna`.
+- `DraftOperator`, `DebugOperator`, `ImproveOperator`, `EnsembleOperator` and
+  `GepaReflectOperator` are `Draft`, `Debug`, `Improve`, `Ensemble` and
+  `GepaReflect`. Class paths recorded in run folders are mapped.
 - `GreedyPolicy` is `Greedy` (`hillclimb.modules.policies.greedy`); its
   `complexity_start` constructor argument is the param `complexity_start`.
   `OpenEvolvePolicy` is gone as a class to subclass (it survives only so
