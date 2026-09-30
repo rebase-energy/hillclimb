@@ -15,7 +15,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from hillclimb.modules import refs
-from hillclimb.modules.memory.base import DEFAULT_GRAPH, MemoryKind
+from hillclimb.modules.memory.base import MemoryKind
 
 DEFAULT_POLICY = "greedy"
 
@@ -51,8 +51,14 @@ _OPENEVOLVE_SCHEDULE_KNOBS = (
 def _from_05_config(data: dict) -> dict:
     """The `climber:` block hillclimb.yaml held in 0.4/0.5 named a climber
     (`ref:`) and what the user laid over it; `operators:` was that overlay,
-    a mapping by operator name. Same settings, older shape: the `ref` is
-    expanded and the rest laid over it."""
+    a mapping by operator name; `graph:` sat beside `memory:`. Same settings,
+    older shape: the `ref` is expanded and the rest laid over it."""
+    if "graph" in data:
+        # the graph module is a setting of the memory it indexes
+        data = dict(data)
+        graph = data.pop("graph")
+        if graph is not None:
+            data["memory_params"] = {"graph": graph, **(data.get("memory_params") or {})}
     if "ref" not in data and not isinstance(data.get("operators"), dict):
         return data
     data = dict(data)
@@ -126,9 +132,12 @@ class ClimberSpec(BaseModel):
     operator_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
     tuner: str = "random"
     tuner_params: dict[str, Any] = Field(default_factory=dict)
+    # what the search knows from other searches and leaves for the next:
+    # `files` (the knowledge/ directory), `none`, a file, or module:Class.
+    # Its settings — for `files`: max_cards, claims, skills, the `graph`
+    # module that indexes it, ... — are `memory_params`
     memory: MemoryKind = "files"  # `knowledge-graph` (pre-0.4) still loads
-    # the graph module over the memory: `knowledge-graph`, a file, or module:Class
-    graph: str = DEFAULT_GRAPH
+    memory_params: dict[str, Any] = Field(default_factory=dict)
     prompts: str | None = None  # a dir whose templates shadow the built-in operator templates by name
 
     @model_validator(mode="before")
@@ -187,17 +196,26 @@ class ClimberSpec(BaseModel):
     def module_refs(self) -> list[str]:
         """Every module this block names."""
         return [
-            self.brain, *([self.select] if self.select else []), self.tuner, self.graph,
+            self.brain, *([self.select] if self.select else []), self.tuner, self.memory,
+            *([self.graph] if self.graph else []),
             *(ref for ref, _ in self.operator_items() or []),
         ]
+
+    @property
+    def graph(self) -> str | None:
+        """The graph module the block names (a setting of its memory), when it names one."""
+        ref = self.memory_params.get("graph")
+        return ref if isinstance(ref, str) else None
 
     def map_refs(self, change: Callable[[str], str]) -> ClimberSpec:
         """A copy with every module ref passed through `change`."""
         update: dict[str, Any] = {
             "loop" if self.loop is not None else "policy": change(self.brain),
             "tuner": change(self.tuner),
-            "graph": change(self.graph),
+            "memory": change(self.memory),
         }
+        if self.graph is not None:
+            update["memory_params"] = {**self.memory_params, "graph": change(self.graph)}
         if self.select is not None:
             update["select"] = change(self.select)
         if self.operators is not None:

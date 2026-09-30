@@ -1,11 +1,24 @@
-"""The memory contracts: the memory kind a climber names, and the graph
-module that turns the knowledge directory into a graph, picks the claims a
-search is shown, and answers `hillclimb knowledge query`.
+"""The memory contracts: the `Memory` a climber names, and the graph module
+that turns the knowledge directory into a graph, picks the claims a search
+is shown, and answers `hillclimb knowledge query`.
 
-Memory is the YAML under `knowledge/` — cards per finished search,
-the claims written into them, the entity and concept registries, credit,
-playbooks, papers, skills. A climber names it `memory: files | none`
-(`knowledge-graph` is the pre-0.4 spelling of `files` and still loads).
+A `Memory` is what a search knows from other searches and what it leaves
+for the next ones. Its life in one search:
+
+    bind(env)      once, before anything: the search it serves
+    retrieve()     before the first attempt: prior experience for the prompts,
+                   a reference solution, and `priors` for the policy's params
+    live()         on every prompt build: what sibling searches found so far
+    publish(...)   after every committed result: this search's state, for them
+    record(...)    after the search: what it learned, for every later search
+
+A climber's block names one like any module — `memory: files | none`, a
+`.py` file, or `module:Class` — and sets its behaviour in `memory_params`.
+`files` (files.py) is the built-in: the YAML under `knowledge/` — cards per
+finished search, the claims written into them, the entity and concept
+registries, credit, playbooks, papers, skills. (`knowledge-graph` is the
+pre-0.4 spelling of `files` and still loads.) The user keeps the switch:
+`learning.enabled: false` / `--no-learning` runs any climber without memory.
 
 The knowledge graph (`knowledge/graph.json`) is never a source of truth: a
 derived, rebuildable index over those files. `graph:` names the GraphModule
@@ -46,9 +59,11 @@ harness in.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Any, ClassVar, Literal
+from typing import Annotated, Any, ClassVar
 
 from pydantic import BaseModel, BeforeValidator, Field
 
@@ -59,12 +74,92 @@ MEMORY_ALIASES = {"knowledge-graph": "files"}  # the pre-0.4 spelling
 
 
 def normalize_memory(value: Any) -> Any:
-    """Map an old spelling to the current one; everything else is left to
-    the Literal, so an unknown kind is still refused by name."""
+    """Map an old spelling to the current one; anything else (a registry
+    name, a file, module:Class) is resolved — and refused by name — when the
+    climber is."""
     return MEMORY_ALIASES.get(value, value) if isinstance(value, str) else value
 
 
-MemoryKind = Annotated[Literal["files", "none"], BeforeValidator(normalize_memory)]
+MemoryKind = Annotated[str, BeforeValidator(normalize_memory)]
+
+
+# --- the Memory contract -----------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Retrieved:
+    """What memory hands a search before its first attempt."""
+
+    text: str = ""  # prior experience, ready to paste into a prompt
+    reference: Path | None = None  # a proven solution worth scaffolding from
+    reference_note: str = ""
+    # param values learned for the policy (e.g. `complexity_start`): they sit
+    # under the block's own params, and only a policy that declares the knob gets one
+    priors: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class MemoryEnv:
+    """The search a memory serves — handed over once, by `bind`."""
+
+    config: Any  # the search's Config: the user's `learning.dir` / `tool`, routing for a memory pass
+    problem: Any  # the ProblemSpec
+    search_dir: Path
+    target: str = ""  # the problem target as launched (groups problems into families)
+    log: Callable[[str], None] = print
+
+
+class Memory:
+    """Subclass, set `name`, list the settings in `DEFAULTS`, override the
+    steps you take part in — every one defaults to doing nothing."""
+
+    name: ClassVar[str] = ""
+    # every setting and its default; the block's `memory_params` lie over them
+    DEFAULTS: ClassVar[Mapping[str, Any]] = {}
+    # False: a search under this memory neither reads nor writes cross-search memory
+    enabled: ClassVar[bool] = True
+
+    def __init__(self, params: Mapping | None = None):
+        self.params = dict(params or {})
+        unknown = sorted(set(self.params) - set(self.DEFAULTS))
+        if unknown:
+            raise ValueError(
+                f"memory {self.name or type(self).__name__} has no setting {unknown} "
+                f"(it has: {', '.join(sorted(self.DEFAULTS)) or 'none'})"
+            )
+        self.env: MemoryEnv | None = None
+        self.scope = None  # the climber's FileScope: where a file among the params resolves
+
+    def param(self, name: str):
+        return self.params.get(name, self.DEFAULTS[name])
+
+    def bind(self, env: MemoryEnv) -> None:
+        self.env = env
+
+    def agent_passes(self) -> tuple[str, ...]:
+        """Routing keys of the agent calls this memory makes (`routing.distill`),
+        so a route that cannot work is found before the search spends anything."""
+        return ()
+
+    def retrieve(self, *, context: str | None = None) -> Retrieved:
+        """What this search is handed before it starts. `context` is a
+        prior-experience section supplied from outside (`--knowledge-context-file`):
+        it stands in for the memory's own text."""
+        return Retrieved(text=context or "")
+
+    def live(self) -> str:
+        """A prompt section with what concurrent searches found so far ("" for none)."""
+        return ""
+
+    def publish(self, journal, *, budget_s: int, cost_usd: float) -> None:
+        """Share this search's current state with concurrent ones. Best effort."""
+
+    def record(self, journal, *, budget_s: int, cost_usd: float) -> None:
+        """Keep what the finished search learned. Best effort: it must never fail a search."""
+
+    def graph_module(self) -> "GraphModule | None":
+        """The module that indexes this memory as a graph, when it has one."""
+        return None
 
 
 # --- the graph data model ----------------------------------------------------

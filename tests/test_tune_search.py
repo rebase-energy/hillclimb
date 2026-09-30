@@ -315,11 +315,11 @@ def test_tune_seed_comes_from_the_tuner_the_search_was_built_with(task, config):
     """A seed the climber sets (merged into the tuner's params by
     `glue.build_tuner`) must seed the asks, not only one the user overlays."""
     from hillclimb.modules.tuners.base import tune_seed
-    from hillclimb.modules.tuners.random_search import RandomTuner
+    from hillclimb.modules.tuners.random_search import RandomSearch
 
     seeds: list[int] = []
 
-    class Recording(RandomTuner):
+    class Recording(RandomSearch):
         def ask(self, space, history, *, higher_is_better, seed):
             seeds.append(seed)
             return super().ask(space, history, higher_is_better=higher_is_better, seed=seed)

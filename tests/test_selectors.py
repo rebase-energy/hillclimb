@@ -142,8 +142,10 @@ def test_what_memory_learned_is_fixed_when_a_search_first_runs(task, config, tmp
         return loop
 
     monkeypatch.setattr(api, "build_loop", spy)
+    from hillclimb.modules.memory.files import FilesMemory
+
     offsets = iter([1, 0])
-    monkeypatch.setattr(api, "build_knowledge_context", lambda *a, **k: ("", next(offsets), []))
+    monkeypatch.setattr(FilesMemory, "prior_experience", lambda self: ("", next(offsets), []))
     agent = FakeAgent()
     for _ in range(2):
         agent.queue(script=ok_script(0.6), notes="d\n")

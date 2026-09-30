@@ -96,11 +96,23 @@ def build_operators(config: Config, search_dir=None) -> OperatorSet:
     return search_climber(config, search_dir).operator_set()
 
 
+def build_memory(config: Config, search_dir=None):
+    """The memory this search runs under: what its climber's block names
+    (`memory`, `memory_params`) — and none at all when the user switched
+    learning off (`learning.enabled: false`, `--no-learning`)."""
+    from hillclimb.modules.memory.files import NoMemory
+
+    if not config.learning.enabled:
+        return NoMemory()
+    return search_climber(config, search_dir).memory()
+
+
 def build_graph_module(config: Config, search_dir=None, log=None):
-    """The climber's graph module (`graph:` in its block). Outside a search —
-    `hillclimb knowledge …`, the graph TUI — there is no search_dir and the
-    block is the folder's; a climber that will not load there falls back to
-    the built-in module, so reading memory never depends on it."""
+    """The graph module that indexes the climber's memory (a setting of the
+    memory: `memory_params.graph`). Outside a search — `hillclimb knowledge
+    …`, the graph TUI — there is no search_dir and the block is the
+    folder's; a climber that will not load there falls back to the built-in
+    module, so reading memory never depends on it."""
     from hillclimb.climber import ClimberLoadError
     from hillclimb.modules.memory.base import DEFAULT_GRAPH
     from hillclimb.modules.memory.graphs import get_graph
@@ -116,8 +128,10 @@ def build_graph_module(config: Config, search_dir=None, log=None):
 
 
 def effective_memory(config: Config, search_dir=None) -> str:
-    """`files` or `none`: what the climber's block says — and always `none`
-    when learning is switched off."""
+    """The memory a search runs under, by name: what the climber's block
+    says (`files`, a file, ...) — and always `none` when learning is switched
+    off or the memory it names keeps nothing."""
     if not config.learning.enabled:
         return "none"
-    return search_climber(config, search_dir).spec.memory
+    climber = search_climber(config, search_dir)
+    return climber.spec.memory if climber.memory().enabled else "none"

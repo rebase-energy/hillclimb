@@ -105,6 +105,18 @@ problems:
 - **A param the policy does not have is an error**, before anything is
   spent: `climber.params: greedy has no param 'num_draft' (it has: ...)`.
   It was silently ignored.
+- **Memory is a module the block names**, like every other slot: `memory:
+  files | none`, a `.py` file or `package.module:Class`, with its behaviour
+  in `memory_params` (for `files`: `max_cards`, `live`, `claims`,
+  `graph_retrieval`, `credit`, `playbooks`, `skills`, `complexity_prior`, and
+  the `graph` module that indexes it). A `Memory` subclass takes part in a
+  search through five steps — `bind`, `retrieve`, `live`, `publish`,
+  `record` — each of which defaults to doing nothing. `learning.enabled:
+  false` and `--no-learning` stay the user's switch over any climber;
+  `learning.dir`, `learning.tool` and `learning.claims_timeout_s` stay in
+  hillclimb.yaml.
+- **`Tuner` is a base class** too, and a tuner can be a file
+  (`tuner: anneal.py`).
 
 **Migrating from 0.5**
 - A directory climber (`climbers/mine/climber.yaml`) is no longer a
@@ -119,6 +131,11 @@ problems:
   `num_inspirations`, `random_seed`, ...) are `climber.select_params` now;
   among `climber.params` they are refused with that advice. A 0.5 block
   `climber: {ref: openevolve, params: {...}}` is sorted into the two on read.
+- `learning.max_cards`, `.live`, `.claims`, `.graph_retrieval`, `.credit`,
+  `.playbooks`, `.skills` and `.complexity_prior` are `climber.memory_params.*`,
+  and `climber.graph` is `climber.memory_params.graph`. The old keys still
+  load, in config files and in `--set`.
+- `RandomTuner` and `OptunaTuner` are `RandomSearch` and `Optuna`.
 - `GreedyPolicy` is `Greedy` (`hillclimb.modules.policies.greedy`); its
   `complexity_start` constructor argument is the param `complexity_start`.
   `OpenEvolvePolicy` is gone as a class to subclass (it survives only so

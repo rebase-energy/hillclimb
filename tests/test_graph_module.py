@@ -177,15 +177,15 @@ class TestSeam:
     command, consolidation, the graph screen."""
 
     def test_retrieval_is_whatever_the_module_returns(self, knowledge_dir, monkeypatch):  # noqa: F811
-        import hillclimb.harness.glue as glue
         from hillclimb.api import build_knowledge_context
+        from hillclimb.modules.memory.files import FilesMemory
 
         config = Config()
         config.learning.dir = knowledge_dir
-        monkeypatch.setattr(glue, "build_graph_module", lambda *a, **k: Claimy())
+        monkeypatch.setattr(FilesMemory, "graph_module", lambda self: Claimy())
         text, _, injected = build_knowledge_context(config, PROBLEM, "", lambda m: None)
         assert injected == ["custom"] and "custom helps" in text
-        monkeypatch.setattr(glue, "build_graph_module", lambda *a, **k: Notes())
+        monkeypatch.setattr(FilesMemory, "graph_module", lambda self: Notes())
         text, _, injected = build_knowledge_context(config, PROBLEM, "", lambda m: None)
         assert injected == [] and "Distilled claims" not in (text or "")  # a graph without claims injects nothing
 

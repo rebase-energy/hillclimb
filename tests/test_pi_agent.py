@@ -385,7 +385,7 @@ def test_search_preflight_failure_finalizes_before_evaluation(tmp_path, monkeypa
 
     config.agent = "pi"
     config.learning.enabled = False
-    config.learning.skills = False
+    config.climber.memory_params["skills"] = False
     run_dir = create_run_dir(config.paths.runs_dir, "preflight-test")
     search_dir = create_search(config, task, run_dir, "preflight-test", 60)
     agent = PiCliAgent(pi_bin=make_stub(tmp_path, STUB_ERROR))

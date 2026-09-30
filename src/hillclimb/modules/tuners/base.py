@@ -7,14 +7,16 @@ journal on every call. WHEN to tune, and how much, is the search policy's
 decision (`Action(operator="tune")`), never the tuner's.
 
 Implementations live in `hillclimb.modules.tuners` (`random`: stdlib, the default
-and the test double; `optuna`: TPE via the optional extra).
+and the test double; `optuna`: TPE via the optional extra). A climber's block
+names one like any module: `tuner: random`, `tuner: anneal.py`, `tuner: pkg.mod:Class`.
 """
 
 from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, Sequence
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:
     from hillclimb.harness.candidate import Candidate
@@ -32,9 +34,16 @@ class Observation:
     pending: bool = False
 
 
-class Tuner(Protocol):
-    name: str
-    params: dict  # persisted verbatim into SearchMeta.tuner_params for resume
+class Tuner:
+    """WHICH parameter set to try next for one candidate. Subclass it, set
+    `name`, implement `ask`. A class with just an `ask` method still runs —
+    the contract is the method."""
+
+    name: str = ""
+
+    def __init__(self, params: Mapping | None = None):
+        # the climber's `tuner_params` (a `seed` among them seeds every ask)
+        self.params = dict(params or {})
 
     def ask(
         self,
@@ -45,8 +54,9 @@ class Tuner(Protocol):
         seed: int,
     ) -> dict:
         """The next parameter set to evaluate (every declared name present,
-        values inside the declared domain)."""
-        ...
+        values inside the declared domain). A pure function of its
+        arguments: no study state survives a call, so resume is free."""
+        raise NotImplementedError(f"{type(self).__name__} must implement ask(space, history, ...)")
 
 
 def tune_seed(base: int, candidate_id: str, n_history: int) -> int:

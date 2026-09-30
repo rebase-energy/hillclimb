@@ -37,6 +37,7 @@ from hillclimb.harness.glue import (
     build_loop,
     build_operators,
     build_tuner,
+    effective_memory,
     holdout_timing,
     search_climber,
 )
@@ -461,7 +462,7 @@ def create_search(
         holdout_enabled=config.holdout.enabled and problem.holdout_cmd is not None,
         seed_from=str(seed_from) if seed_from else None,
         seed_sha256=_sha256(seed_from) if seed_from else None,
-        learning_enabled=config.learning.enabled,
+        learning_enabled=effective_memory(config) != "none",
         study=study,
         experiment=experiment,
         repeat=repeat,
@@ -473,218 +474,29 @@ def create_search(
 
 
 def resolve_knowledge_dir(config: Config) -> Path | None:
-    if not config.learning.enabled:
-        return None
-    if config.learning.dir is not None:
-        return Path(config.learning.dir).absolute()
-    if config.hillclimb_dir is not None:
-        return config.hillclimb_dir / "knowledge"
-    return None
+    """Where the knowledge lives (None when learning is off or no dir is
+    resolvable): `learning.dir`, else `<hillclimb dir>/knowledge`."""
+    from hillclimb.modules.memory.files import knowledge_dir_for
+
+    return knowledge_dir_for(config)
 
 
 def build_knowledge_context(
     config: Config, problem: ProblemSpec, target: str, log: Log, *, search_dir: Path | None = None
 ) -> tuple[str | None, int, list[str]]:
     """(prior-experience prompt section, draft-complexity offset, injected
-    claim ids) from the hillclimb dir's knowledge cards. The claim ids feed credit
-    assignment: whoever gets quoted in the prompt answers for the outcome.
-    The claims come through the climber's graph module (`search_dir` finds
-    the snapshot's), so a climber that indexes memory differently is shown
-    what it asked for."""
-    from hillclimb.modules.memory.knowledge import (
-        complexity_offset,
-        load_cards,
-        problem_family,
-        render_prior_experience,
-    )
+    claim ids) as the search's memory would hand them over — what `hillclimb
+    knowledge …` shows and tests inspect. A memory other than `files` has no
+    cards to show: (None, 0, [])."""
+    from hillclimb.harness.glue import build_memory
+    from hillclimb.modules.memory.base import MemoryEnv
+    from hillclimb.modules.memory.files import FilesMemory
 
-    knowledge_dir = resolve_knowledge_dir(config)
-    if knowledge_dir is None:
+    memory = build_memory(config, search_dir)
+    if not isinstance(memory, FilesMemory):
         return None, 0, []
-    family = problem_family(problem.problem_id, target)
-    cards = load_cards(knowledge_dir, problem_id=problem.problem_id, family=family)
-    if not cards:
-        return None, 0, []
-    log(f"learning: {len(cards)} prior search card(s) inform this search")
-    offset = complexity_offset(cards) if config.learning.complexity_prior else 0
-    text = render_prior_experience(cards, max_cards=config.learning.max_cards)
-    claim_ids: list[str] = []
-    if config.learning.graph_retrieval:
-        # graph-walk retrieval: distilled claims for this family plus
-        # cross-family claims that share a concept with the problem. When a
-        # consolidated playbook covers the problem's concepts it REPLACES the
-        # raw claim list (evolved prose beats retrieved facts), and credit
-        # flows to the claims the playbook was built from.
-        # Best effort — the cards block above never depends on the graph.
-        try:
-            from hillclimb.harness.glue import build_graph_module
-            from hillclimb.modules.memory.claims import problem_concepts, render_claims
-            from hillclimb.modules.memory.graph import load_or_build_graph, node_to_claim
-
-            kind = problem.runtime
-            concepts = problem_concepts(kind, problem.metric_name)
-            playbooks = []
-            if config.learning.playbooks:
-                from hillclimb.modules.memory.consolidate import load_playbooks, render_playbooks
-
-                playbooks = load_playbooks(knowledge_dir, concepts)
-            if playbooks:
-                log(
-                    "learning: playbook(s) inform this search: "
-                    + ", ".join(p.concept for p in playbooks)
-                )
-                text = f"{text}\n\n{render_playbooks(playbooks)}"
-                claim_ids = sorted({cid for p in playbooks for cid in p.source_claims})
-            else:
-                module = build_graph_module(config, search_dir, log=log)
-                nodes = module.retrieve(
-                    load_or_build_graph(knowledge_dir, module=module),
-                    family=family,
-                    problem_id=problem.problem_id,
-                    concepts=concepts,
-                )
-                claims_text = render_claims([node_to_claim(n) for n in nodes])
-                if claims_text:
-                    log(f"learning: {len(nodes)} distilled claim(s) inform this search")
-                    text = f"{text}\n\n{claims_text}"
-                    claim_ids = [n.id.removeprefix("claim:") for n in nodes]
-        except Exception as exc:  # noqa: BLE001
-            log(f"learning: graph retrieval failed (prior cards unaffected): {exc}")
-    return text, offset, claim_ids
-
-
-def _distill_knowledge(
-    config: Config,
-    problem: ProblemSpec,
-    search_dir: Path,
-    journal: Journal,
-    *,
-    target: str,
-    budget_s: int,
-    cost_usd: float,
-    log: Log,
-) -> None:
-    """Best effort — learning must never fail a finished search."""
-    from hillclimb.modules.memory.knowledge import CARD_FILENAME, distill_card, write_card, write_live_card
-    from hillclimb.harness.run import SEARCHES_DIRNAME
-
-    try:
-        card = distill_card(
-            journal,
-            problem=problem,
-            run_ref=search_ref(search_dir),
-            target=target,
-            budget_s=budget_s,
-            cost_usd=cost_usd,
-            selection=config.holdout.selection,
-        )
-        knowledge_dir = resolve_knowledge_dir(config)
-        if config.learning.claims and knowledge_dir is not None:
-            # inner guard: a failed distill pass costs the claims, not the card
-            try:
-                from hillclimb.modules.memory.claims import distill_claims
-
-                card.claims = distill_claims(
-                    journal,
-                    problem=problem,
-                    card=card,
-                    search_dir=search_dir,
-                    knowledge_dir=knowledge_dir,
-                    config=config,
-                    log=log,
-                    record_cost=True,  # this engine is the journal's writer
-                )
-                if card.claims:
-                    log(f"learning: {len(card.claims)} claim(s) distilled")
-            except Exception as exc:  # noqa: BLE001
-                log(f"learning: claims distillation failed (card unaffected): {exc}")
-        # always keep a copy with the search artifacts (synced for hosted runs)
-        import yaml as _yaml
-
-        (search_dir / CARD_FILENAME).write_text(
-            _yaml.safe_dump(card.model_dump(exclude_none=True), sort_keys=False)
-        )
-        if knowledge_dir is not None:
-            path = write_card(knowledge_dir, card)
-            log(f"learning: knowledge card written to {path}")
-        if (
-            config.learning.enabled
-            and config.learning.live
-            and search_dir.parent.name == SEARCHES_DIRNAME
-        ):
-            # final refresh of the run-scoped live card: siblings still
-            # running loaded their static prior cards before this search
-            # finished, so the live channel is how its result reaches them
-            write_live_card(search_dir.parents[1], card, search_dir.name)
-        if (
-            config.learning.credit
-            and config.learning.graph_retrieval
-            and knowledge_dir is not None
-        ):
-            # credit assignment: the claims this search's drafts were shown
-            # share its outcome (see credit.py for the reward definition)
-            try:
-                from hillclimb.modules.memory.credit import (
-                    CreditEvent,
-                    read_injected_claims,
-                    search_reward,
-                    write_credit_event,
-                )
-                from hillclimb.modules.memory.knowledge import load_cards
-
-                claim_ids = read_injected_claims(search_dir)
-                if claim_ids:
-                    prior_cards = [
-                        c for c in load_cards(
-                            knowledge_dir,
-                            problem_id=card.problem_id,
-                            family=card.family,
-                        )
-                        if c.run_ref != card.run_ref  # own card is already on disk
-                    ]
-                    reward, basis = search_reward(
-                        journal, problem, prior_cards, selection=config.holdout.selection
-                    )
-                    write_credit_event(knowledge_dir, CreditEvent(
-                        run_ref=card.run_ref,
-                        problem_id=card.problem_id,
-                        family=card.family,
-                        claim_ids=claim_ids,
-                        reward=reward,
-                        basis=basis,
-                    ))
-                    log(
-                        f"learning: credit {reward:g} ({basis}) recorded for "
-                        f"{len(claim_ids)} injected claim(s)"
-                    )
-            except Exception as exc:  # noqa: BLE001
-                log(f"learning: credit assignment failed (card unaffected): {exc}")
-        if config.learning.skills and knowledge_dir is not None:
-            # procedural memory: a scored winner joins the skill library
-            try:
-                from hillclimb.modules.memory.skills import harvest_skill
-
-                skill_dir = harvest_skill(
-                    journal, problem=problem, card=card,
-                    knowledge_dir=knowledge_dir,
-                    selection=config.holdout.selection, log=log,
-                )
-                if skill_dir is not None:
-                    log(f"learning: skill harvested -> {skill_dir}")
-            except Exception as exc:  # noqa: BLE001
-                log(f"learning: skill harvest failed (card unaffected): {exc}")
-        if knowledge_dir is not None:
-            # keep the derived graph index fresh; cheap at this scale and
-            # best-effort like everything else here
-            try:
-                from hillclimb.harness.glue import build_graph_module
-                from hillclimb.modules.memory.graph import rebuild_graph
-
-                rebuild_graph(knowledge_dir, module=build_graph_module(config, search_dir, log=log))
-            except Exception as exc:  # noqa: BLE001
-                log(f"learning: graph rebuild failed (card unaffected): {exc}")
-    except Exception as exc:  # noqa: BLE001
-        log(f"learning: card distillation failed (search result unaffected): {exc}")
+    memory.bind(MemoryEnv(config=config, problem=problem, search_dir=search_dir, target=target, log=log))
+    return memory.prior_experience()
 
 
 def _raise_stop_requested(signum, frame):
@@ -715,7 +527,9 @@ def _preflight_sandbox(config: Config, log: Log) -> None:
     log("agents: no internet")
 
 
-def _preflight_pi_routes(config: Config, search_dir: Path, router, agents, log: Log) -> None:
+def _preflight_pi_routes(
+    config: Config, search_dir: Path, router, agents, log: Log, memory_passes: Sequence[str] = ()
+) -> None:
     """Validate every statically reachable pi model/sampling combination.
 
     This deliberately happens before the baseline or first draft. Provider
@@ -730,8 +544,7 @@ def _preflight_pi_routes(config: Config, search_dir: Path, router, agents, log: 
     # every operator this search's climber may call is routed by its own
     # name (`routing.draft`, `routing.gepa-reflect`, a climber's `crossover`)
     operators = set(build_operators(config, search_dir).names())
-    if config.learning.enabled and config.learning.claims:
-        operators.add("distill")
+    operators.update(memory_passes)  # the agent calls the memory makes (claim distillation)
     operators.update(
         name
         for name in config.routing
@@ -811,12 +624,17 @@ def execute_search(
     parked/stopped/done; unexpected engine crashes finalize `failed` and
     re-raise."""
     run_dir = search_dir.parents[1]
-    from hillclimb.harness.glue import effective_memory
+    from hillclimb.harness.glue import build_memory
+    from hillclimb.modules.memory.base import MemoryEnv
 
-    if config.learning.enabled and effective_memory(config, search_dir) == "none":
+    # the memory this search runs under: its climber's, unless the user
+    # switched learning off
+    memory = build_memory(config, search_dir)
+    if config.learning.enabled and not memory.enabled:
         config = config.model_copy(deep=True)
         config.learning.enabled = False  # this search neither reads nor writes memory
         log("memory: none (this climber runs without cross-search memory)")
+    memory.bind(MemoryEnv(config=config, problem=problem, search_dir=search_dir, target=target, log=log))
     store = open_store(config)
     key = key_for(search_dir)
     store.clear_stale_stops(key)
@@ -843,38 +661,10 @@ def execute_search(
     from hillclimb.harness.slots import MachineSlots
 
     abort = threading.Event()
-    _kc, _offset = (None, 0)
-    if knowledge_context is None:
-        _kc, _offset, _claim_ids = build_knowledge_context(config, problem, target, log, search_dir=search_dir)
-        if _claim_ids:
-            from hillclimb.modules.memory.credit import record_injected_claims
-
-            record_injected_claims(search_dir, _claim_ids)
-    reference_solution: Path | None = None
-    reference_note = ""
-    if config.learning.skills:
-        _kdir = resolve_knowledge_dir(config)
-        if _kdir is not None:
-            try:
-                from hillclimb.modules.memory.claims import problem_concepts
-                from hillclimb.modules.memory.knowledge import problem_family
-                from hillclimb.modules.memory.skills import SKILL_CODE_FILENAME, select_skill
-
-                kind = problem.runtime
-                match = select_skill(
-                    _kdir,
-                    family=problem_family(problem.problem_id, target),
-                    concepts=problem_concepts(kind, problem.metric_name),
-                    higher_is_better=problem.higher_is_better,
-                )
-                if match is not None:
-                    skill, skill_dir = match
-                    reference_solution = skill_dir / SKILL_CODE_FILENAME
-                    score = f"{skill.score:g} {skill.metric}" if skill.score is not None else "unscored"
-                    reference_note = f"scored {score} on {skill.problem_id}"
-                    log(f"learning: reference solution from {skill.run_ref} ({reference_note})")
-            except Exception as exc:  # noqa: BLE001
-                log(f"learning: skill selection failed (draft unaffected): {exc}")
+    # what the search is handed before it starts: prior experience for the
+    # prompts (an externally supplied section stands in for the memory's
+    # own), a reference solution, and what memory learned about how to start
+    retrieved = memory.retrieve(context=knowledge_context)
     agent_obj = get_agent(
         config.agent,
         auth=config.agent_auth,
@@ -892,7 +682,7 @@ def execute_search(
 
     try:
         _preflight_sandbox(config, log)
-        _preflight_pi_routes(config, search_dir, router, agents, log)
+        _preflight_pi_routes(config, search_dir, router, agents, log, memory_passes=memory.agent_passes())
     except (StopRequested, KeyboardInterrupt) as exc:
         status.finalize("stopped", last_error=str(exc)[:500] or None)
         store.close()
@@ -918,7 +708,7 @@ def execute_search(
     record = store.search(key)
     priors = record.meta.memory_priors if record is not None else None
     if priors is None:
-        priors = {"complexity_start": _offset} if _offset else {}
+        priors = dict(retrieved.priors)
         if record is not None:
             record.meta.memory_priors = priors
             store.record_search(record.meta)
@@ -937,9 +727,8 @@ def execute_search(
         slots=slots,
         abort=abort,
         seed_solution=seed_from,
-        knowledge_context=knowledge_context if knowledge_context is not None else _kc,
-        reference_solution=reference_solution,
-        reference_note=reference_note,
+        memory=memory,
+        retrieved=retrieved,
         router=router,
         agents=agents,
         drain_commands=lambda: store.drain_commands(key),
@@ -979,11 +768,9 @@ def execute_search(
         _official_verify(config, problem, search_dir, journal, selected, log)
     if problem.mlebench_comp_id and selected is not None:
         _mlebench_grade(config, problem, search_dir, selected, log)
-    _distill_knowledge(
-        config, problem, search_dir, journal,
-        target=target, budget_s=budget.total_s,
-        cost_usd=harness.total_cost_usd(), log=log,
-    )
+    # what the finished search leaves for the next ones (and its own card,
+    # beside its artifacts, under any memory)
+    memory.record(journal, budget_s=budget.total_s, cost_usd=harness.total_cost_usd())
     return SearchOutcome(run_dir, search_dir, selected, "done")
 
 

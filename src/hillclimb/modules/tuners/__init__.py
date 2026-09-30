@@ -13,8 +13,8 @@ from hillclimb.modules.tuners.base import Tuner
 
 KIND = "tuner"
 
-refs.register(KIND, "random", "hillclimb.modules.tuners.random_search:RandomTuner")
-refs.register(KIND, "optuna", "hillclimb.modules.tuners.optuna:OptunaTuner")  # optional extra
+refs.register(KIND, "random", "hillclimb.modules.tuners.random_search:RandomSearch")
+refs.register(KIND, "optuna", "hillclimb.modules.tuners.optuna:Optuna")  # optional extra
 
 
 def get_tuner(

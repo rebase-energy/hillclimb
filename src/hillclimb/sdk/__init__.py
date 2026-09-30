@@ -70,7 +70,11 @@ _LAZY = {
     "SimilarityScore": ("hillclimb.modules.similarity.base", "SimilarityScore"),
     "SimilarityUnavailable": ("hillclimb.modules.similarity.base", "SimilarityUnavailable"),
     "Solution": ("hillclimb.modules.similarity.base", "Solution"),
-    # cross-search memory: the graph module and the model it builds
+    # cross-search memory: what a search knows from others and leaves for the next
+    "Memory": ("hillclimb.modules.memory.base", "Memory"),
+    "MemoryEnv": ("hillclimb.modules.memory.base", "MemoryEnv"),
+    "Retrieved": ("hillclimb.modules.memory.base", "Retrieved"),
+    # ...and the graph module that indexes one, with the model it builds
     "GraphModule": ("hillclimb.modules.memory.base", "GraphModule"),
     "KnowledgeGraph": ("hillclimb.modules.memory.base", "KnowledgeGraph"),
     "GraphNode": ("hillclimb.modules.memory.base", "GraphNode"),
@@ -142,6 +146,14 @@ if TYPE_CHECKING:  # eager for type checkers and editors only
     )
     from hillclimb.modules.similarity.base import SimilarityScore, SimilarityUnavailable, Solution
     from hillclimb.modules.selectors.base import Selection, Selector, improvable
-    from hillclimb.modules.memory.base import GraphEdge, GraphModule, GraphNode, KnowledgeGraph
+    from hillclimb.modules.memory.base import (
+        GraphEdge,
+        GraphModule,
+        GraphNode,
+        KnowledgeGraph,
+        Memory,
+        MemoryEnv,
+        Retrieved,
+    )
     from hillclimb.harness.glue import ParkedSearch
     from hillclimb.modules.tuners.base import Observation, Tuner

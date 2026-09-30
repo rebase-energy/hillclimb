@@ -247,13 +247,16 @@ def test_the_climber_block_is_the_climber():
     with pytest.raises(ValueError, match="Unknown climber: nope"):
         Config().apply_overrides({"climber": "nope"})
     # the memory kind: `files` (the YAML under hillclimb/knowledge/), its pre-0.4
-    # spelling `knowledge-graph` mapped on read, anything else refused by name
+    # spelling `knowledge-graph` mapped on read; a memory is named like any module,
+    # so an unknown one is refused by name when the climber is resolved
     assert Config.model_validate({"climber": {"memory": "knowledge-graph"}}).climber.memory == "files"
     config = Config()
     config.apply_overrides(parse_set_overrides(["climber.memory=knowledge-graph"]))
     assert config.climber.memory == "files"
-    with pytest.raises(ValueError, match="memory"):
-        Config.model_validate({"climber": {"memory": "sqlite"}})
+    from hillclimb.harness.glue import search_climber
+
+    with pytest.raises(ValueError, match="unknown memory 'sqlite' .available: files, none"):
+        search_climber(Config.model_validate({"climber": {"memory": "sqlite"}})).memory()
 
 
 def test_the_0_5_climber_block_still_loads():
@@ -364,7 +367,7 @@ def test_the_blocks_graph_module_is_used_and_reading_memory_survives_a_broken_cl
 
     config = Config()
     assert build_graph_module(config).name == "knowledge-graph"  # the default
-    config.climber.graph = "hillclimb.modules.memory.graph:KnowledgeGraphBuilder"
+    config.climber.memory_params["graph"] = "hillclimb.modules.memory.graph:KnowledgeGraphBuilder"
     assert build_graph_module(config).key == "hillclimb.modules.memory.graph:KnowledgeGraphBuilder"
     # outside a search, a climber that will not load falls back to the built-in:
     # `hillclimb knowledge …` must keep working whatever the block says

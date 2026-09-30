@@ -192,6 +192,9 @@ class SearchMeta(BaseModel):
         merged_tuner_params = {**(manifest.get("tuner_params") or {}), **tuner_params}
         if merged_tuner_params:
             block["tuner_params"] = merged_tuner_params
+        graph = block.pop("graph", None)
+        if graph and graph != "knowledge-graph":  # the graph module is a setting of the memory now
+            block["memory_params"] = {"graph": graph}
         data["climber_spec"] = block
         data.setdefault("climber_ref", data.get("climber"))
         data["schema_version"] = SCHEMA_VERSION

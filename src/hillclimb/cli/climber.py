@@ -96,12 +96,13 @@ def climber_list(as_json: bool = typer.Option(False, "--json", help="Machine-rea
         )
     # what a block is built from: every registered module, by slot
     from hillclimb.modules import refs as module_refs
-    from hillclimb.modules.memory.base import MEMORY_KINDS
 
     say("\n[head]Building blocks[/] [note](a `climber:` block names one per slot; a .py file or package.module:Class works too)[/]")
-    for slot, kind in (("policy", "policy"), ("loop", "loop"), ("operators", "operator"), ("tuner", "tuner")):
+    for slot, kind in (
+        ("policy", "policy"), ("select", "select"), ("loop", "loop"), ("operators", "operator"),
+        ("tuner", "tuner"), ("memory", "memory"),
+    ):
         say(f"  {slot:<10} [path]{_m(', '.join(module_refs.registered_names(kind)))}[/]")
-    say(f"  {'memory':<10} [path]{_m(', '.join(MEMORY_KINDS))}[/]")
     say("\n[note]* = this folder's default.[/]  Run one:        [cmd]hillclimb run <problem> --climber <name>[/]")
     say("                              See its block:  [cmd]hillclimb climber show <name>[/]")
     say("                              Start your own: [cmd]hillclimb climber new <name> --from greedy[/]")

@@ -130,7 +130,11 @@ def knowledge_show(target: str = typer.Argument(..., help="Problem target, e.g. 
     if not cards:
         say(f"no knowledge cards for [path]{_m(problem.problem_id)}[/] in [path]{_m(knowledge_dir)}[/]")
         raise typer.Exit(0)
-    typer.echo(render_prior_experience(cards, max_cards=config.learning.max_cards))
+    from hillclimb.modules.memory.files import FilesMemory
+
+    # as many cards as a search's prompts would show (the folder's memory_params)
+    max_cards = config.climber.memory_params.get("max_cards", FilesMemory.DEFAULTS["max_cards"])
+    typer.echo(render_prior_experience(cards, max_cards=int(max_cards)))
 
 
 @knowledge_app.command("distill")

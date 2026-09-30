@@ -29,11 +29,11 @@ def write(path: Path, text: str) -> Path:
 def test_the_three_forms(tmp_path):
     by_name = resolve_ref("random", "tuner")
     assert (by_name.form, by_name.label) == ("name", "random")
-    assert by_name.target.__name__ == "RandomTuner"
+    assert by_name.target.__name__ == "RandomSearch"
 
-    by_module = resolve_ref("hillclimb.modules.tuners.random_search:RandomTuner", "tuner")
+    by_module = resolve_ref("hillclimb.modules.tuners.random_search:RandomSearch", "tuner")
     assert by_module.form == "module" and by_module.target is by_name.target
-    assert by_module.label == "RandomTuner"
+    assert by_module.label == "RandomSearch"
 
     file = write(tmp_path / "mine.py", POLICY)
     by_file = resolve_ref("mine.py", "policy", base_dir=tmp_path)
@@ -67,7 +67,7 @@ def test_errors_name_the_file_and_the_fix(tmp_path):
     with pytest.raises(ClimberLoadError, match=r"unknown tuner 'grid' \(available: optuna, random, a path to a .py file"):
         resolve_ref("grid", "tuner")
     with pytest.raises(ClimberLoadError, match="is not a GraphModule subclass"):
-        resolve_ref("hillclimb.modules.tuners.random_search:RandomTuner", "graph")
+        resolve_ref("hillclimb.modules.tuners.random_search:RandomSearch", "graph")
     with pytest.raises(ValueError, match="would read as a file or module:Class"):
         refs.register("tuner", "bad.py", object)
 

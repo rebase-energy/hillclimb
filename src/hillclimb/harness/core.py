@@ -139,9 +139,8 @@ class Harness:
         slots: MachineSlots | None = None,
         abort: threading.Event | None = None,
         seed_solution: Path | None = None,
-        knowledge_context: str | None = None,
-        reference_solution: Path | None = None,
-        reference_note: str = "",
+        memory=None,
+        retrieved=None,
         router: Router | None = None,
         agents: AgentPool | None = None,
         drain_commands: Callable[[], list[ControlCommand]] | None = None,
@@ -177,15 +176,19 @@ class Harness:
         self.slots = slots  # machine-wide agent-concurrency cap (optional)
         self.abort = abort or threading.Event()
         self.seed_solution = seed_solution  # incumbent model: scored as a floor candidate
-        self.knowledge_context = knowledge_context  # prior-experience prompt section
-        # skill library: a proven prior solution copied into the FIRST
-        # draft's candidate dir as reference_solution.py (later drafts explore)
-        self.reference_solution = reference_solution
-        self.reference_note = reference_note
-        if tuner is None:
-            from hillclimb.modules.tuners.random_search import RandomTuner
+        # cross-search memory (`modules/memory`): what it handed this search
+        # before it started — the prior-experience prompt section, and a
+        # proven solution copied into the first draft's candidate dir as
+        # reference_solution.py (later drafts explore) — and the memory
+        # itself, for what siblings share while the search runs
+        from hillclimb.modules.memory.base import Memory, Retrieved
 
-            tuner = RandomTuner(config.climber.tuner_params)
+        self.memory = memory if memory is not None else Memory()
+        self.retrieved = retrieved if retrieved is not None else Retrieved()
+        if tuner is None:
+            from hillclimb.modules.tuners.random_search import RandomSearch
+
+            tuner = RandomSearch(config.climber.tuner_params)
         self.tuner = tuner  # which params a `tune` action tries; WHEN is the policy's call
         self.router = router  # None: everything routes to `agent` + config.model
         self.agents = agents
@@ -641,62 +644,20 @@ class Harness:
 
     # --- live cross-search sharing ---
 
-    def _live_run_dir(self) -> Path | None:
-        """The run dir hosting the shared live-card folder; None when live
-        sharing is off or the search dir is not in the runs/<run-id>/searches/
-        layout (embedded and unit-test constructions)."""
-        if not (self.config.learning.enabled and self.config.learning.live):
-            return None
-        if self.search_dir.parent.name != SEARCHES_DIRNAME:
-            return None
-        return self.search_dir.parents[1]
-
-    def _target(self) -> str:
-        """Problem target string for family grouping (same convention as the
-        knowledge backfill: empty for non-emflow problems)."""
-        if self.problem.runtime == "emflow":
-            return f"emflow://{self.problem.emflow_problem}"
-        return ""
-
     def _publish_live_card(self) -> None:
-        """Republish this search's knowledge card into the run-scoped live dir
-        so concurrent sibling searches see discoveries mid-run. Best effort —
-        sharing must never fail a search."""
-        run_dir = self._live_run_dir()
-        if run_dir is None:
-            return
-        from hillclimb.modules.memory.knowledge import distill_card, write_live_card
-
+        """Let the memory share this search's state with concurrent ones.
+        Best effort — sharing must never fail a search."""
         try:
-            card = distill_card(
-                self.journal,
-                problem=self.problem,
-                run_ref=f"{run_dir.name}/{self.search_dir.name}",
-                target=self._target(),
-                budget_s=self.budget.total_s,
-                cost_usd=self.total_cost_usd(),
-                selection=self.config.holdout.selection,
-            )
-            write_live_card(run_dir, card, self.search_dir.name)
+            self.memory.publish(self.journal, budget_s=self.budget.total_s, cost_usd=self.total_cost_usd())
         except Exception as exc:  # noqa: BLE001
             self.log(f"  live card publish failed (search unaffected): {exc}")
 
     def _live_experience(self) -> str:
-        """Prompt section from sibling searches' live cards; "" when there are
-        none. Polled fresh on every prompt build so late discoveries land in
-        the very next operator."""
-        run_dir = self._live_run_dir()
-        if run_dir is None:
-            return ""
-        from hillclimb.modules.memory.knowledge import load_live_cards, problem_family, render_live_experience
-
+        """Prompt section with what concurrent searches found so far; "" when
+        there is none. Polled fresh on every prompt build so late discoveries
+        land in the very next operator."""
         try:
-            cards = load_live_cards(
-                run_dir,
-                exclude_search_id=self.search_dir.name,
-                family=problem_family(self.problem.problem_id, self._target()),
-            )
-            return render_live_experience(cards, max_cards=self.config.learning.max_cards)
+            return self.memory.live()
         except Exception:  # noqa: BLE001
             return ""
 
@@ -1051,9 +1012,9 @@ class Harness:
             ),
             budget=self._view().budget,
             memory=MemoryContext(
-                text=self.knowledge_context or "",
-                reference=self.reference_solution,
-                reference_note=self.reference_note,
+                text=self.retrieved.text or "",
+                reference=self.retrieved.reference,
+                reference_note=self.retrieved.reference_note,
             ),
             services=_OperatorServices(self),
             agent_internet=self.config.allow_internet_for_agents,

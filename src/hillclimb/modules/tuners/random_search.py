@@ -9,7 +9,7 @@ import math
 import random
 from typing import Sequence
 
-from hillclimb.sdk import Observation, ParamSpace, ParamSpec, coerce
+from hillclimb.sdk import Observation, ParamSpace, ParamSpec, Tuner, coerce
 
 REDRAWS = 16
 
@@ -28,7 +28,7 @@ def sample_param(spec: ParamSpec, rng: random.Random):
     return int(round(value)) if spec.type == "int" else value
 
 
-class RandomTuner:
+class RandomSearch(Tuner):
     name = "random"
 
     def __init__(self, params: dict | None = None):

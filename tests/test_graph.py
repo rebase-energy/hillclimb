@@ -204,7 +204,7 @@ class TestRetrieval:
         assert "Distilled claims" in with_graph
         assert "histgradientboosting helps" in with_graph
         assert injected == ["cl1"]  # ids surfaced for credit assignment
-        config.learning.graph_retrieval = False
+        config.climber.memory_params["graph_retrieval"] = False
         without, _, none_injected = build_knowledge_context(config, problem, "", lambda m: None)
         assert "Distilled claims" not in without
         assert "PREVIOUS searches" in without  # cards block unaffected

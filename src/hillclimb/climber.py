@@ -19,6 +19,7 @@ that block:
       tuner: optuna
       tuner_params: {seed: 7}
       memory: files
+      memory_params: {max_cards: 3, claims: true}
       prompts: prompts/
 
 Every module is named the same three ways (`modules/refs.py`): a registry
@@ -297,25 +298,20 @@ class Climber:
 
         return get_tuner(self.spec.tuner, self.spec.tuner_params, scope=self.scope)
 
-    def graph_module(self) -> GraphModule:
-        """The climber's graph module (`graph:`): the built-in by registry
-        name, a local file (so it travels with the snapshot), or an
-        importable class — keyed so that an edited file is a different
-        builder and graph.json is rebuilt."""
-        from hillclimb.modules.memory.graphs import graph_key
+    def memory(self):
+        """The memory the block names, built with its `memory_params`."""
+        from hillclimb.modules.memory.files import get_memory
 
-        ref = self.spec.graph
-        resolved = refs.resolve_ref(ref, "graph", scope=self.scope)
-        module = resolved.target()
-        if resolved.path is not None:
-            # the file's NAME, not where it is: a snapshot's copy is the same builder
-            attr = refs.split_file_ref(ref)[1]
-            module.key = graph_key(resolved.path.name + (f":{attr}" if attr else ""), resolved.path)
-        else:
-            module.key = graph_key(ref)
-        if not module.name:
-            module.name = resolved.label  # type: ignore[misc]
-        return module
+        return get_memory(self.spec.memory, self.spec.memory_params, scope=self.scope)
+
+    def graph_module(self) -> GraphModule:
+        """The graph module that indexes the climber's memory (a setting of
+        the memory: `memory_params.graph`); the built-in for a memory that
+        has none, so reading the knowledge never depends on the climber."""
+        from hillclimb.modules.memory.base import DEFAULT_GRAPH
+        from hillclimb.modules.memory.graphs import get_graph
+
+        return self.memory().graph_module() or get_graph(DEFAULT_GRAPH)
 
     def lint_prompts(self) -> list[str]:
         """Problems with the climber's prompts dir (empty when clean): a

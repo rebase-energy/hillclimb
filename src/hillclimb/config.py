@@ -86,6 +86,12 @@ LEGACY_SETTINGS = {
     "search.trial_mode": "evaluation.replicate_mode",
     "search.noise_k": "evaluation.noise_k",
     "search.min_improvement": "evaluation.min_improvement",
+    # 0.5: how memory behaves was the user's `learning:` block, and the graph
+    # module sat beside `memory:`; both are the memory's params now
+    **{f"learning.{name}": f"climber.memory_params.{name}" for name in (
+        "max_cards", "live", "complexity_prior", "claims", "graph_retrieval", "credit", "playbooks", "skills",
+    )},
+    "climber.graph": "climber.memory_params.graph",
 }
 # settings that have no new home, and what to do instead
 REMOVED_SETTINGS = {
@@ -252,9 +258,13 @@ class StoreConfig(BaseModel):
 
 
 class LearningConfig(BaseModel):
-    """Cross-search learning: distill a knowledge card from every finished
-    search and inject prior experience into draft prompts."""
+    """Cross-search learning — what is the USER's about it. Which memory a
+    search uses and how it behaves (cards in the prompt, claims, skills, the
+    graph module, ...) is the climber's: `climber.memory` and
+    `climber.memory_params`."""
 
+    # the master switch: false runs every climber without cross-search
+    # memory, whatever its block says (`--no-learning` is the same)
     enabled: bool = True
     # advertise the read-only `hillclimb knowledge query` lookup to every
     # agent (a clause of the contract; needs `enabled`)
@@ -262,33 +272,16 @@ class LearningConfig(BaseModel):
     # default: <hillclimb dir>/knowledge (git-versionable); explicit
     # path overrides; None + no hillclimb dir = learning off
     dir: Path | None = None
-    max_cards: int = 3  # cards rendered into the prompt
-    # live sharing: republish this search's card after every executed
-    # candidate and read siblings' cards (runs/<run-id>/knowledge/), so
-    # concurrent searches in one run learn from each other mid-flight
-    live: bool = True
-    # opt-in policy bias: start the draft complexity schedule one step up
-    # when past winners were never 'minimal'
-    complexity_prior: bool = False
-    # semantic layer: one cheap agent pass after each finished search
-    # distills typed claims into the card (claims.py). Routed via
-    # `routing: distill:` (default model: haiku).
-    claims: bool = True
+    # wall clock for the one agent pass a memory may make after a search
+    # (claim distillation; routed via `routing: distill:`)
     claims_timeout_s: int = 300
-    # inject graph-ranked claims into operator prompts when
-    # knowledge/graph.json exists (its own flag so A/B stays possible)
-    graph_retrieval: bool = True
-    # credit assignment: injected claims share the search's outcome reward;
-    # track records adjust retrieval confidence and retire failing claims
-    # (credit.py)
-    credit: bool = True
-    # consolidated playbooks (knowledge/playbooks/<concept>.md) replace the
-    # raw claims block in draft prompts when one matches the problem's
-    # concepts; credit flows to the playbook's source claims
-    playbooks: bool = True
-    # skill library: harvest scored winners into knowledge/skills/ and hand
-    # the best match to the first draft as reference_solution.py
-    skills: bool = True
+
+
+# the `learning:` settings that described how memory BEHAVES moved into the
+# climber's block in 0.6: they are its memory's params
+MEMORY_PARAMS_FROM_LEARNING = (
+    "max_cards", "live", "complexity_prior", "claims", "graph_retrieval", "credit", "playbooks", "skills",
+)
 
 
 class ReportConfig(BaseModel):
@@ -442,12 +435,19 @@ class Config(BaseModel):
         `operators:` blocks) still loads: every setting is moved to where it
         lives now (LEGACY_SETTINGS). A setting with no new home raises with
         what to do instead."""
+        moved_learning = isinstance(data, dict) and isinstance(data.get("learning"), dict) and any(
+            name in data["learning"] for name in MEMORY_PARAMS_FROM_LEARNING
+        )
         if not isinstance(data, dict) or not any(k in data for k in ("search", "ensemble", "operators")) and not (
             isinstance(data.get("paths"), dict) and "prompts_dir" in data["paths"]
-        ):
+        ) and not moved_learning:
             return data
         data = {key: (dict(value) if isinstance(value, dict) else value) for key, value in data.items()}
         moved: dict[str, object] = {}
+        if moved_learning:  # a 0.5 `learning:` block: its behaviour flags are the memory's params
+            for name in MEMORY_PARAMS_FROM_LEARNING:
+                if name in data["learning"]:
+                    moved[f"climber.memory_params.{name}"] = data["learning"].pop(name)
         for block in ("search", "ensemble", "operators"):
             for name, value in (data.pop(block, None) or {}).items():
                 key = current_setting(f"{block}.{name}")

@@ -180,6 +180,6 @@ class TestInjectionReplaceRule:
         assert "Distilled claims" not in text
         assert ids == ["a1", "b1"]  # credit flows to the playbook's sources
         # flag off -> claims block again
-        config.learning.playbooks = False
+        config.climber.memory_params["playbooks"] = False
         text, _, ids = build_knowledge_context(config, self._problem(), "", lambda m: None)
         assert "Distilled claims" in text and "## Playbook" not in text

@@ -98,7 +98,7 @@ def test_the_bundled_climbers_load_and_name_their_modules():
     assert greedy.operator_set().get("draft").params == {}  # the operator's own defaults
     # a preset is a complete block because the classes declare what they need
     gepa = load_climber("gepa")
-    assert gepa.spec.block() == {"loop": "gepa", "tuner": "random", "memory": "files", "graph": "knowledge-graph"}
+    assert gepa.spec.block() == {"loop": "gepa", "tuner": "random", "memory": "files"}
     assert gepa.is_loop and gepa.holdout_timing == "after"
     assert gepa.operator_set().names() == ("gepa-reflect",)
 
@@ -108,7 +108,7 @@ def test_a_block_is_a_climber(tmp_path):
     names each module; with neither `policy:` nor `loop:` it is greedy."""
     assert ClimberSpec.model_validate("openevolve").block() == {
         "name": "openevolve", "policy": "greedy", "params": {"ensemble": False, "tune_budget": 0},
-        "select": "map-elites", "tuner": "random", "memory": "files", "graph": "knowledge-graph",
+        "select": "map-elites", "tuner": "random", "memory": "files",
     }  # a preset is a composition: greedy's schedule over the MAP-Elites selector
     assert ClimberSpec.model_validate({"params": {"num_drafts": 5}}).policy == "greedy"
     spec = ClimberSpec.model_validate({"policy": "mine.py:Mine", "operators": ["draft", {"ops.py:Cross": None}]})
@@ -361,9 +361,9 @@ def test_the_engine_uses_the_tuner_the_block_names(config, tmp_path):
     """`climber.tuner` reaches the harness (it silently did not for a while:
     the rig-based tune tests never went through api's wiring)."""
     from hillclimb.harness.glue import build_tuner
-    from hillclimb.modules.tuners.random_search import RandomTuner
+    from hillclimb.modules.tuners.random_search import RandomSearch
 
-    assert isinstance(build_tuner(config), RandomTuner)  # the default
+    assert isinstance(build_tuner(config), RandomSearch)  # the default
     config.climber.tuner_params = {"seed": 7}
     assert build_tuner(config).params == {"seed": 7}
     (tmp_path / "fixed.py").write_text(
@@ -377,7 +377,7 @@ def test_the_engine_uses_the_tuner_the_block_names(config, tmp_path):
     from hillclimb.config import Config
 
     explicit = Config.model_validate({"search": {"policy": "greedy", "tuner": "optuna"}})  # the 0.3 spelling
-    assert type(build_tuner(explicit)).__name__ == "OptunaTuner"
+    assert type(build_tuner(explicit)).__name__ == "Optuna"
 
 
 def test_execute_search_hands_the_harness_the_climbers_tuner(task, config, tmp_path, monkeypatch):
@@ -553,12 +553,16 @@ def test_a_climber_brings_its_own_graph_module(task, config, tmp_path):
     assert load_climber("greedy").graph_module().name == "knowledge-graph"  # the default
     root = write_climber(tmp_path / "mine", manifest="policy: policy.py\ngraph: graph.py\n")
     (root / "graph.py").write_text(GRAPH_PY)
-    module = resolve_climber({"policy": "policy.py", "graph": "graph.py"}, root).graph_module()
+    block = {"policy": "policy.py", "memory_params": {"graph": "graph.py"}}  # the graph module is a setting of the memory
+    module = resolve_climber(block, root).graph_module()
     assert module.name == "notes" and module.key.startswith("graph.py#")
     assert [n.id for n in module.build(tmp_path).nodes] == ["note:a"]
-    assert resolve_climber({"policy": "policy.py", "graph": "knowledge-graph"}, root).graph_module().name == "knowledge-graph"
+    assert resolve_climber({"policy": "policy.py", "memory_params": {"graph": "knowledge-graph"}}, root).graph_module().name == "knowledge-graph"
+    assert resolve_climber({"policy": "policy.py", "memory": "none"}, root).graph_module().name == "knowledge-graph"
+    # 0.5 wrote `graph:` beside `memory:`; it reads as the memory's setting
+    assert ClimberSpec.model_validate({"policy": "policy.py", "graph": "graph.py"}).memory_params == {"graph": "graph.py"}
 
-    config.climber = ClimberSpec.model_validate({"policy": "policy.py", "graph": "graph.py"}).anchored(root)
+    config.climber = ClimberSpec.model_validate(block).anchored(root)
     run_dir = api.create_run(config, RunMeta(run_id="r1", name="r1", kind="problem", target="t", problem_ids=[task.problem_id]))
     search_dir = api.create_search(config, task, run_dir, "r1", 600)
     assert (search_dir / "climber" / "files" / "graph.py").is_file()

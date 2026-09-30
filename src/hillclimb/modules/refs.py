@@ -98,6 +98,8 @@ KINDS: dict[str, Kind] = {
         Kind("operator", "operator", base="hillclimb.modules.operators.base:Operator",
              home="hillclimb.modules.operators"),
         Kind("tuner", "tuner", attr="TUNER", duck=("ask",), home="hillclimb.modules.tuners"),
+        Kind("memory", "memory", attr="MEMORY", base="hillclimb.modules.memory.base:Memory",
+             home="hillclimb.modules.memory.files"),
         Kind("graph", "graph module", attr="KNOWLEDGE_GRAPH", base="hillclimb.modules.memory.base:GraphModule",
              home="hillclimb.modules.memory.graphs"),
         Kind("similarity", "similarity score", attr="SIMILARITY_SCORE",
