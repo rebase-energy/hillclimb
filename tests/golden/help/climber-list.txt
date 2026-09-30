@@ -1,8 +1,7 @@
                                                                                                                         
  Usage: root climber list [OPTIONS]                                                                                     
                                                                                                                         
- The climbers `hillclimb run --climber` accepts: the bundled ones and every directory or one-file climber under         
- climbers/.                                                                                                             
+ The climbers a bare name stands for: the presets, and every one-file climber under climbers/.                          
                                                                                                                         
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --json            Machine-readable output                                                                            │

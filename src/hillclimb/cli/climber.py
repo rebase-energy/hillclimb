@@ -49,32 +49,38 @@ def _climber_ref(path: Path, base_dir: Path | None) -> str:
     return str(path)
 
 
+def _is_legacy_dir(path: Path) -> bool:
+    return (path / "climber.yaml").is_file()
+
+
 @climber_app.command("list")
 def climber_list(as_json: bool = typer.Option(False, "--json", help="Machine-readable output")):
-    """The climbers `hillclimb run --climber` accepts: the bundled ones and
-    every directory or one-file climber under climbers/."""
-    from hillclimb.climber import ClimberLoadError, bundled_climbers, load_climber
-    from hillclimb.climber import climber_base_dir
+    """The climbers a bare name stands for: the presets, and every one-file
+    climber under climbers/."""
+    from hillclimb.climber import ClimberLoadError, climber_base_dir, load_climber, presets
 
     config = common.load_config()
     base_dir = climber_base_dir(config)
-    refs = [(name, "bundled") for name in bundled_climbers()]
+    refs = [(name, "preset") for name in presets()]
     local = _local_climbers_dir(config)
     if local is not None and local.is_dir():
         for path in sorted(local.iterdir()):
-            if (path / "climber.yaml").is_file() or (path.is_file() and path.suffix == ".py"):
+            if _is_legacy_dir(path) or (path.is_file() and path.suffix == ".py"):
                 refs.append((_climber_ref(path, base_dir), "local"))
     rows = []
     for ref, origin in refs:
         try:
             climber = load_climber(ref, base_dir)
-        except ClimberLoadError as exc:
+            kind, description = ("loop" if climber.is_loop else "policy"), climber.description
+        except (ClimberLoadError, ValueError) as exc:
             rows.append({"ref": ref, "origin": origin, "kind": "?", "description": f"BROKEN: {exc}",
                          "sha256": None, "default": ref == config.climber.ref})
             continue
+        if base_dir is not None and _is_legacy_dir(base_dir / ref):
+            description = f"pre-0.6 directory: `hillclimb climber show {ref}` prints it as a block"
         rows.append({
-            "ref": ref, "origin": origin, "kind": "loop" if climber.is_loop else "policy",
-            "description": climber.manifest.description, "sha256": climber.sha256[:12],
+            "ref": ref, "origin": origin, "kind": kind,
+            "description": description, "sha256": climber.sha256[:12],
             "default": ref == config.climber.ref,
         })
     if as_json:
@@ -87,34 +93,81 @@ def climber_list(as_json: bool = typer.Option(False, "--json", help="Machine-rea
             f"{mark} [path]{_m(row['ref']):<{width}}[/]  {_m(row['origin']):<7} {_m(row['kind']):<6} "
             f"[note]{_m(row['description'])}[/]"
         )
-    say("\n[note]* = config climber.ref.[/]  Run one:        [cmd]hillclimb run <problem> --climber <ref>[/]")
-    say("                          Start your own: [cmd]hillclimb climber new <name> --from greedy[/]")
+    say("\n[note]* = this folder's default.[/]  Run one:        [cmd]hillclimb run <problem> --climber <name>[/]")
+    say("                              See its block:  [cmd]hillclimb climber show <name>[/]")
+    say("                              Start your own: [cmd]hillclimb climber new <name> --from greedy[/]")
 
 
-_COPIED_MODULE_KEYS = ("policy", "loop")
+def _portable_block(climber, base_dir: Path | None) -> dict:
+    """The climber's block with file refs written the way a config beside
+    `base_dir` would write them: relative when the file is below it."""
+    from hillclimb.modules import refs as module_refs
+
+    def relative(text: str) -> str:
+        if base_dir is not None:
+            try:
+                return Path(text).resolve().relative_to(base_dir.resolve()).as_posix()
+            except ValueError:
+                pass
+        return text
+
+    def portable(ref: str) -> str:
+        path = module_refs.ref_path(ref)
+        if path is None:
+            return ref
+        attr = module_refs.split_file_ref(ref)[1]
+        return relative(str(path)) + (f":{attr}" if attr else "")
+
+    spec = climber.spec.map_refs(portable)
+    if spec.prompts:
+        spec = spec.model_copy(update={"prompts": relative(spec.prompts)})
+    return spec.block()
+
+
+@climber_app.command("show")
+def climber_show(
+    ref: str = typer.Argument(None, help="A preset, a .py file, or a pre-0.6 climber directory (default: this folder's climber)"),
+):
+    """Print a climber as the block a run config takes.
+
+    Paste it under `climber:` in a run spec or in hillclimb.yaml and edit
+    it there: the block IS the climber. A pre-0.6 directory holding
+    climber.yaml comes out as its block too — this is how one is migrated.
+    """
+    import yaml
+
+    from hillclimb.climber import ClimberLoadError, climber_base_dir, load_climber
+
+    config = common.load_config()
+    base_dir = climber_base_dir(config)
+    try:
+        climber = load_climber(ref or config.climber.ref, base_dir)
+        climber.brain  # noqa: B018 — resolve it, so a broken ref is reported here
+    except (ClimberLoadError, ValueError) as exc:
+        fail(_m(exc))
+        raise typer.Exit(2) from exc
+    typer.echo(yaml.safe_dump({"climber": _portable_block(climber, base_dir)}, sort_keys=False), nl=False)
 
 
 @climber_app.command("new")
 def climber_new(
-    name: str = typer.Argument(..., help="Name of the new climber (becomes climbers/<name>/)"),
+    name: str = typer.Argument(..., help="Name of the new climber (becomes climbers/<name>.py)"),
     from_: str = typer.Option(
-        "greedy", "--from", help="Climber to copy: a bundled name, a directory holding climber.yaml, or a .py file"
+        "greedy", "--from", help="What to copy: a preset's name or a .py file"
     ),
 ):
     """Start your own climber from a copy of an existing one.
 
-    Copies the manifest, the policy (or loop) source and the prompts into
-    climbers/<name>/ so every part is a file you can edit, then
-    prints how to check and run it. A bundled climber's `module:Class`
-    policy is copied in as `<module>.py:Class` — edit that file.
+    Copies the source of the policy (or loop) into climbers/<name>.py — a
+    one-file climber you can edit — and prints the block that runs it.
     """
+    import inspect
     import re as _re
     import shutil
 
     import yaml
 
-    from hillclimb.climber import ClimberLoadError, load_climber
-    from hillclimb.climber import climber_base_dir
+    from hillclimb.climber import ClimberLoadError, climber_base_dir, load_climber
 
     config = common.load_config()
     local = _local_climbers_dir(config)
@@ -125,50 +178,28 @@ def climber_new(
     base_dir = climber_base_dir(config)
     try:
         source = load_climber(from_, base_dir)
-    except ClimberLoadError as exc:
+        source_file = Path(inspect.getsourcefile(source.brain.target))
+    except (ClimberLoadError, ValueError, TypeError) as exc:
         raise typer.BadParameter(str(exc)) from exc
-    target = local / name
-    if target.exists() or target.with_suffix(".py").exists():
+    target = (local / name).with_suffix(".py")
+    if target.exists() or (local / name).exists():
         raise typer.BadParameter(f"{_climber_ref(target, base_dir)} already exists")
     local.mkdir(parents=True, exist_ok=True)
-    if source.root is None:  # a one-file climber stays one file
-        target = target.with_suffix(".py")
-        shutil.copy2(source.source, target)
-    else:
-        shutil.copytree(
-            source.root, target,
-            ignore=lambda _dir, names: [n for n in names if n == "__pycache__" or n.startswith(".")],
-        )
-        manifest_path = target / "climber.yaml"
-        data = yaml.safe_load(manifest_path.read_text()) or {}
-        data["name"] = name
-        # a bundled manifest names its brain by package module; bring the
-        # source in so the copy is editable without touching the package
-        for key in _COPIED_MODULE_KEYS:
-            ref = data.get(key)
-            if not isinstance(ref, str) or ":" not in ref or not ref.startswith("hillclimb."):
-                continue
-            from hillclimb._moved import modernize
-
-            module_name, cls = modernize(ref).split(":", 1)
-            import importlib
-
-            module_file = Path(importlib.import_module(module_name).__file__)
-            shutil.copy2(module_file, target / module_file.name)
-            data[key] = f"{module_file.name}:{cls}"
-        manifest_path.write_text(yaml.safe_dump(data, sort_keys=False))
+    shutil.copy2(source_file, target)
     ref = _climber_ref(target, base_dir)
+    brain = "loop" if source.is_loop else "policy"
+    class_name = getattr(source.brain.target, "__name__", "")
+    block = {**_portable_block(source, base_dir), "name": name, brain: f"{ref}:{class_name}" if class_name else ref}
     try:
-        load_climber(ref, base_dir)
-    except ClimberLoadError as exc:  # never leave a broken copy behind
-        shutil.rmtree(target) if target.is_dir() else target.unlink()
+        load_climber(block[brain], base_dir).brain  # noqa: B018
+    except (ClimberLoadError, ValueError) as exc:  # never leave a broken copy behind
+        target.unlink()
         raise typer.BadParameter(f"the copy does not load: {exc}") from exc
     say(f"[head]Created[/] [path]{_m(ref)}[/] from [path]{_m(from_)}[/]")
-    files = sorted(p for p in target.rglob("*") if p.is_file()) if target.is_dir() else [target]
-    for path in files:
-        say(f"  [path]{_m(path.relative_to(target if target.is_dir() else target.parent))}[/]")
-    say(f"[head]Next:[/] edit it, then   [cmd]hillclimb climber check --climber {_m(ref)}[/]")
-    say(f"      and climb with   [cmd]hillclimb run <problem> --climber {_m(ref)}[/]")
+    say("[head]Its block[/] [note](paste under `climber:` in a run spec or hillclimb.yaml):[/]")
+    typer.echo(yaml.safe_dump({"climber": block}, sort_keys=False), nl=False)
+    say(f"[head]Next:[/] edit it, then   [cmd]hillclimb climber check --climber {_m(block[brain])}[/]")
+    say(f"                       [cmd]hillclimb run <problem> --climber {_m(block[brain])}[/]")
 
 
 @climber_app.command("check")
@@ -215,12 +246,11 @@ def climber_check(
         raise typer.BadParameter(f"climber file not found: {source}")
     try:
         loaded = load_climber(name, base_dir)
-        loaded.graph_module()  # `graph:` must resolve too, before an agent hour is spent
+        loaded.brain  # noqa: B018 — every module must resolve, before an agent hour is spent
+        loaded.graph_module()
     except (ClimberLoadError, ValueError) as exc:
         fail(_m(exc))
         raise typer.Exit(2) from exc
-    if loaded.root is not None and "memory: knowledge-graph" in (loaded.root / "climber.yaml").read_text():
-        warn("note: `memory: knowledge-graph` is now `memory: files` (the old spelling still loads)")
     if loaded.is_loop:
         fail(
             f"{_m(name)} brings its own Loop; "

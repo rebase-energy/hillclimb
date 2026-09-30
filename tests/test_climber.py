@@ -1,5 +1,7 @@
-"""Climbers: a bundled name, a directory with a manifest, or one .py file —
-one loader, one identity, operators and prompts scoped to the search."""
+"""Climbers: a block of config — a preset's name, one .py file, or the full
+`climber:` block — one resolver, one identity, operators and prompts scoped
+to the search. What 0.4/0.5 wrote (a directory with a manifest, a snapshot of
+one) still loads."""
 
 from __future__ import annotations
 
@@ -8,7 +10,18 @@ from pathlib import Path
 import pytest
 
 from hillclimb.agents.fake import FakeAgent
-from hillclimb.climber import ClimberLoadError, bundled_climbers, load_climber, tree_sha256
+import yaml
+
+from hillclimb.climber import (
+    ClimberLoadError,
+    ClimberSpec,
+    bundled_climbers,
+    load_climber,
+    load_snapshot,
+    resolve_climber,
+    snapshot_climber,
+    tree_sha256,
+)
 from hillclimb.harness.loop import PolicyLoop, Loop
 from hillclimb.modules.policies.greedy import GreedyPolicy
 from hillclimb.modules.policies.base import Action
@@ -46,7 +59,19 @@ class Cross(Operator):
 '''
 
 
+BLOCK = {
+    "policy": "policy.py",
+    "params": {"drafts": 2},
+    "operators": ["draft", {"operators.py:Cross": {"style": "bold"}}],
+    "memory": "none",
+    "prompts": "prompts",
+}
+LEGACY_SNAPSHOTS = Path(__file__).parent / "fixtures" / "legacy_snapshots"
+
+
 def write_climber(root: Path, *, manifest: str | None = None) -> Path:
+    """The files of a climber — and, as 0.4/0.5 had it, a `climber.yaml`
+    manifest beside them (`BLOCK` is the same climber as a block)."""
     root.mkdir(parents=True)
     (root / "policy.py").write_text(POLICY_PY)
     (root / "operators.py").write_text(OPERATORS_PY)
@@ -68,16 +93,38 @@ def test_the_bundled_climbers_load_and_name_their_modules():
     greedy = load_climber("greedy")
     loop = greedy.build_loop(params={"num_drafts": 1})
     assert isinstance(loop, PolicyLoop) and isinstance(loop.policy, GreedyPolicy)
-    assert loop.policy.param("num_drafts") == 1 and loop.policy.param("ensemble_top_k") == 3  # overlay, then manifest
+    assert loop.policy.param("num_drafts") == 1 and loop.policy.param("ensemble_top_k") == 3  # overlay, then the class's default
     assert greedy.operator_set().names() == ("draft", "debug", "improve", "ensemble")
-    assert greedy.operator_set().get("draft").params == {"retrieval": True}
+    assert greedy.operator_set().get("draft").params == {}  # the operator's own defaults
+    # a preset is a complete block because the classes declare what they need
     gepa = load_climber("gepa")
-    assert gepa.is_loop and gepa.manifest.holdout_timing == "after"
+    assert gepa.spec.block() == {
+        "loop": "gepa", "params": {}, "operator_params": {}, "tuner": "random", "tuner_params": {},
+        "memory": "files", "graph": "knowledge-graph",
+    }
+    assert gepa.is_loop and gepa.holdout_timing == "after"
     assert gepa.operator_set().names() == ("gepa-reflect",)
 
 
-def test_a_directory_climber_runs_with_its_own_operator_and_prompts(task, config, tmp_path):
-    climber = load_climber(str(write_climber(tmp_path / "crosser")))
+def test_a_block_is_a_climber(tmp_path):
+    """The `climber:` block: a bare string is a preset or one file, a mapping
+    names each module; with neither `policy:` nor `loop:` it is greedy."""
+    assert ClimberSpec.model_validate("openevolve").block()["policy"] == "openevolve"
+    assert ClimberSpec.model_validate({"params": {"num_drafts": 5}}).policy == "greedy"
+    spec = ClimberSpec.model_validate({"policy": "mine.py:Mine", "operators": ["draft", {"ops.py:Cross": None}]})
+    assert spec.label == "mine" and spec.operator_items() == [("draft", {}), ("ops.py:Cross", {})]
+    assert ClimberSpec.model_validate({"name": "x", "policy": "pkg.mod:Cls"}).label == "x"
+    anchored = spec.anchored(tmp_path)
+    assert anchored.policy == f"{tmp_path / 'mine.py'}:Mine"
+    assert anchored.operators == ["draft", {f"{tmp_path / 'ops.py'}:Cross": None}]
+    assert [p.name for p in anchored.file_paths()] == ["mine.py", "ops.py"]
+    with pytest.raises(ValueError, match="Unknown climber: climbers/mine .*hillclimb climber show climbers/mine"):
+        ClimberSpec.model_validate("climbers/mine")
+
+
+def test_a_block_runs_with_its_own_operator_and_prompts(task, config, tmp_path):
+    root = write_climber(tmp_path / "crosser")
+    climber = resolve_climber({**BLOCK, "name": "crosser"}, root)  # file refs resolve from the block's folder
     assert climber.name == "crosser" and not climber.is_loop and climber.lint_prompts() == []
     agent = FakeAgent()
     for score in (0.5, 0.7, 0.9):
@@ -102,7 +149,7 @@ def test_a_directory_climber_runs_with_its_own_operator_and_prompts(task, config
 
 
 def test_an_operator_the_climber_did_not_list_is_refused(task, config, tmp_path):
-    climber = load_climber(str(write_climber(tmp_path / "crosser")))
+    climber = resolve_climber(BLOCK, write_climber(tmp_path / "crosser"))
     agent = FakeAgent()
     agent.queue(script=ok_script(0.5), notes="x\n")
     harness, _journal, _ = make_harness(task, config, agent, operators=climber.operator_set())
@@ -115,7 +162,8 @@ def test_a_one_file_climber_is_the_ten_line_story(task, config, tmp_path):
     path = tmp_path / "drafts_only.py"
     path.write_text(OPERATORS_PY + "\n" + POLICY_PY.replace("DraftsThenCross", "DraftsOnly"))
     climber = load_climber(str(path))
-    assert (climber.name, climber.root, climber.is_loop) == ("drafts_only", None, False)
+    assert (climber.name, climber.is_loop) == ("drafts_only", False)
+    assert climber.spec.policy == str(path)  # a bare file is `policy: <file>`
     # the default four, plus the Operator the file itself defines
     assert climber.operator_set().names() == ("draft", "debug", "improve", "ensemble", "cross")
     assert climber.build_loop(params={"drafts": 5}).policy.params == {"drafts": 5}
@@ -140,49 +188,89 @@ def test_a_one_file_loop_is_recognised(tmp_path):
     assert climber.is_loop and isinstance(loop, Loop) and (loop.shots, loop.parallelism) == (3, 4)
 
 
-def test_identity_is_the_tree_and_ignores_caches(tmp_path):
+def test_identity_is_the_block_and_every_file_it_reaches(tmp_path):
     root = write_climber(tmp_path / "c")
-    before = load_climber(str(root)).sha256
+    (root / "policy.py").write_text("from .helpers import LIMIT\n" + POLICY_PY)
+    (root / "helpers.py").write_text("LIMIT = 2\n")
+    before = resolve_climber(BLOCK, root).sha256
+    assert resolve_climber({**BLOCK, "name": "renamed"}, root).sha256 == before  # a label is not identity
     (root / "__pycache__").mkdir()
     (root / "__pycache__" / "policy.cpython-312.pyc").write_bytes(b"junk")
-    (root / ".DS_Store").write_bytes(b"junk")
-    assert tree_sha256(root) == before
+    (root / "prompts" / ".DS_Store").write_bytes(b"junk")
+    (root / "unrelated.py").write_text("x = 1\n")  # a file the block does not reach
+    assert resolve_climber(BLOCK, root).sha256 == before
+    assert resolve_climber({**BLOCK, "params": {"drafts": 3}}, root).sha256 != before  # a param
     (root / "prompts" / "cross.md").write_text("Cross {{files}} differently.\n")
-    assert tree_sha256(root) != before  # a prompt edit is a different climber
+    prompt_edit = resolve_climber(BLOCK, root).sha256
+    assert prompt_edit != before  # a prompt edit is a different climber
+    (root / "helpers.py").write_text("LIMIT = 3\n")
+    assert resolve_climber(BLOCK, root).sha256 != prompt_edit  # so is a file it only reaches by import
+
+
+def test_a_snapshot_is_the_climber_it_was_taken_of(tmp_path):
+    """`<search_dir>/climber/`: the block, its local files and its prompts —
+    same identity, loadable with the originals gone."""
+    import shutil
+
+    root = write_climber(tmp_path / "c")
+    (root / "policy.py").write_text("from .helpers import LIMIT\n" + POLICY_PY)
+    (root / "helpers.py").write_text("LIMIT = 2\n")
+    live = resolve_climber({**BLOCK, "name": "crosser"}, root)
+    snapshot = snapshot_climber(live, tmp_path / "search")
+    assert sorted(p.relative_to(snapshot).as_posix() for p in snapshot.rglob("*") if p.is_file()) == [
+        "climber.yaml", "files/helpers.py", "files/operators.py", "files/policy.py",
+        "prompts/cross.md", "prompts/draft.md",
+    ]
+    block = yaml.safe_load((snapshot / "climber.yaml").read_text())
+    assert block["snapshot"] == 2 and block["policy"] == "files/policy.py" and block["prompts"] == "prompts"
+    assert block["operators"] == ["draft", {"files/operators.py:Cross": {"style": "bold"}}]
+    shutil.rmtree(root)  # editing — or losing — the live files never changes a started search
+    loaded = load_snapshot(tmp_path / "search")
+    assert (loaded.name, loaded.sha256) == ("crosser", live.sha256)
+    assert loaded.operator_set().names() == ("draft", "cross")
+    assert loaded.build_loop().policy.params == {"drafts": 2}
+    assert snapshot_climber(loaded, tmp_path / "search") == snapshot  # idempotent
 
 
 @pytest.mark.parametrize(
-    ("manifest", "message"),
+    ("block", "message"),
     [
-        ("policy: policy.py\nloop: policy.py\n", "exactly one of `policy:`"),
-        ("memory: none\n", "exactly one of `policy:`"),
+        ("policy: policy.py\nloop: policy.py\n", "`policy:` .* or `loop:` .*, not both"),
         ("policy: policy.py\nrouting: {draft: {model: opus}}\n", "`routing` is reserved"),
         ("policy: policy.py\nmemory: sqlite\n", "memory"),
         ("policy: policy.py\nnum_drafts: 3\n", "num_drafts"),  # a typo'd top-level key, not silently ignored
-        ("policy: nope.py\n", "nope.py is not a file inside the climber's directory"),
-        ("policy: ../evil.py\n", "is not a file inside the climber's directory"),
-        ("policy: greedy\n", "name a file"),
+        ("policy: policy.py\ndescription: mine\n", "`description`: .*YAML comment"),
+        ("policy: policy.py\nsimilarity: [api-calls]\n", "`similarity`: .*viewer's setting"),
+        ("policy: policy.py\nholdout_timing: after\n", "`holdout_timing`: a loop declares it on its class"),
+        ("policy: nope.py\n", "climber file not found: .*nope.py"),
+        ("policy: nonsense\n", r"unknown policy 'nonsense' \(available: greedy, openevolve"),
+        ("loop: nonsense\n", r"unknown loop 'nonsense' \(available: gepa"),
         ("policy: operators.py\n", "exactly one policy class"),
         ("policy: policy.py\noperators: [operators.py:Nope]\n", "defines no Nope"),
-        ("policy: policy.py\ngraph: nope.py\n", "nope.py is not a file inside the climber's directory"),
+        ("policy: policy.py\noperators: [nope]\n", r"unknown operator 'nope' \(available: debug, draft, ensemble, improve"),
+        ("policy: policy.py\noperator_params: {cross: {style: bold}}\n", "has no operator 'cross'"),
+        ("policy: policy.py\ntuner: nope\n", "unknown tuner 'nope'"),
+        ("policy: policy.py\ngraph: nope.py\n", "climber file not found: .*nope.py"),
         ("policy: policy.py\ngraph: operators.py\n", "exactly one GraphModule subclass"),
-        ("policy: policy.py\ngraph: operators.py:Cross\n", "`graph: operators.py:Cross` is not a GraphModule subclass"),
-        ("policy: policy.py\ngraph: nowhere.mod:X\n", "`graph: nowhere.mod:X` cannot be imported"),
+        ("policy: policy.py\ngraph: operators.py:Cross\n", "is not a GraphModule subclass"),
+        ("policy: policy.py\ngraph: nowhere.mod:X\n", "cannot import graph module 'nowhere.mod:X'"),
     ],
 )
-def test_a_bad_manifest_names_the_file_and_the_fix(tmp_path, manifest, message):
-    root = write_climber(tmp_path / "bad", manifest=manifest)
-    with pytest.raises(ClimberLoadError, match=message) as exc:
-        climber = load_climber(str(root))
+def test_a_bad_block_names_the_file_and_the_fix(tmp_path, block, message):
+    root = write_climber(tmp_path / "bad")
+    with pytest.raises(ClimberLoadError, match=message):
+        climber = resolve_climber(yaml.safe_load(block), root)
         climber.build_loop()
         climber.operator_set()
+        climber.tuner()
         climber.graph_module()
-    assert "bad" in str(exc.value)
 
 
 def test_unknown_reference_lists_what_exists(tmp_path):
     with pytest.raises(ClimberLoadError, match="bundled: gepa, greedy, openevolve"):
         load_climber("nope")
+    with pytest.raises(ClimberLoadError, match="Unknown climber: nope .presets: gepa, greedy, openevolve"):
+        resolve_climber("nope")
     with pytest.raises(ClimberLoadError, match="holds no climber.yaml"):
         load_climber(str(tmp_path))
 
@@ -191,7 +279,7 @@ def test_a_climber_may_not_shadow_the_contract(tmp_path):
     root = write_climber(tmp_path / "sneaky")
     (root / "prompts" / "contract_verifier.md").write_text("Anything goes.\n")
     (root / "prompts" / "improve.md").write_text("Improve it. {{made_up_token}}\n")
-    problems = load_climber(str(root)).lint_prompts()
+    problems = resolve_climber(BLOCK, root).lint_prompts()
     assert any("contract_verifier.md: harness-owned" in p for p in problems)
     assert any("improve.md" in p and "made_up_token" in p for p in problems)
 
@@ -200,7 +288,7 @@ def test_an_import_error_in_the_authors_file_is_reported_with_its_path(tmp_path)
     root = write_climber(tmp_path / "broken")
     (root / "policy.py").write_text("import not_a_real_module\n")
     with pytest.raises(ClimberLoadError, match="policy.py failed to import: ModuleNotFoundError"):
-        load_climber(str(root)).build_loop()
+        resolve_climber(BLOCK, root).build_loop()
 
 
 # --- run folders: what is recorded, and what older folders still load as ---
@@ -318,22 +406,58 @@ def test_a_manifest_with_a_pre_move_ref_still_loads(tmp_path):
     assert isinstance(loop.policy, GreedyPolicy)
 
 
-def test_a_search_snapshot_with_a_pre_move_ref_still_resumes(task, config, tmp_path):
-    """The v3 run folder written before the move: its climber/ snapshot names
-    the policy by the old module path, and resume loads that snapshot."""
-    from hillclimb import api
-    from hillclimb.climber import load_snapshot
-    from hillclimb.modules.policies.greedy import GreedyPolicy
-    from hillclimb.harness.run import RunMeta
-
-    run_dir = api.create_run(config, RunMeta(run_id="r1", name="r1", kind="problem", target="t", problem_ids=[task.problem_id]))
-    search_dir = api.create_search(config, task, run_dir, "r1", 600)
+def _legacy_snapshot(search_dir: Path, text: str) -> Path:
+    """What 0.4/0.5 left in `<search_dir>/climber/`: the climber's manifest."""
     manifest = search_dir / "climber" / "climber.yaml"
-    text = manifest.read_text().replace("hillclimb.modules.policies.greedy:", "hillclimb.policies.greedy:")
-    assert "hillclimb.policies.greedy:GreedyPolicy" in text  # the old spelling is what we test
+    manifest.parent.mkdir(parents=True)
     manifest.write_text(text)
-    loop = load_snapshot(search_dir, name="greedy").build_loop()
+    return manifest
+
+
+@pytest.mark.parametrize("name", ["greedy", "openevolve", "gepa"])
+def test_a_pre_06_snapshot_of_a_bundled_climber_still_loads(tmp_path, name):
+    """Every search started before 0.6 holds the bundled climber's manifest
+    (frozen here as 0.5.0 shipped it). It must still resume — read as it is,
+    never rewritten."""
+    if name == "openevolve":
+        pytest.importorskip("openevolve")
+    text = (LEGACY_SNAPSHOTS / f"{name}.yaml").read_text()
+    manifest = _legacy_snapshot(tmp_path, text)
+    climber = load_snapshot(tmp_path, name=name)
+    assert climber.name == name
+    loop = climber.build_loop(log=lambda *_: None)
+    if name == "gepa":
+        assert climber.is_loop and type(loop).__name__ == "GepaLoop"
+        assert climber.operator_set().names() == ("gepa-reflect",)
+        assert climber.holdout_timing == "after"  # the manifest asked for it
+        assert loop.params.max_metric_calls == 50
+    else:
+        assert not climber.is_loop and type(loop.policy).__name__ == {"greedy": "GreedyPolicy", "openevolve": "OpenEvolvePolicy"}[name]
+        assert climber.operator_set().names() == ("draft", "debug", "improve", "ensemble")
+        assert climber.operator_set().get("draft").params == {"retrieval": True}
+        assert loop.policy.params["num_drafts"] == 3  # the manifest's params
+    assert manifest.read_text() == text
+
+
+def test_a_search_snapshot_with_a_pre_move_ref_still_resumes(tmp_path):
+    """A run folder written before the package-layout move names the policy
+    by the old module path, and resume loads that snapshot."""
+    from hillclimb.modules.policies.greedy import GreedyPolicy
+
+    text = (LEGACY_SNAPSHOTS / "greedy.yaml").read_text().replace(
+        "hillclimb.modules.policies.greedy:", "hillclimb.policies.greedy:"
+    )
+    assert "hillclimb.policies.greedy:GreedyPolicy" in text  # the old spelling is what we test
+    _legacy_snapshot(tmp_path, text)
+    loop = load_snapshot(tmp_path, name="greedy").build_loop()
     assert isinstance(loop.policy, GreedyPolicy)
+
+
+def test_a_pre_06_one_file_snapshot_still_loads(tmp_path):
+    (tmp_path / "climber").mkdir()
+    (tmp_path / "climber" / "drafts_only.py").write_text(OPERATORS_PY + "\n" + POLICY_PY)
+    climber = load_snapshot(tmp_path)
+    assert climber.name == "drafts_only" and "cross" in climber.operator_set().names()
 
 
 def test_memory_is_files_and_the_old_spelling_still_loads(tmp_path):
@@ -341,29 +465,36 @@ def test_memory_is_files_and_the_old_spelling_still_loads(tmp_path):
     reads as `files`, and nothing on disk is rewritten to say so."""
     root = write_climber(tmp_path / "old", manifest="policy: policy.py\nmemory: knowledge-graph\n")
     climber = load_climber(str(root))
-    assert climber.manifest.memory == "files"
-    assert climber.manifest.model_dump()["memory"] == "files"
+    assert climber.spec.memory == "files"
+    assert climber.spec.model_dump()["memory"] == "files"
     assert "memory: knowledge-graph" in (root / "climber.yaml").read_text()  # left as written
-    assert load_climber(str(write_climber(tmp_path / "new", manifest="policy: policy.py\nmemory: files\n"))).manifest.memory == "files"
+    assert ClimberSpec.model_validate({"memory": "knowledge-graph"}).memory == "files"
     one_file = write_climber(tmp_path / "solo") / "policy.py"
-    assert load_climber(str(one_file)).manifest.memory == "files"  # the model default
+    assert load_climber(str(one_file)).spec.memory == "files"  # the model default
 
 
-def test_a_search_snapshot_with_the_old_memory_spelling_still_resumes(task, config, tmp_path):
-    from hillclimb import api
-    from hillclimb.climber import load_snapshot
+def test_a_search_snapshot_with_the_old_memory_spelling_still_resumes(config, tmp_path):
     from hillclimb.harness.glue import effective_memory
-    from hillclimb.harness.run import RunMeta
 
-    run_dir = api.create_run(config, RunMeta(run_id="r1", name="r1", kind="problem", target="t", problem_ids=[task.problem_id]))
-    search_dir = api.create_search(config, task, run_dir, "r1", 600)
-    manifest = search_dir / "climber" / "climber.yaml"
-    manifest.write_text(manifest.read_text().replace("memory: files", "memory: knowledge-graph"))
-    assert "memory: knowledge-graph" in manifest.read_text()
-    before = tree_sha256(search_dir / "climber")
-    assert load_snapshot(search_dir, name="greedy").manifest.memory == "files"
-    assert effective_memory(config, search_dir) == "files"
-    assert tree_sha256(search_dir / "climber") == before  # resume never rewrites the snapshot
+    text = (LEGACY_SNAPSHOTS / "greedy.yaml").read_text().replace("memory: files", "memory: knowledge-graph")
+    assert "memory: knowledge-graph" in text
+    _legacy_snapshot(tmp_path, text)
+    before = tree_sha256(tmp_path / "climber")
+    assert load_snapshot(tmp_path, name="greedy").spec.memory == "files"
+    assert effective_memory(config, tmp_path) == "files"
+    assert tree_sha256(tmp_path / "climber") == before  # resume never rewrites the snapshot
+
+
+def test_a_pre_06_directory_is_the_same_climber_as_its_block(tmp_path):
+    """The manifest a 0.5 directory climber held reads as the block it is —
+    same modules, same identity — which is how `climber show` migrates one."""
+    root = write_climber(tmp_path / "crosser")
+    legacy, block = load_climber(str(root)), resolve_climber(BLOCK, root)
+    assert legacy.name == "crosser" and legacy.sha256 == block.sha256
+    assert legacy.operator_set().names() == block.operator_set().names() == ("draft", "cross")
+    assert legacy.operator_set().get("cross").params == {"style": "bold"}
+    timed = write_climber(tmp_path / "timed", manifest="policy: policy.py\nholdout_timing: after\ndescription: x\nsimilarity: [api-calls]\n")
+    assert load_climber(str(timed)).holdout_timing == "after"  # carried beside the block
 
 
 GRAPH_PY = """
@@ -380,22 +511,22 @@ class Notes(GraphModule):
 
 def test_a_climber_brings_its_own_graph_module(task, config, tmp_path):
     """`graph:` names the module that indexes the memory: the built-in by
-    name, or a file in the climber dir — which the snapshot then carries."""
+    name, or a local file — which the snapshot then carries."""
     from hillclimb import api
-    from hillclimb.climber import load_snapshot
     from hillclimb.harness.run import RunMeta
 
     assert load_climber("greedy").graph_module().name == "knowledge-graph"  # the default
     root = write_climber(tmp_path / "mine", manifest="policy: policy.py\ngraph: graph.py\n")
     (root / "graph.py").write_text(GRAPH_PY)
-    module = load_climber(str(root)).graph_module()
+    module = resolve_climber({"policy": "policy.py", "graph": "graph.py"}, root).graph_module()
     assert module.name == "notes" and module.key.startswith("graph.py#")
     assert [n.id for n in module.build(tmp_path).nodes] == ["note:a"]
-    explicit = write_climber(tmp_path / "explicit", manifest="policy: policy.py\ngraph: knowledge-graph\n")
-    assert load_climber(str(explicit)).graph_module().name == "knowledge-graph"
+    assert resolve_climber({"policy": "policy.py", "graph": "knowledge-graph"}, root).graph_module().name == "knowledge-graph"
 
     config.climber.ref = str(root)
     run_dir = api.create_run(config, RunMeta(run_id="r1", name="r1", kind="problem", target="t", problem_ids=[task.problem_id]))
     search_dir = api.create_search(config, task, run_dir, "r1", 600)
-    assert (search_dir / "climber" / "graph.py").is_file()
-    assert load_snapshot(search_dir, name="mine").graph_module().name == "notes"
+    assert (search_dir / "climber" / "files" / "graph.py").is_file()
+    snapshot = load_snapshot(search_dir, name="mine")
+    assert snapshot.graph_module().name == "notes"
+    assert snapshot.graph_module().key == module.key  # the copy is the same builder: no rebuild of graph.json

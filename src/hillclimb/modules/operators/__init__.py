@@ -21,15 +21,19 @@ from hillclimb.modules.operators.base import (
     ProblemInfo,
     inspiration_filename,
 )
+from hillclimb.modules import refs
 from hillclimb.modules.operators.builtin import BUILTIN_OPERATORS
 
-_OPERATORS: dict[str, type[Operator]] = {cls.name: cls for cls in BUILTIN_OPERATORS}
+# the registry itself lives with every other kind's, in modules/refs.py
+_OPERATORS: dict[str, type[Operator]] = refs.KINDS["operator"].registry
+for _builtin in BUILTIN_OPERATORS:
+    refs.register("operator", _builtin.name, _builtin)
 
 
 def register_operator(cls: type[Operator]) -> type[Operator]:
     if cls.role not in ROLES:
         raise ValueError(f"operator {cls.name!r}: role {cls.role!r} is not one of {ROLES}")
-    _OPERATORS[cls.name] = cls
+    refs.register("operator", cls.name, cls)
     return cls
 
 

@@ -130,6 +130,12 @@ class Loop(ABC):
     harness then commits whatever is still in flight and ends the search."""
 
     name: str = "loop"
+    # what a loop needs of the search it drives, declared on the class so
+    # `loop: <name>` is a complete climber:
+    # the operators its search may use (names or classes; None = the built-in four)
+    operators: tuple | None = None
+    # `"after"` when its state must never meet a holdout value (None = the user's)
+    holdout_timing: str | None = None
 
     @abstractmethod
     def run(self, harness: Harness) -> None: ...

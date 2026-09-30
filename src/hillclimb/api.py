@@ -414,7 +414,7 @@ def create_search(
         climber=config.climber.ref,
         role="improver" if problem.solution_kind == "climber" else "solver",
         climber_sha256=climber.sha256,
-        climber_manifest=climber.manifest.model_dump(exclude_defaults=False),
+        climber_manifest=climber.spec.model_dump(),
         climber_params=config.climber.params,
         hillclimb_version=__version__,
         tuner=config.climber.tuner,

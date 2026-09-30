@@ -316,8 +316,6 @@ class DraftsOnly(GreedyPolicy):
 
 
 def test_file_policy_loads_by_path_and_is_hashed(tmp_path, journal, config):
-    import hashlib
-
     from hillclimb.climber import load_climber
 
     path = tmp_path / "hillclimb" / "policies" / "drafts_only.py"
@@ -330,10 +328,16 @@ def test_file_policy_loads_by_path_and_is_hashed(tmp_path, journal, config):
     assert policy.propose(make_view(journal, config)).operator == "draft"  # greedy would improve
 
     # relative paths anchor at the folder holding the hillclimb dir; a
-    # one-file climber's identity is the hash of its bytes
+    # one-file climber's identity follows its bytes, not its place
     relative = load_climber("hillclimb/policies/drafts_only.py", tmp_path)
-    assert relative.source == path
-    assert relative.sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert Path(relative.source) == path
+    assert relative.sha256 == load_climber(str(path)).sha256
+    elsewhere = tmp_path / "copy" / "drafts_only.py"
+    elsewhere.parent.mkdir()
+    elsewhere.write_text(FILE_POLICY)
+    assert load_climber(str(elsewhere)).sha256 == relative.sha256
+    elsewhere.write_text(FILE_POLICY + "# edited\n")
+    assert load_climber(str(elsewhere)).sha256 != relative.sha256
     assert climber_label(str(path)) == "drafts_only" and climber_label("greedy") == "greedy"
     with pytest.raises(ClimberLoadError, match="climber file not found"):
         load_climber("hillclimb/policies/missing.py", tmp_path)
@@ -417,11 +421,10 @@ def test_file_policy_drives_a_search_and_is_recorded(task, config, tmp_path):
     run_dir = create_run(config, RunMeta(run_id="r1", name="r1", kind="problem", target="p", problem_ids=["p"]))
     meta = load_search_meta(create_search(config, load_problem("p", config), run_dir, "r1", 60))
     assert meta.climber == str(path)
-    import hashlib
-    assert meta.climber_sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
+    from hillclimb.climber import load_climber
+    assert meta.climber_sha256 == load_climber(str(path)).sha256
     config.climber.ref = "greedy"
     meta = load_search_meta(create_search(config, load_problem("p", config), run_dir, "r1", 60))
-    from hillclimb.climber import load_climber
     assert meta.climber_sha256 == load_climber("greedy").sha256  # a bundled climber has an identity too
 
 

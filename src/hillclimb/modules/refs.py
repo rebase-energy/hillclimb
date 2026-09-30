@@ -91,9 +91,10 @@ class Kind:
 KINDS: dict[str, Kind] = {
     kind.name: kind
     for kind in (
-        Kind("policy", "policy", attr="POLICY", duck=("propose", "observe")),
-        Kind("loop", "loop", attr="LOOP", base="hillclimb.harness.loop:Loop"),
-        Kind("operator", "operator", base="hillclimb.modules.operators.base:Operator"),
+        Kind("policy", "policy", attr="POLICY", duck=("propose", "observe"), home="hillclimb.modules.policies"),
+        Kind("loop", "loop", attr="LOOP", base="hillclimb.harness.loop:Loop", home="hillclimb.climbers"),
+        Kind("operator", "operator", base="hillclimb.modules.operators.base:Operator",
+             home="hillclimb.modules.operators"),
         Kind("tuner", "tuner", attr="TUNER", duck=("ask",), home="hillclimb.modules.tuners"),
         Kind("graph", "graph module", attr="KNOWLEDGE_GRAPH", base="hillclimb.modules.memory.base:GraphModule",
              home="hillclimb.modules.memory.graphs"),

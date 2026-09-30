@@ -1,16 +1,16 @@
                                                                                                                         
- Usage: root climber new [OPTIONS] NAME                                                                                 
+ Usage: root climber show [OPTIONS] [REF]                                                                               
                                                                                                                         
- Start your own climber from a copy of an existing one.                                                                 
+ Print a climber as the block a run config takes.                                                                       
                                                                                                                         
- Copies the source of the policy (or loop) into climbers/<name>.py — a                                                  
- one-file climber you can edit — and prints the block that runs it.                                                     
+ Paste it under `climber:` in a run spec or in hillclimb.yaml and edit                                                  
+ it there: the block IS the climber. A pre-0.6 directory holding                                                        
+ climber.yaml comes out as its block too — this is how one is migrated.                                                 
                                                                                                                         
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ *    name      TEXT  Name of the new climber (becomes climbers/<name>.py) [required]                                 │
+│   [ref]      TEXT  A preset, a .py file, or a pre-0.6 climber directory (default: this folder's climber)             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ --from          TEXT  What to copy: a preset's name or a .py file [default: greedy]                                  │
-│ --help  -h            Show this message and exit.                                                                    │
+│ --help  -h        Show this message and exit.                                                                        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 

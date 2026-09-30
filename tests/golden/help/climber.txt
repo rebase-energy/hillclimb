@@ -9,8 +9,9 @@
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ check  Conformance check for a climber — the cheap pre-verifier.                                                     │
-│ list   The climbers `hillclimb run --climber` accepts: the bundled ones and                                          │
-│        every directory or one-file climber under climbers/.                                                          │
+│ list   The climbers a bare name stands for: the presets, and every one-file                                          │
+│        climber under climbers/.                                                                                      │
 │ new    Start your own climber from a copy of an existing one.                                                        │
+│ show   Print a climber as the block a run config takes.                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 

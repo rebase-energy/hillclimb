@@ -50,18 +50,20 @@ def is_loop_climber(name: str, config: Config | None = None) -> bool:
 def holdout_timing(config: Config, search_dir=None) -> str:
     """When the harness scores the hidden split: the user's `holdout.timing`,
     tightened to `after` for a climber that asks for it."""
-    asked = search_climber(config, search_dir).manifest.holdout_timing
+    asked = search_climber(config, search_dir).holdout_timing
     return asked or config.holdout.timing
 
 
 def build_tuner(config: Config, search_dir=None):
     """The climber's tuner, unless the user named one (`search.tuner`)."""
+    from hillclimb.climber import climber_base_dir
     from hillclimb.modules.tuners import get_tuner
 
-    manifest = search_climber(config, search_dir).manifest
+    climber = search_climber(config, search_dir)
     if config.climber.tuner is not None:  # the user named one: it wins
-        return get_tuner(config.climber.tuner, config.climber.tuner_params)
-    return get_tuner(manifest.tuner, {**manifest.tuner_params, **config.climber.tuner_params})
+        return get_tuner(config.climber.tuner, config.climber.tuner_params, base_dir=climber_base_dir(config))
+    spec = climber.spec
+    return get_tuner(spec.tuner, {**spec.tuner_params, **config.climber.tuner_params}, scope=climber.scope)
 
 
 def build_loop(config: Config, *, complexity_start: int = 0, log=print, search_dir=None) -> Loop:
@@ -119,4 +121,4 @@ def effective_memory(config: Config, search_dir=None) -> str:
     manifest's — and always `none` when learning is switched off."""
     if not config.learning.enabled:
         return "none"
-    return config.climber.memory or search_climber(config, search_dir).manifest.memory
+    return config.climber.memory or search_climber(config, search_dir).spec.memory

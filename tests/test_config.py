@@ -276,10 +276,10 @@ def test_the_users_operator_overlay_reaches_the_operators():
     from hillclimb.harness.glue import build_operators, effective_memory
 
     config = Config()
-    assert build_operators(config).get("draft").params == {"retrieval": True}  # the manifest's
+    assert build_operators(config).get("draft").params == {}  # the operator's own defaults
     config.climber.operators = {"draft": {"retrieval": False}}
     assert build_operators(config).get("draft").params == {"retrieval": False}
-    assert build_operators(config).get("improve").params == {"ablation": True}
+    assert build_operators(config).get("improve").params == {}
     config.climber.operators = {"crossover": {"x": 1}}
     with pytest.raises(ValueError, match="this climber has no operator 'crossover'"):
         build_operators(config)

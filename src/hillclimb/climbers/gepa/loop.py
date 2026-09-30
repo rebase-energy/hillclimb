@@ -26,7 +26,7 @@ from typing import Callable, Protocol
 
 from hillclimb.climbers.gepa.config import GEPAParams
 from hillclimb.climbers.gepa.evaluator import GepaScoring
-from hillclimb.climbers.gepa.operator import OPERATOR_NAME
+from hillclimb.climbers.gepa.operator import OPERATOR_NAME, GepaReflectOperator
 from hillclimb.climbers.gepa.proposer import COMPONENT, ProposerError, feedback_json
 from hillclimb.sdk import (
     INJECT_ACTION,
@@ -73,6 +73,8 @@ class _Halt(Exception):
 
 class GepaLoop(Loop):
     name = "gepa"
+    operators = (GepaReflectOperator,)  # a reflective mutation is its one way to make an attempt
+    holdout_timing = "after"  # gepa's state never meets a holdout value, not even a failed hidden split
 
     def __init__(self, params: GEPAParams | Mapping | None = None, driver: GEPADriver | None = None,
                  log=print, parallelism: int = 1):
