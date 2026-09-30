@@ -35,6 +35,15 @@ def _quota_off(monkeypatch):
     monkeypatch.setenv("HILLCLIMB_QUOTA", "off")
 
 
+@pytest.fixture(autouse=True)
+def _sandbox_off(monkeypatch):
+    """The OS sandbox is on by default and wraps every verifier run and agent
+    call in a real sandbox-exec/bwrap. The suite tests the engine, which may
+    itself run inside a sandbox (macOS allows none inside another); the tests
+    of the sandbox (test_sandbox.py) switch it back on."""
+    monkeypatch.setenv("HILLCLIMB_SANDBOX", "off")
+
+
 def executor_for(problem) -> CommandExecutor:
     """The problem's own verifier command, run by the dev interpreter."""
     return CommandExecutor(Path(sys.executable), problem.verifier_cmd, problem.verifier_env)

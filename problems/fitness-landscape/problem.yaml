@@ -7,4 +7,4 @@ chart_baselines:
   best-decoy: 12.996735   # highest point more than 1.0 away from the needle
   global-peak: 17.110625  # elevation at the needle, grid(2001) resolution
 time_budget_s: 300
-allow_network: false
+allow_internet_during_solution: false

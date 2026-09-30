@@ -1,17 +1,19 @@
                                                                                                                         
  Usage: root kill [OPTIONS] [SEARCH]                                                                                    
                                                                                                                         
- SIGTERM a running engine; it can be resumed.                                                                           
+ Last resort for an engine that does not respond to `hillclimb stop`.                                                   
                                                                                                                         
- State is finalized on the way out. For a graceful stop that lets the                                                   
- current operator finish, use `hillclimb stop`. `--all` kills every                                                     
- running search.                                                                                                        
+ SIGTERMs the engine with its agents and verifiers, then SIGKILLs whatever                                              
+ is still alive after `--grace` seconds. The search stays resumable: a                                                  
+ candidate left pending is recovered as abandoned on resume. `--all` kills                                              
+ every running search.                                                                                                  
                                                                                                                         
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │   [search]      TEXT  [default: latest]                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ --all             Kill every running search                                                                          │
-│ --help  -h        Show this message and exit.                                                                        │
+│ --all                   Kill every running search                                                                    │
+│ --grace          FLOAT  Seconds between SIGTERM and SIGKILL [default: 5.0]                                           │
+│ --help   -h             Show this message and exit.                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 

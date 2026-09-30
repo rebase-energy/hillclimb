@@ -33,29 +33,30 @@ holding `climber.yaml`, or one `.py` file.
 ## Several optimizers on one problem: a mixed fleet
 
 Repeat `--climber` and one run holds one search per climber, each its own
-engine process on the same problem, tagged as an arm so the arms can be
-compared afterwards. Per-arm settings go through `--arm-set ARM:KEY=VALUE`
-(applied after `--set`, which is fleet-wide); arms are named after their
+engine process on the same problem, tagged as an experiment so the experiments can be
+compared afterwards. Per-experiment settings go through
+`--experiment-set EXPERIMENT:KEY=VALUE` (applied after `--set`, which is
+fleet-wide); experiments are named after their
 climber (a repeated climber becomes `greedy-2`):
 
 ```bash
 uv run hillclimb run circle-packing --budget 30m \
   --climber greedy --climber openevolve --climber gepa \
   --seed-from experiments/seeds/circle-packing.py \
-  --arm-set gepa:concurrency.parallel_agents=1 \
-  --arm-set gepa:climber.params.max_metric_calls=60
-uv run hillclimb watch                          # the three searches side by side, arm in the problem column
-uv run hillclimb experiment report <run-id>     # arms compared; --experiment NAME names it instead
+  --experiment-set gepa:concurrency.parallel_agents=1 \
+  --experiment-set gepa:climber.params.max_metric_calls=60
+uv run hillclimb watch                          # the three searches side by side, experiment in the problem column
+uv run hillclimb experiment report <run-id>     # experiments compared; --study NAME names the study instead
 ```
 
-The GEPA climber is serial, so its arm needs `concurrency.parallel_agents=1`
+The GEPA climber is serial, so its experiment needs `concurrency.parallel_agents=1`
 while the others keep the fleet-wide operator count. `--parallel-searches N`
-repeats every arm N times (repeat-major, like `hillclimb experiment run`).
+repeats every experiment N times (repeat-major, like `hillclimb experiment run`).
 Searches of one run share live knowledge cards; pass `--set
 learning.enabled=false` for a fair comparison, or keep it for cooperation.
 The same fleet is available to embedders as `hillclimb.api.run_fleet(...,
 engines=mixed_fleet([...]))`. For repeats across problems with a committed
-spec, noise floors and a control arm, use `hillclimb experiment run` (see
+spec, noise floors and a control experiment, use `hillclimb experiment run` (see
 [experiments.md](experiments.md)).
 
 Any other feature dimension must be a numeric key the verifier writes next
@@ -118,7 +119,7 @@ class DraftsOnly(GreedyPolicy):
 ```bash
 uv run hillclimb climber check --climber climbers/drafts_only.py   # before spending budget
 uv run hillclimb run circle-packing --climber climbers/drafts_only.py
-uv run hillclimb run circle-packing --climber greedy --climber climbers/drafts_only.py  # fleet: arm "drafts_only"
+uv run hillclimb run circle-packing --climber greedy --climber climbers/drafts_only.py  # fleet: experiment "drafts_only"
 ```
 
 The file exposes its policy as the one class it defines with `propose`
@@ -139,8 +140,8 @@ this shape — greedy is just the one that ships.
 The whole exploration process is one dict plus one file. Every knob greedy
 reads — `num_drafts`, `max_debug_depth`, the `ensemble*` window and the
 `tune_*` budget — comes from the climber's `params` (the manifest's, with
-whatever the user set in `climber.params` laid over it), so an experiment
-arm (or, later, an agent editing the loop) is handed a single dict;
+whatever the user set in `climber.params` laid over it), so a study's
+experiment (or, later, an agent editing the loop) is handed a single dict;
 `GreedyPolicy.resolved_params()` is that dict fully resolved. Before
 spending an agent hour on an edited process, run the conformance check:
 

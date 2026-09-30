@@ -58,7 +58,7 @@ class ProblemInfo:
     description: str
     metric_name: str
     higher_is_better: bool
-    allow_network: bool = False
+    allow_internet_during_solution: bool = False
     data_listing: str = ""
 
     @property
@@ -66,8 +66,13 @@ class ProblemInfo:
         return "higher is better" if self.higher_is_better else "lower is better"
 
     @property
+    def allow_network(self) -> bool:
+        """The pre-0.6 name of `allow_internet_during_solution`."""
+        return self.allow_internet_during_solution
+
+    @property
     def network_note(self) -> str:
-        if self.allow_network:
+        if self.allow_internet_during_solution:
             return (
                 "Internet access IS available at execution time — this problem's rules "
                 "permit fetching external data; cache downloads to files in the "
@@ -105,6 +110,10 @@ class OperatorContext:
     budget: BudgetView
     memory: MemoryContext
     services: OperatorServices = field(repr=False)
+    # may the agent making this attempt reach the internet (web search, curl)?
+    # The user's `allow_internet_for_agents`; False = its shell is jailed and
+    # its web tools are off, so a prompt must not ask it to search
+    agent_internet: bool = True
 
     def render(self, template: str, **tokens) -> str:
         """Fill a prompt template's `{{tokens}}`. The climber's own

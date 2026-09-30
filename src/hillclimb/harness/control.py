@@ -25,6 +25,10 @@ class ControlCommand(BaseModel):
     candidate_id: str | None = None  # prune only
     reason: str = ""
     source: str = "cli"  # cli | tui | agent
+    # stop only: False aborts in-flight operators now (their candidates are
+    # journaled abandoned); True lets them finish and be scored first. A
+    # record written before the field existed was a graceful stop.
+    graceful: bool = True
     requested_at: str = Field(default_factory=utcnow)
 
 
@@ -180,10 +184,17 @@ def request_prune(
     return outcome
 
 
-def request_stop(store: DataStore, key: SearchKey, source: str = "cli") -> str | None:
-    """Queue a graceful stop if the engine is running; returns an outcome
-    message, or None when there is nothing to stop."""
+def request_stop(
+    store: DataStore, key: SearchKey, source: str = "cli", *, graceful: bool = False
+) -> str | None:
+    """Queue a stop if the engine is running; returns an outcome message, or
+    None when there is nothing to stop. By default the engine aborts its
+    in-flight operators within about a second (their candidates are journaled
+    abandoned; the search stays resumable); `graceful` lets them finish and be
+    scored first."""
     if derive_state(store.read_status(key)) != "running":
         return None
-    store.enqueue_command(key, ControlCommand(action="stop", source=source))
-    return "stop queued: engine parks after the current operator finishes"
+    store.enqueue_command(key, ControlCommand(action="stop", source=source, graceful=graceful))
+    if graceful:
+        return "stop queued: engine parks once the operators in flight finish"
+    return "stop queued: engine aborts the operators in flight and parks"

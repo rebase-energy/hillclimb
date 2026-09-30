@@ -1,14 +1,14 @@
                                                                                                                         
  Usage: root experiment run [OPTIONS] SPEC                                                                              
                                                                                                                         
- Run an experiment: every arm × every problem × N repeats.                                                              
+ Run a study: every experiment × every problem × N repeats.                                                             
                                                                                                                         
  Sequential (the default) runs jobs in a fair order — repeat by repeat,                                                 
- arms round-robin inside — so shared state such as cross-search memory                                                  
- is seen by every arm at the same point; use it whenever an arm touches                                                 
- shared state. Parallel launches all jobs detached at once (machine                                                     
- slots still cap concurrency) — fine for stateless comparisons such as                                                  
- policy or model. Bounded parallel (--max-concurrent N, or the spec's                                                   
+ experiments round-robin inside — so shared state such as cross-search                                                  
+ memory is seen by every experiment at the same point; use it whenever                                                  
+ an experiment touches shared state. Parallel launches all jobs detached                                                
+ at once (machine slots still cap concurrency) — fine for stateless                                                     
+ comparisons such as policy or model. Bounded parallel (--max-concurrent N, or the spec's                               
  max_concurrent) keeps at most N alive so no search spends its wall                                                     
  clock waiting for a machine slot; the launcher stays up until the last                                                 
  child exits, then prints the report — run it under nohup or in tmux.                                                   
@@ -27,8 +27,8 @@
 │ --max-concurrent                      INTEGER RANGE [x>=1]  Parallel, but at most N searches alive at once: launch   │
 │                                                             detached in job order, wait on the children before       │
 │                                                             starting the next (overrides the spec's max_concurrent)  │
-│ --run-id                              TEXT                  Append the searches to this existing experiment run      │
-│                                                             instead of creating a new one                            │
+│ --run-id                              TEXT                  Append the searches to this existing study run instead   │
+│                                                             of creating a new one                                    │
 │ --first-repeat                        INTEGER RANGE [x>=1]  Number the repeats from K (with --run-id: add repeats    │
 │                                                             K.. to a finished run)                                   │
 │                                                             [default: 1]                                             │

@@ -7,9 +7,9 @@
  a reference candidate — the origin the search grew from (its seed, else                                                
  its baseline) by default, `c` toggles to the current champion — coloured                                               
  by score rank (cold to hot; the champion is gold, the reference white).                                                
- A search that is an experiment arm opens the whole run instead: every                                                  
+ A search that is one experiment of a study opens the whole run instead: every                                          
  search of that problem in one cube, measured from the shared seed,                                                     
- coloured by arm like `chart`, n/p stepping through the run's problems                                                  
+ coloured by experiment like `chart`, n/p stepping through the run's problems                                           
  (--single for the one-search view). v opens the map. Drag rotates,                                                     
  scroll zooms, q quits.                                                                                                 
                                                                                                                         
@@ -17,7 +17,7 @@
 │   [search]      TEXT  latest (default), <run-id>, or <run-id>/<search-id>                                            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ --single            One search only, even when it is an experiment arm                                               │
+│ --single            One search only, even when it is one experiment of a study                                       │
 │ --help    -h        Show this message and exit.                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 

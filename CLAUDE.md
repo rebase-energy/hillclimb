@@ -134,6 +134,30 @@ places they are imported.
   from JSON `stopReason` even on exit 0. Debug children use `--fork` to keep
   history while binding tools to the child's cwd; `--session` restores the
   parent's cwd and must not be used across candidates.
+- Sandbox (`harness/sandbox.py`, stdlib-only, `docs/sandbox.md`): on by
+  default (`sandbox: off` / `sandbox.enabled`, `$HILLCLIMB_SANDBOX=off`; the
+  test suite runs with it off, `tests/test_sandbox.py` switches it on). A
+  `SandboxPolicy` (write / write_prefix / deny_read / network open|none|proxy)
+  is enforced by `launch(argv, policy)`: sandbox-exec on macOS, bwrap on Linux,
+  nothing on Windows (`backend()` None → unsandboxed + warning). `backend()`
+  probes once and raises `SandboxUnavailable` with the fix; `cli/common.
+  require_sandbox` and `api._preflight_sandbox` refuse before anything spends.
+  macOS allows NO sandbox inside a sandbox, so a policy wraps the whole
+  process ONCE: claude-code and pi are wrapped (`_sandboxed` adds the
+  candidate dir + their own state), codex never (its own sandbox), a
+  meta-problem's verifier never. Verifier/unit-test/holdout runs get
+  `verifier_policy` through `run_logged(sandbox=…)`; network is the problem's
+  `allow_internet_during_solution` (`allow_network` is the legacy key), now
+  enforced. `allow_internet_for_agents: false` → `OperatorRequest.
+  allow_internet=False` → network `proxy`: `AllowlistProxy` (a thread of the
+  engine, CONNECT only) lets the agent's `MODEL_HOSTS` through; on Linux the
+  netns reaches it through `sandbox.py bridge` (localhost:3128 → unix socket).
+  It needs the sandbox; the draft drops its research cue
+  (`OperatorContext.agent_internet`). Claude Code's own `sandbox` setting is
+  NOT used: under bypassPermissions it let curl through. `hillclimb sandbox
+  check` (`harness/sandbox_check.py` + the stdlib-only `sandbox_probe.py` it
+  runs INSIDE the verifier and the no-internet agent policy) is the proof a
+  user can run; the docs site's Sandbox page shows its output
 - Model per agent: `config.model` (default `sonnet`) is Claude's vocabulary; the
   codex agent's `native_model` omits `--model` for a Claude alias/id so the Codex
   CLI's own default answers (journaled as `codex-default`; the connect ping says
@@ -471,19 +495,22 @@ places they are imported.
   (repo only, NOT in the bundled catalog; baseline `greedy.py` byte-identical
   to `modules/policies/greedy.py`, `tests/test_meta.py` enforces).
   Deferred: directory-shaped candidates, parallel inner runs, replay/ReplayHarness
-- Experiments (`experiment.py`): a spec (`experiments/<name>.yaml`)
-  is problems × named arms (dotted config overrides, `Config.apply_overrides`)
-  × repeats; searches are tagged in `SearchMeta` (`experiment`, `arm`,
-  `repeat`, `arm_overrides`) and the report groups on those tags through the
-  store — the first arm is the control, gaps are paired by repeat and judged
-  against the spec's `noise_floor`. Sequential schedule (repeat-major, arms
-  round-robin) is mandatory when an arm touches shared state (memory);
+- Studies (`experiment.py`, run by `hillclimb experiment run|report`): a spec
+  (`experiments/<name>.yaml`) is problems × named experiments (dotted config
+  overrides, `Config.apply_overrides`; `arms:` is the legacy key) × repeats;
+  searches are tagged in `SearchMeta` (`study`, `experiment`, `repeat`,
+  `experiment_overrides`; `SearchMeta._legacy_arm_tags` maps records written
+  with the old `experiment`/`arm`/`arm_overrides` names) and the report groups
+  on those tags through the store — the first experiment is the control, gaps
+  are paired by repeat and judged against the spec's `noise_floor`. Sequential
+  schedule (repeat-major, experiments round-robin) is mandatory when an
+  experiment touches shared state (memory);
   otherwise `schedule: parallel` + `max_concurrent: N` (or
   `--max-concurrent N`) — unbounded parallel starts every search at once and
-  the ones past the machine's operator slots burn their budget in
+  the ones past the machine's agent slots burn their budget in
   `waiting-slot`. `--run-id R --first-repeat K` appends repeats to a finished
   run. `SearchMeta.seed_sha256` records the seed each search started from.
-  `experiment report --json` (`experiment.summaries_to_dict`) emits the arms,
+  `experiment report --json` (`experiment.summaries_to_dict`) emits the experiments,
   paired gaps and a `verdict` per comparison (`better`/`worse`/`tie`/
   `within-noise`/`unknown`) so a meta-verifier reads a score, not a table.
   `problems/make_heilbronn.py` stamps the heilbronn difficulty ladder
@@ -498,7 +525,7 @@ places they are imported.
   rendering of the missing-dir hint
 - `hillclimb run <problem>` DETACHES by default (one-search fleet through
   `_run_problem_fleet`/`api.run_fleet`, summary + `hillclimb watch` hint); a suite's or
-  experiment's child (`--run-id`), an experiment arm, and `--no-detach` run in-process;
+  study's child (`--run-id`), a study's experiment, and `--no-detach` run in-process;
   the in-terminal log is a clock gutter (`common.engine_log`/`split_engine_line`, clock
   from `BudgetManager.clock_str`)
 - CLI: `uv run hillclimb --help` (engine); live TUIs: `watch` (agents; `watch candidates` jumps to a search),
@@ -507,9 +534,9 @@ places they are imported.
   `chart` (best score vs time per search; a bare `chart` on a folder with
   several run×problem pairs opens `ChartPickerScreen` first — enter opens,
   esc pops back; `watch` pushes the same `ChartScreen` with `c` via
-  `watch.push_chart`; `chart_index` is the pure row builder; an experiment
+  `watch.push_chart`; `chart_index` is the pure row builder; a study
   anchor confines the chart to its own run (`chart_run_scope`) so two runs
-  of one experiment never overlay each other's `arm rN`, while a plain
+  of one study never overlay each other's `experiment rN`, while a plain
   problem still folds every run into one climb;
   `--detail`/`d` overlays one search's
   exploration tree on the curve), `tree` (one search's exploration tree —
@@ -569,10 +596,10 @@ places they are imported.
   `fingerprint.py` — `fingerprint(candidate_dir) -> vector`, picked up by
   default like `landscape.py`, for outputs with equivalences the flat file
   misses — else submission.csv or the best trial's r0 evaluator report, solution.py
-  tokens, parent chains) and NEVER stored; an experiment arm opens the
+  tokens, parent chains) and NEVER stored; a study's experiment opens the
   **run scope** instead (`build_run_similarity`: every search of the problem
   in the run, each measured from its own copy of the shared seed, ids
-  `<search>/<cid>`, coloured by arm with the chart's palette, `--single`
+  `<search>/<cid>`, coloured by experiment with the chart's palette, `--single`
   opts out); `tui/similarity.py` pure layer with fingerprint caches,
   `tui/similarityview.py` the screens; no usable reference = prints why and
   returns), `graph` (knowledge graph)

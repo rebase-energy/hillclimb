@@ -42,8 +42,16 @@ unit_tests:                      # optional correctness gate, frozen at run star
   root: tests
   command: ["{python}", "-m", "pytest", "-q", "{tests}"]
 data_dir: data
-allow_network: false
+allow_internet_during_solution: false
 ```
+
+`allow_internet_during_solution` says whether `solution.py` may fetch
+external data when the verifier runs it. The contract prompt tells the agent
+which, and the [sandbox](sandbox.md) enforces it: without it the verifier,
+and the solution it runs, have no network. A verifier that downloads
+something itself needs it set to `true`. `allow_network` is its old name and
+still loads. Whether the agents may use the internet while they write the
+solution is `allow_internet_for_agents` in `hillclimb.yaml`.
 
 `chart_baselines` accepts any number of `label: score` entries. Each becomes
 a named horizontal reference line, in the order written. A numeric `baseline`
@@ -213,7 +221,7 @@ just on average. `problems/circle-packing/verify.py` (one instance per
 circle) is the reference producer; verifiers that emit nothing lose nothing.
 emflow problems emit one instance per scored origin, keyed `<asof>/<zone>`
 — for GEFCom2014 that is every task x zone of the validation split (solar:
-3 tasks x 3 plants = 9 instances) — so a GEPA arm on `emflow://gefcom2014:solar`
+3 tasks x 3 plants = 9 instances) — so a GEPA experiment on `emflow://gefcom2014:solar`
 keeps a candidate that wins any single task. A candidate that leaves an
 origin unscored simply lacks that key and is treated as having failed it;
 MLE-bench per-fold instances are a planned follow-up.
@@ -232,12 +240,12 @@ evaluation:
 ```
 
 Concurrency is bounded machine-wide, not per search: `concurrency.parallel_agents`
-is how many operators one search keeps in flight, and
+is how many agents one search keeps in flight, and
 `concurrency.machine_max_agents` (default `min(8, cores - 2)`, `0` = off) caps
-the total across every search on the machine — extra operators wait
+the total across every search on the machine — extra agents wait
 (`waiting-slot` in `hillclimb watch`). Every verifier and agent process gets
 `OMP/OPENBLAS/MKL_NUM_THREADS=1` unless the parent environment sets them, so
-N operators cost at most N cores; `hillclimb ps` shows what is actually running.
+N agents cost at most N cores; `hillclimb ps` shows what is actually running.
 
 - **A trial's score is the MEDIAN of its replicates**, so one slow run or
   unlucky seed does not become the number the search ranks on. With

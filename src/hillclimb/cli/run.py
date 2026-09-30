@@ -118,15 +118,15 @@ def _run_problem(
     run_id: str | None = None,
     run_name: str | None = None,
     seed_from: Path | None = None,
+    study: str | None = None,
     experiment: str | None = None,
-    arm: str | None = None,
     repeat: int = 0,
-    arm_overrides: dict | None = None,
+    experiment_overrides: dict | None = None,
     knowledge_context: str | None = None,
 ) -> None:
-    if arm_overrides:
+    if experiment_overrides:
         try:
-            config.apply_overrides(arm_overrides)
+            config.apply_overrides(experiment_overrides)
         except (KeyError, ValueError) as exc:
             raise typer.BadParameter(str(exc)) from exc
     problem = load_problem(target, config)
@@ -140,7 +140,7 @@ def _run_problem(
             target, budget=budget or total_s, agent=config.agent, model=config.model,
             climber=config.climber.ref, parallel_agents=config.concurrency.parallel_agents,
             n_replicates=config.evaluation.n_replicates, seed_from=seed_from,
-            set=[f"{key}={value}" for key, value in (arm_overrides or {}).items()],
+            set=[f"{key}={value}" for key, value in (experiment_overrides or {}).items()],
         )])
     else:
         # suite child: the parent already wrote run.yaml and spec.yaml
@@ -148,9 +148,9 @@ def _run_problem(
         run_dir = config.paths.runs_dir / run_id
     search_dir = create_search(
         config, problem, run_dir, run_id, total_s, seed_from=seed_from,
-        experiment=experiment, arm=arm, repeat=repeat, arm_overrides=arm_overrides,
+        study=study, experiment=experiment, repeat=repeat, experiment_overrides=experiment_overrides,
     )
-    tag = f", experiment={experiment}/{arm}" + (f" r{repeat}" if repeat else "") if experiment else ""
+    tag = f", study={study}/{experiment}" + (f" r{repeat}" if repeat else "") if study else ""
     say(
         f"[head]Search {_m(search_ref(search_dir))}[/] [note](run={_m(run_name)}, problem={_m(problem.problem_id)}, "
         f"agent={_m(config.agent)}, model={_m(config.model)}, budget={total_s}s{_m(tag)})[/]"
@@ -275,14 +275,14 @@ def run(
             "The climber (default: greedy): a bundled name, a directory holding climber.yaml, "
             "or one .py file; params via config climber.params. Repeat it "
             "(--climber greedy --climber gepa) for a mixed fleet: one search per climber "
-            "on the problem, under one run, each tagged as an arm"
+            "on the problem, under one run, each tagged as an experiment"
         ),
     ),
     policy: list[str] = typer.Option(None, "--policy", hidden=True),
     holdout: bool = typer.Option(True, "--holdout/--no-holdout", help="Hidden selection holdout"),
     learning: bool = typer.Option(
         True, "--learning/--no-learning",
-        help="Cross-search memory (cards/claims injection + distillation); off = memory-blind arm",
+        help="Cross-search memory (cards/claims injection + distillation); off = memory-blind experiment",
     ),
     name: str = typer.Option(None, "--name", help="Run name shown in the TUI"),
     parallel_agents: int = typer.Option(
@@ -307,18 +307,19 @@ def run(
     set_: list[str] = typer.Option(
         None, "--set", help="Any config setting, dotted: --set climber.ref=openevolve --set learning.enabled=false",
     ),
-    arm_set: list[str] = typer.Option(
-        None, "--arm-set",
+    experiment_set: list[str] = typer.Option(
+        None, "--experiment-set", "--arm-set",
         help=(
-            "A setting for one arm of a mixed fleet, ARM:KEY=VALUE: "
-            "--arm-set gepa:concurrency.parallel_agents=1 (applied after --set)"
+            "A setting for one experiment of a mixed fleet, EXPERIMENT:KEY=VALUE: "
+            "--experiment-set gepa:concurrency.parallel_agents=1 (applied after --set; "
+            "--arm-set is the old spelling)"
         ),
     ),
-    experiment: str = typer.Option(
-        None, "--experiment",
-        help="Tag the search as one arm of an experiment (with --arm); names a mixed fleet's experiment",
+    study: str = typer.Option(
+        None, "--study",
+        help="Tag the search as one experiment of a study (with --experiment); names a mixed fleet's study",
     ),
-    arm: str = typer.Option(None, "--arm", help="The arm name (with --experiment)"),
+    experiment: str = typer.Option(None, "--experiment", help="The experiment name (with --study)"),
     repeat: int = typer.Option(0, "--repeat", hidden=True),
     run_id: str = typer.Option(None, "--run-id", hidden=True),
     run_name: str = typer.Option(None, "--run-name", hidden=True),
@@ -342,9 +343,9 @@ def run(
         warn("note: `--policy` is now `--climber` (same values)")
     climbers = [*(climber or []), *(policy or [])]
     mixed = len(climbers) > 1
-    arm_overrides = common._parse_arm_set(arm_set or [])
-    if arm_overrides and not mixed:
-        raise typer.BadParameter("--arm-set needs a mixed fleet (two or more --climber)")
+    experiment_overrides = common._parse_experiment_set(experiment_set or [])
+    if experiment_overrides and not mixed:
+        raise typer.BadParameter("--experiment-set needs a mixed fleet (two or more --climber)")
     single_climber = None if mixed else (climbers[0] if climbers else None)
     if single_climber is not None:
         config.climber.ref = single_climber
@@ -353,11 +354,12 @@ def run(
     if n_replicates is not None:
         config.evaluation.n_replicates = n_replicates
     overrides = common._parse_set(set_ or [])
+    common.require_sandbox(config, overrides)
     if mixed:
-        if arm or run_id:
-            raise typer.BadParameter("a mixed fleet names its arms itself; --arm/--run-id do not apply")
-    elif (experiment is None) != (arm is None):
-        raise typer.BadParameter("--experiment and --arm go together")
+        if experiment or run_id:
+            raise typer.BadParameter("a mixed fleet names its experiments itself; --experiment/--run-id do not apply")
+    elif (study is None) != (experiment is None):
+        raise typer.BadParameter("--study and --experiment go together")
     resolved = resolve_target(target, config)
     if resolved.kind == "suite":
         if mixed:
@@ -370,7 +372,7 @@ def run(
         return
     if mixed:
         try:
-            engines = mixed_fleet(climbers, repeats=parallel_searches, arm_overrides=arm_overrides)
+            engines = mixed_fleet(climbers, repeats=parallel_searches, experiment_overrides=experiment_overrides)
         except ValueError as exc:
             raise typer.BadParameter(str(exc)) from exc
         _run_problem_fleet(
@@ -378,15 +380,15 @@ def run(
             agent=agent, model=model, climber=None, parallel_agents=parallel_agents,
             n_replicates=n_replicates, holdout=holdout, learning=learning, set_=set_ or [],
             seed_from=seed_from, knowledge_context_file=knowledge_context_file,
-            engines=engines, experiment=experiment,
+            engines=engines, study=study,
         )
         return
-    if parallel_searches > 1 and (experiment or run_id):
-        raise typer.BadParameter("--parallel-searches does not combine with --experiment/--run-id")
+    if parallel_searches > 1 and (study or run_id):
+        raise typer.BadParameter("--parallel-searches does not combine with --study/--run-id")
     # The default is a detached engine — the terminal comes straight back with
-    # the run id and `hillclimb watch` to follow it. A suite's or experiment's
-    # child (`--run-id`), an experiment arm, and `--no-detach` run here.
-    detached = detach and run_id is None and experiment is None
+    # the run id and `hillclimb watch` to follow it. A suite's or study's
+    # child (`--run-id`), a study's experiment, and `--no-detach` run here.
+    detached = detach and run_id is None and study is None
     if parallel_searches > 1 or detached:
         _run_problem_fleet(
             target, config, budget, parallel_searches, name,
@@ -402,10 +404,10 @@ def run(
         run_id=run_id,
         run_name=run_name or name,
         seed_from=seed_from,
+        study=study,
         experiment=experiment,
-        arm=arm,
         repeat=repeat,
-        arm_overrides=overrides,
+        experiment_overrides=overrides,
         knowledge_context=_read_knowledge_context(knowledge_context_file),
     )
 
@@ -428,7 +430,7 @@ def _run_problem_fleet(
     seed_from: Path | None = None,
     knowledge_context_file: Path | None = None,
     engines: list[FleetEngine] | None = None,
-    experiment: str | None = None,
+    study: str | None = None,
 ) -> Path:
     """CLI shell over api.run_fleet: N independent searches on one problem
     (or one per `engines` entry — a mixed fleet), each its own detached
@@ -443,20 +445,20 @@ def _run_problem_fleet(
         parallel_agents=parallel_agents, n_replicates=n_replicates,
         holdout=holdout, learning=learning, seed_from=seed_from,
         knowledge_context_file=knowledge_context_file, overrides=set_,
-        engines=engines, experiment=experiment,
+        engines=engines, study=study,
         log=common.engine_log,
     )
-    operators = parallel_agents if parallel_agents is not None else config.concurrency.parallel_agents
+    agents = parallel_agents if parallel_agents is not None else config.concurrency.parallel_agents
     if engines:
-        arms = ", ".join(dict.fromkeys(engine.arm for engine in engines))
+        experiments = ", ".join(dict.fromkeys(engine.experiment for engine in engines))
         say(
-            f"[head]Run {_m(fleet.run_id)}[/]: {len(engines)} searches ({_m(arms)}) x {operators} operators "
+            f"[head]Run {_m(fleet.run_id)}[/]: {len(engines)} searches ({_m(experiments)}) x {agents} agents "
             f"running in the background"
         )
     else:
         searches = "1 search" if parallel_searches == 1 else f"{parallel_searches} searches"
         say(
-            f"[head]Run {_m(fleet.run_id)}[/]: {searches} x {operators} operator{'' if operators == 1 else 's'} "
+            f"[head]Run {_m(fleet.run_id)}[/]: {searches} x {agents} agent{'' if agents == 1 else 's'} "
             f"running in the background"
         )
     say(f"Engine logs in [path]{_m(fleet.run_dir / 'logs')}[/]")
@@ -466,7 +468,7 @@ def _run_problem_fleet(
         ("hillclimb stop --all", "end the run; the best solution of every search stays in runs/"),
     ]
     if engines:
-        steps.insert(2, (f"hillclimb experiment report {experiment or fleet.run_id}", "compare the arms"))
+        steps.insert(2, (f"hillclimb experiment report {study or fleet.run_id}", "compare the experiments"))
     next_steps(steps)
     return fleet.run_dir
 
@@ -511,6 +513,7 @@ def resume(
     under a live project.
     """
     config = common.load_config()
+    common.require_sandbox(config)
     if all_:
         store = open_store(config)
         targets = [r for r in store.searches() if r.state in RESUMABLE_STATES]

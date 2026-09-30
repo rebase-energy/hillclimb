@@ -99,7 +99,7 @@ def problem_yaml(n: int, m: int) -> str:
         "chart_baselines:",
         f'  "best known ({BEST_KNOWN_SOURCE})": {best}',
         "time_budget_s: 900",
-        "allow_network: false",
+        "allow_internet_during_solution: false",
         "",
     ])
 

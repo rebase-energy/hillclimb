@@ -279,6 +279,12 @@ class _CodexStreamReader(threading.Thread):
                 sink.flush()
 
 
+# no internet: codex's web search off, its sandbox's network off (its default,
+# pinned). hillclimb's own sandbox (`harness/sandbox.py`) never wraps codex: it
+# applies one itself, and macOS allows no sandbox inside a sandbox
+NO_INTERNET = ["-c", 'web_search="disabled"', "-c", "sandbox_workspace_write.network_access=false"]
+
+
 class CodexCliAgent:
     """Run Hillclimb operators through an authenticated local Codex CLI."""
 
@@ -301,6 +307,8 @@ class CodexCliAgent:
         native = native_model(request.model, self.auth)
         if native is not None:
             cmd += ["--model", native]
+        if not request.allow_internet:
+            cmd += NO_INTERNET
         cmd += [
             "--sandbox",
             "workspace-write",

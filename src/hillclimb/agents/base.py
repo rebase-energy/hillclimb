@@ -5,6 +5,8 @@ from typing import Protocol
 
 from pydantic import BaseModel, Field, FiniteFloat
 
+from hillclimb.harness.sandbox import SandboxPolicy
+
 
 class OperatorRequest(BaseModel):
     operator: str  # the operator's name (routing and logs key on it)
@@ -15,6 +17,12 @@ class OperatorRequest(BaseModel):
     model: str = "sonnet"
     sampling: dict[str, int | FiniteFloat] | None = None
     resume_session_id: str | None = None  # set within a debug chain
+    # False = no internet for the agent: its web tools are off and its whole
+    # process tree reaches nothing but its model provider (the sandbox's proxy)
+    allow_internet: bool = True
+    # the OS sandbox the agent runs in (`harness/sandbox.py`); None = none.
+    # The agent adds its candidate dir and its own state to what is writable
+    sandbox: SandboxPolicy | None = None
 
 
 class OperatorResult(BaseModel):

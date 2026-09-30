@@ -30,8 +30,18 @@ jobs:
         run: uv build --wheel
       - name: pip install hillclimb
         run: python -m pip install dist/*.whl pytest
+      - name: The sandbox's own tool (Linux)
+        if: runner.os == 'Linux'
+        # what a Linux user installs once; Ubuntu 24.04 keeps unprivileged
+        # user namespaces, which bubblewrap is built on, behind AppArmor
+        run: |
+          sudo apt-get update && sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: OS layer tests
         run: python -m pytest -q -p no:cacheprovider tests/test_oscompat.py
+      - name: Sandbox tests
+        # they start a real sandbox on Linux and macOS; Windows has none
+        run: python -m pytest -q -p no:cacheprovider -rs tests/test_sandbox.py
       - name: Walk the quickstart
         run: |
           mkdir "$RUNNER_TEMP/qs" && cd "$RUNNER_TEMP/qs"

@@ -441,6 +441,37 @@ class TestWorkerPool:
         # both in-flight operators finished and were committed as real work
         assert len(journal.scored_candidates()) == 2
 
+    def test_immediate_stop_aborts_in_flight(self, task, config):
+        """`hillclimb stop` (no --graceful): the operators in flight are cut
+        off without anyone releasing them, journaled abandoned, and the search
+        ends as a resumable stop."""
+        agent = GateAgent()
+        agent.queue(script=ok_script(0.6), notes="a\n")
+        agent.queue(script=ok_script(0.7), notes="b\n")
+        searcher, journal, search_dir = pool_searcher(task, config, agent, n=2, max_candidates=6)
+        agent.abort = searcher.abort
+        outcome: dict = {}
+
+        def run():
+            try:
+                searcher.run()
+            except Exception as exc:  # noqa: BLE001
+                outcome["exc"] = exc
+
+        runner = threading.Thread(target=run)
+        runner.start()
+        assert agent.started.acquire(timeout=10)
+        assert agent.started.acquire(timeout=10)
+        write_command(search_dir, ControlCommand(action="stop", source="cli", graceful=False))
+        # nobody releases the gates: the stop alone must cut the operators off
+        runner.join(timeout=30)
+        assert not runner.is_alive()
+
+        assert isinstance(outcome.get("exc"), StopRequested)
+        abandoned = [c for c in journal.candidates.values() if c.status == "abandoned"]
+        assert len(abandoned) == 2
+        assert not [c for c in journal.scored_candidates() if c.operator != "baseline"]
+
     def test_graceful_deadline_lets_in_flight_finish(self, task, config):
         agent = GateAgent()
         agent.queue(script=ok_script(0.6), notes="a\n")

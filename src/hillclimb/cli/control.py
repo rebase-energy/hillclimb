@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import signal
+import os
 
 import typer
 
@@ -104,21 +104,34 @@ def ps():
 def stop(
     search: str = typer.Argument("latest"),
     all_: bool = typer.Option(False, "--all", help="Stop every running search"),
+    graceful: bool = typer.Option(
+        False, "--graceful", "-g", help="Let the operators in flight finish and be scored first"
+    ),
 ):
-    """Gracefully stop a running engine.
+    """Stop a running engine now; it can be resumed.
 
-    It finishes the current operator call, then parks. Resume later with
-    `hillclimb resume`. `--all` stops every running search (e.g. a parallel run).
+    The operators in flight are aborted within about a second — their agents
+    and verifiers are killed and their candidates journaled as abandoned (the
+    tokens they spent are not recovered). `--graceful` instead starts no new
+    work and parks once the operators in flight have finished and been
+    scored. Resume later with `hillclimb resume`. `--all` stops every running
+    search (e.g. a parallel run). An engine that does not respond: `hillclimb kill`.
     """
     config = _load_config_or_reap_orphans(all_)
     store, targets = _search_targets(config, search, all_)
     for record in targets:
         ref = record.ref
-        outcome = request_stop(store, record.key, source="cli")
+        outcome = request_stop(store, record.key, source="cli", graceful=graceful)
         if outcome is None:
             say(f"[head]Search [path]{_m(ref)}[/] is {_m(record.state)}[/]; nothing to stop.")
             raise typer.Exit(1)
-        say(f"[head]{_m(outcome)}[/] [note](use [cmd]hillclimb kill {_m(ref)}[/] to interrupt now)[/]")
+        hint = (
+            "(drop [cmd]--graceful[/] to abort them now)"
+            if graceful
+            else "(use [cmd]--graceful[/] to let them finish)"
+        )
+        say(f"[head]{_m(outcome)}[/] [note]{hint}[/]")
+    say(f"Resume with: [cmd]hillclimb resume {_m(targets[0].ref if len(targets) == 1 else '--all')}[/]")
 
 
 @app.command()
@@ -155,27 +168,45 @@ def prune(
 def kill(
     search: str = typer.Argument("latest"),
     all_: bool = typer.Option(False, "--all", help="Kill every running search"),
+    grace: float = typer.Option(5.0, "--grace", help="Seconds between SIGTERM and SIGKILL"),
 ):
-    """SIGTERM a running engine; it can be resumed.
+    """Last resort for an engine that does not respond to `hillclimb stop`.
 
-    State is finalized on the way out. For a graceful stop that lets the
-    current operator finish, use `hillclimb stop`. `--all` kills every
-    running search.
+    SIGTERMs the engine with its agents and verifiers, then SIGKILLs whatever
+    is still alive after `--grace` seconds. The search stays resumable: a
+    candidate left pending is recovered as abandoned on resume. `--all` kills
+    every running search.
     """
+    from hillclimb.harness.orphans import Engine, kill_engines, live_engines
+    from hillclimb.harness.oscompat import IS_WINDOWS
+
     config = _load_config_or_reap_orphans(all_)
     store, targets = _search_targets(config, search, all_)
+    engines: dict[int, Engine] = {}
+    listed = {engine.pid: engine for engine in live_engines()}
     for record in targets:
         ref = record.ref
         state = record.state
         if state != "running":
             say(f"[head]Search [path]{_m(ref)}[/] is {_m(state)}[/]; nothing to kill.")
             raise typer.Exit(1)
-        engine_pid = store.read_status(record.key).pid
-        from hillclimb.harness.oscompat import signal_pid
-
-        signal_pid(engine_pid, signal.SIGTERM)
-        say(f"[head]Sent SIGTERM[/] to engine pid {engine_pid} ([path]{_m(ref)}[/]).")
-        say(f"Resume with: [cmd]hillclimb resume {_m(ref)}[/]")
+        pid = store.read_status(record.key).pid
+        if pid is None:
+            continue
+        engine = listed.get(pid)
+        if engine is None:  # not recognizable as an engine in ps: its own group
+            try:
+                pgid = pid if IS_WINDOWS else os.getpgid(pid)
+            except ProcessLookupError:
+                continue  # died since the status was read
+            engine = Engine(pid=pid, pgid=pgid, hillclimb_dir=None)
+        engines[pid] = engine
+    forced = kill_engines(list(engines.values()), grace_s=grace)
+    for record in targets:
+        say(f"[head]Killed[/] engine of [path]{_m(record.ref)}[/].")
+    if forced:
+        say(f"[note]{len(forced)} engine(s) ignored SIGTERM and needed SIGKILL.[/]")
+    say(f"Resume with: [cmd]hillclimb resume {_m(targets[0].ref if len(targets) == 1 else '--all')}[/]")
 
 
 @app.command()

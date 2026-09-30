@@ -17,6 +17,7 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "hillclimb"
 ALLOWED = re.compile(
     r"_legacy_workspace_key|\"workspace\"|`workspace`"
     r"|\"workspace-write\""  # codex --sandbox value
+    r"|sandbox_workspace_write\."  # codex config key
 )
 
 

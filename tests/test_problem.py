@@ -46,7 +46,7 @@ def test_load_problem_from_directory(problem_dir, config):
     assert spec.time_budget_s == 123
     assert spec.chart_baselines == {"reference floor": 0.5, "OpenEvolve best": 0.75}
     assert spec.holdout_cmd is None  # no `holdout: true`
-    assert not spec.allow_network
+    assert not spec.allow_internet_during_solution
 
 
 def test_load_problem_with_data_dir_and_holdout(problem_dir, config):
@@ -59,15 +59,23 @@ metric: nrmse
 higher_is_better: false
 description: description.md
 data_dir: data
-allow_network: true
+allow_internet_during_solution: true
 holdout: true
 """
     )
     spec = load_problem(problem_dir, config)
     assert spec.data_dir == data_dir
-    assert spec.allow_network
+    assert spec.allow_internet_during_solution
     # the hidden split is the same verifier, told which side to score
     assert spec.holdout_cmd == [str(problem_dir / "verifier.sh"), "--holdout"]
+
+
+def test_allow_network_is_the_legacy_spelling(problem_dir, config):
+    (problem_dir / "problem.yaml").write_text(
+        "problem_id: my-problem\nmetric: score\nhigher_is_better: true\n"
+        "description: description.md\nallow_network: true\n"
+    )
+    assert load_problem(problem_dir, config).allow_internet_during_solution
 
 
 def test_load_problem_with_unit_tests(problem_dir, config):

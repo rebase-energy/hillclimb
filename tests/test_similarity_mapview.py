@@ -50,15 +50,15 @@ class TestStyles:
         assert sizes[ids.index("c003")] == sizes[ids.index("c000")] > sizes[ids.index("c002")]
         assert len(edge_colours(view, colours)) == len(view.edges)
 
-    def test_run_scope_colours_by_arm(self, tmp_path):
-        from hillclimb.tui.chart import ARM_PALETTE
+    def test_run_scope_colours_by_experiment(self, tmp_path):
+        from hillclimb.tui.chart import EXPERIMENT_PALETTE
 
         run = build_run_map([
             make_arm(tmp_path, "p", "greedy"), make_arm(tmp_path, "p-2", "openevolve"),
         ], True)
         colours, _sizes, _shapes = node_styles(run)
         by_id = dict(zip((n.id for n in run.nodes), colours))
-        assert by_id["p/c002"] == ARM_PALETTE[0] and by_id["p-2/c002"] == ARM_PALETTE[1]
+        assert by_id["p/c002"] == EXPERIMENT_PALETTE[0] and by_id["p-2/c002"] == EXPERIMENT_PALETTE[1]
         assert by_id["p/c001"] == REFERENCE_RGB  # the seed
 
     def test_lineage_highlight_keeps_ancestors_and_descendants(self, view):
@@ -175,13 +175,13 @@ class TestCli:
 # the screens, mounted
 
 
-def _seeded_search(runs_dir, run_id: str, search_id: str, arm: str | None) -> None:
-    """An experiment-arm search with a seed and two children of it — enough
+def _seeded_search(runs_dir, run_id: str, search_id: str, experiment: str | None) -> None:
+    """A study-experiment search with a seed and two children of it — enough
     for both views to have something to draw."""
     from tests.test_similarity import cand, sub_csv, write_candidate
     from tests.test_similarity_run import _experiment_search
 
-    _experiment_search(runs_dir, run_id, search_id, arm or "greedy", seed=True)
+    _experiment_search(runs_dir, run_id, search_id, experiment or "greedy", seed=True)
     search_dir = runs_dir / run_id / "searches" / search_id
     from hillclimb.harness.journal import Journal
 
@@ -197,8 +197,8 @@ async def test_map_screen_mounts_swaps_and_replays(config):
     from hillclimb.tui.similarity_mapview import MapScreen, RunMapScreen
     from hillclimb.tui.similarityview import RunSimilarityScreen, SimilarityApp, SimilarityScreen
 
-    for search_id, arm in (("p", "greedy"), ("p-2", "gepa")):
-        _seeded_search(config.paths.runs_dir, "r1", search_id, arm)
+    for search_id, experiment in (("p", "greedy"), ("p-2", "gepa")):
+        _seeded_search(config.paths.runs_dir, "r1", search_id, experiment)
 
     # run scope, opened on the map
     app = SimilarityApp(config, run=("r1", "p"), view="map")

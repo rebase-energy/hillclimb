@@ -10,17 +10,17 @@ champion. Colour is the score's rank bin on a cold→hot ramp; the champion
 is gold, the reference an anchoring white dot at the origin,
 positioned-but-unscored candidates a dim grey.
 
-**Run scope** (every search of one problem in an experiment run, opened
-automatically when the anchored search is an experiment arm): each search
+**Run scope** (every search of one problem in a study run, opened
+automatically when the anchored search is one experiment of a study): each search
 is measured from its own seed — one shared seed file, so one origin — and
-colour is the experiment arm (the chart's palette, so an arm looks the same
+colour is the experiment (the chart's palette, so an experiment looks the same
 in both views); size carries the score rank. `c` re-anchors on the run's
 best candidate; `n`/`p` step through the run's problems.
 
 The reading this view is built for: near the structure axis and far on
 behavior = a sensitive knob was found; far on structure and near on
 behavior = agents refactored without changing behavior (wasted operators).
-In run scope: arms whose clouds overlap explored the same way.
+In run scope: experiments whose clouds overlap explored the same way.
 
 Same architecture as surfaceview.py: pure functions up top, thin Textual
 shells below, free orbit camera starting from the shared START_CAMERA.
@@ -36,7 +36,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Label
 
-from hillclimb.tui.chart import ARM_PALETTE
+from hillclimb.tui.chart import EXPERIMENT_PALETTE
 from hillclimb.config import Config
 from hillclimb.tui.header import HillclimbHeader, TimezoneMixin
 from hillclimb.harness.journal import Journal
@@ -78,12 +78,12 @@ START_CAMERA = (0.9, -0.8, 0.75, 0.0, 0.0)
 BOUNDS = ((-0.05, -0.05, -0.05), (1.05, 1.05, 1.05))
 
 
-def arm_colour(view: SimilarityView, arm: str | None) -> tuple[int, int, int]:
-    """The chart's colour for an arm — first-seen order over the run's
-    searches, so `chart` and `similarity` agree on which arm is which."""
-    if arm is None or arm not in view.arms:
+def experiment_colour(view: SimilarityView, experiment: str | None) -> tuple[int, int, int]:
+    """The chart's colour for an experiment — first-seen order over the run's
+    searches, so `chart` and `similarity` agree on which experiment is which."""
+    if experiment is None or experiment not in view.experiments:
         return UNSCORED_RGB
-    return ARM_PALETTE[view.arms.index(arm) % len(ARM_PALETTE)]
+    return EXPERIMENT_PALETTE[view.experiments.index(experiment) % len(EXPERIMENT_PALETTE)]
 
 
 def rank_size(bin_index: int | None) -> float:
@@ -103,7 +103,7 @@ def build_similarity_plot(view: SimilarityView) -> Plot:
         elif node.best:
             key = (BEST_RGB, BEST_SIZE)
         elif view.scope == "run":
-            key = (arm_colour(view, node.arm), rank_size(node.bin))
+            key = (experiment_colour(view, node.experiment), rank_size(node.bin))
         elif node.bin is None:
             key = (UNSCORED_RGB, UNSCORED_SIZE)
         else:
@@ -118,9 +118,9 @@ def build_similarity_plot(view: SimilarityView) -> Plot:
     return plot
 
 
-def arm_legend(view: SimilarityView) -> str:
+def experiment_legend(view: SimilarityView) -> str:
     return "  ".join(
-        f"[rgb({r},{g},{b})]■[/] {arm}" for arm in view.arms for (r, g, b) in [arm_colour(view, arm)]
+        f"[rgb({r},{g},{b})]■[/] {experiment}" for experiment in view.experiments for (r, g, b) in [experiment_colour(view, experiment)]
     )
 
 
@@ -145,8 +145,8 @@ def statusline(
         parts.append(f"{len(view.nodes)} placed")
     if view.n_unpositioned:
         parts.append(f"[dim]{view.n_unpositioned} unpositioned[/]")
-    if view.scope == "run" and view.arms:
-        parts.append(arm_legend(view))
+    if view.scope == "run" and view.experiments:
+        parts.append(experiment_legend(view))
     if view.lineage_note:
         parts.append(f"[dim]{view.lineage_note}[/]")
     b, s, l = view.scales
@@ -155,7 +155,7 @@ def statusline(
 
 
 def run_inputs(store: DataStore, run_id: str, problem_key: str) -> list[SearchRecord]:
-    """The run's searches on one problem, oldest first (the arm order the
+    """The run's searches on one problem, oldest first (the experiment order the
     chart colours by)."""
     return [r for r in store.searches(run_id=run_id) if r.meta.problem_key == problem_key]
 
@@ -165,7 +165,7 @@ def search_inputs(store: DataStore, records: list[SearchRecord]) -> list[SearchI
         SearchInput(
             search_id=r.search_id, search_dir=r.search_dir,
             candidates=list(Journal(store.journal(r.key)).candidates.values()),
-            arm=r.meta.arm, seed_from=r.meta.seed_from,
+            experiment=r.meta.experiment, seed_from=r.meta.seed_from,
             seed_sha256=getattr(r.meta, "seed_sha256", None),
         )
         for r in records
@@ -418,8 +418,8 @@ class RunScopeMixin:
 
 
 class RunSimilarityScreen(RunScopeMixin, SimilarityScreen):
-    """Run scope: every search of one problem in an experiment run in one
-    cube, coloured by arm. `n`/`p` step through the run's problems."""
+    """Run scope: every search of one problem in a study run in one
+    cube, coloured by experiment. `n`/`p` step through the run's problems."""
 
     BINDINGS = [
         Binding("c", "toggle_reference", "seed/champion",

@@ -2,7 +2,7 @@
 parabola y = x², x = i/(N-1). Valid by construction (a line meets a parabola
 in at most two points, so no three are collinear), inside the square, fast,
 and far from optimal — the smallest triangle is h³ with h = 1/(N-1) — so it
-is a neutral start every experiment arm improves from.
+is a neutral start every experiment improves from.
 
 One file serves the whole difficulty ladder: N is read from the problem's
 own scorer (`problem/` is linked into every candidate dir), so the same

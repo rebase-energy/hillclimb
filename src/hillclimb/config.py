@@ -317,7 +317,7 @@ class ReportConfig(BaseModel):
     emflow validation evals."""
 
     # gates ONLY prompt injection — computation and journal storage always
-    # run, so A/B arms record identical data and differ only in what the
+    # run, so A/B experiments record identical data and differ only in what the
     # improve operator sees
     enabled: bool = True
 
@@ -384,6 +384,23 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return merged
 
 
+class SandboxConfig(BaseModel):
+    """The OS sandbox agents and verifiers run in (`harness/sandbox.py`):
+    sandbox-exec on macOS, bubblewrap on Linux. On by default; a search
+    refuses to start when it is on and cannot be started. `sandbox: off`
+    is the short form of `sandbox: {enabled: false}`."""
+
+    model_config = {"extra": "forbid"}
+
+    enabled: bool = True
+    write: list[Path] = Field(default_factory=list)  # writable beyond the candidate dir
+    deny_read: list[Path] = Field(default_factory=list)  # unreadable beyond the built-in secrets
+    # hosts agents still reach with allow_internet_for_agents: false, beyond
+    # their model provider's
+    allow_hosts: list[str] = Field(default_factory=list)
+    local_ports: list[int] = Field(default_factory=list)  # localhost ports left open without network
+
+
 AGENT_AUTHS = ("subscription", "api-key", "openrouter")
 
 
@@ -391,6 +408,12 @@ class Config(BaseModel):
     agent: str = "claude-code"
     agent_auth: str = "subscription"  # one of AGENT_AUTHS
     model: str = "sonnet"
+    # may the operator agents reach the internet (web search/fetch, curl, pip
+    # from their shell)? False turns their web tools off, runs every shell
+    # command they issue in an OS network jail and drops the draft's
+    # web-research cue. Whether the SOLUTION may use the internet is the
+    # problem's `allow_internet_during_solution`, not this.
+    allow_internet_for_agents: bool = True
     # per-operator routing; keys: draft | debug | improve | ensemble |
     # distill | default. Missing keys (or an absent block) fall back to the
     # scalars above (except distill's model, which defaults to haiku).
@@ -404,6 +427,7 @@ class Config(BaseModel):
     store: StoreConfig = StoreConfig()
     emflow: EmflowConfig = EmflowConfig()
     einsteinarena: EinsteinArenaConfig = EinsteinArenaConfig()
+    sandbox: SandboxConfig = SandboxConfig()
     pi: PiConfig = PiConfig()
     similarity: SimilarityConfig = SimilarityConfig()
     learning: LearningConfig = LearningConfig()
@@ -416,6 +440,19 @@ class Config(BaseModel):
     @classmethod
     def _renamed_scalars(cls, data):
         return renamed_keys(data)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _sandbox_switch(cls, data):
+        """`sandbox: off` (YAML reads it as false) and `sandbox: on`."""
+        if isinstance(data, dict) and isinstance(data.get("sandbox"), (bool, str)):
+            value = data["sandbox"]
+            if isinstance(value, str):
+                if value.strip().lower() not in {"on", "off"}:
+                    raise ValueError(f"sandbox: {value!r} is neither on nor off")
+                value = value.strip().lower() == "on"
+            data = {**data, "sandbox": {"enabled": value}}
+        return data
 
     @model_validator(mode="before")
     @classmethod
@@ -565,7 +602,7 @@ class Config(BaseModel):
     def apply_overrides(self, overrides: dict[str, object]) -> None:
         """Set dotted config paths (`climber.ref`, `learning.enabled`,
         `climber.params.population_size`, top-level `model`) with
-        pydantic validation at each level — the one way an experiment arm
+        pydantic validation at each level — the one way a study experiment
         or `hillclimb run --set` changes a setting. Unknown paths raise
         KeyError naming the offending key."""
         working = self.model_copy(deep=True)

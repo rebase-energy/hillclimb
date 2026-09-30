@@ -1,18 +1,18 @@
 # Three search strategies across the Heilbronn difficulty ladder (11, 14, 17
 # points), one shared executable seed: only the optimizer varies. Learning
-# off so no arm inherits knowledge from another. The first arm (greedy) is
+# off so no experiment inherits knowledge from another. The first experiment (greedy) is
 # the control. Bounded parallel: 8 searches alive at once, well under the
-# machine's operator slots, so no search burns its clock in waiting-slot.
+# machine's agent slots, so no search burns its clock in waiting-slot.
 #
 # 60m successor of gepa-vs-openevolve-vs-greedy-heilbronn: its 15m pilot
-# (run 20260904-094621) gave every arm one finished draft (4-9 min of agent
+# (run 20260904-094621) gave every experiment one finished draft (4-9 min of agent
 # time each) and one budget-killed one, so no policy ever chose a "next"
-# candidate and the arms were indistinguishable by construction. Sixty
-# minutes targets >=10 scored candidates per search. The gepa arm also
+# candidate and the experiments were indistinguishable by construction. Sixty
+# minutes targets >=10 scored candidates per search. The gepa experiment also
 # starts on frontier_type=instance (the objective frontier aborted there).
 #
 # Run all repeats:  hillclimb experiment run gepa-vs-openevolve-vs-greedy-heilbronn-60m
-# Then recheck noise_floor against the within-arm spread across repeats.
+# Then recheck noise_floor against the within-experiment spread across repeats.
 name: gepa-vs-openevolve-vs-greedy-heilbronn-60m
 problems: [heilbronn-11, heilbronn-14, heilbronn-17]
 seed_from: seeds/heilbronn.py
@@ -31,10 +31,10 @@ defaults:
   backend: claude-code
   model: claude-opus-5
   learning.enabled: false
-  concurrency.parallel_operators: 1
+  concurrency.parallel_agents: 1
   evaluation.n_replicates: 1
 
-arms:
+experiments:
   greedy:
     climber.ref: greedy
     climber.params: {}

@@ -8,7 +8,7 @@ higher_is_better: true
 description: description.md
 solution_kind: climber      # solution.py is a climber; a search here runs its climber as an improver
 baseline: greedy.py         # the bundled greedy policy as one file (byte-identical to the package's)
-allow_network: true         # inner searches spawn agents
+allow_internet_during_solution: true         # inner searches spawn agents
 # a verifier run is the whole meta.yaml (2 problems x 1 repeat x 3m + start-up),
 # so the outer config needs `budget.exec_timeout_s` above that: 900 fits
 time_budget_s: 7200

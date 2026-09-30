@@ -1,4 +1,4 @@
-"""`hillclimb experiment run|report`: arms × repeats, and the paired report."""
+"""`hillclimb experiment run|report`: a study's experiments × repeats, and the paired report."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from hillclimb.harness.store import open_store
 from hillclimb.problem import load_problem, resolve_target
 
 experiment_app = typer.Typer(
-    cls=HillclimbGroup, help="Compare setups: named arms of config overrides × repeats on a problem"
+    cls=HillclimbGroup, help="Compare setups: a study of named experiments (config overrides) × repeats on a problem"
 )
 
 
@@ -50,7 +50,7 @@ def experiment_run(
     ),
     run_id: str = typer.Option(
         None, "--run-id",
-        help="Append the searches to this existing experiment run instead of creating a new one",
+        help="Append the searches to this existing study run instead of creating a new one",
     ),
     first_repeat: int = typer.Option(
         1, "--first-repeat", min=1,
@@ -58,14 +58,14 @@ def experiment_run(
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the jobs, start nothing"),
 ):
-    """Run an experiment: every arm × every problem × N repeats.
+    """Run a study: every experiment × every problem × N repeats.
 
     Sequential (the default) runs jobs in a fair order — repeat by repeat,
-    arms round-robin inside — so shared state such as cross-search memory
-    is seen by every arm at the same point; use it whenever an arm touches
-    shared state. Parallel launches all jobs detached at once (machine
-    slots still cap concurrency) — fine for stateless comparisons such as
-    policy or model. Bounded parallel (--max-concurrent N, or the spec's
+    experiments round-robin inside — so shared state such as cross-search
+    memory is seen by every experiment at the same point; use it whenever
+    an experiment touches shared state. Parallel launches all jobs detached
+    at once (machine slots still cap concurrency) — fine for stateless
+    comparisons such as policy or model. Bounded parallel (--max-concurrent N, or the spec's
     max_concurrent) keeps at most N alive so no search spends its wall
     clock waiting for a machine slot; the launcher stays up until the last
     child exits, then prints the report — run it under nohup or in tmux.
@@ -75,40 +75,41 @@ def experiment_run(
     """
     from hillclimb.experiment import (
         expand,
-        load_experiment,
-        resolve_experiment_path,
+        load_study,
+        resolve_study_path,
         resolved_seed,
     )
 
     config = common.load_config()
+    common.require_sandbox(config)
     try:
-        spec_path = resolve_experiment_path(spec, config.hillclimb_dir)
-        experiment = load_experiment(spec_path)
-        seed_path = resolved_seed(experiment)
+        spec_path = resolve_study_path(spec, config.hillclimb_dir)
+        study = load_study(spec_path)
+        seed_path = resolved_seed(study)
     except (FileNotFoundError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     if repeats is not None:
-        experiment = experiment.model_copy(update={"repeats": repeats})
-    for problem_target in experiment.problems:
+        study = study.model_copy(update={"repeats": repeats})
+    for problem_target in study.problems:
         if resolve_target(problem_target, config).kind == "suite":
-            raise typer.BadParameter(f"experiments take problems, not suites ({problem_target!r})")
-    jobs = expand(experiment, first_repeat)
+            raise typer.BadParameter(f"studies take problems, not suites ({problem_target!r})")
+    jobs = expand(study, first_repeat)
     if parallel is False and max_concurrent is not None:
         raise typer.BadParameter("--sequential and --max-concurrent contradict each other")
-    schedule = "parallel" if parallel else "sequential" if parallel is False else experiment.schedule
-    limit = max_concurrent if max_concurrent is not None else experiment.max_concurrent
+    schedule = "parallel" if parallel else "sequential" if parallel is False else study.schedule
+    limit = max_concurrent if max_concurrent is not None else study.max_concurrent
     if max_concurrent is not None:
         schedule = "parallel"  # the flag implies detached launches
     if schedule != "parallel":
         limit = None
-    child_budget = budget or experiment.budget
+    child_budget = budget or study.budget
     repeats_text = (
-        f"{experiment.repeats} repeat(s)" if first_repeat == 1
-        else f"repeats {first_repeat}..{first_repeat + experiment.repeats - 1}"
+        f"{study.repeats} repeat(s)" if first_repeat == 1
+        else f"repeats {first_repeat}..{first_repeat + study.repeats - 1}"
     )
     common.say(
-        f"[head]Experiment {common._m(experiment.name)}:[/] {len(experiment.arms)} arms × "
-        f"{len(experiment.problems)} problem(s) × {repeats_text} = {len(jobs)} searches, {schedule}"
+        f"[head]Study {common._m(study.name)}:[/] {len(study.experiments)} experiments × "
+        f"{len(study.problems)} problem(s) × {repeats_text} = {len(jobs)} searches, {schedule}"
         + (f" [note](at most {limit} at once)[/]" if limit else "")
     )
     if seed_path is not None:
@@ -119,7 +120,7 @@ def experiment_run(
     for job in jobs:
         settings = ", ".join(f"{k}={v}" for k, v in job.overrides.items()) or "(defaults)"
         common.say(
-            f"  {job.index:2d}. [path]{common._m(job.problem)}[/] · {common._m(job.arm)} · r{job.repeat}"
+            f"  {job.index:2d}. [path]{common._m(job.problem)}[/] · {common._m(job.experiment)} · r{job.repeat}"
             f"  [note]{common._m(settings)}[/]"
         )
     if dry_run:
@@ -128,26 +129,26 @@ def experiment_run(
         run_dir = config.paths.runs_dir / run_id
         existing = load_run_meta(run_dir)
         if existing is None or existing.kind != "experiment":
-            raise typer.BadParameter(f"--run-id {run_id!r} is not an existing experiment run")
+            raise typer.BadParameter(f"--run-id {run_id!r} is not an existing study run")
         run_name = existing.name
         common.say(f"[head]Appending to run[/] [path]{common._m(run_id)}[/]")
     else:
-        run_name = experiment.name
+        run_name = study.name
         run_id = new_run_id(run_name)
         run_dir = create_run(
             config,
             RunMeta(
                 run_id=run_id, name=run_name, kind="experiment", target=spec,
                 spec=common._spec_provenance(config, spec_path),
-                problem_ids=list(dict.fromkeys(load_problem(p, config).problem_id for p in experiment.problems)),
+                problem_ids=list(dict.fromkeys(load_problem(p, config).problem_id for p in study.problems)),
             ),
         )
-        # the run's own recipe: one entry per search, named by arm and
+        # the run's own recipe: one entry per search, named by experiment and
         # repeat, its overrides as `set` pairs — reruns the same searches
-        # as a plain suite (the experiment tagging is run.yaml's)
+        # as a plain suite (the study tagging is run.yaml's)
         write_run_spec(run_dir, [
             spec_entry(
-                job.problem, name=f"{job.arm}-r{job.repeat}", budget=child_budget, seed_from=seed_path,
+                job.problem, name=f"{job.experiment}-r{job.repeat}", budget=child_budget, seed_from=seed_path,
                 set=[f"{key}={_set_value(value)}" for key, value in job.overrides.items()],
             )
             for job in jobs
@@ -158,7 +159,7 @@ def experiment_run(
     for job in jobs:
         argv = [
             job.problem, "--run-id", run_id, "--run-name", run_name,
-            "--experiment", experiment.name, "--arm", job.arm, "--repeat", str(job.repeat),
+            "--study", study.name, "--experiment", job.experiment, "--repeat", str(job.repeat),
         ]
         if seed_path is not None:
             argv += ["--seed-from", str(seed_path)]
@@ -166,7 +167,7 @@ def experiment_run(
             argv += ["--budget", child_budget]
         for key, value in job.overrides.items():
             argv += ["--set", f"{key}={_set_value(value)}"]
-        slug = f"{Path(job.problem).name}-{job.arm}-r{job.repeat}"
+        slug = f"{Path(job.problem).name}-{job.experiment}-r{job.repeat}"
         if schedule == "parallel":
             if limit:
                 _reap_until_below(alive, limit, exits, _say_reaped)
@@ -185,7 +186,7 @@ def experiment_run(
         if result.returncode != 0:
             hint = " (parked — resume it, then `experiment report`)" if result.returncode == 2 else ""
             common.fail(
-                f"{common._m(slug)} exited {result.returncode}{common._m(hint)}; stopping the experiment"
+                f"{common._m(slug)} exited {result.returncode}{common._m(hint)}; stopping the study"
             )
             raise typer.Exit(result.returncode)
     if schedule == "parallel" and not limit:
@@ -208,7 +209,7 @@ def experiment_run(
                 f"  [path]{common._m(slug)}[/]: {common._m(hint)}; log under [path]{common._m(run_dir / 'logs')}[/]"
             )
     common.say()
-    _experiment_report_impl(config, experiment.name, "", spec_path=spec_path)
+    _experiment_report_impl(config, study.name, "", spec_path=spec_path)
     if exits:
         raise typer.Exit(1 if any(code != 2 for code in exits.values()) else 2)
 
@@ -257,41 +258,41 @@ def _set_value(value) -> str:
 
 @experiment_app.command("report")
 def experiment_report(
-    experiment: str = typer.Argument(None, help="Experiment name or spec (default: every experiment)"),
+    study: str = typer.Argument(None, help="Study name or spec (default: every study)"),
     problem: str = typer.Option("", "--problem", help="Filter to one problem id"),
-    control: str = typer.Option(None, "--control", help="Arm to compare against (default: the first)"),
+    control: str = typer.Option(None, "--control", help="Experiment to compare against (default: the first)"),
     noise_floor: float = typer.Option(
-        None, "--noise-floor", help="Gap below which arms are not different (default: the spec's)"
+        None, "--noise-floor", help="Gap below which experiments are not different (default: the spec's)"
     ),
     as_json: bool = typer.Option(
         False, "--json", help="Machine-readable: the summaries as JSON (a meta-verifier reads the gaps)"
     ),
 ):
-    """Compare the arms of an experiment.
+    """Compare the experiments of a study.
 
     On the selected candidate's holdout score (val when holdout was off):
-    per arm n/mean/median/spread, best-of-repeat wins, time to best and
-    tokens; then every arm against the control, with the gap judged against
-    the noise floor (`hillclimb verify <problem> --repeat 5` measures it).
+    per experiment n/mean/median/spread, best-of-repeat wins, time to best
+    and tokens; then every experiment against the control, with the gap
+    judged against the noise floor (`hillclimb verify <problem> --repeat 5` measures it).
     """
-    from hillclimb.experiment import resolve_experiment_path
+    from hillclimb.experiment import resolve_study_path
 
     config = common.load_config()
     spec_path = None
-    if experiment:
+    if study:
         try:
-            spec_path = resolve_experiment_path(experiment, config.hillclimb_dir)
+            spec_path = resolve_study_path(study, config.hillclimb_dir)
         except FileNotFoundError:
             spec_path = None  # a name with no spec on disk: report by tag alone
     _experiment_report_impl(
-        config, experiment, problem, spec_path=spec_path, control=control,
+        config, study, problem, spec_path=spec_path, control=control,
         noise_floor=noise_floor, as_json=as_json,
     )
 
 
 def _experiment_report_impl(
     config: Config,
-    experiment: str | None,
+    study: str | None,
     problem_id: str,
     *,
     spec_path: Path | None = None,
@@ -301,16 +302,16 @@ def _experiment_report_impl(
 ) -> None:
     from hillclimb.experiment import (
         collect_results,
-        load_experiment,
+        load_study,
         render_report,
         summaries_to_dict,
         summarize,
     )
 
     floors: dict[str, float | None] = {}
-    name = experiment
+    name = study
     if spec_path is not None:
-        spec = load_experiment(spec_path)
+        spec = load_study(spec_path)
         name = spec.name
         control = control or spec.control
         for target in spec.problems:
@@ -320,7 +321,7 @@ def _experiment_report_impl(
                 pid = Path(target).name
             floors[pid] = spec.noise_for(pid)
     with closing(open_store(config)) as store:
-        rows = collect_results(store, experiment=name, problem_id=problem_id)
+        rows = collect_results(store, study=name, problem_id=problem_id)
     if noise_floor is not None:
         floors = {row.problem_id: noise_floor for row in rows}
     summaries = summarize(rows, control=control, noise_floor=floors)

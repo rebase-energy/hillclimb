@@ -1,5 +1,46 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **A sandbox, on by default.** Agents and verifier runs are confined by the
+  operating system: `sandbox-exec` on macOS, bubblewrap on Linux (`sudo apt
+  install bubblewrap`). They write only to their candidate's folder, the
+  temp dirs and the ML caches, and cannot read `~/.ssh`, cloud logins, `.env`
+  files, the journal or the holdout runs. A search does not start when the
+  sandbox cannot, and says how to fix it; `sandbox: off` in `hillclimb.yaml`
+  (or `HILLCLIMB_SANDBOX=off`) runs without. Windows has no sandbox and runs
+  unsandboxed with a warning. Codex keeps its own sandbox.
+  See [docs/sandbox.md](docs/sandbox.md).
+- **`hillclimb sandbox check`** runs a script that behaves like a hostile
+  solution inside the sandbox and lists what happened to every attempt:
+  writes outside its folder, reads of your keys, connections out, a signal
+  to a process outside. Exit code 1 when one got through.
+- **Agents without internet.** `allow_internet_for_agents: false` in
+  `hillclimb.yaml` leaves the agents nothing but their model provider: their
+  traffic goes through a proxy in the engine that refuses every other host.
+  Claude Code loses web search, web fetch and MCP servers, codex loses web
+  search, and the draft prompt stops asking for web research. The default
+  stays `true`.
+
+### Changed
+- **`allow_network` is `allow_internet_during_solution`** in `problem.yaml`,
+  so it cannot be mistaken for the agents' internet. The old key still loads.
+  The sandbox now enforces it: a verifier has no network unless its problem
+  sets it to `true`, so a verifier that downloads something itself needs it.
+- **A study's setups are experiments.** What `hillclimb experiment run`
+  compares is a *study*, and each named setup in it is an *experiment* (it
+  was an *arm*). A spec lists them under `experiments:`; `arms:` still
+  loads. `hillclimb run` tags a search with `--study S --experiment E` (it
+  was `--experiment S --arm E`), and a mixed fleet's per-setup settings are
+  `--experiment-set NAME:KEY=VALUE` (`--arm-set` still works). `search.yaml`
+  records `study`, `experiment` and `experiment_overrides`; runs written
+  before the rename read the same. `experiment report --json` names the
+  study `study` and lists `experiments` (each with an `experiment` key). In
+  the Python API, `create_search`, `fleet_argv`, `run_fleet`, `mixed_fleet`
+  and `FleetEngine` take the new names, and `load_experiment` /
+  `ExperimentSpec` are `load_study` / `StudySpec`.
+
 ## 0.5.0 — 2026-09-28
 
 ### Added

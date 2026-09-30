@@ -10,7 +10,7 @@ drawn as a gold trail through the cloud.
 Search scope: colour is the score's rank bin (cold→hot), size grows with
 rank, the champion is a gold diamond, the origin a white open diamond,
 shape carries the tree's fate. Run scope (every search of the problem in
-an experiment run): colour is the arm, as in `chart`.
+a study run): colour is the experiment, as in `chart`.
 
 Keys: `m` cycles the metric (behavioral → structural → blend), `v` swaps
 to the reference cube (`r` is plotui's own reset-view key), `space` replays the search growing candidate by
@@ -49,8 +49,8 @@ from hillclimb.tui.similarityview import (
     UNSCORED_SIZE,
     RunScopeMixin,
     SimilarityBase,
-    arm_colour,
-    arm_legend,
+    experiment_colour,
+    experiment_legend,
     rank_size,
     search_inputs,
     run_state,
@@ -83,7 +83,7 @@ def node_colour(view: MapView, node: MapNode) -> RGB:
     if node.best:
         return BEST_RGB
     if view.scope == "run":
-        return arm_colour(view, node.arm)  # type: ignore[arg-type]
+        return experiment_colour(view, node.experiment)  # type: ignore[arg-type]
     if node.bin is None:
         return UNSCORED_RGB
     return SCORE_RGB[node.bin]
@@ -262,8 +262,8 @@ def statusline(
     parts.append(f"[dim]stress {view.stress:.2f}[/]")
     if hover:
         parts.append(hover)
-    elif view.scope == "run" and view.arms:
-        parts.append(arm_legend(view))  # type: ignore[arg-type]
+    elif view.scope == "run" and view.experiments:
+        parts.append(experiment_legend(view))  # type: ignore[arg-type]
     if spinning:
         parts.append("[dim]spinning[/]")
     return "  ".join(parts)
@@ -502,8 +502,8 @@ class MapScreen(SimilarityBase):
 
 
 class RunMapScreen(RunScopeMixin, MapScreen):
-    """Run scope: every search of one problem in an experiment run in one
-    map, coloured by arm. `n`/`p` step through the run's problems."""
+    """Run scope: every search of one problem in a study run in one
+    map, coloured by experiment. `n`/`p` step through the run's problems."""
 
     BINDINGS = [
         Binding("n", "next_search", "next problem", tooltip="the run's next problem"),

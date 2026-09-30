@@ -1,20 +1,20 @@
                                                                                                                         
- Usage: root experiment report [OPTIONS] [EXPERIMENT]                                                                   
+ Usage: root experiment report [OPTIONS] [STUDY]                                                                        
                                                                                                                         
- Compare the arms of an experiment.                                                                                     
+ Compare the experiments of a study.                                                                                    
                                                                                                                         
  On the selected candidate's holdout score (val when holdout was off):                                                  
- per arm n/mean/median/spread, best-of-repeat wins, time to best and                                                    
- tokens; then every arm against the control, with the gap judged against                                                
- the noise floor (`hillclimb verify <problem> --repeat 5` measures it).                                                 
+ per experiment n/mean/median/spread, best-of-repeat wins, time to best                                                 
+ and tokens; then every experiment against the control, with the gap                                                    
+ judged against the noise floor (`hillclimb verify <problem> --repeat 5` measures it).                                  
                                                                                                                         
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│   [experiment]      TEXT  Experiment name or spec (default: every experiment)                                        │
+│   [study]      TEXT  Study name or spec (default: every study)                                                       │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --problem              TEXT   Filter to one problem id                                                               │
-│ --control              TEXT   Arm to compare against (default: the first)                                            │
-│ --noise-floor          FLOAT  Gap below which arms are not different (default: the spec's)                           │
+│ --control              TEXT   Experiment to compare against (default: the first)                                     │
+│ --noise-floor          FLOAT  Gap below which experiments are not different (default: the spec's)                    │
 │ --json                        Machine-readable: the summaries as JSON (a meta-verifier reads the gaps)               │
 │ --help         -h             Show this message and exit.                                                            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

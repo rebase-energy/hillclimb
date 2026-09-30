@@ -1,5 +1,5 @@
 """Similarity additions: seed-first reference, the problem-supplied
-fingerprint mode, the run-scope cube (every arm of a problem in an
+fingerprint mode, the run-scope cube (every experiment of a problem in an
 experiment run), its rendering, and the CLI's auto-detection."""
 
 from __future__ import annotations
@@ -187,11 +187,11 @@ class TestProblemPickup:
 
 
 def make_arm(
-    root: Path, search_id: str, arm: str, *, seed_source: str = "s = 1\n",
+    root: Path, search_id: str, experiment: str, *, seed_source: str = "s = 1\n",
     seed_values=(1.0, 2.0, 3.0), child_scores=(0.6, 0.8), child_offsets=(1.0, 2.0),
     seed_submission: bool = True,
 ) -> SearchInput:
-    """One experiment-arm search: c000 baseline (copied submission, no
+    """One study-experiment search: c000 baseline (copied submission, no
     source), c001 seed, then children of the seed."""
     search_dir = root / search_id
     (search_dir / "candidates" / "c000").mkdir(parents=True, exist_ok=True)
@@ -207,7 +207,7 @@ def make_arm(
         candidates.append(cand(cid, parent="c001", score=score, t=i))
         write_candidate(search_dir, cid, solution=f"s = {i}\nprint({i})\n",
                         submission=sub_csv([v + offset for v in seed_values]))
-    return SearchInput(search_id=search_id, search_dir=search_dir, candidates=candidates, arm=arm)
+    return SearchInput(search_id=search_id, search_dir=search_dir, candidates=candidates, experiment=experiment)
 
 
 class TestRunView:
@@ -222,13 +222,13 @@ class TestRunView:
     def test_every_arm_measured_from_its_own_seed(self, tmp_path):
         view = build_run_similarity(self.make_run(tmp_path), True)
         assert view.unavailable is None and view.scope == "run"
-        assert view.arms == ("greedy", "openevolve") and view.n_searches == 4
+        assert view.experiments == ("greedy", "openevolve") and view.n_searches == 4
         assert view.reference_label == "seed" and view.mode == "submission"
         assert set(view.reference_ids) == {"p/c001", "p-2/c001", "p-3/c001", "p-4/c001"}
         by_id = {n.id: n for n in view.nodes}
         for ref in view.reference_ids:
             assert by_id[ref].raw == (0.0, 0.0, 0.0)
-        assert by_id["p-2/c003"].raw[2] == 1.0 and by_id["p-2/c003"].arm == "openevolve"
+        assert by_id["p-2/c003"].raw[2] == 1.0 and by_id["p-2/c003"].experiment == "openevolve"
         assert by_id["p-2/c003"].search_id == "p-2"
         assert view.n_unpositioned == 4  # the four sourceless baselines
 
@@ -253,7 +253,7 @@ class TestRunView:
         other = make_arm(tmp_path, "q", "gepa", seed_source="s = 2\n")
         view = build_run_similarity([*searches, other], True)
         assert view.unavailable is not None and "seeds differ: p vs q" in view.unavailable
-        seedless = SearchInput("r", tmp_path / "r", [cand("c000", "baseline", score=0.1)], arm="x")
+        seedless = SearchInput("r", tmp_path / "r", [cand("c000", "baseline", score=0.1)], experiment="x")
         write_candidate(tmp_path / "r", "c000", submission=sub_csv([1.0]))
         view = build_run_similarity([*searches, seedless], True)
         assert "r has no seed candidate" in (view.unavailable or "")
@@ -286,16 +286,16 @@ class TestRunView:
 
 
 class TestRendering:
-    def test_run_plot_groups_by_arm_and_rank(self, tmp_path):
-        from hillclimb.tui.chart import ARM_PALETTE
+    def test_run_plot_groups_by_experiment_and_rank(self, tmp_path):
+        from hillclimb.tui.chart import EXPERIMENT_PALETTE
         from hillclimb.tui.similarityview import (
-            BEST_RGB, REFERENCE_RGB, arm_colour, build_similarity_plot, rank_size, statusline,
+            BEST_RGB, REFERENCE_RGB, experiment_colour, build_similarity_plot, rank_size, statusline,
         )
 
         view = build_run_similarity(TestRunView().make_run(tmp_path), True)
-        assert arm_colour(view, "greedy") == ARM_PALETTE[0]
-        assert arm_colour(view, "openevolve") == ARM_PALETTE[1]
-        assert arm_colour(view, "nope") != ARM_PALETTE[0]
+        assert experiment_colour(view, "greedy") == EXPERIMENT_PALETTE[0]
+        assert experiment_colour(view, "openevolve") == EXPERIMENT_PALETTE[1]
+        assert experiment_colour(view, "nope") != EXPERIMENT_PALETTE[0]
         assert rank_size(None) < rank_size(0) < rank_size(5) < 7.0
         plot = build_similarity_plot(view)
         assert plot is not None
@@ -320,7 +320,7 @@ class TestRendering:
 # CLI auto-detection
 
 
-def _experiment_search(runs_dir: Path, run_id: str, search_id: str, arm: str, *, seed: bool) -> None:
+def _experiment_search(runs_dir: Path, run_id: str, search_id: str, experiment: str, *, seed: bool) -> None:
     run_dir = runs_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     write_run_meta(run_dir, RunMeta(run_id=run_id, name="exp", kind="experiment", target="exp", problem_ids=["p"]))
@@ -329,7 +329,7 @@ def _experiment_search(runs_dir: Path, run_id: str, search_id: str, arm: str, *,
     write_search_meta(search_dir, SearchMeta(
         search_id=search_id, run_id=run_id, problem="p", problem_id="p", problem_key="p",
         agent="dummy", model="", metric="score", higher_is_better=True,
-        experiment="exp", arm=arm, repeat=1, started_at=f"2026-09-04T10:0{len(search_id)}:00+00:00",
+        study="exp", experiment=experiment, repeat=1, started_at=f"2026-09-04T10:0{len(search_id)}:00+00:00",
     ))
     journal = Journal(search_dir / "journal.jsonl")
     candidates = [cand("c000", "baseline", score=0.1, t=0)]
@@ -362,8 +362,8 @@ class TestCliAutoDetect:
 
         from hillclimb.cli import app
 
-        for search_id, arm in (("p", "greedy"), ("p-2", "gepa")):
-            _experiment_search(config.paths.runs_dir, "r1", search_id, arm, seed=True)
+        for search_id, experiment in (("p", "greedy"), ("p-2", "gepa")):
+            _experiment_search(config.paths.runs_dir, "r1", search_id, experiment, seed=True)
         monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config)
         launched = self._capture(monkeypatch)
         result = CliRunner().invoke(app, ["similarity", "r1/p"])
@@ -388,8 +388,8 @@ class TestCliAutoDetect:
 
         from hillclimb.cli import app
 
-        for search_id, arm in (("p", "greedy"), ("p-2", "gepa")):
-            _experiment_search(config.paths.runs_dir, "r1", search_id, arm, seed=False)
+        for search_id, experiment in (("p", "greedy"), ("p-2", "gepa")):
+            _experiment_search(config.paths.runs_dir, "r1", search_id, experiment, seed=False)
         monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config)
         launched = self._capture(monkeypatch)
         for argv in (["similarity", "r1/p-2"], ["similarity", "reference", "r1/p-2"]):

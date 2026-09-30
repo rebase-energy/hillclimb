@@ -91,8 +91,9 @@ To see what the in-flight agent is doing live:
 **Control:**
 
 ```bash
-uv run hillclimb stop <search>                    # graceful: finishes current operator, then parks
-uv run hillclimb kill <search>                    # SIGTERM now; state is finalized, still resumable
+uv run hillclimb stop <search>                    # now: aborts in-flight operators (journaled abandoned), parks; resumable
+uv run hillclimb stop --graceful <search>         # lets in-flight operators finish and be scored, then parks
+uv run hillclimb kill <search>                    # last resort for an unresponsive engine: SIGTERM, then SIGKILL
 uv run hillclimb prune <search> <candidate-id>    # cut a candidate + its whole subtree from the search
 uv run hillclimb resume <search>                  # continue a parked/stopped/crashed search
 uv run hillclimb resume --all                     # resume everything resumable, each detached
@@ -136,14 +137,14 @@ uv run hillclimb knowledge query "<terms>"      # read-only memory lookup (no ag
 uv run hillclimb knowledge show <target>        # prior-experience block a new search would get
 uv run hillclimb paper add <pdf> --problem <t>  # distill a PDF paper into claims (before a run: inspect wiring with `hillclimb graph`)
 uv run hillclimb paper list                     # ingested papers with scope and claim counts
-uv run hillclimb experiment run <spec> [--dry-run] [--parallel]  # arms × problems × repeats (real searches; --dry-run lists jobs)
-uv run hillclimb experiment report [spec]       # compare the arms on holdout, gap vs control judged against the noise floor (--json: gaps + verdicts as data)
+uv run hillclimb experiment run <spec> [--dry-run] [--parallel]  # a study: experiments × problems × repeats (real searches; --dry-run lists jobs)
+uv run hillclimb experiment report [spec]       # compare the experiments on holdout, gap vs control judged against the noise floor (--json: gaps + verdicts as data)
 uv run hillclimb climber list                     # bundled climbers (greedy | openevolve | gepa) + climbers/* — the `--climber` refs
 uv run hillclimb climber new mine --from greedy   # copy a climber into climbers/mine/ (manifest + policy source + prompts) to edit
 uv run hillclimb climber check [--climber climbers/mine] [--set climber.params.k=v] [--problem P --smoke]  # replay recorded journals through the climber's policy (no agent): resume-determinism, dangling ids, writes, prompt lint; exit 1 on a breach
 uv run hillclimb run <problem> --climber climbers/mine  # a climber dir (climber.yaml) or one .py file (a SearchPolicy class, or POLICY=...) instead of a bundled name; search.yaml records climber_sha256 and snapshots it
-uv run hillclimb run <problem> --set climber.ref=openevolve --experiment E --arm A  # one arm by hand (counts in the report)
-uv run hillclimb run <problem> --climber greedy --climber openevolve --climber gepa --arm-set gepa:concurrency.parallel_operators=1  # mixed fleet: one search per climber under one run; `experiment report <run-id>` compares
+uv run hillclimb run <problem> --set climber.ref=openevolve --study S --experiment E  # one experiment by hand (counts in the report)
+uv run hillclimb run <problem> --climber greedy --climber openevolve --climber gepa --experiment-set gepa:concurrency.parallel_agents=1  # mixed fleet: one search per climber under one run; `experiment report <run-id>` compares
 ```
 
 ## Rules
@@ -158,6 +159,12 @@ uv run hillclimb run <problem> --climber greedy --climber openevolve --climber g
   status and `agent_stream.jsonl`. The `temperature` experiment spec compares
   three temperatures; inspect with `experiment run temperature --dry-run`,
   then use `experiment report temperature --json` for the verdicts.
+
+- Agents and verifier runs are sandboxed by default (`docs/sandbox.md`):
+  they write only to their candidate's folder. `Not started: the sandbox …`
+  means it cannot start here; the message names the fix. When this session's
+  own shell is sandboxed, macOS refuses the inner one: start the run from an
+  unsandboxed shell. Never set `sandbox: off` for the user without asking.
 
 - **Never edit `journal.jsonl`, `status.json`, or `control/` by hand.**
   With `store.backend: sqlite` those records live in `store.sqlite`

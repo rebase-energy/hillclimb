@@ -46,7 +46,7 @@ class AgentInfo(BaseModel):
     # journals predating the field or when nothing was observed
     token_usage: dict[str, int] = Field(default_factory=dict)
     # subscription limit-window utilization (%) snapshotted at agent-call
-    # start/end (see quota.py). Account-wide — parallel operators and other
+    # start/end (see quota.py). Account-wide — parallel agents and other
     # sessions move it too, so the delta is telemetry, not accounting.
     quota_start: dict | None = None
     quota_end: dict | None = None

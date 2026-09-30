@@ -78,7 +78,7 @@ def test_shared_seed_reads_n_from_the_problem(config: Config, tmp_path, n):
     assert run.returncode == 0, run.stderr
     rows = (candidate_dir / "submission.csv").read_text().splitlines()
     assert rows[0] == "id,x,y" and len(rows) == n + 1
-    # the seed is exactly the sample: the same neutral start for every arm
+    # the seed is exactly the sample: the same neutral start for every experiment
     assert (candidate_dir / "submission.csv").read_text() == (spec.problem_dir / "sample_submission.csv").read_text()
 
 

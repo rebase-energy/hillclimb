@@ -123,6 +123,23 @@ class SearchMeta(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
+    def _legacy_arm_tags(cls, data):
+        """A record written before the study vocabulary named the comparison
+        the `experiment` and each setup in it an `arm`. Same things, older
+        words: map them, so reports and charts keep grouping old runs."""
+        if not isinstance(data, dict) or ("arm" not in data and "arm_overrides" not in data):
+            return data
+        data = dict(data)
+        if "arm" in data:
+            data.setdefault("study", data.get("experiment"))
+            data["experiment"] = data.pop("arm")
+        overrides = data.pop("arm_overrides", None)
+        if overrides is not None:
+            data.setdefault("experiment_overrides", overrides)
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
     def _from_v2(cls, data):
         """A record written before the climber vocabulary (schema v2) named a
         `policy`. Same thing, older word: map it, so every view keeps
@@ -146,13 +163,13 @@ class SearchMeta(BaseModel):
     seed_sha256: str | None = None
     # whether cross-search memory was active
     learning_enabled: bool = True
-    # Experiment tags (experiment.py): which experiment and arm this search
-    # belongs to, its repeat index, and the config overrides the arm applied
-    # — the grouping keys for every setup-vs-setup comparison
+    # Study tags (experiment.py): which study and experiment this search
+    # belongs to, its repeat index, and the config overrides the experiment
+    # applied — the grouping keys for every setup-vs-setup comparison
+    study: str | None = None
     experiment: str | None = None
-    arm: str | None = None
     repeat: int = 0
-    arm_overrides: dict = Field(default_factory=dict)
+    experiment_overrides: dict = Field(default_factory=dict)
     started_at: str = Field(default_factory=utcnow)
 
     @model_validator(mode="after")

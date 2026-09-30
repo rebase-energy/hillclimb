@@ -1,13 +1,13 @@
                                                                                                                         
  Usage: root experiment [OPTIONS] COMMAND [ARGS]...                                                                     
                                                                                                                         
- Compare setups: named arms of config overrides × repeats on a problem                                                  
+ Compare setups: a study of named experiments (config overrides) × repeats on a problem                                 
                                                                                                                         
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --help  -h        Show this message and exit.                                                                        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ report  Compare the arms of an experiment.                                                                           │
-│ run     Run an experiment: every arm × every problem × N repeats.                                                    │
+│ report  Compare the experiments of a study.                                                                          │
+│ run     Run a study: every experiment × every problem × N repeats.                                                   │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 

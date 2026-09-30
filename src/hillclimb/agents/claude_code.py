@@ -11,6 +11,7 @@ from hillclimb.harness.procs import Reaper
 from hillclimb.harness import quota
 from hillclimb.harness.candidate import utcnow
 from hillclimb.harness.oscompat import new_group_kwargs, runnable
+from hillclimb.harness import sandbox
 from hillclimb.agents.base import OperatorRequest, OperatorResult
 
 
@@ -36,6 +37,10 @@ RATE_LIMIT_MARKERS = (
     "limit reached",
     "out of extra usage",
 )
+
+WEB_TOOLS = "WebSearch,WebFetch"
+# what Claude Code itself has to reach: the API and the login's token refresh
+MODEL_HOSTS = ("api.anthropic.com", "console.anthropic.com", "platform.claude.com", "claude.ai")
 
 STREAM_FILE = "agent_stream.jsonl"
 PID_FILE = "agent.pid"
@@ -211,6 +216,28 @@ class ClaudeCodeAgent:
         self.auth = auth  # subscription | api-key (see subscription_env)
         self.abort = abort  # set → kill the agent and report error_kind="aborted"
 
+    def _sandboxed(self, cmd: list[str], request: OperatorRequest) -> sandbox.Launch:
+        """The command as it starts: inside the sandbox, writing only to the
+        candidate dir and Claude Code's own state, and without internet
+        reaching only Anthropic."""
+        cmd = list(cmd)
+        if not request.allow_internet:
+            # WebSearch runs on Anthropic's side, where no sandbox reaches; an
+            # MCP server is a process of its own choosing
+            cmd += ["--disallowedTools", WEB_TOOLS, "--strict-mcp-config"]
+        policy = request.sandbox
+        if policy is None:
+            if not request.allow_internet:
+                raise sandbox.SandboxUnavailable(sandbox.NEEDS_SANDBOX)
+            return sandbox.Launch(cmd, {})
+        home = Path.home()
+        policy = policy.writable(
+            request.candidate_dir,
+            os.environ.get("CLAUDE_CONFIG_DIR") or home / ".claude",
+            prefix=(str(home / ".claude.json"),),
+        ).for_agent(request.allow_internet, hosts=MODEL_HOSTS)
+        return sandbox.launch(cmd, policy)
+
     def invoke(self, request: OperatorRequest) -> OperatorResult:
         cmd = [
             self.claude_bin,
@@ -225,6 +252,10 @@ class ClaudeCodeAgent:
         ]
         if request.resume_session_id:
             cmd += ["--resume", request.resume_session_id]
+        try:
+            started = self._sandboxed(cmd, request)
+        except sandbox.SandboxUnavailable as exc:
+            return OperatorResult(ok=False, error_kind="error", error_message=str(exc))
 
         candidate_dir = Path(request.candidate_dir)
         stream_path = candidate_dir / STREAM_FILE
@@ -242,13 +273,13 @@ class ClaudeCodeAgent:
         try:
             with stderr_path.open("w") as stderr_sink:
                 proc = subprocess.Popen(
-                    runnable(cmd),
+                    runnable(started.argv),
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=stderr_sink,
                     text=True,
                     cwd=request.candidate_dir,
-                    env=subscription_env(self.auth),
+                    env={**subscription_env(self.auth), **started.env},
                     **new_group_kwargs(),  # own process group → killable as a unit
                 )
                 reaper = Reaper(proc)  # reaps through wait4: the call's CPU rides along

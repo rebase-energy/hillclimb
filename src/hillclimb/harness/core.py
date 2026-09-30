@@ -4,6 +4,7 @@ import queue
 import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -33,6 +34,7 @@ from hillclimb.modules.operators import (
 )
 from hillclimb.prompts.render import render
 from hillclimb.harness.routing import AgentPool, ResolvedRoute, Router
+from hillclimb.harness.sandbox import agent_policy
 from hillclimb.harness.run import SEARCHES_DIRNAME
 from hillclimb.harness.glue import ParkedSearch, StopRequested
 from hillclimb.harness.slots import MachineSlots
@@ -203,6 +205,10 @@ class Harness:
         self._latch: Exception | None = None
         self._finished: str | None = None
         self._rejections = 0
+        # commands a control watcher drained while the loop's thread was busy
+        # in a blocking job (run(), the seed); _process_control applies them
+        self._deferred_commands: list[ControlCommand] = []
+        self._deferred_lock = threading.Lock()
         for stale in journal.pending_candidates():
             # a pending candidate at construction time means a previous
             # orchestrator process died mid-operator (crash/kill); its work is
@@ -393,7 +399,9 @@ class Harness:
         if isinstance(job, Ticket):
             return Outcome(ticket=job, kind="rejected", candidate=None)
         self._inflight[job.key] = job
-        outcome = self._commit_outcome(self._execute_job(job))
+        with self._watch_control():
+            msg = self._execute_job(job)
+        outcome = self._commit_outcome(msg)
         self._tick()
         return outcome
 
@@ -740,10 +748,47 @@ class Harness:
             )
         self.status.update(**fields)
 
+    def _drain_control(self) -> list[ControlCommand]:
+        with self._deferred_lock:
+            commands, self._deferred_commands = self._deferred_commands, []
+        return commands + self.drain_commands()
+
+    @contextmanager
+    def _watch_control(self, interval_s: float = 1.0):
+        """While the loop's thread blocks in one job (`run()`, the seed), a
+        watcher drains the control queue so an immediate stop still aborts
+        the job within ~interval_s. It only sets `abort` (thread-safe) and
+        defers every command to the next `_process_control` — the journal is
+        never touched off the loop's thread."""
+        done = threading.Event()
+
+        def watch() -> None:
+            while not done.wait(interval_s):
+                try:
+                    commands = self.drain_commands()
+                except Exception:  # noqa: BLE001 - a store hiccup must not kill the job
+                    continue
+                if not commands:
+                    continue
+                with self._deferred_lock:
+                    self._deferred_commands.extend(commands)
+                if any(c.action == "stop" and not c.graceful for c in commands):
+                    self.abort.set()
+
+        watcher = threading.Thread(target=watch, name="control-watch", daemon=True)
+        watcher.start()
+        try:
+            yield
+        finally:
+            done.set()
+            watcher.join()
+
     def _process_control(self) -> None:
         """Apply queued user commands (control/) between operators. Prunes are
-        applied before a stop so nothing is left half-processed."""
-        commands = self.drain_commands()
+        applied before a stop so nothing is left half-processed. An immediate
+        stop (the default) also aborts the operators in flight: they return
+        within ~1 s and commit as abandoned; a graceful one lets them finish."""
+        commands = self._drain_control()
         stop: ControlCommand | None = None
         for cmd in sorted(commands, key=lambda c: c.action != "prune"):
             if cmd.action == "stop":
@@ -766,7 +811,13 @@ class Harness:
                         self.problem.output_artifacts,
                     )
         if stop is not None:
-            self.journal.control_event("stop", reason=stop.reason, source=stop.source)
+            self.journal.control_event(
+                "stop", reason=stop.reason, source=stop.source, graceful=stop.graceful
+            )
+            if not stop.graceful:
+                if self._inflight:
+                    self.log(f"  stop requested by {stop.source}: aborting {len(self._inflight)} in-flight operator(s)")
+                self.abort.set()
             raise StopRequested(f"stop requested by {stop.source}")
 
     def _run_seed(self) -> Candidate:
@@ -783,7 +834,9 @@ class Harness:
             summary=f"incumbent model seeded from {seed.name}",
         )
         self._inflight[job.key] = job
-        committed = self._commit(self._execute_job(job))
+        with self._watch_control():
+            msg = self._execute_job(job)
+        committed = self._commit(msg)
         score = f"val={committed.val_score}" if committed.status == "passing" else committed.status
         self.log(f"  seed scored: {score}")
         return committed
@@ -922,6 +975,8 @@ class Harness:
             model=route.model,
             sampling=route.sampling,
             role=op.role,
+            allow_internet=self.config.allow_internet_for_agents,
+            sandbox=agent_policy(self.config, self.search_dir, route.agent),
             resume_session_id=(
                 target.agent.session_id
                 if prep.fork_session
@@ -995,7 +1050,7 @@ class Harness:
                 description=self.problem.description,
                 metric_name=self.problem.metric_name,
                 higher_is_better=self.problem.higher_is_better,
-                allow_network=self.problem.allow_network,
+                allow_internet_during_solution=self.problem.allow_internet_during_solution,
                 data_listing=self._data_listing(),
             ),
             budget=self._view().budget,
@@ -1005,6 +1060,7 @@ class Harness:
                 reference_note=self.reference_note,
             ),
             services=_OperatorServices(self),
+            agent_internet=self.config.allow_internet_for_agents,
         )
         return op, op.prepare(ctx)
 
@@ -1494,7 +1550,7 @@ class Harness:
             "Internet access IS available at execution time — this problem's rules "
             "permit fetching external data; cache downloads to files in the "
             "working directory so reruns don't refetch."
-            if self.problem.allow_network
+            if self.problem.allow_internet_during_solution
             else "Assume no internet access at execution time."
         )
         contract_template = self.problem.contract_template

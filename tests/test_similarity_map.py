@@ -267,14 +267,14 @@ class TestRunMap:
     def test_every_search_in_one_map(self, tmp_path):
         view = build_run_map(self.make_run(tmp_path), True, problem_key="p")
         assert view.unavailable is None and view.scope == "run"
-        assert view.arms == ("greedy", "openevolve") and view.n_searches == 2
+        assert view.experiments == ("greedy", "openevolve") and view.n_searches == 2
         ids = [n.id for n in view.nodes]
         assert "p/c001" in ids and "p-2/c003" in ids
         assert view.n_unpositioned == 2  # the sourceless baselines
         by_id = {n.id: n for n in view.nodes}
         assert by_id["p/c001"].origin and by_id["p-2/c001"].origin
         assert [n.id for n in view.nodes if n.best] == ["p-2/c003"]
-        assert by_id["p-2/c003"].arm == "openevolve" and by_id["p-2/c003"].search_id == "p-2"
+        assert by_id["p-2/c003"].experiment == "openevolve" and by_id["p-2/c003"].search_id == "p-2"
         # the two seeds share one file: zero apart on every matrix that measures output
         i, j = ids.index("p/c001"), ids.index("p-2/c001")
         assert view.behavioral[i, j] == pytest.approx(0.0)

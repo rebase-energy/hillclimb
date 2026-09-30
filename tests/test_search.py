@@ -588,7 +588,7 @@ def test_malformed_eval_result_ignored(task, config):
 
 def test_report_injection_gated_by_config(task, config):
     """report.enabled=false stops injection but not recording — both A/B
-    arms journal identical data."""
+    experiments journal identical data."""
     config.climber.params["num_drafts"] = 1
     config.report.enabled = False
     agent = FakeAgent()

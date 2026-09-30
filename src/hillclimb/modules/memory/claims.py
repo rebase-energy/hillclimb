@@ -435,6 +435,7 @@ def invoke_knowledge_agent(
     # resolve through the api namespace — the seam tests patch to keep every
     # agent call fake; lazy import avoids the module cycle
     from hillclimb.api import get_agent
+    from hillclimb.harness.sandbox import agent_policy
 
     agent = get_agent(
         agent_name, auth=auth, pi_models_file=config.pi.models_file
@@ -443,6 +444,8 @@ def invoke_knowledge_agent(
         OperatorRequest(
             operator=operator, prompt=prompt, candidate_dir=work_dir,
             timeout_s=timeout_s, model=model, sampling=sampling,
+            allow_internet=config.allow_internet_for_agents,
+            sandbox=agent_policy(config, None, agent_name),
         )
     )
 

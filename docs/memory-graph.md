@@ -67,10 +67,10 @@ and never pins a layout across keys.
 ## Roadmap steps 2-4 + benchmark (added 2026-07-10)
 
 - **A/B benchmark** (`bench.py`): `hillclimb bench run <problem> --pairs N`
-  executes sequential off/on pairs (`--no-learning` arm first per pair, so
-  the blind arm never sees its sibling's card while the on-arm keeps
+  executes sequential off/on pairs (`--no-learning` experiment first per pair, so
+  the blind experiment never sees its sibling's card while the on-experiment keeps
   learning between pairs); `bench report` groups finished searches by
-  `SearchMeta.learning_enabled` and compares arms on the selected
+  `SearchMeta.learning_enabled` and compares experiments on the selected
   candidate's holdout (val fallback) with per-pair winners and a win-rate
   verdict. This is the measuring stick everything below answers to.
 - **Consolidation + playbooks** (`modules/memory/consolidate.py`, manual

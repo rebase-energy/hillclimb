@@ -6,8 +6,8 @@
  One 3D graph: lineage edges join parent to child, the best-so-far                                                      
  sequence is a gold trail, colour is score rank (cold to hot; the                                                       
  champion a gold diamond, the origin a white open diamond), shape the                                                   
- tree's fate. An experiment arm opens its whole run instead, coloured by                                                
- arm like `chart` (--single for the one-search view). Keys: m cycles                                                    
+ tree's fate. A study's experiment opens its whole run instead, coloured by                                             
+ experiment like `chart` (--single for the one-search view). Keys: m cycles                                             
  behavioral/structural/blend, v opens the reference view, space                                                         
  replays the search growing, s toggles the idle spin; hover reads a                                                     
  candidate's distances to the selected one, click dims everything                                                       
@@ -17,7 +17,7 @@
 │   [search]      TEXT  latest (default), <run-id>, or <run-id>/<search-id>                                            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ --single                One search only, even when it is an experiment arm                                           │
+│ --single                One search only, even when it is one experiment of a study                                   │
 │ --metric  -m      TEXT  Pairwise distance to lay out by: behavioral, structural, blend [default: behavioral]         │
 │ --help    -h            Show this message and exit.                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

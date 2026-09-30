@@ -1,13 +1,13 @@
 # Which setup climbs circle-packing best? `hillclimb experiment run policy-vs-memory`
-# (add --dry-run to see the jobs). The first arm is the control; every other
-# arm is compared against it, paired by repeat, judged against noise_floor
+# (add --dry-run to see the jobs). The first experiment is the control; every other
+# experiment is compared against it, paired by repeat, judged against noise_floor
 # (measure it with `hillclimb verify circle-packing --repeat 5`).
 problems: [circle-packing]
 repeats: 2
 budget: 15m
-schedule: sequential   # memory arms share the knowledge graph: keep them in lockstep
+schedule: sequential   # memory experiments share the knowledge graph: keep them in lockstep
 noise_floor: 0.01
-arms:
+experiments:
   greedy:       {climber.ref: greedy}
   greedy-nomem: {climber.ref: greedy, learning.enabled: false}
   openevolve:   {climber.ref: openevolve}

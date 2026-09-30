@@ -2,7 +2,7 @@
 unit square. Valid by construction (no randomness, no overlap, all inside —
 the radius sits 3.3e-4 under the exact half-cell so 6-decimal rounding can
 never push a circle out), fast, and far from optimal — a neutral starting
-point every experiment arm improves from. Sum of radii = 26 * 0.083 = 2.158."""
+point every experiment improves from. Sum of radii = 26 * 0.083 = 2.158."""
 
 import csv
 

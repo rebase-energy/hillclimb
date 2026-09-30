@@ -211,6 +211,28 @@ def load_config(*, raise_not_found: bool = False, **overrides) -> Config:
         raise typer.Exit(1) from exc
 
 
+def require_sandbox(config: Config, overrides: dict | None = None) -> None:
+    """Before a command starts agents or a verifier: exit with the fix when
+    the sandbox is on and cannot start here, and say so when what follows
+    runs without one (`sandbox: off`, or an OS that has none)."""
+    from hillclimb.harness import sandbox
+
+    if overrides:
+        config = config.model_copy(deep=True)
+        config.apply_overrides(overrides)
+    try:
+        if not sandbox.enabled(config):
+            reason = "off"
+        elif sandbox.backend() is None:
+            reason = "none exists for this operating system"
+        else:
+            return
+    except sandbox.SandboxUnavailable as exc:
+        fail(f"Not started: {_m(exc)}")
+        raise typer.Exit(1) from exc
+    warn(f"sandbox: {reason} — agents and solutions run with your full user rights")
+
+
 def say_no_hillclimb_dir(exc) -> None:
     """The no-hillclimb-dir hint in the CLI's voice, on stderr: the same
     words as the exception's, with the path, the command and the env var
@@ -401,16 +423,16 @@ def _spec_provenance(config: Config, suite_path: Path) -> str:
     return str(suite_path)
 
 
-def _parse_arm_set(pairs: list[str]) -> dict[str, list[str]]:
-    """`ARM:KEY=VALUE` strings (the `--arm-set` flag) → arm name -> its
-    `--set` pairs, validated the way `--set` is."""
+def _parse_experiment_set(pairs: list[str]) -> dict[str, list[str]]:
+    """`EXPERIMENT:KEY=VALUE` strings (the `--experiment-set` flag) →
+    experiment name -> its `--set` pairs, validated the way `--set` is."""
     out: dict[str, list[str]] = {}
     for item in pairs:
-        arm, sep, pair = item.partition(":")
-        if not sep or not arm.strip() or "=" not in pair:
-            raise typer.BadParameter(f"--arm-set expects ARM:KEY=VALUE, got {item!r}")
+        name, sep, pair = item.partition(":")
+        if not sep or not name.strip() or "=" not in pair:
+            raise typer.BadParameter(f"--experiment-set expects EXPERIMENT:KEY=VALUE, got {item!r}")
         _parse_set([pair])
-        out.setdefault(arm.strip(), []).append(pair)
+        out.setdefault(name.strip(), []).append(pair)
     return out
 
 

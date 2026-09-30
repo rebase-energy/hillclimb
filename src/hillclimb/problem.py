@@ -66,7 +66,10 @@ class ProblemSpec(BaseModel):
     metric_name: str
     higher_is_better: bool
     time_budget_s: int
-    allow_network: bool = False
+    # may solution.py reach the internet when the verifier runs it? Only
+    # the contract prompt says so; the verifier's network is not jailed.
+    # (The operator AGENTS' internet is the user's `allow_internet_for_agents`.)
+    allow_internet_during_solution: bool = False
     # What a solution.py IS. `program`: a script or module the verifier
     # drives (every ordinary problem). `climber`: a one-file hillclimb climber
     # — the problem is a META-problem whose verifier runs inner searches with
@@ -431,7 +434,10 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
         metric_name=meta["metric"],
         higher_is_better=bool(legacy_direction_key(meta)["higher_is_better"]),
         time_budget_s=meta.get("time_budget_s", config.budget.total_s),
-        allow_network=bool(meta.get("allow_network", False)),
+        # `allow_network` is the pre-0.6 spelling
+        allow_internet_during_solution=bool(
+            meta.get("allow_internet_during_solution", meta.get("allow_network", False))
+        ),
         solution_kind=solution_kind,
         # a climber is prompted for as a climber, not as a script
         contract_template=CONTRACT_TEMPLATES[solution_kind],

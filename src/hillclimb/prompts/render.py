@@ -3,7 +3,7 @@ override dir first, then this package.
 
 The override dir (`config.paths.prompts_dir`, default `<hillclimb dir>/
 prompts/`) is how the exploration process's *prompts* become data an
-agent or an experiment arm can edit without touching the installed
+agent or a study experiment can edit without touching the installed
 package. The engine activates it once per process (`set_override_dir` in
 `api.execute_search`); `templates_digest` hashes the effective template
 set so `SearchMeta.templates_sha256` pins exactly which prompts a search

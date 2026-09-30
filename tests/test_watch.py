@@ -382,18 +382,18 @@ def test_search_row_shows_requested_model_after_synthetic_error(tmp_path: Path):
 
 
 def test_scan_searches_shows_the_policy_and_the_arm_when_it_differs(tmp_path: Path):
-    """An optimizer comparison names its arms after the policies, so the
-    policy column carries it and the problem cell stays bare; an arm that
+    """An optimizer comparison names its experiments after the policies, so the
+    policy column carries it and the problem cell stays bare; an experiment that
     means something else (a model comparison) still tags the problem."""
     runs_dir = tmp_path / "runs"
     search_dir = make_run_with_search(runs_dir, "exp-run")
     meta = load_search_meta(search_dir)
-    meta.climber, meta.experiment, meta.arm = "gepa", "optimizers", "gepa"
+    meta.climber, meta.study, meta.experiment = "gepa", "optimizers", "gepa"
     write_search_meta(search_dir, meta)
     row = scan_searches(runs_dir, "exp-run")[0]
     assert (row.problem, row.policy) == ("circle-packing", "gepa")
 
-    meta.climber, meta.arm = "greedy", "opus"
+    meta.climber, meta.experiment = "greedy", "opus"
     write_search_meta(search_dir, meta)
     row = scan_searches(runs_dir, "exp-run")[0]
     assert (row.problem, row.policy) == ("circle-packing [opus]", "greedy")

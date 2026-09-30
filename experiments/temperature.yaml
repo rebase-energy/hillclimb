@@ -22,10 +22,10 @@ defaults:
   learning.enabled: false
   climber.ref: greedy
   climber.params: {tune_budget: 0}
-  concurrency.parallel_operators: 1
+  concurrency.parallel_agents: 1
   evaluation.n_replicates: 1
   budget.max_cost_usd: 2.0
-arms:
+experiments:
   t0.2:
     routing:
       default: {sampling: {temperature: 0.2}}

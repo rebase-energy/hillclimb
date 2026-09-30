@@ -17,7 +17,7 @@ from hillclimb.harness.store import FileDataStore
 
 def _search(
     runs_dir: Path, run_id: str, search_id: str, problem_id: str, *,
-    started: str, arm: str | None = None, best: float | None = None, state: str = "done",
+    started: str, experiment: str | None = None, best: float | None = None, state: str = "done",
 ) -> Path:
     run_dir = runs_dir / run_id
     if not (run_dir / "run.yaml").exists():
@@ -29,7 +29,7 @@ def _search(
     write_search_meta(search_dir, SearchMeta(
         search_id=search_id, run_id=run_id, problem=problem_id, problem_id=problem_id,
         agent="dummy", model="m", metric="score", higher_is_better=True,
-        started_at=started, arm=arm, experiment="exp" if arm else None,
+        started_at=started, experiment=experiment, study="exp" if experiment else None,
     ))
     journal = Journal(search_dir / "journal.jsonl")
     journal.candidate_result(Candidate(
@@ -47,10 +47,10 @@ def _search(
 def test_chart_index_one_row_per_run_and_problem(tmp_path: Path):
     runs = tmp_path / "runs"
     _search(runs, "r1", "alpha", "alpha", started="2026-09-01T10:00:00+00:00", best=0.5)
-    # an experiment run: two arms on beta, one on gamma
-    _search(runs, "r2", "beta", "beta", started="2026-09-02T10:00:00+00:00", arm="greedy", best=0.3)
-    _search(runs, "r2", "beta-2", "beta", started="2026-09-02T10:00:01+00:00", arm="gepa", best=0.4)
-    _search(runs, "r2", "gamma", "gamma", started="2026-09-02T10:00:02+00:00", arm="greedy")
+    # an experiment run: two experiments on beta, one on gamma
+    _search(runs, "r2", "beta", "beta", started="2026-09-02T10:00:00+00:00", experiment="greedy", best=0.3)
+    _search(runs, "r2", "beta-2", "beta", started="2026-09-02T10:00:01+00:00", experiment="gepa", best=0.4)
+    _search(runs, "r2", "gamma", "gamma", started="2026-09-02T10:00:02+00:00", experiment="greedy")
 
     rows = chart_index(FileDataStore(runs))
 
@@ -58,9 +58,9 @@ def test_chart_index_one_row_per_run_and_problem(tmp_path: Path):
     beta = rows[1]
     assert beta.anchor == "r2/beta-2"  # the newest search of the pair
     assert beta.searches == 2 and beta.running == 0
-    assert beta.arms == ("greedy", "gepa")
+    assert beta.experiments == ("greedy", "gepa")
     assert beta.best == 0.4  # best across the pair's searches
-    assert rows[0].best is None and rows[0].arms == ("greedy",)
+    assert rows[0].best is None and rows[0].experiments == ("greedy",)
     assert rows[2].run_name == "r1"
 
 
@@ -72,10 +72,10 @@ def test_experiment_chart_stays_inside_its_run(tmp_path: Path):
     """Two runs of one experiment on the same problem each carry a
     `greedy r1`; the chart anchored on one run must not overlay the other's."""
     runs = tmp_path / "runs"
-    _search(runs, "pilot", "beta", "beta", started="2026-09-04T10:00:00+00:00", arm="greedy", best=0.3)
-    _search(runs, "pilot", "beta-2", "beta", started="2026-09-04T10:00:01+00:00", arm="gepa", best=0.2)
-    _search(runs, "real", "beta", "beta", started="2026-09-10T10:00:00+00:00", arm="greedy", best=0.1)
-    _search(runs, "real", "beta-2", "beta", started="2026-09-10T10:00:01+00:00", arm="gepa", best=0.4)
+    _search(runs, "pilot", "beta", "beta", started="2026-09-04T10:00:00+00:00", experiment="greedy", best=0.3)
+    _search(runs, "pilot", "beta-2", "beta", started="2026-09-04T10:00:01+00:00", experiment="gepa", best=0.2)
+    _search(runs, "real", "beta", "beta", started="2026-09-10T10:00:00+00:00", experiment="greedy", best=0.1)
+    _search(runs, "real", "beta-2", "beta", started="2026-09-10T10:00:01+00:00", experiment="gepa", best=0.4)
     store = FileDataStore(runs)
 
     anchor = load_search_meta(runs / "real" / "searches" / "beta-2")
@@ -122,9 +122,9 @@ async def test_bare_chart_lists_then_opens_then_comes_back(config):
 @pytest.mark.asyncio
 async def test_picked_experiment_run_charts_only_its_own_arms(config):
     runs = config.paths.runs_dir
-    _search(runs, "pilot", "beta", "beta", started="2026-09-04T10:00:00+00:00", arm="greedy", best=0.3)
-    _search(runs, "real", "beta", "beta", started="2026-09-10T10:00:00+00:00", arm="greedy", best=0.1)
-    _search(runs, "real", "beta-2", "beta", started="2026-09-10T10:00:01+00:00", arm="gepa", best=0.4)
+    _search(runs, "pilot", "beta", "beta", started="2026-09-04T10:00:00+00:00", experiment="greedy", best=0.3)
+    _search(runs, "real", "beta", "beta", started="2026-09-10T10:00:00+00:00", experiment="greedy", best=0.1)
+    _search(runs, "real", "beta-2", "beta", started="2026-09-10T10:00:01+00:00", experiment="gepa", best=0.4)
 
     app = ChartApp(config, "real/beta-2")
     async with app.run_test(size=(120, 40)) as pilot:

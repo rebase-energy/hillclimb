@@ -8,4 +8,4 @@ chart_baselines:
   "best known (AlphaEvolve 2025)": 0.380924
   "previous best (Haugland 2016)": 0.380927
 time_budget_s: 900
-allow_network: false
+allow_internet_during_solution: false

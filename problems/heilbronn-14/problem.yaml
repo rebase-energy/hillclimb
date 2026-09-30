@@ -7,4 +7,4 @@ baseline_files: {submission.csv: sample_submission.csv}
 chart_baselines:
   "best known (Beyleveld 2006)": 0.024300
 time_budget_s: 900
-allow_network: false
+allow_internet_during_solution: false

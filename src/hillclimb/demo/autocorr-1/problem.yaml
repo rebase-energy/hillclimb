@@ -8,4 +8,4 @@ chart_baselines:
   "best known (AlphaEvolve 2025)": 1.505300
   "previous best (Matolcsi & Vinuesa 2010)": 1.509800
 time_budget_s: 900
-allow_network: false
+allow_internet_during_solution: false

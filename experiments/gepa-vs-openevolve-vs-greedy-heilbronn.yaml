@@ -1,8 +1,8 @@
 # Three search strategies across the Heilbronn difficulty ladder (11, 14, 17
 # points), one shared executable seed: only the optimizer varies. Learning
-# off so no arm inherits knowledge from another. The first arm (greedy) is
+# off so no experiment inherits knowledge from another. The first experiment (greedy) is
 # the control. Bounded parallel: 8 searches alive at once, well under the
-# machine's operator slots, so no search burns its clock in waiting-slot.
+# machine's agent slots, so no search burns its clock in waiting-slot.
 #
 # Pilot first:  hillclimb experiment run gepa-vs-openevolve-vs-greedy-heilbronn --repeats 1
 # Then repeats: hillclimb experiment run gepa-vs-openevolve-vs-greedy-heilbronn \
@@ -25,10 +25,10 @@ defaults:
   backend: claude-code
   model: claude-opus-5
   learning.enabled: false
-  concurrency.parallel_operators: 1
+  concurrency.parallel_agents: 1
   evaluation.n_replicates: 1
 
-arms:
+experiments:
   greedy:
     climber.ref: greedy
     climber.params: {}

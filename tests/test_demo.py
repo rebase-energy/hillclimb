@@ -214,8 +214,14 @@ def test_stop_all_reaches_every_running_search(tmp_path, config, monkeypatch):
     with pytest.raises(SystemExit) as exc:
         cli_main(["stop", "--all"])
     assert exc.value.code == 0
-    assert [c.action for _, c in read_commands(a)] == ["stop"]
-    assert [c.action for _, c in read_commands(b)] == ["stop"]
+    # immediate by default: in-flight operators are aborted, not waited for
+    assert [(c.action, c.graceful) for _, c in read_commands(a)] == [("stop", False)]
+    assert [(c.action, c.graceful) for _, c in read_commands(b)] == [("stop", False)]
+
+    with pytest.raises(SystemExit) as exc:
+        cli_main(["stop", "--all", "--graceful"])
+    assert exc.value.code == 0
+    assert [c.graceful for _, c in read_commands(a)] == [False, True]
 
 
 @pytest.mark.asyncio

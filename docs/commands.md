@@ -40,18 +40,18 @@ the run has a single search), or `latest` (the default).
 | `verify <problem> [--repeat N] [--holdout] [--solution FILE]` | run a problem's verifier once, outside a search; `--repeat` measures the noise floor |
 | `run <target> [--name ...] [--budget 2h] [--agent ...] [--model ...] [--climber REF] [--no-detach]` | start a run for one problem or a suite YAML — a detached engine, `hillclimb watch` follows it; `--no-detach` keeps it in the terminal |
 | `run <problem> --parallel-searches N --parallel-agents M` | N independent searches (detached engines, one run) each running M agents at once |
-| `run <problem> --climber A --climber B [--arm-set ARM:KEY=VALUE]` | a mixed fleet: one search per climber, each tagged as an arm |
+| `run <problem> --climber A --climber B [--experiment-set EXPERIMENT:KEY=VALUE]` | a mixed fleet: one search per climber, each tagged as an experiment |
 | `resume [search] [--all] [--detach]` | continue a parked / stopped / crashed search |
 | `status [search]` | search state + candidate tree (text) |
 | `watch` | live TUI over runs, searches, and candidates |
-| `chart` | live chart: best score so far by tested-candidate count across the problem's searches as a staircase, every scored candidate a dot (one line per arm in an experiment) |
-| `similarity map [search] [--single] [--metric M]` | live 3D map: every candidate embedded by pairwise distance (behavioral by default; `m` cycles structural and blend), so nearby dots are alike — lineage edges, a gold best-so-far trail, hover reads distances, click dims everything outside a lineage, `space` replays the search growing; an experiment arm opens its whole run, coloured by arm; a bare `similarity` is this view |
-| `similarity reference [search] [--single]` | live 3D cube: each candidate at behavioral / structural / lineage distance from the search's seed (or baseline; `c` toggles the champion); an experiment arm opens its whole run, coloured by arm, `n`/`p` stepping through the run's problems; a problem's `fingerprint.py` defines the behavioral axis; `v` swaps between the two views |
+| `chart` | live chart: best score so far by tested-candidate count across the problem's searches as a staircase, every scored candidate a dot (one line per experiment in a study) |
+| `similarity map [search] [--single] [--metric M]` | live 3D map: every candidate embedded by pairwise distance (behavioral by default; `m` cycles structural and blend), so nearby dots are alike — lineage edges, a gold best-so-far trail, hover reads distances, click dims everything outside a lineage, `space` replays the search growing; a study's experiment opens its whole run, coloured by experiment; a bare `similarity` is this view |
+| `similarity reference [search] [--single]` | live 3D cube: each candidate at behavioral / structural / lineage distance from the search's seed (or baseline; `c` toggles the champion); a study's experiment opens its whole run, coloured by experiment, `n`/`p` stepping through the run's problems; a problem's `fingerprint.py` defines the behavioral axis; `v` swaps between the two views |
 | `graph` | the knowledge-graph TUI (same screen as `knowledge graph`) |
 | `show [search] <candidate-id>` | everything about one candidate: scores, evaluation breakdown, diff vs parent, output |
 | `ps` | every process hillclimb owns on this machine: engines with their agents and verifiers nested; `orphan` marks engines whose hillclimb dir was deleted |
-| `stop [search] [--all]` | graceful stop: finish current operator, then park; `--all` also reaps orphaned engines when no hillclimb dir is found |
-| `kill [search] [--all]` | SIGTERM the engine now (state finalized, resumable) |
+| `stop [search] [--all] [--graceful]` | stop now: abort the operators in flight (their candidates are journaled abandoned), then park, resumable; `--graceful` lets them finish and be scored first; `--all` also reaps orphaned engines when no hillclimb dir is found |
+| `kill [search] [--all] [--grace S]` | last resort for an engine that ignores `stop`: SIGTERM it with its agents and verifiers, SIGKILL after `S` s (default 5); still resumable |
 | `reset` | kill every engine of THIS hillclimb dir and delete the dir — never another folder's |
 | `prune <search> <candidate-id> [--reason ...]` | cut a candidate and its subtree from the search |
 | `tree [search]` | live 3D exploration tree of one search: colour is the operator, silhouette the fate (expanded / discontinued / best / failed); `j`/`k` scrub through time |
@@ -74,16 +74,16 @@ the run has a single search), or `latest` (the default).
 | `knowledge consolidate [--dry-run]` | sleep phase: generalize claims + rewrite playbooks |
 | `knowledge query "<terms>" [--json]` | read-only memory lookup (also available to agents) |
 | `knowledge show <target>` | the prior-experience section a new search would get |
-| `run <problem> --set key=value … [--experiment E --arm A]` | any config setting, dotted; tag the search as an experiment arm |
-| `experiment run <spec> [--repeats N] [--budget B] [--parallel] [--max-concurrent N] [--run-id R --first-repeat K] [--dry-run]` | every arm × problem × repeat of a spec; `--max-concurrent` bounds how many run at once, `--run-id` appends repeats to a finished run |
-| `experiment report [spec] [--problem X] [--control A] [--noise-floor F] [--json]` | compare the arms on holdout; `--json` gives a meta-verifier the gaps and verdicts as data |
+| `run <problem> --set key=value … [--study S --experiment E]` | any config setting, dotted; tag the search as one experiment of a study |
+| `experiment run <spec> [--repeats N] [--budget B] [--parallel] [--max-concurrent N] [--run-id R --first-repeat K] [--dry-run]` | every experiment × problem × repeat of a study spec; `--max-concurrent` bounds how many run at once, `--run-id` appends repeats to a finished run |
+| `experiment report [spec] [--problem X] [--control A] [--noise-floor F] [--json]` | compare a study's experiments on holdout; `--json` gives a meta-verifier the gaps and verdicts as data |
 
 Exit code `2` from `run`/`resume` means the search parked or was stopped — resume it.
 
 `hillclimb stop --all` ends a parallel run (the best solutions stay in `runs/`);
 `hillclimb reset` ends it AND deletes what hillclimb made in this folder (`hillclimb.yaml`, `problems/`, `runs/`, …; nothing else) — only
 engines pinned to that dir are killed, never another folder's. 3 searches x 3
-operators is 9 agents, capped machine-wide by
+agents is 9 agents, capped machine-wide by
 `concurrency.machine_max_agents`; each search's engine log is under
 `runs/<run-id>/logs/`.
 

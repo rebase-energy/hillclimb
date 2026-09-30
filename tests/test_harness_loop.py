@@ -318,3 +318,39 @@ def test_a_stop_from_outside_the_loop_closes_the_harness_even_if_swallowed(task,
     with pytest.raises(StopRequested, match="SIGTERM"):
         harness.execute(loop)
     assert harness.abort.is_set() and len(agent.requests) == 1 and loop.closed_errors == 9
+
+
+def test_an_immediate_stop_aborts_a_blocking_run(task, config):
+    """`harness.run()` blocks the loop's thread in one job, so no tick polls
+    the control queue; the control watcher must still see an immediate stop,
+    set `abort` (which is what kills the agent) and leave the command for the
+    next tick to close the harness."""
+    import threading
+
+    from hillclimb.harness.core import OutcomeMsg
+
+    agent = FakeAgent()
+    agent.queue(script=ok_script(0.5), notes="d\n")
+    commands: list = []
+    harness, journal, _ = make_harness(
+        task, config, agent, drain_commands=lambda: [commands.pop()] if commands else []
+    )
+    aborted = threading.Event()
+
+    def blocks_until_aborted(job):
+        commands.append(ControlCommand(action="stop", graceful=False))
+        if harness.abort.wait(timeout=10):
+            aborted.set()
+        return OutcomeMsg(job=job, kind="aborted")
+
+    harness._execute_job = blocks_until_aborted
+    loop = Stubborn()
+    with pytest.raises(StopRequested):
+        harness.execute(loop)
+
+    assert aborted.is_set()  # the watcher, not a timeout, ended the job
+    assert loop.closed_errors == 9
+    drafts = [c for c in journal.candidates.values() if c.operator == "draft"]
+    assert [c.status for c in drafts] == ["abandoned"]
+    stops = audit_lines(harness.search_dir, "control")
+    assert [(r["action"], r["graceful"]) for r in stops] == [("stop", False)]

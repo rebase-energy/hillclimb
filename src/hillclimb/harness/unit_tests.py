@@ -13,6 +13,7 @@ from pathlib import Path
 from hillclimb.harness.candidate import UnitTestResult
 from hillclimb.harness.executor import (
     PARAMS_FILE,
+    confined,
     prepend_pythonpath,
     run_logged,
     scrubbed_env,
@@ -182,7 +183,14 @@ def copy_visible_root(root: Path, candidate_dir: Path) -> None:
 
 
 class UnitTestRunner:
-    def __init__(self, python: Path, spec: UnitTestSpec, pythonpath: str | None = None):
+    def __init__(
+        self,
+        python: Path,
+        spec: UnitTestSpec,
+        pythonpath: str | None = None,
+        sandbox=None,  # harness.sandbox.SandboxPolicy: what a test run is confined to
+    ):
+        self.sandbox = sandbox
         self.python = python.absolute()
         self.spec = spec
         self.pythonpath = pythonpath
@@ -243,7 +251,10 @@ class UnitTestRunner:
         started = time.monotonic()
         try:
             with stdout_path.open("w") as out, stderr_path.open("w") as err:
-                run = run_logged(argv, work_dir, max(0.001, timeout_s), out, err, env)
+                run = run_logged(
+                    argv, work_dir, max(0.001, timeout_s), out, err, env,
+                    sandbox=confined(self.sandbox, work_dir),
+                )
         except OSError as exc:
             raise UnitTestInfrastructureError(
                 f"cannot start unit-test command {argv[0]!r}: {exc}"

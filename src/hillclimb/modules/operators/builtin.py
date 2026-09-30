@@ -42,7 +42,8 @@ class DraftOperator(Operator):
         prior = "\n\n".join(part for part in (ctx.memory.text, ctx.live_experience()) if part)
         research_cue = (
             ctx.render("research_cue", network_note=problem.network_note).rstrip() + "\n"
-            if self.params.get("retrieval", True)
+            # an agent without internet cannot do the research the cue asks for
+            if self.params.get("retrieval", True) and ctx.agent_internet
             else ""
         )
         reference = ctx.memory.reference

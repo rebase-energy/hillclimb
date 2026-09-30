@@ -48,12 +48,15 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import IO, NamedTuple, Protocol
+from typing import IO, TYPE_CHECKING, NamedTuple, Protocol
 
 from pydantic import BaseModel
 
 from hillclimb.harness.procs import Reaper
 from hillclimb.harness.oscompat import env_path, link_dir, new_group_kwargs, runnable
+
+if TYPE_CHECKING:
+    from hillclimb.harness.sandbox import SandboxPolicy
 
 RESULT_FILE = "eval_result.json"
 
@@ -311,15 +314,24 @@ def run_logged(
     err: IO,
     env: dict[str, str] | None = None,
     abort: "threading.Event | None" = None,
+    sandbox: "SandboxPolicy | None" = None,
 ) -> RunResult:
     """Run cmd in its own process group with logs redirected; kill the whole
-    group on timeout or abort so stray workers don't linger.
+    group on timeout or abort so stray workers don't linger. With a `sandbox`
+    policy the command runs inside the OS sandbox (`harness/sandbox.py`).
 
     The child is reaped through `procs.Reaper`, so its CPU time (user+system,
     with everything it waited for and — at a kill — the descendants the kill
     orphans) rides along in the result; cpu_s is None where the platform
     cannot say.
     """
+    if sandbox is not None:
+        from hillclimb.harness.sandbox import launch
+
+        started = launch(list(cmd), sandbox)
+        cmd = started.argv
+        if started.env:
+            env = {**(os.environ if env is None else env), **started.env}
     proc = subprocess.Popen(
         runnable(cmd),
         cwd=candidate_dir,
@@ -338,6 +350,16 @@ def run_logged(
             return RunResult(proc.returncode, True, reaper.cpu_s)
 
 
+def confined(policy: "SandboxPolicy | None", run_dir: Path) -> "SandboxPolicy | None":
+    """`policy` for one run in `run_dir`: writable are that dir and the
+    candidate it belongs to (a solution may write beside itself)."""
+    if policy is None:
+        return None
+    from hillclimb.harness.sandbox import candidate_root
+
+    return policy.writable(run_dir, candidate_root(run_dir))
+
+
 class CommandExecutor:
     """Executor-protocol impl: runs the problem's verifier command on the
     validation split, in the candidate (or trial) candidate_dir."""
@@ -348,7 +370,10 @@ class CommandExecutor:
         argv: list[str],
         env_extra: dict[str, str] | None = None,
         pythonpath: str | None = None,
+        sandbox: "SandboxPolicy | None" = None,
     ):
+        # what every run is confined to; each run adds its candidate's dir
+        self.sandbox = sandbox
         # absolute() not resolve(): a venv python must be invoked via its
         # symlink path or the interpreter escapes the venv's site-packages
         self.python = python.absolute()
@@ -387,6 +412,7 @@ class CommandExecutor:
             returncode, timed_out, cpu_s = run_logged(
                 render_argv(self.argv, self.python, script, result_path),
                 candidate_dir, timeout_s, out, err, env,
+                sandbox=confined(self.sandbox, candidate_dir),
             )
         duration = time.monotonic() - start
         score, payload = (None, None) if timed_out else read_result(result_path)
@@ -419,7 +445,9 @@ class CommandHoldoutScorer:
         work_root: Path,
         timeout_s: int,
         pythonpath: str | None = None,
+        sandbox: "SandboxPolicy | None" = None,
     ):
+        self.sandbox = sandbox
         self.python = python.absolute()
         self.argv = list(argv)
         self.problem_dir = problem_dir
@@ -469,6 +497,7 @@ class CommandHoldoutScorer:
             returncode, timed_out, cpu_s = run_logged(
                 render_argv(self.argv, self.python, eval_dir / "solution.py", result_path),
                 eval_dir, self.timeout_s, out, err, env,
+                sandbox=self.sandbox.writable(eval_dir) if self.sandbox is not None else None,
             )
         if timed_out:
             return None, "holdout evaluation timed out", cpu_s

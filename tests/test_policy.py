@@ -430,11 +430,11 @@ def test_file_policy_drives_a_search_and_is_recorded(task, config, tmp_path):
     assert meta.climber_sha256 == load_climber("greedy").sha256  # a bundled climber has an identity too
 
 
-def test_mixed_fleet_names_file_policy_arms_by_stem():
+def test_mixed_fleet_names_file_policy_experiments_by_stem():
     from hillclimb.api import mixed_fleet
 
     engines = mixed_fleet(["greedy", "hillclimb/policies/drafts_only.py", "hillclimb/policies/drafts_only.py"])
-    assert [(e.arm, e.climber) for e in engines] == [
+    assert [(e.experiment, e.climber) for e in engines] == [
         ("greedy", "greedy"),
         ("drafts_only", "hillclimb/policies/drafts_only.py"),
         ("drafts_only-2", "hillclimb/policies/drafts_only.py"),

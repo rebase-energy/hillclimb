@@ -88,7 +88,7 @@ class MapNode:
     operator: str
     parent_id: str | None    # namespaced like `id` in run scope
     search_id: str = ""
-    arm: str | None = None
+    experiment: str | None = None
 
 
 @dataclass(frozen=True)
@@ -106,7 +106,7 @@ class MapView:
     structural: np.ndarray | None = None
     lineage: np.ndarray | None = None
     scope: str = "search"                 # "search" | "run"
-    arms: tuple[str, ...] = ()
+    experiments: tuple[str, ...] = ()
     n_searches: int = 1
     problem_key: str = ""
 
@@ -321,7 +321,7 @@ class _Member:
     namespaced ids, and its prints."""
     candidate: Candidate
     search_id: str
-    arm: str | None
+    experiment: str | None
     node_id: str
     parent_id: str | None
     prints: Prints
@@ -367,7 +367,7 @@ def _assemble(
             best=m.node_id in best, origin=m.node_id in origins,
             fate=fates.get(m.node_id, "pending"), on_path=m.node_id in on_path,
             operator=m.candidate.operator, parent_id=m.parent_id,
-            search_id=m.search_id, arm=m.arm,
+            search_id=m.search_id, experiment=m.experiment,
         )
         for i, m in enumerate(members)
     )
@@ -392,7 +392,7 @@ def _members(search: SearchInput, ref: Reference, fingerprinter, namespaced: boo
 
     members = [
         _Member(
-            candidate=c, search_id=search.search_id, arm=search.arm,
+            candidate=c, search_id=search.search_id, experiment=search.experiment,
             node_id=node_id(c.candidate_id),
             parent_id=node_id(c.parent_id) if c.parent_id else None,
             prints=prints[c.candidate_id],
@@ -452,7 +452,7 @@ def build_run_map(
     previous: Mapping[str, tuple[float, float, float]] | None = None,
     problem_key: str = "",
 ) -> MapView:
-    """Every search of one problem in an experiment run in one map. The
+    """Every search of one problem in a study run in one map. The
     searches must share one seed (the same rule as the run cube), which
     settles the mode and unit; ids are `<search-id>/<candidate-id>`;
     lineage edges never cross searches, and the trail is the best-so-far
@@ -493,10 +493,10 @@ def build_run_map(
             f"{champion_search.search_id}/{cid}"
             for cid in accepted_lineage(champion_search.candidates, higher_is_better)
         ]
-    arms = tuple(dict.fromkeys(s.arm for s in searches if s.arm))
+    experiments = tuple(dict.fromkeys(s.experiment for s in searches if s.experiment))
     return _assemble(
         members, origin, higher_is_better, metric, previous,
         best=best, origins={f"{sid}/{seed.candidate_id}" for sid, seed in seeds.items()},
         fates=fates, on_path=on_path, trail_ids=trail_ids, n_missing=missing,
-        scope=scope, arms=arms, n_searches=len(searches), problem_key=problem_key,
+        scope=scope, experiments=experiments, n_searches=len(searches), problem_key=problem_key,
     )

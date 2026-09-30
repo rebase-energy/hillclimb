@@ -92,7 +92,7 @@ def problem_yaml(inst: Instance) -> str:
         f'  "best known ({inst.best_source})": {inst.best:.6f}',
         f'  "previous best ({inst.previous_source})": {inst.previous:.6f}',
         "time_budget_s: 900",
-        "allow_network: false",
+        "allow_internet_during_solution: false",
         "",
     ])
 

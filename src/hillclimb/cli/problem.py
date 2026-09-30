@@ -217,6 +217,7 @@ def verify(
     from hillclimb.harness.dirs import create_candidate_dir
 
     config = common.load_config()
+    common.require_sandbox(config)
     problem = load_problem(target, config)
     source = solution.read_text() if solution else problem.baseline_text
     floor_files = {} if solution else problem.baseline_files

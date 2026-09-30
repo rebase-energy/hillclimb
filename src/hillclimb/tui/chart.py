@@ -4,7 +4,7 @@ One staircase per problem: the best validation score so far across every
 search of it, against the number of tested candidate solutions, with every
 scored candidate as a dot on the same axes — bright where it set a new best,
 dim where it missed. Three parallel searches on a problem are one climb, not
-three; a search only gets its own line in an experiment, where the arms are
+three; a search only gets its own line in a study, where the experiments are
 the comparison (build_plot) — and there the chart stays inside the anchor's
 run, so two runs of one experiment on the same problem never overlay each
 other's "greedy r1". Same figure as the website's, in the same colours. Strictly a viewer like watch.py: everything is read through the configured store
@@ -41,14 +41,14 @@ from hillclimb.harness.journal import Journal
 from hillclimb.harness.store import DataStore, FileDataStore, SearchRecord, key_for, open_store, resolve_search
 
 # Searches drawn at once; older ones of the same problem fall off the chart
-# rather than turning it into a haystack. Sized so a three-arm experiment
+# rather than turning it into a haystack. Sized so a three-experiment study
 # with three repeats (nine curves) fits with room to spare.
 MAX_CURVES = 12
 
 
-# plotui's line palette, mirrored so curves of one experiment arm can share
-# a colour (repeats) while arms differ — the chart's "colour by arm"
-ARM_PALETTE = (
+# plotui's line palette, mirrored so curves of one experiment can share
+# a colour (repeats) while experiments differ — the chart's "colour by experiment"
+EXPERIMENT_PALETTE = (
     (57, 135, 229), (25, 158, 112), (201, 133, 0), (0, 131, 0),
     (144, 133, 233), (230, 103, 103), (213, 81, 129), (217, 89, 38),
 )
@@ -79,7 +79,7 @@ class Curve:
     state: str
     xs: list[float] = field(default_factory=list)  # tested-candidate count; the floor at 0
     ys: list[float] = field(default_factory=list)  # best-so-far score (val, or its holdout)
-    arm: str | None = None  # experiment arm, when the search is one
+    experiment: str | None = None  # the study experiment, when the search is one
 
     @property
     def best(self) -> float | None:
@@ -200,17 +200,17 @@ def _record_curve(store: DataStore, record: SearchRecord, label: str, split: str
         started_at=record.meta.started_at,
         split=split,
     )
-    curve.arm = record.meta.arm if record.meta.experiment else None
+    curve.experiment = record.meta.experiment if record.meta.study else None
     return curve
 
 
 def curve_label(record: SearchRecord, per_run: dict[str, int]) -> str:
     """Run name (what the user chose), plus the search id when the run holds
-    several searches on the problem; an experiment search is its arm and
+    several searches on the problem; a study's search is its experiment and
     repeat instead — the comparison the chart is then drawing."""
     meta = record.meta
-    if meta.experiment and meta.arm:
-        return f"{meta.arm} r{meta.repeat}" if meta.repeat else meta.arm
+    if meta.study and meta.experiment:
+        return f"{meta.experiment} r{meta.repeat}" if meta.repeat else meta.experiment
     label = record.run_name
     if per_run.get(record.run_id, 0) > 1:
         label += f"/{record.search_id}"
@@ -232,11 +232,11 @@ def climb_curve(search_dir: Path, label: str | None = None, meta: SearchMeta | N
 
 
 def chart_run_scope(anchor: SearchMeta) -> str | None:
-    """The run the chart confines itself to: an experiment search's own run
-    (its arms are the comparison, and another run of the same experiment
-    would repeat every `arm rN` label), else None — a plain problem's climb
+    """The run the chart confines itself to: a study's search's own run
+    (its experiments are the comparison, and another run of the same study
+    would repeat every `experiment rN` label), else None — a plain problem's climb
     is one staircase across every run that worked it."""
-    return anchor.run_id if anchor.experiment else None
+    return anchor.run_id if anchor.study else None
 
 
 def climb_curves(
@@ -682,7 +682,7 @@ def chart_problem(config: Config, search: str | None = None) -> SearchMeta | Non
 class ChartRow:
     """One chart the folder can show: a problem worked in a run. `anchor` is
     the ref the chart opens on (the newest search of that pair). An
-    experiment row's chart stays inside that run; a plain problem's chart
+    study row's chart stays inside that run; a plain problem's chart
     still folds every search of the problem across runs (chart_run_scope)."""
 
     run_id: str
@@ -691,7 +691,7 @@ class ChartRow:
     anchor: str
     searches: int
     running: int
-    arms: tuple[str, ...]
+    experiments: tuple[str, ...]
     state: str
     best: float | None
     activity_at: str
@@ -707,11 +707,11 @@ def chart_index(store: DataStore) -> list[ChartRow]:
     for (run_id, problem_key), records in groups.items():
         newest = max(records, key=lambda r: (r.activity_at, r.ref))
         states = [r.state for r in records]
-        arms: list[str] = []
+        experiments: list[str] = []
         best: float | None = None
         for record in records:
-            if record.meta.arm and record.meta.arm not in arms:
-                arms.append(record.meta.arm)
+            if record.meta.experiment and record.meta.experiment not in experiments:
+                experiments.append(record.meta.experiment)
             status = store.read_status(record.key)
             score = status.best.val_score if status and status.best else None
             if score is not None and (best is None or better(score, best, newest.meta.higher_is_better)):
@@ -723,7 +723,7 @@ def chart_index(store: DataStore) -> list[ChartRow]:
             anchor=newest.ref,
             searches=len(records),
             running=states.count("running"),
-            arms=tuple(arms),
+            experiments=tuple(experiments),
             state=_state_summary(states),
             best=best,
             activity_at=newest.activity_at,
@@ -913,11 +913,11 @@ class ChartPlotWidget(PlotWidget):
 
 
 def curve_colors(curves: list[Curve]) -> list[tuple[int, int, int] | None]:
-    """A colour per curve: curves of the same experiment arm share one, so an
-    arm's repeats read as one family against the others; curves without an
-    arm (None) take plotui's next palette slot as before."""
-    arms = list(dict.fromkeys(c.arm for c in curves if c.arm))
-    return [ARM_PALETTE[arms.index(c.arm) % len(ARM_PALETTE)] if c.arm else None for c in curves]
+    """A colour per curve: curves of the same experiment share one, so an
+    experiment's repeats read as one family against the others; curves
+    without an experiment (None) take plotui's next palette slot as before."""
+    experiments = list(dict.fromkeys(c.experiment for c in curves if c.experiment))
+    return [EXPERIMENT_PALETTE[experiments.index(c.experiment) % len(EXPERIMENT_PALETTE)] if c.experiment else None for c in curves]
 
 
 def _hide_plot_legend(plot: Plot, show_legend: bool) -> None:
@@ -975,7 +975,7 @@ def build_plot(
     higher_is_better: bool = True,
     y_title: str | None = None,
 ) -> Plot:
-    """One step line per curve — the experiment view, where each arm is a
+    """One step line per curve — the study view, where each experiment is a
     series of its own, and the base of the detail overlay. `hidden` names
     legend entries toggled off: their traces are left out of the plot."""
     plot = themed_plot()
@@ -992,7 +992,7 @@ def build_plot(
             continue
         # Pin the colour plot_legend assigns this slot: skipping a hidden
         # trace must not let plotui's next-palette-slot drift under the rest.
-        rgb = color or ARM_PALETTE[trace_index % len(ARM_PALETTE)]
+        rgb = color or EXPERIMENT_PALETTE[trace_index % len(EXPERIMENT_PALETTE)]
         trace_index += 1
         if curve.label in hidden:
             continue
@@ -1245,15 +1245,15 @@ def _curve_legend(curves: list[Curve], baselines: Mapping[str, float]) -> list[L
     for curve, color in zip(curves, curve_colors(curves)):
         if not curve.xs:
             continue
-        # ARM_PALETTE mirrors plotui's default trace palette. An uncoloured
+        # EXPERIMENT_PALETTE mirrors plotui's default trace palette. An uncoloured
         # trace takes the slot determined by everything already added.
-        entries.append((curve.label, color or ARM_PALETTE[trace_index % len(ARM_PALETTE)], "─"))
+        entries.append((curve.label, color or EXPERIMENT_PALETTE[trace_index % len(EXPERIMENT_PALETTE)], "─"))
         trace_index += 1
     return entries
 
 
 def plot_legend(curves: list[Curve], baselines: Mapping[str, float]) -> list[LegendEntry]:
-    """Legend for an experiment/detail base plot: the curves, then the
+    """Legend for a study/detail base plot: the curves, then the
     references."""
     return _with_benchmarks(_curve_legend(curves, baselines), baselines)
 
@@ -1757,9 +1757,9 @@ class ChartScreen(LiveScreen):
             curves = climb_curves(self._store, anchor.problem_key, split=split, run_id=scope)
             cost = cost_for_problem(self._store, anchor.problem_key, run_id=scope)
         climb: Climb | None = None
-        if layout is not None or any(c.arm for c in curves):
-            # one line per search: the detail overlay, or an experiment
-            # where the arms are the comparison
+        if layout is not None or any(c.experiment for c in curves):
+            # one line per search: the detail overlay, or a study
+            # where the experiments are the comparison
             for curve in curves:
                 style = STATE_STYLE.get(curve.state, "")
                 best = f"{curve.best:.5g}" if curve.best is not None else "-"
@@ -1865,7 +1865,7 @@ class ChartScreen(LiveScreen):
 class ChartPickerScreen(LiveScreen):
     """The charts this folder can show, one row per problem worked in a
     run: enter opens the chart anchored on that row, esc in the chart comes
-    back here. Refreshes like the watch tables so a running experiment's
+    back here. Refreshes like the watch tables so a running study's
     rows keep moving."""
 
     BINDINGS = [
@@ -1895,7 +1895,7 @@ class ChartPickerScreen(LiveScreen):
 
     def on_mount(self) -> None:
         table = self.query_one("#charts", DataTable)
-        table.add_columns("run", "problem", "arms", "searches", "state", "best val", "last activity")
+        table.add_columns("run", "problem", "experiments", "searches", "state", "best val", "last activity")
         self.start_live()
 
     def refresh_data(self) -> None:
@@ -1909,7 +1909,7 @@ class ChartPickerScreen(LiveScreen):
             table.add_row(
                 row.run_name,
                 row.problem_key,
-                ", ".join(row.arms) or "-",
+                ", ".join(row.experiments) or "-",
                 searches,
                 Text(row.state, style=STATE_STYLE.get(row.state, "")),
                 _fmt(row.best),

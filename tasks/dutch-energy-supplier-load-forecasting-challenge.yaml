@@ -6,7 +6,7 @@ comp_id: dutch-energy-supplier-load-forecasting-challenge
 metric: nrmse
 higher_is_better: false
 data_dir: data/dutch-energy-supplier-load-forecasting-challenge
-allow_network: true   # comp rules require Open-Meteo weather; target lags forbidden
+allow_internet_during_solution: true   # comp rules require Open-Meteo weather; target lags forbidden
 holdout:
   strategy: time-tail
   time_col: timestamp_utc

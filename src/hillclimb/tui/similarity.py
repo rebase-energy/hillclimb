@@ -42,8 +42,8 @@ refresh with one new candidate costs that candidate's file reads plus an
 O(N) numpy pass, and toggling the reference invalidates nothing.
 
 **Run scope** (`build_run_similarity`): every search of one problem in an
-experiment run in one cube — each search measured from its own seed
-candidate (the arms share one seed file, so the origin is the same point),
+study run in one cube — each search measured from its own seed
+candidate (the experiments share one seed file, so the origin is the same point),
 lineage counted within its own tree, axes and rank bins normalized over the
 union, node ids namespaced `<search-id>/<candidate-id>`. The `champion`
 reference there is the run's best candidate: behavior and structure are
@@ -98,7 +98,7 @@ class SimilarityNode:
     on_path: bool
     operator: str
     search_id: str = ""      # run scope: which search the candidate belongs to
-    arm: str | None = None   # run scope: that search's experiment arm
+    experiment: str | None = None   # run scope: that search's experiment
 
 
 @dataclass(frozen=True)
@@ -113,7 +113,7 @@ class SimilarityView:
     reference_ids: tuple[str, ...] = ()  # every node at the origin (run scope: one seed per search)
     reference_label: str = ""            # what the reference resolved to: seed | baseline | earliest | champion
     scope: str = "search"                # "search" | "run"
-    arms: tuple[str, ...] = ()           # run scope: experiment arms, first-seen order
+    experiments: tuple[str, ...] = ()           # run scope: experiments, first-seen order
     n_searches: int = 1
     problem_key: str = ""
     lineage_note: str = ""               # run scope, champion reference: "lineage from own seed"
@@ -129,11 +129,11 @@ class SimilarityView:
 @dataclass(frozen=True)
 class SearchInput:
     """One search as the run-scope builder needs it: its candidates, where
-    their artifacts live, and the experiment tags the view groups on."""
+    their artifacts live, and the study tags the view groups on."""
     search_id: str
     search_dir: Path
     candidates: list[Candidate]
-    arm: str | None = None
+    experiment: str | None = None
     seed_from: str | None = None
     seed_sha256: str | None = None
 
@@ -464,7 +464,7 @@ def _resolve_reference(
 ) -> tuple[Candidate, str] | None:
     """(candidate, what it is). `champion` is the last accepted candidate;
     anything else is the origin the search grew from: its seed when it has
-    one (the executable every experiment arm started from — the declared
+    one (the executable every experiment started from — the declared
     baseline of a `baseline_files` problem ships no source at all), else the
     baseline, else the earliest candidate."""
     if reference == "champion":
@@ -501,7 +501,7 @@ class Reference:
 class Placed:
     candidate: Candidate
     search_id: str
-    arm: str | None
+    experiment: str | None
     behavioral: float
     structural: float
     lineage: float
@@ -625,7 +625,7 @@ def _place(
             structural = structural_distance(ref.tokens, tokens)
         lineage = lineage_distance(by_id, cand.candidate_id, lineage_ref_id)
         placed.append(Placed(
-            cand, search.search_id, search.arm, behavioral, structural, lineage,
+            cand, search.search_id, search.experiment, behavioral, structural, lineage,
             fates.get(cand.candidate_id, "pending"), cand.candidate_id in on_path,
         ))
     return placed, skipped
@@ -669,7 +669,7 @@ def _finish(
             on_path=p.on_path,
             operator=p.candidate.operator,
             search_id=p.search_id,
-            arm=p.arm,
+            experiment=p.experiment,
         )
         for p in placed
     )
@@ -845,10 +845,10 @@ def build_run_similarity(
         )
         placed.extend(rows)
         skipped += missed
-    arms = tuple(dict.fromkeys(s.arm for s in searches if s.arm))
+    experiments = tuple(dict.fromkeys(s.experiment for s in searches if s.experiment))
     return _finish(
         placed, higher_is_better, best=best, reference_ids=reference_ids, namespaced=True,
         reference=reference, reference_label=label, mode=next(iter(modes)), n_unpositioned=skipped,
-        scope=scope, arms=arms, n_searches=len(searches), problem_key=problem_key,
+        scope=scope, experiments=experiments, n_searches=len(searches), problem_key=problem_key,
         lineage_note=lineage_note,
     )

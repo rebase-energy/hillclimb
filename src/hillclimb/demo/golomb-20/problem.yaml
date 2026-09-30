@@ -7,4 +7,4 @@ baseline_files: {submission.csv: sample_submission.csv}
 chart_baselines:
   "optimal (Garry, Vanderschel et al. 1997)": 283
 time_budget_s: 900
-allow_network: false
+allow_internet_during_solution: false

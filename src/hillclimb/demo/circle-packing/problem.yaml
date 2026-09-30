@@ -9,4 +9,4 @@ chart_baselines:
 # lean runtime venv (numpy/scipy/pandas) so the demo starts in seconds
 requirements: requirements.txt
 time_budget_s: 60  # good packings converge in seconds; bounds how long one candidate can hold a core
-allow_network: false
+allow_internet_during_solution: false

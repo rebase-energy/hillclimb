@@ -1,6 +1,6 @@
 # Three search strategies, one problem, one shared executable seed: only the
-# optimizer varies. Sequential + learning off so no arm inherits knowledge
-# from an earlier one. The first arm (greedy) is the control.
+# optimizer varies. Sequential + learning off so no experiment inherits knowledge
+# from an earlier one. The first experiment (greedy) is the control.
 name: gepa-vs-openevolve-vs-greedy
 problems: [circle-packing]
 seed_from: seeds/circle-packing.py
@@ -13,10 +13,10 @@ defaults:
   backend: claude-code
   model: sonnet
   learning.enabled: false
-  concurrency.parallel_operators: 1
+  concurrency.parallel_agents: 1
   evaluation.n_replicates: 1
 
-arms:
+experiments:
   greedy:
     climber.ref: greedy
     climber.params: {}

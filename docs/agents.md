@@ -34,6 +34,17 @@ implements the `Agent` protocol in `agents/base.py` — take a prompt plus a
 working directory, return the agent's JSON result — and is selected with
 `--agent <name>`.
 
+## The sandbox, and agents without internet
+
+Every agent runs confined: it writes only to its candidate's folder and
+cannot read your keys. `allow_internet_for_agents: false` in `hillclimb.yaml`
+also takes the internet away from it, except for its model provider. Both are
+described in [sandbox.md](sandbox.md).
+
+Whether the solution may use the internet when the verifier runs it is a
+different setting, the problem's `allow_internet_during_solution`
+([problems.md](problems.md)).
+
 ## Connecting an agent
 
 ```
@@ -114,9 +125,9 @@ token is not cheap per search, because a weaker model compensates with
 volume: one measured DRAFT burned 3M tokens (~$0.53 at qwen3-coder prices)
 and another spent its whole agent timeout without converging. Running out of
 credits parks the search — top up, then `resume`.
-To compare models head to head, give an experiment one arm per model
-(`arm_overrides: {model: …}`); the chart and `experiment report` group on the
-arm tags (see [experiments.md](experiments.md)).
+To compare models head to head, give a study one experiment per model
+(`experiments: {sonnet: {model: …}, opus: {model: …}}`); the chart and
+`experiment report` group on the experiment tags (see [experiments.md](experiments.md)).
 
 ## Sampling with pi
 
@@ -179,5 +190,5 @@ compatibility; reasoning effort remains a separate follow-up.
 `experiments/temperature.yaml` compares temperatures 0.2, 0.7 and
 1.0 on circle-packing, with three repeats and three concurrent searches.
 Run `hillclimb experiment run temperature --dry-run` to inspect the jobs;
-`hillclimb experiment report temperature --json` reports the arm verdicts
+`hillclimb experiment report temperature --json` reports the experiment verdicts
 after the experiment finishes.

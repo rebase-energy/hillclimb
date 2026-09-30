@@ -178,9 +178,13 @@ def interface_shim(log: Log = print) -> str | None:
         return None
 
 
-def build_executor(config: Config, problem: ProblemSpec, log: Log = print):
-    """The problem's verifier command, wired to the runtime venv it needs."""
+def build_executor(
+    config: Config, problem: ProblemSpec, log: Log = print, search_dir: Path | None = None
+):
+    """The problem's verifier command, wired to the runtime venv it needs and
+    confined to the sandbox (`harness/sandbox.py`)."""
     from hillclimb.harness.executor import CommandExecutor
+    from hillclimb.harness.sandbox import verifier_policy
 
     env_extra = dict(problem.verifier_env)
     if config.hillclimb_dir is not None:
@@ -195,13 +199,17 @@ def build_executor(config: Config, problem: ProblemSpec, log: Log = print):
         problem.verifier_cmd,
         env_extra=env_extra,
         pythonpath=interface_shim(log),
+        sandbox=verifier_policy(config, problem, search_dir),
     )
 
 
-def build_unit_test_runner(config: Config, problem: ProblemSpec, log: Log = print):
+def build_unit_test_runner(
+    config: Config, problem: ProblemSpec, log: Log = print, search_dir: Path | None = None
+):
     """The run-frozen correctness gate, or None for verifier-only problems."""
     if problem.unit_tests is None:
         return None
+    from hillclimb.harness.sandbox import verifier_policy
     from hillclimb.harness.unit_tests import UnitTestRunner
 
     return UnitTestRunner(
@@ -210,6 +218,7 @@ def build_unit_test_runner(config: Config, problem: ProblemSpec, log: Log = prin
         ),
         problem.unit_tests,
         pythonpath=interface_shim(log),
+        sandbox=verifier_policy(config, problem, search_dir),
     )
 
 
@@ -232,6 +241,7 @@ def build_holdout_scorer(config: Config, problem: ProblemSpec, search_dir: Path,
             # silently scores nan
             os.environ["HF_TOKEN"] = os.environ["HUGGINGFACE_TOKEN"]
     from hillclimb.harness.executor import CommandHoldoutScorer
+    from hillclimb.harness.sandbox import verifier_policy
 
     return CommandHoldoutScorer(
         ensure_runtime_venv(
@@ -243,6 +253,7 @@ def build_holdout_scorer(config: Config, problem: ProblemSpec, search_dir: Path,
         work_root=search_dir / "holdout-eval",
         timeout_s=config.budget.exec_timeout_s,
         pythonpath=interface_shim(log),
+        sandbox=verifier_policy(config, problem, search_dir, holdout=True),
     )
 
 
@@ -261,8 +272,8 @@ def build_evaluator(
     from hillclimb.harness.evaluation import CandidateEvaluator
 
     return CandidateEvaluator(
-        executor=build_executor(config, problem, log),
-        unit_test_runner=build_unit_test_runner(config, problem, log),
+        executor=build_executor(config, problem, log, search_dir),
+        unit_test_runner=build_unit_test_runner(config, problem, log, search_dir),
         problem=problem,
         config=config,
         holdout_scorer=build_holdout_scorer(config, problem, search_dir, log),
@@ -373,10 +384,10 @@ def create_search(
     run_id: str,
     total_s: int,
     seed_from: Path | None = None,
+    study: str | None = None,
     experiment: str | None = None,
-    arm: str | None = None,
     repeat: int = 0,
-    arm_overrides: dict | None = None,
+    experiment_overrides: dict | None = None,
 ) -> Path:
     from hillclimb import __version__
     from hillclimb.climber import snapshot_climber
@@ -427,10 +438,10 @@ def create_search(
         seed_from=str(seed_from) if seed_from else None,
         seed_sha256=_sha256(seed_from) if seed_from else None,
         learning_enabled=config.learning.enabled,
+        study=study,
         experiment=experiment,
-        arm=arm,
         repeat=repeat,
-        arm_overrides=dict(arm_overrides or {}),
+        experiment_overrides=dict(experiment_overrides or {}),
     )
     with closing(open_store(config)) as store:
         store.record_search(meta)
@@ -655,6 +666,30 @@ def _raise_stop_requested(signum, frame):
     raise StopRequested(f"signal {signal.Signals(signum).name}")
 
 
+def _preflight_sandbox(config: Config, log: Log) -> None:
+    """Start the sandbox once before anything spends: a search whose agents
+    and verifier cannot be confined does not start (SandboxUnavailable names
+    the fix). Where the OS has none, say so and run without."""
+    from hillclimb.harness import sandbox
+
+    sandbox.log = log
+    names = {config.agent} | {route.agent for route in config.routing.values() if route.agent}
+    if not sandbox.enabled(config):
+        log("sandbox: off — agents and solutions run with your full user rights")
+    elif sandbox.backend() is None:
+        log(
+            "sandbox: none exists for this operating system — agents and "
+            "solutions run with your full user rights"
+        )
+    else:
+        log(f"sandbox: on ({sandbox.backend()})")
+    if config.allow_internet_for_agents:
+        return
+    if names & {"claude-code", "pi"} and not sandbox.active(config):
+        raise sandbox.SandboxUnavailable(sandbox.NEEDS_SANDBOX)
+    log("agents: no internet")
+
+
 def _preflight_pi_routes(config: Config, search_dir: Path, router, agents, log: Log) -> None:
     """Validate every statically reachable pi model/sampling combination.
 
@@ -664,6 +699,8 @@ def _preflight_pi_routes(config: Config, search_dir: Path, router, agents, log: 
     """
     import hashlib
     import json
+
+    from hillclimb.harness.sandbox import agent_policy
 
     # every operator this search's climber may call is routed by its own
     # name (`routing.draft`, `routing.gepa-reflect`, a climber's `crossover`)
@@ -721,6 +758,10 @@ def _preflight_pi_routes(config: Config, search_dir: Path, router, agents, log: 
                 timeout_s=min(120, max(10, config.budget.agent_timeout_s)),
                 model=model,
                 sampling=route.sampling,
+                # the same confinement the search's calls run under, so a
+                # provider the proxy does not let through fails here
+                allow_internet=config.allow_internet_for_agents,
+                sandbox=agent_policy(config, search_dir, "pi"),
             )
         )
         (work_dir / "result.json").write_text(result.model_dump_json(indent=2))
@@ -825,6 +866,7 @@ def execute_search(
     router = Router(config)
 
     try:
+        _preflight_sandbox(config, log)
         _preflight_pi_routes(config, search_dir, router, agents, log)
     except (StopRequested, KeyboardInterrupt) as exc:
         status.finalize("stopped", last_error=str(exc)[:500] or None)
@@ -1128,17 +1170,17 @@ def fleet_argv(
     seed_from: Path | str | None = None,
     knowledge_context_file: Path | str | None = None,
     overrides: list[str] | tuple[str, ...] = (),
+    study: str | None = None,
     experiment: str | None = None,
-    arm: str | None = None,
     repeat: int = 0,
 ) -> list[str]:
     """The `hillclimb run` arguments an engine of a fleet is started with.
     `budget` is the CLI's wall-clock spelling (`2h`, `30m`) or plain seconds.
-    `experiment`/`arm` tag the search as one arm of a mixed fleet (see
-    `FleetEngine`), so `hillclimb experiment report` compares the arms."""
+    `study`/`experiment` tag the search as one experiment of a mixed fleet
+    (see `FleetEngine`), so `hillclimb experiment report` compares them."""
     argv = [target, "--run-id", run_dir.name, "--run-name", run_name]
-    if experiment:
-        argv += ["--experiment", experiment, "--arm", arm or experiment]
+    if study:
+        argv += ["--study", study, "--experiment", experiment or study]
         if repeat:
             argv += ["--repeat", str(repeat)]
     if budget:
@@ -1168,14 +1210,14 @@ def fleet_argv(
 
 @dataclass(frozen=True)
 class FleetEngine:
-    """One engine of a mixed fleet: the arm it is tagged as, the climber it
+    """One engine of a mixed fleet: the experiment it is tagged as, the climber it
     runs, and the `--set` overrides that apply to this engine only (after the
     fleet-wide ones, so they win). `climber=None` keeps the fleet-wide climber.
-    Overrides are the one per-arm knob — `concurrency.parallel_agents=1`
+    Overrides are the one per-experiment knob — `concurrency.parallel_agents=1`
     for a serial climber like GEPA, `climber.params.seed=7`, anything
     `Config.apply_overrides` accepts."""
 
-    arm: str
+    experiment: str
     climber: str | None = None
     overrides: tuple[str, ...] = ()
     repeat: int = 0
@@ -1185,35 +1227,39 @@ def mixed_fleet(
     climbers: Sequence[str],
     *,
     repeats: int = 1,
-    arm_overrides: Mapping[str, Sequence[str]] | None = None,
+    experiment_overrides: Mapping[str, Sequence[str]] | None = None,
 ) -> list[FleetEngine]:
     """The engines of a fleet that runs one search per climber on the same
-    problem. Arms are named after their climber (a repeated climber gets a
-    `-2`, `-3` suffix); `repeats` > 1 clones every arm that many times,
-    repeat-major so every arm has seen the same shared state when it
-    starts. `arm_overrides` maps an arm name to that arm's `--set` pairs;
-    a name that matches no arm is an error."""
+    problem. Experiments are named after their climber (a repeated climber
+    gets a `-2`, `-3` suffix); `repeats` > 1 clones every experiment that
+    many times, repeat-major so every experiment has seen the same shared
+    state when it starts. `experiment_overrides` maps an experiment name to
+    that experiment's `--set` pairs; a name that matches no experiment is an
+    error."""
     if repeats < 1:
         raise ValueError("repeats must be >= 1")
     if not climbers:
         raise ValueError("a mixed fleet needs at least one climber")
     from hillclimb.modules.policies import policy_label
 
-    arms: list[tuple[str, str]] = []
+    experiments: list[tuple[str, str]] = []
     seen: dict[str, int] = {}
     for climber in climbers:
-        label = policy_label(climber)  # a one-file climber's arm is its stem
+        label = policy_label(climber)  # a one-file climber's experiment is its stem
         count = seen.get(label, 0) + 1
         seen[label] = count
-        arms.append((label if count == 1 else f"{label}-{count}", climber))
-    overrides = {arm: tuple(pairs) for arm, pairs in (arm_overrides or {}).items()}
-    unknown = sorted(set(overrides) - {arm for arm, _ in arms})
+        experiments.append((label if count == 1 else f"{label}-{count}", climber))
+    overrides = {name: tuple(pairs) for name, pairs in (experiment_overrides or {}).items()}
+    unknown = sorted(set(overrides) - {name for name, _ in experiments})
     if unknown:
-        raise ValueError(f"arm override for unknown arm(s) {', '.join(unknown)}; arms are {', '.join(a for a, _ in arms)}")
+        raise ValueError(
+            f"experiment override for unknown experiment(s) {', '.join(unknown)}; "
+            f"experiments are {', '.join(name for name, _ in experiments)}"
+        )
     return [
-        FleetEngine(arm=arm, climber=climber, overrides=overrides.get(arm, ()), repeat=repeat if repeats > 1 else 0)
+        FleetEngine(experiment=name, climber=climber, overrides=overrides.get(name, ()), repeat=repeat if repeats > 1 else 0)
         for repeat in range(1, repeats + 1)
-        for arm, climber in arms
+        for name, climber in experiments
     ]
 
 
@@ -1282,7 +1328,7 @@ def run_fleet(
     knowledge_context_file: Path | str | None = None,
     overrides: list[str] | tuple[str, ...] = (),
     engines: Sequence[FleetEngine] | None = None,
-    experiment: str | None = None,
+    study: str | None = None,
     log: Log = print,
 ) -> FleetHandle:
     """N independent searches on one problem, each its own detached engine
@@ -1292,7 +1338,7 @@ def run_fleet(
     Two shapes. `parallel_searches=N`: N identical engines. `engines=[...]`
     (see `FleetEngine`, `mixed_fleet`): one engine per entry, each with its
     own climber and overrides on top of the fleet-wide arguments, tagged as
-    an arm of `experiment` (default: the run id) so `hillclimb experiment
+    an experiment of `study` (default: the run id) so `hillclimb experiment
     report <run-id>` compares them — three optimizers on one problem under
     one run. `parallel_searches` is ignored when `engines` is given."""
     if engines is not None and not engines:
@@ -1315,7 +1361,7 @@ def run_fleet(
     else:
         entries = [
             spec_entry(
-                target, name=engine.arm, climber=engine.climber or climber or config.climber.ref,
+                target, name=engine.experiment, climber=engine.climber or climber or config.climber.ref,
                 set=(*overrides, *engine.overrides), **shared_entry,
             )
             for engine in engines
@@ -1337,14 +1383,14 @@ def run_fleet(
         argv = fleet_argv(target, run_dir, name, climber=climber, overrides=overrides, **shared)
         plan = [(problem.problem_id, argv)] * parallel_searches
     else:
-        experiment = experiment or run_dir.name
+        study = study or run_dir.name
         for engine in engines:
             argv = fleet_argv(
                 target, run_dir, name, climber=engine.climber or climber,
                 overrides=(*overrides, *engine.overrides),
-                experiment=experiment, arm=engine.arm, repeat=engine.repeat, **shared,
+                study=study, experiment=engine.experiment, repeat=engine.repeat, **shared,
             )
-            slug = f"{problem.problem_id}-{engine.arm}" + (f"-r{engine.repeat}" if engine.repeat else "")
+            slug = f"{problem.problem_id}-{engine.experiment}" + (f"-r{engine.repeat}" if engine.repeat else "")
             plan.append((slug, argv))
     procs: list[subprocess.Popen] = []
     log_paths: list[Path] = []

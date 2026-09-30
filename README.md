@@ -151,7 +151,8 @@ is spent on it.
 - [Problems](docs/problems.md) — the verifier contract, floors, unit tests, tunable parameters, per-instance scores, noise
 - [Climbers](docs/climbers.md) — bundled climbers, the manifest, one-file climbers, mixed fleets, `climber check`, GEPA
 - [Agents](docs/agents.md) — Claude Code, Codex, pi; `connect`; billing through OpenRouter; sampling
-- [Experiments](docs/experiments.md) — arms, repeats, matched budgets, the report
+- [The sandbox](docs/sandbox.md) — what agents and solutions can write, read and reach; agents without internet
+- [Experiments](docs/experiments.md) — studies of experiments, repeats, matched budgets, the report
 - [Providers](docs/providers.md) — emflow, MLE-bench, Einstein Arena
 - [Operators and memory](docs/operators-and-memory.md) — operator scaffolds, model routing, the knowledge graph
 - [The hillclimb dir](docs/hillclimb-dir.md) — config precedence, run specs, how runs are laid out, the store, pruning

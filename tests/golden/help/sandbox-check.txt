@@ -1,0 +1,16 @@
+                                                                                                                        
+ Usage: root sandbox check [OPTIONS]                                                                                    
+                                                                                                                        
+ Try to break out of the sandbox, and show what happened.                                                               
+                                                                                                                        
+ Runs a script that behaves like a hostile solution inside the sandbox a                                                
+ search uses: it writes outside its folder, reads your keys, connects to                                                
+ the internet and signals other processes. Every attempt is listed with                                                 
+ its outcome. Exit code 1 when one got through, or when there is no                                                     
+ sandbox to check.                                                                                                      
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --json            Print the attempts as JSON                                                                         │
+│ --help  -h        Show this message and exit.                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

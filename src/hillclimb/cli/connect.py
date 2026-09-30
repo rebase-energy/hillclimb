@@ -119,6 +119,28 @@ def _write_defaults(
         )
 
 
+def _sandbox_line(config) -> str:
+    """Whether agents and verifiers will run confined on this machine."""
+    from hillclimb.harness import sandbox
+
+    try:
+        if not sandbox.enabled(config):
+            return "[head]sandbox[/]: [warn]off[/] [note]— agents and solutions run with your full user rights[/]"
+        kind = sandbox.backend()
+    except sandbox.SandboxUnavailable as exc:
+        return f"[head]sandbox[/]: [bad]cannot start[/] [note]— {common._m(exc)}[/]"
+    if kind is None:
+        return (
+            "[head]sandbox[/]: [warn]none exists for this operating system[/] "
+            "[note]— agents and solutions run with your full user rights[/]"
+        )
+    tool = {"seatbelt": "sandbox-exec", "bwrap": "bubblewrap"}[kind]
+    return (
+        f"[head]sandbox[/]: [ok]on[/] [note]({tool}) — agents and solutions write only to "
+        "their candidate's folder and cannot read your keys[/]"
+    )
+
+
 def _verdict_style(status) -> str:
     """The theme style for a connection's state: ready is ok, an error is
     bad, everything between (logged in but not connected, logged out) warns."""
@@ -300,6 +322,7 @@ def connect(
     for status, _ in rows:
         if not status.connected and status.fix:
             common.say(f"  [head]{common._m(status.target)}[/]: [note]{common._m(status.fix)}[/]")
+    common.say(f"  {_sandbox_line(config)}")
     if config.hillclimb_dir is None:
         common.say(
             "  [note]no hillclimb dir here — connecting pins the defaults in[/] "

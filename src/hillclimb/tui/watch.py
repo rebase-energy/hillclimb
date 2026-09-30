@@ -407,13 +407,13 @@ def _search_row(store: DataStore, record: SearchRecord) -> SearchRow:
     best_score = status.best.val_score if status is not None and status.best else None
     return SearchRow(
         search_id=search_dir.name,
-        # an experiment arm is what tells the searches of one run apart, so
+        # a study's experiment is what tells the searches of one run apart, so
         # it rides along with the problem — unless it is just the policy's
         # name (a mixed fleet, an optimizer comparison), which the policy
         # column already shows
         problem=(
-            f"{meta.problem_id} [{meta.arm}]"
-            if meta.arm and meta.arm != policy_label(meta.climber)
+            f"{meta.problem_id} [{meta.experiment}]"
+            if meta.experiment and meta.experiment != policy_label(meta.climber)
             else meta.problem_id
         ),
         # the role is the problem's doing (a meta-problem runs its climber
@@ -2218,7 +2218,7 @@ class CandidateScreen(ResizableDetail, LiveScreen):
 
         self.app.push_screen(
             ConfirmScreen(
-                f"Stop search {_search_ref(self.search_dir)}? (parks after current operator)"
+                f"Stop search {_search_ref(self.search_dir)}? (aborts the operators in flight, then parks)"
             ),
             go,
         )
@@ -2741,7 +2741,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
                 self.notify(outcome or "engine is not running", severity="information")
 
         self.app.push_screen(
-            ConfirmScreen(f"Stop search {_search_ref(search_dir)}? (parks after current operator)"),
+            ConfirmScreen(f"Stop search {_search_ref(search_dir)}? (aborts the operators in flight, then parks)"),
             go,
         )
 

@@ -8,7 +8,7 @@ Two prompt scaffolds sharpen the default operators (both on by default; a
 climber's manifest lists them as operator params — `- draft: {retrieval:
 true}`, `- improve: {ablation: true}` — and the `climber.operators` config
 block lays your values over them; both gate prompt injection only, so A/B
-arms record identical data):
+experiments record identical data):
 
 - **Retrieval-augmented draft** (`climber.operators.draft.retrieval`) — the draft
   agent is told to web-search the current state of the art for the problem
@@ -83,7 +83,7 @@ git-versionable — it lives in your hillclimb dir, under `knowledge/`:
 - **Query tool** (`learning.tool`, default on) — operator agents
   are told they can run `hillclimb knowledge query "<keywords>"` mid-search
   to consult the memory before re-deriving something expensive.
-- **Does it help?** — an experiment with a memory-on and a memory-off arm
+- **Does it help?** — a study with a memory-on and a memory-off experiment
   (`learning.enabled: false`) answers it on holdout; see
   [experiments.md](experiments.md).
 

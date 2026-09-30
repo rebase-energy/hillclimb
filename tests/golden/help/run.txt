@@ -26,12 +26,12 @@
 │                                                                                  --climber gepa) for a mixed fleet:  │
 │                                                                                  one search per climber on the       │
 │                                                                                  problem, under one run, each tagged │
-│                                                                                  as an arm                           │
+│                                                                                  as an experiment                    │
 │ --holdout                                 --no-holdout                           Hidden selection holdout            │
 │                                                                                  [default: holdout]                  │
 │ --learning                                --no-learning                          Cross-search memory (cards/claims   │
 │                                                                                  injection + distillation); off =    │
-│                                                                                  memory-blind arm                    │
+│                                                                                  memory-blind experiment             │
 │                                                                                  [default: learning]                 │
 │ --name                                                     TEXT                  Run name shown in the TUI           │
 │ --parallel-agents,--parallel-operat…                       INTEGER               Concurrent agents per search, one   │
@@ -55,14 +55,16 @@
 │ --set                                                      TEXT                  Any config setting, dotted: --set   │
 │                                                                                  climber.ref=openevolve --set        │
 │                                                                                  learning.enabled=false              │
-│ --arm-set                                                  TEXT                  A setting for one arm of a mixed    │
-│                                                                                  fleet, ARM:KEY=VALUE: --arm-set     │
+│ --experiment-set,--arm-set                                 TEXT                  A setting for one experiment of a   │
+│                                                                                  mixed fleet, EXPERIMENT:KEY=VALUE:  │
+│                                                                                  --experiment-set                    │
 │                                                                                  gepa:concurrency.parallel_agents=1  │
-│                                                                                  (applied after --set)               │
-│ --experiment                                               TEXT                  Tag the search as one arm of an     │
-│                                                                                  experiment (with --arm); names a    │
-│                                                                                  mixed fleet's experiment            │
-│ --arm                                                      TEXT                  The arm name (with --experiment)    │
+│                                                                                  (applied after --set; --arm-set is  │
+│                                                                                  the old spelling)                   │
+│ --study                                                    TEXT                  Tag the search as one experiment of │
+│                                                                                  a study (with --experiment); names  │
+│                                                                                  a mixed fleet's study               │
+│ --experiment                                               TEXT                  The experiment name (with --study)  │
 │ --help                                -h                                         Show this message and exit.         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 

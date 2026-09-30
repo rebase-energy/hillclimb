@@ -54,6 +54,16 @@ def test_draft_research_cue_gated_off(task, config):
     assert "{{" not in prompt
 
 
+def test_offline_agent_gets_no_research_cue(task, config):
+    """An agent without internet cannot do the web research the cue asks
+    for; the solution's own network rule still reaches the contract."""
+    config.allow_internet_for_agents = False
+    searcher, _, _ = make_searcher(task, config, FakeAgent())
+    prompt = searcher.build_prompt("draft", None, "minimal")
+    assert "# Research first" not in prompt
+    assert "Assume no internet access at execution time." in prompt
+
+
 # --- ablation-guided improve ---
 
 

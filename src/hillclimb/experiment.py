@@ -1,10 +1,12 @@
-"""Experiments: which setup wins on a problem?
+"""Studies: which setup wins on a problem?
 
-An experiment is a problem (or several) × named *arms* × N repeats. An arm
-is a set of config overrides — anything `Config.apply_overrides` accepts
-(`climber.ref`, `learning.enabled`, `model`, `climber.params.*`,
+A study is a problem (or several) × named *experiments* × N repeats. An
+experiment is a set of config overrides — anything `Config.apply_overrides`
+accepts (`climber.ref`, `learning.enabled`, `model`, `climber.params.*`,
 …) — so "does memory help?", "greedy or openevolve?", "sonnet or opus?" are
-all the same experiment with different arms. A spec is a YAML file:
+all the same study with different experiments. A spec is a YAML file
+(`hillclimb experiment run` takes it; `arms:` is the old name of
+`experiments:` and still loads):
 
     name: policy-vs-memory          # default: the file stem
     problems: [circle-packing]
@@ -13,22 +15,23 @@ all the same experiment with different arms. A spec is a YAML file:
     schedule: sequential            # sequential | parallel
     max_concurrent: 8               # parallel only: searches alive at once
     noise_floor: 0.02               # a number, or {problem-id: number}
-    defaults: {model: sonnet}       # overrides every arm starts from
-    arms:
+    defaults: {model: sonnet}       # overrides every experiment starts from
+    experiments:
       greedy:        {climber.ref: greedy}
       greedy-nomem:  {climber.ref: greedy, learning.enabled: false}
       openevolve:    {climber.ref: openevolve, climber.params: {population_size: 50}}
 
-`expand` turns it into jobs in a fair order — round-robin over arms within
-each repeat, so shared state (the knowledge graph) is seen by every arm at
-the same point in time — and the CLI runs each job as one `hillclimb run
---experiment … --arm …`. Every search is tagged in `SearchMeta` (experiment,
-arm, repeat, arm_overrides), and the report groups on those tags through the
-store, so a search started by hand with the same flags counts too.
+`expand` turns it into jobs in a fair order — round-robin over experiments
+within each repeat, so shared state (the knowledge graph) is seen by every
+experiment at the same point in time — and the CLI runs each job as one
+`hillclimb run --study … --experiment …`. Every search is tagged in
+`SearchMeta` (study, experiment, repeat, experiment_overrides), and the
+report groups on those tags through the store, so a search started by hand
+with the same flags counts too.
 
 Comparison is on the selected candidate's holdout score (val when holdout
-was off), per (problem, arm): n, mean, median, spread, wins per repeat, and
-the gap to the first arm (the control) judged against the noise floor.
+was off), per (problem, experiment): n, mean, median, spread, wins per repeat, and
+the gap to the first experiment (the control) judged against the noise floor.
 Pure functions here; orchestration and printing live in the CLI.
 """
 
@@ -48,23 +51,23 @@ from hillclimb.harness.store import DataStore, FileDataStore
 EXPERIMENTS_DIRNAME = "experiments"
 
 
-class ExperimentSpec(BaseModel):
+class StudySpec(BaseModel):
     name: str
     problems: list[str]
-    arms: dict[str, dict] = Field(default_factory=dict)
+    experiments: dict[str, dict] = Field(default_factory=dict)
     repeats: int = 1
     budget: str | None = None
     schedule: str = "sequential"  # sequential | parallel
     # parallel only: at most this many searches alive at once — the launcher
     # waits on its children before starting the next. Without it every job
-    # starts at once and, past the machine's operator slots, burns its wall
+    # starts at once and, past the machine's agent slots, burns its wall
     # clock in `waiting-slot`. None = unbounded (the old behaviour)
     max_concurrent: int | None = None
     noise_floor: float | dict[str, float] | None = None
     defaults: dict = Field(default_factory=dict)
     # one executable seed solution shared by every search (--seed-from for
-    # each child), so arms are compared from identical source, not merely the
-    # same baseline score; relative paths resolve against the spec's dir
+    # each child), so experiments are compared from identical source, not merely
+    # the same baseline score; relative paths resolve against the spec's dir
     seed_from: str | None = None
     spec_path: Path | None = None
 
@@ -75,14 +78,14 @@ class ExperimentSpec(BaseModel):
             raise ValueError(f"schedule must be sequential or parallel, got {value!r}")
         return value
 
-    @field_validator("arms")
+    @field_validator("experiments")
     @classmethod
-    def _arms(cls, value: dict[str, dict]) -> dict[str, dict]:
+    def _experiments(cls, value: dict[str, dict]) -> dict[str, dict]:
         if len(value) < 2:
-            raise ValueError("an experiment needs at least two arms")
+            raise ValueError("a study needs at least two experiments")
         for name, overrides in value.items():
             if not isinstance(overrides, dict):
-                raise ValueError(f"arm {name!r} must map config settings to values")
+                raise ValueError(f"experiment {name!r} must map config settings to values")
         return value
 
     @field_validator("max_concurrent")
@@ -101,17 +104,17 @@ class ExperimentSpec(BaseModel):
 
     @property
     def control(self) -> str:
-        """The first arm — the one every other arm is compared against."""
-        return next(iter(self.arms))
+        """The first experiment — the one every other experiment is compared against."""
+        return next(iter(self.experiments))
 
     def noise_for(self, problem_id: str) -> float | None:
         if isinstance(self.noise_floor, dict):
             return self.noise_floor.get(problem_id)
         return self.noise_floor
 
-    def arm_overrides(self, arm: str) -> dict:
-        """The overrides an arm applies: `defaults`, then the arm's own."""
-        return flatten_overrides({**self.defaults, **self.arms[arm]})
+    def experiment_overrides(self, experiment: str) -> dict:
+        """The overrides an experiment applies: `defaults`, then the experiment's own."""
+        return flatten_overrides({**self.defaults, **self.experiments[experiment]})
 
 
 def flatten_overrides(overrides: dict, prefix: str = "") -> dict:
@@ -130,7 +133,7 @@ def flatten_overrides(overrides: dict, prefix: str = "") -> dict:
     return flat
 
 
-def resolve_experiment_path(target: str | Path, hillclimb_dir: Path | None) -> Path:
+def resolve_study_path(target: str | Path, hillclimb_dir: Path | None) -> Path:
     """A spec path as given, or `<hillclimb>/experiments/<name>.yaml`."""
     path = Path(target)
     if path.is_file():
@@ -144,19 +147,19 @@ def resolve_experiment_path(target: str | Path, hillclimb_dir: Path | None) -> P
             if candidate.is_file():
                 return candidate.resolve()
     raise FileNotFoundError(
-        f"No experiment spec {target!r} (a YAML path, or a name under {EXPERIMENTS_DIRNAME}/)"
+        f"No study spec {target!r} (a YAML path, or a name under {EXPERIMENTS_DIRNAME}/)"
     )
 
 
-def load_experiment(path: Path) -> ExperimentSpec:
+def load_study(path: Path) -> StudySpec:
     data = yaml.safe_load(path.read_text()) or {}
     if not isinstance(data, dict):
-        raise ValueError(f"{path}: an experiment spec is a mapping")
+        raise ValueError(f"{path}: a study spec is a mapping")
     problems = data.get("problems") or ([data["problem"]] if data.get("problem") else [])
-    return ExperimentSpec(
+    return StudySpec(
         name=data.get("name") or path.stem,
         problems=list(problems),
-        arms=data.get("arms") or {},
+        experiments=data.get("experiments") or data.get("arms") or {},
         repeats=data.get("repeats", 1),
         budget=data.get("budget"),
         schedule=data.get("schedule", "sequential"),
@@ -168,7 +171,7 @@ def load_experiment(path: Path) -> ExperimentSpec:
     )
 
 
-def resolved_seed(spec: ExperimentSpec) -> Path | None:
+def resolved_seed(spec: StudySpec) -> Path | None:
     """The spec's shared seed as an absolute path (relative to the spec
     file's directory), validated to exist before any run is created."""
     if not spec.seed_from:
@@ -186,14 +189,14 @@ def resolved_seed(spec: ExperimentSpec) -> Path | None:
 class Job:
     index: int  # 1-based launch order
     problem: str
-    arm: str
+    experiment: str
     repeat: int
     overrides: dict
 
 
-def expand(spec: ExperimentSpec, first_repeat: int = 1) -> list[Job]:
-    """Problems × arms × repeats as jobs in launch order: repeat-major,
-    arms round-robin inside, so every arm has seen the same shared state
+def expand(spec: StudySpec, first_repeat: int = 1) -> list[Job]:
+    """Problems × experiments × repeats as jobs in launch order: repeat-major,
+    experiments round-robin inside, so every experiment has seen the same shared state
     (knowledge, cache) when its k-th repeat starts. `first_repeat` numbers
     the repeats from K — how a finished run gains repeats K.. later."""
     if first_repeat < 1:
@@ -201,15 +204,15 @@ def expand(spec: ExperimentSpec, first_repeat: int = 1) -> list[Job]:
     jobs: list[Job] = []
     for repeat in range(first_repeat, first_repeat + spec.repeats):
         for problem in spec.problems:
-            for arm in spec.arms:
-                jobs.append(Job(len(jobs) + 1, problem, arm, repeat, spec.arm_overrides(arm)))
+            for experiment in spec.experiments:
+                jobs.append(Job(len(jobs) + 1, problem, experiment, repeat, spec.experiment_overrides(experiment)))
     return jobs
 
 
 @dataclass(frozen=True)
-class ExperimentRow:
+class StudyRow:
+    study: str
     experiment: str
-    arm: str
     repeat: int
     problem_id: str
     problem_key: str
@@ -235,20 +238,20 @@ class ExperimentRow:
 
 
 def collect_results(
-    store: DataStore | Path, *, experiment: str | None = None, problem_id: str = ""
-) -> list[ExperimentRow]:
-    """One row per finished, experiment-tagged search (every experiment
-    unless one is named). A runs dir is shorthand for its FileDataStore."""
+    store: DataStore | Path, *, study: str | None = None, problem_id: str = ""
+) -> list[StudyRow]:
+    """One row per finished, study-tagged search (every study unless one
+    is named). A runs dir is shorthand for its FileDataStore."""
     from hillclimb.tui.tree import accepted_lineage, minutes_since
 
     if isinstance(store, Path):
         store = FileDataStore(store)
-    rows: list[ExperimentRow] = []
+    rows: list[StudyRow] = []
     for record in store.searches():
         meta = record.meta
-        if not meta.experiment or not meta.arm:
+        if not meta.study or not meta.experiment:
             continue
-        if experiment and meta.experiment != experiment:
+        if study and meta.study != study:
             continue
         if problem_id and meta.problem_id != problem_id:
             continue
@@ -260,9 +263,9 @@ def collect_results(
         scored = [c for c in candidates if c.val_score is not None]
         accepted = accepted_lineage(candidates, meta.higher_is_better)
         best = next((c for c in candidates if accepted and c.candidate_id == accepted[-1]), None)
-        rows.append(ExperimentRow(
+        rows.append(StudyRow(
+            study=meta.study,
             experiment=meta.experiment,
-            arm=meta.arm,
             repeat=meta.repeat,
             problem_id=meta.problem_id,
             problem_key=meta.problem_key,
@@ -277,15 +280,15 @@ def collect_results(
             tokens=sum(c.agent.total_tokens or 0 for c in candidates if c.agent),
             minutes_to_best=minutes_since(best.finished_at, meta.started_at) if best else None,
         ))
-    rows.sort(key=lambda r: (r.experiment, r.problem_key, r.repeat, r.started_at))
+    rows.sort(key=lambda r: (r.study, r.problem_key, r.repeat, r.started_at))
     return rows
 
 
 @dataclass(frozen=True)
-class ArmStats:
-    arm: str
-    rows: list[ExperimentRow]
-    wins: int = 0  # repeats in which this arm had the best score
+class ExperimentStats:
+    experiment: str
+    rows: list[StudyRow]
+    wins: int = 0  # repeats in which this experiment had the best score
 
     @property
     def scores(self) -> list[float]:
@@ -315,55 +318,55 @@ class ArmStats:
 
 @dataclass(frozen=True)
 class Comparison:
-    """One arm against the control, across the repeats both ran."""
+    """One experiment against the control, across the repeats both ran."""
 
-    arm: str
+    experiment: str
     control: str
-    gap: float | None          # mean over paired repeats of (arm - control), in the metric's units
-    wins: int                  # repeats where arm beat control
+    gap: float | None          # mean over paired repeats of (experiment - control), in the metric's units
+    wins: int                  # repeats where experiment beat control
     losses: int
     ties: int
     within_noise: bool | None  # None when no noise floor is known
 
 
 @dataclass(frozen=True)
-class ExperimentSummary:
-    experiment: str
+class StudySummary:
+    study: str
     problem_id: str
     problem_key: str
     higher_is_better: bool
-    arms: list[ArmStats]
+    experiments: list[ExperimentStats]
     comparisons: list[Comparison]
     noise_floor: float | None
-    unfinished: list[ExperimentRow] = field(default_factory=list)
+    unfinished: list[StudyRow] = field(default_factory=list)
 
 
 def summarize(
-    rows: list[ExperimentRow],
+    rows: list[StudyRow],
     *,
     control: str | None = None,
     noise_floor: dict[str, float | None] | None = None,
-) -> list[ExperimentSummary]:
-    """Group rows by (experiment, problem) and compare the arms. The control
-    is the arm named, else the first arm to have started. `noise_floor` maps
-    problem id → the spread below which a gap is not a result."""
-    groups: dict[tuple[str, str], list[ExperimentRow]] = {}
+) -> list[StudySummary]:
+    """Group rows by (study, problem) and compare the experiments. The
+    control is the experiment named, else the first experiment to have
+    started. `noise_floor` maps problem id → the spread below which a gap is not a result."""
+    groups: dict[tuple[str, str], list[StudyRow]] = {}
     for row in rows:
-        groups.setdefault((row.experiment, row.problem_key), []).append(row)
-    summaries: list[ExperimentSummary] = []
-    for (experiment, problem_key), group in sorted(groups.items()):
+        groups.setdefault((row.study, row.problem_key), []).append(row)
+    summaries: list[StudySummary] = []
+    for (study, problem_key), group in sorted(groups.items()):
         higher = group[0].higher_is_better
         problem_id = group[0].problem_id
         finished = [r for r in group if r.state == "done" or r.score is not None]
         unfinished = [r for r in group if r not in finished]
-        arm_order = list(dict.fromkeys(r.arm for r in sorted(group, key=lambda r: r.started_at)))
-        if control in arm_order:
-            arm_order.remove(control)
-            arm_order.insert(0, control)
-        by_arm = {arm: [r for r in finished if r.arm == arm] for arm in arm_order}
-        # best-of-repeat wins: within each repeat, the best-scoring arm takes one
-        wins = {arm: 0 for arm in arm_order}
-        by_repeat: dict[int, list[ExperimentRow]] = {}
+        order = list(dict.fromkeys(r.experiment for r in sorted(group, key=lambda r: r.started_at)))
+        if control in order:
+            order.remove(control)
+            order.insert(0, control)
+        by_experiment = {name: [r for r in finished if r.experiment == name] for name in order}
+        # best-of-repeat wins: within each repeat, the best-scoring experiment takes one
+        wins = {name: 0 for name in order}
+        by_repeat: dict[int, list[StudyRow]] = {}
         for row in finished:
             if row.score is not None:
                 by_repeat.setdefault(row.repeat, []).append(row)
@@ -375,17 +378,17 @@ def summarize(
             if not any(
                 r is not top and r.score == top.score for r in contenders
             ):
-                wins[top.arm] += 1
-        arms = [ArmStats(arm, by_arm[arm], wins[arm]) for arm in arm_order]
+                wins[top.experiment] += 1
+        experiments = [ExperimentStats(name, by_experiment[name], wins[name]) for name in order]
         floor = (noise_floor or {}).get(problem_id)
         comparisons = []
-        if arms:
-            ctrl = arms[0]
+        if experiments:
+            ctrl = experiments[0]
             ctrl_by_repeat = {r.repeat: r for r in ctrl.rows if r.score is not None}
-            for arm in arms[1:]:
+            for stats in experiments[1:]:
                 w = l = t = 0
                 diffs: list[float] = []
-                for row in arm.rows:
+                for row in stats.rows:
                     partner = ctrl_by_repeat.get(row.repeat)
                     if partner is None or row.score is None:
                         continue
@@ -400,40 +403,40 @@ def summarize(
                 # point in time); unpaired means only when nothing pairs
                 if diffs:
                     gap: float | None = mean(diffs)
-                elif arm.mean is not None and ctrl.mean is not None:
-                    gap = arm.mean - ctrl.mean
+                elif stats.mean is not None and ctrl.mean is not None:
+                    gap = stats.mean - ctrl.mean
                 else:
                     gap = None
                 within = abs(gap) < floor if gap is not None and floor is not None else None
-                comparisons.append(Comparison(arm.arm, ctrl.arm, gap, w, l, t, within))
-        summaries.append(ExperimentSummary(
-            experiment=experiment, problem_id=problem_id, problem_key=problem_key,
-            higher_is_better=higher, arms=arms, comparisons=comparisons,
+                comparisons.append(Comparison(stats.experiment, ctrl.experiment, gap, w, l, t, within))
+        summaries.append(StudySummary(
+            study=study, problem_id=problem_id, problem_key=problem_key,
+            higher_is_better=higher, experiments=experiments, comparisons=comparisons,
             noise_floor=floor, unfinished=unfinished,
         ))
     return summaries
 
 
-def summary_to_dict(summary: ExperimentSummary) -> dict:
+def summary_to_dict(summary: StudySummary) -> dict:
     """The summary as plain JSON-able data (`experiment report --json`):
-    per arm the scores and aggregates, per comparison the paired gap and
+    per experiment the scores and aggregates, per comparison the paired gap and
     its verdict — enough for a meta-verifier to read a score off without
     parsing the table. `verdict` is one of `better`, `worse`, `tie`,
     `within-noise`, `unknown` (no scores or no noise floor)."""
-    arms = []
-    for arm in summary.arms:
-        arms.append({
-            "arm": arm.arm,
-            "control": arm is summary.arms[0],
-            "n": len(arm.scores),
-            "scores": list(arm.scores),
-            "mean": arm.mean,
-            "median": arm.median,
-            "spread": arm.spread,
-            "wins": arm.wins,
-            "minutes_to_best": arm.minutes_to_best,
-            "tokens": arm.tokens,
-            "searches": [r.ref for r in arm.rows],
+    experiments = []
+    for stats in summary.experiments:
+        experiments.append({
+            "experiment": stats.experiment,
+            "control": stats is summary.experiments[0],
+            "n": len(stats.scores),
+            "scores": list(stats.scores),
+            "mean": stats.mean,
+            "median": stats.median,
+            "spread": stats.spread,
+            "wins": stats.wins,
+            "minutes_to_best": stats.minutes_to_best,
+            "tokens": stats.tokens,
+            "searches": [r.ref for r in stats.rows],
         })
     comparisons = []
     for cmp in summary.comparisons:
@@ -448,7 +451,7 @@ def summary_to_dict(summary: ExperimentSummary) -> dict:
         else:
             verdict = "better" if (cmp.gap > 0) == summary.higher_is_better else "worse"
         comparisons.append({
-            "arm": cmp.arm,
+            "experiment": cmp.experiment,
             "control": cmp.control,
             "gap": cmp.gap,
             "wins": cmp.wins,
@@ -458,18 +461,18 @@ def summary_to_dict(summary: ExperimentSummary) -> dict:
             "verdict": verdict,
         })
     return {
-        "experiment": summary.experiment,
+        "study": summary.study,
         "problem_id": summary.problem_id,
         "problem_key": summary.problem_key,
         "higher_is_better": summary.higher_is_better,
         "noise_floor": summary.noise_floor,
-        "arms": arms,
+        "experiments": experiments,
         "comparisons": comparisons,
-        "unfinished": [{"search": r.ref, "arm": r.arm, "state": r.state} for r in summary.unfinished],
+        "unfinished": [{"search": r.ref, "experiment": r.experiment, "state": r.state} for r in summary.unfinished],
     }
 
 
-def summaries_to_dict(summaries: list[ExperimentSummary]) -> list[dict]:
+def summaries_to_dict(summaries: list[StudySummary]) -> list[dict]:
     return [summary_to_dict(s) for s in summaries]
 
 
@@ -487,25 +490,25 @@ def _fmt_tokens(value: float | None) -> str:
     return f"{value:.0f}"
 
 
-def render_report(summaries: list[ExperimentSummary]) -> str:
-    """Markdown-ish text: one table per (experiment, problem) — the arms with
-    their n/mean/median/spread/wins/cost — then every arm against the
-    control with the gap judged against the noise floor."""
+def render_report(summaries: list[StudySummary]) -> str:
+    """Markdown-ish text: one table per (study, problem) — the experiments
+    with their n/mean/median/spread/wins/cost — then every experiment against
+    the control with the gap judged against the noise floor."""
     if not summaries:
-        return "no finished experiment searches found (run `hillclimb experiment run <spec>` first)"
+        return "no finished study searches found (run `hillclimb experiment run <spec>` first)"
     lines: list[str] = []
     for summary in summaries:
         direction = "higher is better" if summary.higher_is_better else "lower is better"
-        lines.append(f"## {summary.experiment} · {summary.problem_key} ({direction})")
+        lines.append(f"## {summary.study} · {summary.problem_key} ({direction})")
         lines.append("")
-        lines.append("| arm | n | mean | median | spread | wins | min→best | tokens |")
+        lines.append("| experiment | n | mean | median | spread | wins | min→best | tokens |")
         lines.append("|---|---|---|---|---|---|---|---|")
-        for arm in summary.arms:
-            tag = " (control)" if arm is summary.arms[0] and len(summary.arms) > 1 else ""
+        for stats in summary.experiments:
+            tag = " (control)" if stats is summary.experiments[0] and len(summary.experiments) > 1 else ""
             lines.append(
-                f"| {arm.arm}{tag} | {len(arm.scores)} | {_fmt(arm.mean)} | {_fmt(arm.median)} | "
-                f"{_fmt(arm.spread, 3)} | {arm.wins} | {_fmt(arm.minutes_to_best, 3)} | "
-                f"{_fmt_tokens(arm.tokens)} |"
+                f"| {stats.experiment}{tag} | {len(stats.scores)} | {_fmt(stats.mean)} | {_fmt(stats.median)} | "
+                f"{_fmt(stats.spread, 3)} | {stats.wins} | {_fmt(stats.minutes_to_best, 3)} | "
+                f"{_fmt_tokens(stats.tokens)} |"
             )
         lines.append("")
         for cmp in summary.comparisons:
@@ -522,9 +525,9 @@ def render_report(summaries: list[ExperimentSummary]) -> str:
                 else:
                     verdict += " — " + ("better" if improves else "worse") + " (no noise floor known)"
                 verdict += f"; wins {cmp.wins}, loses {cmp.losses}, ties {cmp.ties}"
-            lines.append(f"{cmp.arm}: {verdict}")
+            lines.append(f"{cmp.experiment}: {verdict}")
         if summary.unfinished:
-            refs = ", ".join(f"{r.ref} ({r.arm}, {r.state})" for r in summary.unfinished)
+            refs = ", ".join(f"{r.ref} ({r.experiment}, {r.state})" for r in summary.unfinished)
             lines.append(f"not finished: {refs}")
         lines.append("")
     return "\n".join(lines).rstrip()

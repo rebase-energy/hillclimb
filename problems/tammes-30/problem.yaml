@@ -7,4 +7,4 @@ baseline_files: {submission.csv: sample_submission.csv}
 chart_baselines:
   "best known (Hardin, Sloane & Smith 1994)": 38.597116
 time_budget_s: 900
-allow_network: false
+allow_internet_during_solution: false

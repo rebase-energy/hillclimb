@@ -25,12 +25,22 @@ from hillclimb.agents.claude_code import (
     STREAM_FILE,
     usage_total_tokens,
 )
+from hillclimb.harness import sandbox
 from hillclimb.harness.oscompat import new_group_kwargs, runnable
 from hillclimb.harness.pricing import cost_usd
 from hillclimb.harness.procs import Reaper
 
 
 SAMPLING_EXTENSION = Path(__file__).with_name("pi_ext") / "hillclimb-sampling.ts"
+# what pi has to reach without internet: the providers its logins and keys
+# speak to (`sandbox.allow_hosts` adds more; a models_file adds its own)
+MODEL_HOSTS = (
+    "api.anthropic.com", "console.anthropic.com", "claude.ai",
+    "api.openai.com", "auth.openai.com", "chatgpt.com",
+    "generativelanguage.googleapis.com", "oauth2.googleapis.com",
+)
+OPENROUTER_HOSTS = ("openrouter.ai",)
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 TOOLS = "read,write,edit,bash,grep,find,ls"
 CREDIT_MARKERS = (
     "payment required",
@@ -305,6 +315,46 @@ class PiCliAgent:
             cmd += ["--system-prompt", "Reply briefly to the user's request."]
         return cmd
 
+    def _provider_endpoints(self) -> tuple[list[str], list[int]]:
+        """(hosts, localhost ports) of the providers in `pi.models_file`."""
+        hosts: list[str] = []
+        ports: list[int] = []
+        if self.models_file is None:
+            return hosts, ports
+        from urllib.parse import urlsplit
+
+        try:
+            providers = json.loads(Path(self.models_file).expanduser().read_text())["providers"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return hosts, ports
+        for provider in providers.values() if isinstance(providers, dict) else ():
+            url = urlsplit(str(provider.get("baseUrl", ""))) if isinstance(provider, dict) else None
+            if url is None or not url.hostname:
+                continue
+            if url.hostname in LOCAL_HOSTS:
+                ports.append(url.port or (443 if url.scheme == "https" else 80))
+            else:
+                hosts.append(url.hostname)
+        return hosts, ports
+
+    def _sandboxed(
+        self, cmd: list[str], request: OperatorRequest, candidate_dir: Path, env: dict[str, str]
+    ) -> sandbox.Launch:
+        """The command as it starts: inside the sandbox, writing only to the
+        candidate dir, its sessions and pi's isolated home, and without
+        internet reaching only its model providers."""
+        policy = request.sandbox
+        if policy is None:
+            if not request.allow_internet:
+                raise sandbox.SandboxUnavailable(sandbox.NEEDS_SANDBOX)
+            return sandbox.Launch(list(cmd), {})
+        hosts, ports = self._provider_endpoints()
+        hosts += OPENROUTER_HOSTS if self.auth == "openrouter" else MODEL_HOSTS
+        policy = policy.writable(
+            candidate_dir, self._session_dir(candidate_dir), env["PI_CODING_AGENT_DIR"]
+        ).for_agent(request.allow_internet, hosts=hosts, local_ports=ports)
+        return sandbox.launch(list(cmd), policy)
+
     def preflight(self, request: OperatorRequest) -> OperatorResult:
         """Make the cheap, tool-free provider call used before search work."""
         return self._invoke(request, no_tools=True)
@@ -331,6 +381,9 @@ class PiCliAgent:
         try:
             child_env = pi_env(self.auth, self.models_file)
             child_env.pop("HILLCLIMB_SAMPLING", None)
+            started = self._sandboxed(cmd, request, candidate_dir, child_env)
+            cmd = started.argv
+            child_env.update(started.env)
             if request.sampling:
                 child_env["HILLCLIMB_SAMPLING"] = json.dumps(
                     request.sampling, sort_keys=True, separators=(",", ":")

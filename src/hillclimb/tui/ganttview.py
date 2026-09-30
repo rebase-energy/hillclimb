@@ -1,6 +1,6 @@
 """The operator timeline of one search — a cell-native gantt, live.
 
-One row per operator slot (lanes reconstructed in gantt.py), one bar per
+One row per agent slot (lanes reconstructed in gantt.py), one bar per
 candidate coloured by its operator: the dim stretch is the agent writing
 code, the bright stretch the verifier running, `◆` the moment it scored.
 Running bars grow toward the right edge every tick and end in `▶`; a slot

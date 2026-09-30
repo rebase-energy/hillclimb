@@ -1047,20 +1047,20 @@ def test_run_with_several_policies_launches_a_mixed_fleet(config, monkeypatch, t
     result = CliRunner().invoke(cli.app, [
         "run", "circle-packing", "--budget", "1m", "--agent", "dummy",
         "--climber", "greedy", "--climber", "openevolve", "--climber", "gepa",
-        "--arm-set", "gepa:concurrency.parallel_agents=1", "--set", "learning.enabled=false",
-        "--experiment", "three-way",
+        "--experiment-set", "gepa:concurrency.parallel_agents=1", "--set", "learning.enabled=false",
+        "--study", "three-way",
     ])
 
     assert result.exit_code == 0, result.output
     (call,) = calls
     assert call["target"] == "circle-packing" and call["climber"] is None
     assert call["engines"] == [
-        FleetEngine(arm="greedy", climber="greedy"),
-        FleetEngine(arm="openevolve", climber="openevolve"),
-        FleetEngine(arm="gepa", climber="gepa", overrides=("concurrency.parallel_agents=1",)),
+        FleetEngine(experiment="greedy", climber="greedy"),
+        FleetEngine(experiment="openevolve", climber="openevolve"),
+        FleetEngine(experiment="gepa", climber="gepa", overrides=("concurrency.parallel_agents=1",)),
     ]
-    assert call["experiment"] == "three-way" and call["overrides"] == ["learning.enabled=false"]
-    assert config.climber.ref == "greedy"  # the parent's config is not bent to any one arm
+    assert call["study"] == "three-way" and call["overrides"] == ["learning.enabled=false"]
+    assert config.climber.ref == "greedy"  # the parent's config is not bent to any one experiment
     assert "3 searches (greedy, openevolve, gepa)" in result.output
     assert "hillclimb experiment report three-way" in result.output
 
@@ -1072,22 +1072,22 @@ def test_run_mixed_fleet_repeats_every_arm_and_rejects_stray_flags(config, monke
         "run", "circle-packing", "--climber", "greedy", "--climber", "gepa", "--parallel-searches", "2",
     ])
     assert result.exit_code == 0, result.output
-    assert [(e.arm, e.repeat) for e in calls[0]["engines"]] == [("greedy", 1), ("gepa", 1), ("greedy", 2), ("gepa", 2)]
+    assert [(e.experiment, e.repeat) for e in calls[0]["engines"]] == [("greedy", 1), ("gepa", 1), ("greedy", 2), ("gepa", 2)]
     assert "hillclimb experiment report 20260910-120000-cp" in result.output
 
     for extra, message in (
-        (["--arm", "x"], "--arm/--run-id do not apply"),
-        (["--arm-set", "openevolve:concurrency.parallel_agents=1"], "unknown arm"),
-        (["--arm-set", "gepa-concurrency.parallel_agents=1"], "ARM:KEY=VALUE"),
+        (["--experiment", "x"], "--experiment/--run-id do not apply"),
+        (["--experiment-set", "openevolve:concurrency.parallel_agents=1"], "unknown experiment"),
+        (["--experiment-set", "gepa-concurrency.parallel_agents=1"], "EXPERIMENT:KEY=VALUE"),
     ):
         # a wide terminal: rich wraps (and elides) usage errors in narrow boxes
         result = CliRunner().invoke(
             cli.app, ["run", "circle-packing", "--climber", "greedy", "--climber", "gepa", *extra], env={"COLUMNS": "300"}
         )
         assert result.exit_code != 0 and message in result.output, (extra, result.output)
-    # a single policy is the classic path; --arm-set has nothing to attach to
+    # a single policy is the classic path; --experiment-set has nothing to attach to
     result = CliRunner().invoke(
-        cli.app, ["run", "circle-packing", "--climber", "gepa", "--arm-set", "gepa:x=1"], env={"COLUMNS": "300"}
+        cli.app, ["run", "circle-packing", "--climber", "gepa", "--experiment-set", "gepa:x=1"], env={"COLUMNS": "300"}
     )
     assert result.exit_code != 0 and "needs a mixed fleet" in result.output
     assert len(calls) == 1

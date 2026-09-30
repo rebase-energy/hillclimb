@@ -7,4 +7,4 @@ chart_baselines:
   OpenEvolve: 2.6359773947566274
   AlphaEvolve: 2.6359830849176067
 time_budget_s: 900
-allow_network: false
+allow_internet_during_solution: false

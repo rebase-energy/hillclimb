@@ -321,7 +321,7 @@ def chart(
 
     One staircase across every search of the problem, every scored candidate
     a dot (bright where it set a new best, dim where it missed), plus optional
-    problem-config baselines; an experiment gets one line per arm instead.
+    problem-config baselines; a study gets one line per experiment instead.
     Refreshes as candidates land.
     Keys: r=refresh, t=toggle improvement text, d=detail
     (every scored candidate as a mark, parent edges, accepted lineage bold),
@@ -471,7 +471,7 @@ app.add_typer(similarity_app, name="similarity")
 _SIMILARITY_SEARCH = typer.Argument(None, help="latest (default), <run-id>, or <run-id>/<search-id>")
 
 
-_SIMILARITY_SINGLE = typer.Option(False, "--single", help="One search only, even when it is an experiment arm")
+_SIMILARITY_SINGLE = typer.Option(False, "--single", help="One search only, even when it is one experiment of a study")
 
 
 @similarity_app.callback()
@@ -500,8 +500,8 @@ def similarity_map(
     One 3D graph: lineage edges join parent to child, the best-so-far
     sequence is a gold trail, colour is score rank (cold to hot; the
     champion a gold diamond, the origin a white open diamond), shape the
-    tree's fate. An experiment arm opens its whole run instead, coloured by
-    arm like `chart` (--single for the one-search view). Keys: m cycles
+    tree's fate. A study's experiment opens its whole run instead, coloured by
+    experiment like `chart` (--single for the one-search view). Keys: m cycles
     behavioral/structural/blend, v opens the reference view, space
     replays the search growing, s toggles the idle spin; hover reads a
     candidate's distances to the selected one, click dims everything
@@ -518,9 +518,9 @@ def similarity_reference(search: str = _SIMILARITY_SEARCH, single: bool = _SIMIL
     a reference candidate — the origin the search grew from (its seed, else
     its baseline) by default, `c` toggles to the current champion — coloured
     by score rank (cold to hot; the champion is gold, the reference white).
-    A search that is an experiment arm opens the whole run instead: every
+    A search that is one experiment of a study opens the whole run instead: every
     search of that problem in one cube, measured from the shared seed,
-    coloured by arm like `chart`, n/p stepping through the run's problems
+    coloured by experiment like `chart`, n/p stepping through the run's problems
     (--single for the one-search view). v opens the map. Drag rotates,
     scroll zooms, q quits.
     """
@@ -675,7 +675,7 @@ def _open_similarity(search: str | None, single: bool, view: str, metric: str = 
     higher = bool(meta.higher_is_better)
     shared = dict(output_artifacts=meta.output_artifacts, fingerprint_path=fingerprint_path)
 
-    if meta.experiment and meta.arm and not single:
+    if meta.study and meta.experiment and not single:
         inputs = search_inputs(store, run_inputs(store, record.run_id, meta.problem_key))
         reference: str | None = None
         if view == "map":
