@@ -20,16 +20,11 @@ like policies are:
 
 from __future__ import annotations
 
-import hashlib
-import importlib
-import importlib.util
-import inspect
-import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from hillclimb._moved import modernize
+from hillclimb.modules import refs
 from hillclimb.modules.similarity.base import (
     SimilarityScore,
     SimilarityUnavailable,
@@ -60,10 +55,11 @@ __all__ = [
     "sparse_cosine",
 ]
 
-SCORE_FILE_SUFFIX = ".py"
-SCORE_ATTR = "SIMILARITY_SCORE"
+KIND = "similarity"
+SCORE_ATTR = refs.KINDS[KIND].attr  # SIMILARITY_SCORE
 
-_SCORES: dict[str, type[SimilarityScore]] = {}
+# the registry itself lives with every other kind's, in modules/refs.py
+_SCORES: dict[str, type[SimilarityScore]] = refs.KINDS[KIND].registry
 
 
 def register_score(cls: type[SimilarityScore], name: str | None = None) -> type[SimilarityScore]:
@@ -71,71 +67,22 @@ def register_score(cls: type[SimilarityScore], name: str | None = None) -> type[
     key = name or cls.name
     if not key:
         raise ValueError(f"{cls.__name__} has no name; set `name = ...` or pass one")
-    _SCORES[key] = cls
+    refs.register(KIND, key, cls)
     return cls
 
 
 def registered_scores() -> dict[str, type[SimilarityScore]]:
-    return dict(_SCORES)
+    return refs.registered(KIND)
 
 
 for _builtin in (SolutionCard, ApiCalls, CodeTokens):
     register_score(_builtin)
 
 
-def _is_score_class(obj: Any, module_name: str) -> bool:
-    return (
-        inspect.isclass(obj)
-        and issubclass(obj, SimilarityScore)
-        and obj is not SimilarityScore
-        and obj.__module__ == module_name
-    )
-
-
 def load_score_file(path: Path) -> type[SimilarityScore]:
     """The score class a `.py` file exposes. Import errors and a missing or
     ambiguous class surface as ValueError naming the file."""
-    path = Path(path)
-    if not path.is_file():
-        raise ValueError(f"similarity score file not found: {path}")
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
-    module_name = f"hillclimb_similarity_{path.stem}_{digest}"
-    if module_name in sys.modules:
-        module = sys.modules[module_name]
-    else:
-        spec = importlib.util.spec_from_file_location(module_name, path)
-        if spec is None or spec.loader is None:
-            raise ValueError(f"cannot import similarity score file: {path}")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = module
-        try:
-            spec.loader.exec_module(module)
-        except Exception as exc:  # noqa: BLE001 — user code
-            del sys.modules[module_name]
-            raise ValueError(f"similarity score file {path} failed to import: {type(exc).__name__}: {exc}") from exc
-    target = getattr(module, SCORE_ATTR, None)
-    if target is None:
-        classes = [obj for obj in vars(module).values() if _is_score_class(obj, module_name)]
-        if len(classes) != 1:
-            raise ValueError(
-                f"similarity score file {path} must define exactly one SimilarityScore subclass "
-                f"(found {[c.__name__ for c in classes]}) or set {SCORE_ATTR} = <class>"
-            )
-        target = classes[0]
-    if not (inspect.isclass(target) and issubclass(target, SimilarityScore)):
-        raise ValueError(f"{SCORE_ATTR} in {path} is not a SimilarityScore subclass: {target!r}")
-    return target
-
-
-def _load_import_path(spec: str) -> type[SimilarityScore]:
-    module_name, _, attr = modernize(spec).partition(":")  # a ref written before a move
-    try:
-        target = getattr(importlib.import_module(module_name), attr)
-    except (ImportError, AttributeError) as exc:
-        raise ValueError(f"cannot import similarity score {spec!r}: {exc}") from exc
-    if not (inspect.isclass(target) and issubclass(target, SimilarityScore)):
-        raise ValueError(f"{spec!r} is not a SimilarityScore subclass")
-    return target
+    return refs.resolve_ref(str(path), KIND).target
 
 
 def get_score(
@@ -145,24 +92,8 @@ def get_score(
     relative one — pass `climber.climber_base_dir(config)`), or
     `module:Class`. A class without a `name` is named after the file stem
     or class, so matrices and caches stay labelled."""
-    if name.endswith(SCORE_FILE_SUFFIX):
-        path = Path(name).expanduser()
-        if not path.is_absolute() and base_dir is not None:
-            path = base_dir / path
-        cls = load_score_file(path)
-        fallback = path.stem
-    elif ":" in name:
-        cls = _load_import_path(name)
-        fallback = cls.__name__
-    elif name in _SCORES:
-        cls = _SCORES[name]
-        fallback = name
-    else:
-        raise ValueError(
-            f"unknown similarity score {name!r} (available: {', '.join(sorted(_SCORES))}, "
-            "a path to a .py file, or module:Class)"
-        )
-    score = cls(dict(params or {}))
+    resolved = refs.resolve_ref(name, KIND, base_dir=base_dir)
+    score = resolved.target(dict(params or {}))
     if not score.name:
-        score.name = fallback  # type: ignore[misc] — instance attribute shadows the ClassVar
+        score.name = resolved.label  # type: ignore[misc] — instance attribute shadows the ClassVar
     return score

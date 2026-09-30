@@ -43,6 +43,7 @@ from hillclimb.harness.loop import PolicyLoop, Loop
 from hillclimb.modules.operators import Operator
 from hillclimb.modules.operators.builtin import BUILTIN_OPERATORS
 from hillclimb.modules.memory.base import DEFAULT_GRAPH, GraphModule, MemoryKind
+from hillclimb.modules.refs import ClimberLoadError  # noqa: F401 — one error for every module that cannot load
 
 MANIFEST = "climber.yaml"
 BUNDLED_DIR = Path(__file__).parent / "climbers"
@@ -67,8 +68,6 @@ def climber_base_dir(config) -> Path | None:
     return getattr(config, "hillclimb_dir", None)
 
 
-class ClimberLoadError(ValueError):
-    """The climber cannot be loaded; the message names the file and the fix."""
 
 
 class ClimberManifest(BaseModel):

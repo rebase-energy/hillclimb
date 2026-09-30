@@ -31,7 +31,7 @@ def in_domain(values: dict) -> bool:
 
 
 def test_registry_rejects_unknown_names():
-    with pytest.raises(ValueError, match="Unknown tuner"):
+    with pytest.raises(ValueError, match="unknown tuner 'grid' \\(available: optuna, random"):
         get_tuner("grid")
 
 
