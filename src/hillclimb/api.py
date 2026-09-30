@@ -407,10 +407,12 @@ def create_search(
     # prompt that names a token nothing fills — fails here, before a search
     # dir exists
     climber = search_climber(config)
-    climber.brain  # noqa: B018
     climber.operator_set()
     climber.tuner()
     climber.graph_module()
+    # ...and its loop must build: a param the policy does not have, a
+    # selector setting that does not exist, a serial loop asked to run wide
+    climber.build_loop(parallelism=max(1, config.concurrency.parallel_agents), log=lambda *_: None)
     problems = climber.lint_prompts()
     if problems:
         raise ValueError(f"climber {climber.name}: prompts do not lint clean:\n  " + "\n  ".join(problems))
@@ -911,7 +913,16 @@ def execute_search(
     problems = climber.lint_prompts()
     if problems:
         raise ValueError(f"climber {climber.name}: prompts do not lint clean: " + "; ".join(problems))
-    loop = build_loop(config, complexity_start=_offset, log=log, search_dir=search_dir)
+    # what memory learned about how to start, fixed when the search first
+    # runs: a resume reads the record, never what the knowledge says by now
+    record = store.search(key)
+    priors = record.meta.memory_priors if record is not None else None
+    if priors is None:
+        priors = {"complexity_start": _offset} if _offset else {}
+        if record is not None:
+            record.meta.memory_priors = priors
+            store.record_search(record.meta)
+    loop = build_loop(config, priors=priors, log=log, search_dir=search_dir)
     harness = Harness(
         problem=problem,
         config=config,

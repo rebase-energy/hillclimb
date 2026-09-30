@@ -15,7 +15,7 @@ from hillclimb.harness.budget import BudgetManager
 from hillclimb.harness.candidate import Candidate
 from hillclimb.harness.dirs import create_search_dir
 from hillclimb.harness.journal import Journal
-from hillclimb.modules.policies.greedy import GreedyPolicy
+from hillclimb.modules.policies.greedy import Greedy
 from hillclimb.harness.evaluation import accept_band
 from hillclimb.modules.policies.base import TUNE_ACTION, Action, BudgetView, InflightRef, SearchState
 from tests.harness_factory import SearchRig
@@ -63,7 +63,7 @@ def make_searcher(task, config, agent, max_candidates=3, holdout=False, **policy
         problem=task, config=config, journal=journal, agent=agent,
         executor=executor_for(task), budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir, max_candidates=max_candidates, log=lambda *_: None,
-        policy=GreedyPolicy(params=config.climber.params), **kwargs,
+        policy=Greedy(params=config.climber.params), **kwargs,
     )
     return searcher, journal, search_dir
 
@@ -241,45 +241,45 @@ def seeded_journal(tmp_path, *candidates) -> Journal:
 class TestGreedyTuneRule:
     def test_off_by_default_for_undeclared_candidates(self, tmp_path, config):
         journal = seeded_journal(tmp_path, make_candidate("c001", 0.5, candidate_dir="/tmp/x"))
-        assert GreedyPolicy().tune_target(make_view(journal, config)) is None
+        assert Greedy().tune_target(make_view(journal, config)) is None
 
     def test_budget_counts_trials_and_inflight(self, tmp_path, config):
         journal = seeded_journal(tmp_path, tunable("c001", 0.5))
-        policy = GreedyPolicy(params={"tune_budget": 2})
+        policy = Greedy(params={"tune_budget": 2})
         assert policy.tune_target(make_view(journal, config)).candidate_id == "c001"
         one_inflight = (InflightRef("c001", TUNE_ACTION, None, trial_index=1),)
         assert policy.tune_target(make_view(journal, config, one_inflight)) is None  # tune_parallel=1
-        policy = GreedyPolicy(params={"tune_budget": 2, "tune_parallel": 2})
+        policy = Greedy(params={"tune_budget": 2, "tune_parallel": 2})
         assert policy.tune_target(make_view(journal, config, one_inflight)) is not None
         two = one_inflight + (InflightRef("c001", TUNE_ACTION, None, trial_index=2),)
         assert policy.tune_target(make_view(journal, config, two)) is None  # budget spent
         spent = seeded_journal(tmp_path / "b", tunable("c002", trials=[trial(0.5), trial(0.6, index=1), trial(0.4, index=2, is_best=False)]))
         assert policy.tune_target(make_view(spent, config)) is None
-        assert GreedyPolicy(params={"tune_budget": 0}).tune_target(make_view(journal, config)) is None
+        assert Greedy(params={"tune_budget": 0}).tune_target(make_view(journal, config)) is None
 
     def test_gate_modes(self, tmp_path, config):
         config.evaluation.min_improvement = 0.05
         journal = seeded_journal(
             tmp_path, tunable("c001", 0.9, is_best=True), tunable("c002", 0.87), tunable("c003", 0.5),
         )
-        picks = lambda **p: GreedyPolicy(params={"tune_budget": 8, **p}).tune_target(make_view(journal, config))  # noqa: E731
+        picks = lambda **p: Greedy(params={"tune_budget": 8, **p}).tune_target(make_view(journal, config))  # noqa: E731
         assert picks(tune_gate="best").candidate_id == "c001"
         assert picks(tune_gate="band").candidate_id == "c001"  # best first
         # once the best is spent, the band admits c002 (within 0.05) but not c003
         spent_best = tunable("c001", trials=[trial(0.9), *[trial(0.8, index=i, is_best=False) for i in range(1, 9)]], is_best=True)
         journal = seeded_journal(tmp_path / "b", spent_best, tunable("c002", 0.87), tunable("c003", 0.5))
-        picks = lambda **p: GreedyPolicy(params={"tune_budget": 8, **p}).tune_target(make_view(journal, config))  # noqa: E731
+        picks = lambda **p: Greedy(params={"tune_budget": 8, **p}).tune_target(make_view(journal, config))  # noqa: E731
         assert picks(tune_gate="band").candidate_id == "c002"
         assert picks(tune_gate="best") is None
         journal = seeded_journal(tmp_path / "c", spent_best, tunable("c003", 0.5))
-        picks = lambda **p: GreedyPolicy(params={"tune_budget": 8, **p}).tune_target(make_view(journal, config))  # noqa: E731
+        picks = lambda **p: Greedy(params={"tune_budget": 8, **p}).tune_target(make_view(journal, config))  # noqa: E731
         assert picks(tune_gate="band") is None
         assert picks(tune_gate="always").candidate_id == "c003"
 
     def test_burst_interleaves_with_agent_proposals(self, tmp_path, config):
         cand = tunable("c001", trials=[trial(0.5), trial(0.6, index=1), trial(0.4, index=2, is_best=False)])
         journal = seeded_journal(tmp_path, cand)
-        policy = GreedyPolicy(params={"tune_budget": 8, "tune_burst": 2})
+        policy = Greedy(params={"tune_budget": 8, "tune_burst": 2})
         assert policy.tune_target(make_view(journal, config)) is None  # 2 spent, no agent since
         later = seeded_journal(tmp_path / "b", cand, make_candidate("c002", 0.3, candidate_dir="/tmp/x"))
         assert policy.tune_target(make_view(later, config)).candidate_id == "c001"
@@ -289,7 +289,7 @@ class TestGreedyTuneRule:
     def test_no_tune_without_headroom_for_a_trial(self, tmp_path, config):
         slow = tunable("c001", trials=[trial(0.5, duration_s=100.0)])
         journal = seeded_journal(tmp_path, slow)
-        policy = GreedyPolicy(params={"tune_budget": 8})
+        policy = Greedy(params={"tune_budget": 8})
         assert policy.tune_target(make_view(journal, config, remaining_s=120.0)) is None  # 1.5x100 > 119
         assert policy.tune_target(make_view(journal, config, remaining_s=200.0)) is not None
         quick = seeded_journal(tmp_path / "b", tunable("c002", trials=[trial(0.5, duration_s=1.0)]))
@@ -298,16 +298,16 @@ class TestGreedyTuneRule:
 
     def test_propose_prefers_tune_over_improve_once_drafts_exist(self, tmp_path, config):
         journal = seeded_journal(tmp_path, tunable("c001", 0.5))
-        action = GreedyPolicy(params={"num_drafts": 1, "tune_budget": 2}).propose(make_view(journal, config))
+        action = Greedy(params={"num_drafts": 1, "tune_budget": 2}).propose(make_view(journal, config))
         assert action == Action(operator=TUNE_ACTION, target_id="c001")
-        action = GreedyPolicy(params={"num_drafts": 1, "tune_budget": 0}).propose(make_view(journal, config))
+        action = Greedy(params={"num_drafts": 1, "tune_budget": 0}).propose(make_view(journal, config))
         assert action.operator == "improve"
 
     def test_same_journal_same_proposals(self, tmp_path, config):
         journal = seeded_journal(tmp_path, tunable("c001", 0.5))
         params = {"num_drafts": 1, "tune_budget": 2}
-        a = GreedyPolicy(params=params).propose(make_view(journal, config))
-        b = GreedyPolicy(params=params).propose(make_view(Journal(tmp_path / "journal.jsonl"), config))
+        a = Greedy(params=params).propose(make_view(journal, config))
+        b = Greedy(params=params).propose(make_view(Journal(tmp_path / "journal.jsonl"), config))
         assert a == b
 
 

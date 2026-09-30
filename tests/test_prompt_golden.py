@@ -94,10 +94,9 @@ def test_openevolve_prompts_match_golden(task, config, tmp_path):
     from tests.factories import make_policy
     from tests.harness_factory import SearchRig
     from tests.conftest import local_executor, ok_script
-    from tests.test_openevolve_policy import PARAMS
+    from tests.test_openevolve_policy import PARAMS, block
 
-    name_climber(config, "openevolve")
-    config.climber.params = {**PARAMS, "num_drafts": 2}
+    config.apply_overrides({"climber": block({**PARAMS, "num_drafts": 2})})
     agent = FakeAgent()
     for score, note in ((0.6, "one\n"), (0.7, "two\n"), (0.8, "three\n")):
         agent.queue(script=ok_script(score), notes=note)
@@ -106,7 +105,7 @@ def test_openevolve_prompts_match_golden(task, config, tmp_path):
         problem=task, config=config, journal=Journal(search_dir / "journal.jsonl"),
         agent=agent, executor=local_executor(), budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir, max_candidates=4, log=lambda *_: None,
-        policy=make_policy("openevolve", config.climber.params),
+        policy=make_policy(config.climber),
     ).run()
     _check("openevolve", collect_prompts(search_dir, tmp_path))
 

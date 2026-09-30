@@ -23,7 +23,7 @@ from hillclimb.climber import (
     tree_sha256,
 )
 from hillclimb.harness.loop import PolicyLoop, Loop
-from hillclimb.modules.policies.greedy import GreedyPolicy
+from hillclimb.modules.policies.greedy import Greedy
 from hillclimb.modules.policies.base import Action
 from tests.conftest import ok_script
 from tests.harness_factory import make_harness
@@ -92,7 +92,7 @@ def test_the_bundled_climbers_load_and_name_their_modules():
     assert bundled_climbers() == ["gepa", "greedy", "openevolve"]
     greedy = load_climber("greedy")
     loop = greedy.build_loop(params={"num_drafts": 1})
-    assert isinstance(loop, PolicyLoop) and isinstance(loop.policy, GreedyPolicy)
+    assert isinstance(loop, PolicyLoop) and isinstance(loop.policy, Greedy)
     assert loop.policy.param("num_drafts") == 1 and loop.policy.param("ensemble_top_k") == 3  # overlay, then the class's default
     assert greedy.operator_set().names() == ("draft", "debug", "improve", "ensemble")
     assert greedy.operator_set().get("draft").params == {}  # the operator's own defaults
@@ -106,7 +106,10 @@ def test_the_bundled_climbers_load_and_name_their_modules():
 def test_a_block_is_a_climber(tmp_path):
     """The `climber:` block: a bare string is a preset or one file, a mapping
     names each module; with neither `policy:` nor `loop:` it is greedy."""
-    assert ClimberSpec.model_validate("openevolve").block()["policy"] == "openevolve"
+    assert ClimberSpec.model_validate("openevolve").block() == {
+        "name": "openevolve", "policy": "greedy", "params": {"ensemble": False, "tune_budget": 0},
+        "select": "map-elites", "tuner": "random", "memory": "files", "graph": "knowledge-graph",
+    }  # a preset is a composition: greedy's schedule over the MAP-Elites selector
     assert ClimberSpec.model_validate({"params": {"num_drafts": 5}}).policy == "greedy"
     spec = ClimberSpec.model_validate({"policy": "mine.py:Mine", "operators": ["draft", {"ops.py:Cross": None}]})
     assert spec.label == "mine" and spec.operator_items() == [("draft", {}), ("ops.py:Cross", {})]
@@ -240,7 +243,10 @@ def test_a_snapshot_is_the_climber_it_was_taken_of(tmp_path):
         ("policy: policy.py\nsimilarity: [api-calls]\n", "`similarity`: .*viewer's setting"),
         ("policy: policy.py\nholdout_timing: after\n", "`holdout_timing`: a loop declares it on its class"),
         ("policy: nope.py\n", "climber file not found: .*nope.py"),
-        ("policy: nonsense\n", r"unknown policy 'nonsense' \(available: greedy, openevolve"),
+        ("policy: nonsense\n", r"unknown policy 'nonsense' \(available: greedy"),
+        ("policy: policy.py\nselect: nonsense\n", r"unknown selector 'nonsense' \(available: best, map-elites"),
+        ("policy: greedy\nparams: {num_draft: 2}\n", "greedy has no param 'num_draft'"),
+        ("loop: gepa\nselect: best\n", "a `loop:` does its own selection"),
         ("loop: nonsense\n", r"unknown loop 'nonsense' \(available: gepa"),
         ("policy: operators.py\n", "exactly one policy class"),
         ("policy: policy.py\noperators: [operators.py:Nope]\n", "defines no Nope"),
@@ -341,7 +347,7 @@ def test_a_run_folder_written_by_0_5_still_loads(tmp_path):
     })
     assert meta.schema_version == 4 and (meta.climber, meta.climber_ref) == ("greedy", "greedy")
     block = meta.climber_spec
-    assert block["policy"] == "hillclimb.modules.policies.greedy:GreedyPolicy"
+    assert block["policy"] == "hillclimb.modules.policies.greedy:GreedyPolicy"  # as recorded; mapped when it is imported
     assert block["params"]["num_drafts"] == 1 and block["params"]["ensemble_top_k"] == 3  # the user's over the manifest's
     assert block["tuner"] == "random" and block["tuner_params"] == {"seed": 3}
     assert "description" not in block and "similarity" not in block
@@ -414,7 +420,10 @@ def test_execute_search_hands_the_harness_the_climbers_tuner(task, config, tmp_p
 def test_modernize_maps_only_what_moved():
     from hillclimb._moved import modernize
 
-    assert modernize("hillclimb.policies.greedy:GreedyPolicy") == "hillclimb.modules.policies.greedy:GreedyPolicy"
+    # a module that moved AND a class that was renamed since: both hops
+    assert modernize("hillclimb.policies.greedy:GreedyPolicy") == "hillclimb.modules.policies.greedy:Greedy"
+    assert modernize("hillclimb.modules.policies.greedy:GreedyPolicy") == "hillclimb.modules.policies.greedy:Greedy"
+    assert modernize("hillclimb.modules.policies.openevolve:OpenEvolvePolicy") == "hillclimb.modules.policies.compat:OpenEvolvePolicy"
     assert modernize("hillclimb.similarity_scores.builtin:ApiCalls") == "hillclimb.modules.similarity.builtin:ApiCalls"
     # 0.6 moved the gepa library out of integrations/: a search recorded before resumes
     assert modernize("hillclimb.integrations" + ".gepa.loop:GepaLoop") == "hillclimb.climbers.gepa.loop:GepaLoop"
@@ -423,13 +432,13 @@ def test_modernize_maps_only_what_moved():
 
 
 def test_a_manifest_with_a_pre_move_ref_still_loads(tmp_path):
-    from hillclimb.modules.policies.greedy import GreedyPolicy
+    from hillclimb.modules.policies.greedy import Greedy
 
     root = tmp_path / "old"
     root.mkdir()
     (root / "climber.yaml").write_text("name: old\npolicy: hillclimb.policies.greedy:GreedyPolicy\n")
     loop = load_climber(str(root)).build_loop()
-    assert isinstance(loop.policy, GreedyPolicy)
+    assert isinstance(loop.policy, Greedy)
 
 
 def _legacy_snapshot(search_dir: Path, text: str) -> Path:
@@ -458,7 +467,7 @@ def test_a_pre_06_snapshot_of_a_bundled_climber_still_loads(tmp_path, name):
         assert climber.holdout_timing == "after"  # the manifest asked for it
         assert loop.params.max_metric_calls == 50
     else:
-        assert not climber.is_loop and type(loop.policy).__name__ == {"greedy": "GreedyPolicy", "openevolve": "OpenEvolvePolicy"}[name]
+        assert not climber.is_loop and type(loop.policy).__name__ == {"greedy": "Greedy", "openevolve": "OpenEvolvePolicy"}[name]
         assert climber.operator_set().names() == ("draft", "debug", "improve", "ensemble")
         assert climber.operator_set().get("draft").params == {"retrieval": True}
         assert loop.policy.params["num_drafts"] == 3  # the manifest's params
@@ -468,7 +477,7 @@ def test_a_pre_06_snapshot_of_a_bundled_climber_still_loads(tmp_path, name):
 def test_a_search_snapshot_with_a_pre_move_ref_still_resumes(tmp_path):
     """A run folder written before the package-layout move names the policy
     by the old module path, and resume loads that snapshot."""
-    from hillclimb.modules.policies.greedy import GreedyPolicy
+    from hillclimb.modules.policies.greedy import Greedy
 
     text = (LEGACY_SNAPSHOTS / "greedy.yaml").read_text().replace(
         "hillclimb.modules.policies.greedy:", "hillclimb.policies.greedy:"
@@ -476,7 +485,7 @@ def test_a_search_snapshot_with_a_pre_move_ref_still_resumes(tmp_path):
     assert "hillclimb.policies.greedy:GreedyPolicy" in text  # the old spelling is what we test
     _legacy_snapshot(tmp_path, text)
     loop = load_snapshot(tmp_path, name="greedy").build_loop()
-    assert isinstance(loop.policy, GreedyPolicy)
+    assert isinstance(loop.policy, Greedy)
 
 
 def test_a_pre_06_one_file_snapshot_still_loads(tmp_path):

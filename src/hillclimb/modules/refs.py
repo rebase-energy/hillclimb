@@ -93,6 +93,8 @@ KINDS: dict[str, Kind] = {
     for kind in (
         Kind("policy", "policy", attr="POLICY", duck=("propose", "observe"), home="hillclimb.modules.policies"),
         Kind("loop", "loop", attr="LOOP", base="hillclimb.harness.loop:Loop", home="hillclimb.climbers"),
+        Kind("select", "selector", attr="SELECTOR", base="hillclimb.modules.selectors.base:Selector",
+             home="hillclimb.modules.selectors"),
         Kind("operator", "operator", base="hillclimb.modules.operators.base:Operator",
              home="hillclimb.modules.operators"),
         Kind("tuner", "tuner", attr="TUNER", duck=("ask",), home="hillclimb.modules.tuners"),

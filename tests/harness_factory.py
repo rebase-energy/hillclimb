@@ -32,7 +32,7 @@ def make_harness(task, config, agent, *, name: str = "test-search", **kwargs):
 
 from hillclimb.harness.candidate import Candidate  # noqa: E402
 from hillclimb.harness.loop import PolicyLoop  # noqa: E402
-from hillclimb.modules.policies.greedy import GreedyPolicy  # noqa: E402
+from hillclimb.modules.policies.greedy import Greedy  # noqa: E402
 from hillclimb.modules.policies.base import TUNE_ACTION, Action, Policy  # noqa: E402
 
 
@@ -40,12 +40,14 @@ class LiveParams(dict):
     """`config.climber.params`, read at access time — tests set knobs on the
     config after building the rig, and replace the dict wholesale."""
 
-    def __init__(self, config):
+    def __init__(self, config, **fixed):
         super().__init__()
         self._config = config
+        self._fixed = fixed  # what the rig itself pins (a complexity offset), under the config's
 
     def get(self, name, default=None):
-        return self._config.climber.params.get(name, default)
+        params = self._config.climber.params
+        return params[name] if name in params else self._fixed.get(name, default)
 
     def __getitem__(self, name):
         return self._config.climber.params[name]
@@ -70,8 +72,8 @@ class SearchRig(Harness):
     def __init__(self, *args, complexity_start: int = 0, policy: Policy | None = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.complexity_start = complexity_start
-        self.policy = policy or GreedyPolicy(
-            complexity_start=complexity_start, params=LiveParams(self.config)
+        self.policy = policy or Greedy(
+            params=LiveParams(self.config, complexity_start=complexity_start)
         )
         self._loop = PolicyLoop(self.policy)
         self._loop.catch_up(self)  # the resume contract: the policy replays the journal

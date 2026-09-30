@@ -59,7 +59,7 @@ search:
 
 def test_policy_dotted_override():
     config = Config.load(**{"search.policy": "openevolve"})
-    assert config.climber.policy == "openevolve"
+    assert config.climber.label == "openevolve" and config.climber.select == "map-elites"
 
 
 def test_subscription_env_strips_api_key(monkeypatch):
@@ -216,7 +216,7 @@ def test_the_climber_block_is_the_climber():
     it DEFINES the folder's climber. A bare name is a preset."""
     from hillclimb.config import parse_set_overrides
 
-    assert Config.model_validate({"climber": "openevolve"}).climber.policy == "openevolve"
+    assert Config.model_validate({"climber": "openevolve"}).climber.select == "map-elites"
     assert Config.model_validate({"climber": "gepa"}).climber.block()["loop"] == "gepa"
     config = Config.model_validate(
         {"climber": {"policy": "greedy", "params": {"num_drafts": 5}, "tuner": "optuna", "memory": "none",
@@ -237,8 +237,8 @@ def test_the_climber_block_is_the_climber():
         {"climber": {"loop": "gepa", "params": {"max_metric_calls": 9}}}
     ).climber.block()
     # a block, inline, as a child engine receives it
-    config.apply_overrides(parse_set_overrides(['climber={"policy": "openevolve", "params": {"num_islands": 2}}']))
-    assert (config.climber.policy, config.climber.loop, config.climber.params) == ("openevolve", None, {"num_islands": 2})
+    config.apply_overrides(parse_set_overrides(['climber={"policy": "mine.py", "params": {"k": 2}}']))
+    assert (config.climber.policy, config.climber.loop, config.climber.params) == ("mine.py", None, {"k": 2})
     # a climber has a policy or a loop: naming one drops the other
     config.apply_overrides(parse_set_overrides(["climber.loop=gepa"]))
     assert (config.climber.policy, config.climber.loop) == (None, "gepa")
@@ -266,9 +266,11 @@ def test_the_0_5_climber_block_still_loads():
         {"climber": {"ref": "openevolve", "params": {"num_islands": 3}, "tuner": None, "memory": None, "graph": None,
                      "tuner_params": {"seed": 2}, "operators": {"draft": {"retrieval": False}}}}
     )
+    # ...and 0.5's openevolve kept MAP-Elites' settings among its params: they are the selector's
     assert config.climber.block() == Config.model_validate({"climber": {
-        "policy": "openevolve", "params": {"num_islands": 3}, "tuner_params": {"seed": 2},
-        "operator_params": {"draft": {"retrieval": False}},
+        "name": "openevolve", "policy": "greedy", "select": "map-elites",
+        "params": {"ensemble": False, "tune_budget": 0}, "select_params": {"num_islands": 3},
+        "tuner_params": {"seed": 2}, "operator_params": {"draft": {"retrieval": False}},
     }}).climber.block()
     config.apply_overrides(parse_set_overrides(["climber.ref=gepa"]))  # the 0.5 way to name one
     assert config.climber.loop == "gepa" and config.climber.params == {}
@@ -308,10 +310,9 @@ def test_a_config_file_written_for_0_3_still_loads():
         "operators": {"draft_retrieval": False, "knowledge_tool": False},
     }
     config = Config.model_validate(old)
-    assert config.climber.policy == "openevolve" and config.climber.tuner == "optuna"
-    assert config.climber.params == {
-        "population_size": 50, "num_drafts": 2, "ensemble": False, "ensemble_top_k": 4,
-    }
+    assert (config.climber.label, config.climber.select, config.climber.tuner) == ("openevolve", "map-elites", "optuna")
+    assert config.climber.params == {"num_drafts": 2, "ensemble": False, "ensemble_top_k": 4, "tune_budget": 0}
+    assert config.climber.select_params == {"population_size": 50}  # MAP-Elites' setting: the selector's
     assert config.climber.operator_params == {"draft": {"retrieval": False}}
     assert config.learning.tool is False
     assert (config.concurrency.parallel_agents, config.evaluation.n_replicates, config.evaluation.noise_k) == (3, 4, 2.0)
@@ -326,8 +327,8 @@ def test_legacy_set_overrides_keep_working_and_removed_keys_say_what_to_do():
         ["search.policy=openevolve", "search.policy_params.population_size=9", "ensemble.top_k=5",
          "search.parallel_agents=2", "operators.improve_ablation=false"]
     ))
-    assert config.climber.policy == "openevolve"
-    assert config.climber.params == {"population_size": 9, "ensemble_top_k": 5}
+    assert config.climber.label == "openevolve"
+    assert config.climber.params == {"ensemble": False, "tune_budget": 0, "population_size": 9, "ensemble_top_k": 5}
     assert config.concurrency.parallel_agents == 2
     assert config.climber.operator_params == {"improve": {"ablation": False}}
     assert current_setting("budget.total_s") == "budget.total_s"  # today's keys pass through

@@ -1,7 +1,7 @@
 """hillclimb.sdk — the one import a climber needs.
 
-A climber is the shareable bundle of exchangeable modules (a `Policy`
-or `Loop`, operators, memory, a tuner, similarity scores) that decides
+A climber is the block of exchangeable modules (a `Policy` with its
+`Selector`, or a `Loop`; operators, memory, a tuner) that decides
 HOW to hillclimb. Everything else — running agents, scoring, holdout, the
 journal, budgets — is the harness, and a climber only ever meets it through
 the names exported here. `tests/test_sdk_imports.py` enforces the other half
@@ -48,6 +48,10 @@ _LAZY = {
     # the accept rule, so a policy agrees with the harness on what "better" means
     "improves": ("hillclimb.harness.evaluation", "improves"),
     "accept_band": ("hillclimb.harness.evaluation", "accept_band"),
+    # which candidate to expand
+    "Selector": ("hillclimb.modules.selectors.base", "Selector"),
+    "Selection": ("hillclimb.modules.selectors.base", "Selection"),
+    "improvable": ("hillclimb.modules.selectors.base", "improvable"),
     # how one attempt is made
     "Operator": ("hillclimb.modules.operators.base", "Operator"),
     "OperatorContext": ("hillclimb.modules.operators.base", "OperatorContext"),
@@ -137,6 +141,7 @@ if TYPE_CHECKING:  # eager for type checkers and editors only
         Policy,
     )
     from hillclimb.modules.similarity.base import SimilarityScore, SimilarityUnavailable, Solution
+    from hillclimb.modules.selectors.base import Selection, Selector, improvable
     from hillclimb.modules.memory.base import GraphEdge, GraphModule, GraphNode, KnowledgeGraph
     from hillclimb.harness.glue import ParkedSearch
     from hillclimb.modules.tuners.base import Observation, Tuner

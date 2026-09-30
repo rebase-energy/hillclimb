@@ -12,6 +12,8 @@ that block:
     climber:
       policy: greedy                 # xor `loop:`
       params: {num_drafts: 5}
+      select: map-elites             # which candidate the policy expands
+      select_params: {num_islands: 3}
       operators: [draft, debug, improve, crossover.py:Crossover]
       operator_params: {draft: {retrieval: false}}
       tuner: optuna
@@ -195,16 +197,60 @@ class Climber:
         """The block's params with an overlay on top."""
         return {**self.spec.params, **dict(overlay or {})}
 
-    def build_loop(self, *, params: Mapping | None = None, complexity_start: int = 0,
+    def _known_params(self) -> dict | None:
+        """The knobs the policy/loop declares (`Policy.defaults()`), or None
+        when it takes free-form params."""
+        declared = getattr(self.brain.target, "defaults", None)
+        return dict(declared()) if callable(declared) else None
+
+    def selector(self):
+        """The selector the policy expands with: the block's `select:`, else
+        the policy class's own default. None for a loop, and for a policy
+        that names none."""
+        from hillclimb.modules.selectors import get_selector
+
+        if self.is_loop:
+            return None
+        ref = self.spec.select or getattr(self.brain.target, "default_selector", None)
+        if ref is None:
+            if self.spec.select_params:
+                raise ClimberLoadError(f"{self.source}: `select_params` without a selector to give them to")
+            return None
+        return get_selector(ref, self.spec.select_params, scope=self.scope)
+
+    def build_loop(self, *, params: Mapping | None = None, priors: Mapping | None = None,
                    parallelism: int = 1, log=print) -> Loop:
-        merged = self.resolved_params(params)
-        offered = {"params": merged, "complexity_start": complexity_start, "parallelism": parallelism, "log": log}
+        """The loop this climber runs: its `loop:`, or a `PolicyLoop` over
+        its `policy:` (with its selector). `priors` are param values memory
+        learned (a draft-complexity offset): they sit UNDER the block's
+        params and reach only a policy that declares the knob. `params` is
+        an overlay for callers that hold a resolved climber."""
         target = self.brain.target
+        known = self._known_params()
+        merged = self.resolved_params(params)
+        if known is not None:
+            if getattr(target, "strict_params", False):
+                unknown = sorted(set(merged) - set(known))
+                if unknown:
+                    raise ClimberLoadError(
+                        f"climber.params: {climber_label(self.spec.brain)} has no param {', '.join(map(repr, unknown))} "
+                        f"(it has: {', '.join(sorted(known))}). A selector's settings go in `select_params`."
+                    )
+            merged = {**{k: v for k, v in (priors or {}).items() if k in known}, **merged}
+        offered = {"params": merged, "parallelism": parallelism, "log": log}
         if self.is_loop:
             loop = refs.construct(target, offered, self.source)
             if not isinstance(loop, Loop):
                 raise ClimberLoadError(f"{self.source}: `loop:` must name a Loop, got {type(loop).__name__}")
             return loop
+        selector = self.selector()
+        if selector is not None:
+            if self.spec.select is not None and not _accepts(target, "selector"):
+                raise ClimberLoadError(
+                    f"{self.source}: `select: {self.spec.select}` — this policy takes no selector "
+                    "(its constructor has no `selector` argument)"
+                )
+            offered["selector"] = selector
         policy = refs.construct(target, offered, self.source)
         for method in ("propose", "observe"):
             if not callable(getattr(policy, method, None)):
@@ -484,6 +530,15 @@ def tree_sha256(root: Path) -> str:
 
 
 # --- helpers ---
+
+
+def _accepts(target, name: str) -> bool:
+    """Does calling `target` take a keyword argument `name`?"""
+    try:
+        parameters = inspect.signature(target).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in parameters or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values())
 
 
 def _classes(module, base: type) -> list[type]:

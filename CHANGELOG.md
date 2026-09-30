@@ -87,6 +87,24 @@ problems:
   `climbers/NAME.py` and prints the block that runs it.
 - **Experiments** name or define a climber with `climber:` (a preset, a
   file, or the block); `climber.<field>` overrides edit it.
+- **A selector slot: `select:`.** A policy decides the kind of move; its
+  selector picks WHICH candidate to expand and what rides along
+  (inspirations, a paragraph of prompt context, a note in the journal).
+  `best` (the default) is what makes greedy greedy; `map-elites` is
+  OpenEvolve's MAP-Elites archive. Its settings are `select_params`. Write
+  your own as a `Selector` subclass in a file: `select: mine.py`.
+- **`openevolve` is a composition, not a policy of its own**: the preset is
+  `{policy: greedy, select: map-elites, params: {ensemble: false,
+  tune_budget: 0}}`. The same schedule runs over any selector, and any
+  policy can take `map-elites`.
+- **`Policy` is a base class** (it was a protocol): list your knobs in
+  `DEFAULTS`, implement `propose`, and `param()`, `resolved_params()`,
+  `debuggable_tip()`, `prospective_branches()`, `draft_complexity()`,
+  `top_distinct()` and `self.selector` are there. A class with just
+  `propose` and `observe` still runs.
+- **A param the policy does not have is an error**, before anything is
+  spent: `climber.params: greedy has no param 'num_draft' (it has: ...)`.
+  It was silently ignored.
 
 **Migrating from 0.5**
 - A directory climber (`climbers/mine/climber.yaml`) is no longer a
@@ -97,6 +115,14 @@ problems:
   load: they read as the block they meant.
 - In a block, `description`, `similarity` and `holdout_timing` are refused
   with what to do instead (a loop declares `holdout_timing` on its class).
+- MAP-Elites' settings (`num_islands`, `feature_dimensions`,
+  `num_inspirations`, `random_seed`, ...) are `climber.select_params` now;
+  among `climber.params` they are refused with that advice. A 0.5 block
+  `climber: {ref: openevolve, params: {...}}` is sorted into the two on read.
+- `GreedyPolicy` is `Greedy` (`hillclimb.modules.policies.greedy`); its
+  `complexity_start` constructor argument is the param `complexity_start`.
+  `OpenEvolvePolicy` is gone as a class to subclass (it survives only so
+  pre-0.6 searches resume).
 - Searches started before 0.6 still load in every view and resume from
   their snapshot. `search.yaml` is schema v4: `climber` (its label),
   `climber_spec` (the block), `climber_sha256`; v2 and v3 records are mapped

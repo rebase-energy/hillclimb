@@ -102,7 +102,8 @@ class TestSpec:
         assert b["climber"] == {"policy": "greedy", "tuner": "optuna", "params": {"ensemble": False}}
         config = Config()
         config.apply_overrides(a)
-        assert config.climber.policy == "openevolve" and config.climber.params == {"num_drafts": 2, "tune_budget": 0}
+        assert config.climber.select == "map-elites"
+        assert config.climber.params == {"ensemble": False, "num_drafts": 2, "tune_budget": 0}
         config = Config()
         config.apply_overrides(b)
         assert (config.climber.tuner, config.climber.params) == ("optuna", {"ensemble": False, "num_drafts": 2})
@@ -126,10 +127,10 @@ class TestOverrides:
             "search.policy=openevolve", "learning.enabled=false", "search.n_replicates=3",
             "search.policy_params={population_size: 50}", "search.policy_params.seed=7", "model=opus",
         ]))
-        assert config.climber.policy == "openevolve"
+        assert config.climber.label == "openevolve"
         assert config.learning.enabled is False
         assert config.evaluation.n_replicates == 3
-        assert config.climber.params == {"population_size": 50, "seed": 7}
+        assert config.climber.params == {"population_size": 50, "seed": 7}  # the dict replaces the preset's, then one key
         assert config.model == "opus"
         with pytest.raises(KeyError, match="search.nope"):
             config.apply_overrides({"search.nope": 1})
@@ -422,13 +423,13 @@ class TestCli:
         monkeypatch.setattr("hillclimb.cli.run._execute", fake_execute)
         _run_problem(
             str(problem), config, budget="1m", study="ab", experiment="b", repeat=1,
-            experiment_overrides=parse_set_overrides(["learning.enabled=false", "search.policy_params={k: 1}"]),
+            experiment_overrides=parse_set_overrides(["learning.enabled=false", "search.policy_params={num_drafts: 1}"]),
         )
         assert seen["config"].learning.enabled is False
-        assert seen["config"].climber.params == {"k": 1}
+        assert seen["config"].climber.params == {"num_drafts": 1}
         meta = load_search_meta(seen["search_dir"])
         assert (meta.study, meta.experiment, meta.repeat, meta.learning_enabled) == ("ab", "b", 1, False)
-        assert meta.experiment_overrides == {"learning.enabled": False, "search.policy_params": {"k": 1}}
+        assert meta.experiment_overrides == {"learning.enabled": False, "search.policy_params": {"num_drafts": 1}}
         with pytest.raises(typer.BadParameter, match="unknown config setting"):
             _run_problem(str(problem), config, budget="1m", experiment_overrides={"search.nope": 1})
 
@@ -653,3 +654,27 @@ class TestSummaryJson:
         data = summary_to_dict(summarize(rows, control="b", noise_floor={"p": 0.001})[0])
         assert data["comparisons"][0]["verdict"] == "worse"
         assert summary_to_dict(summarize([row("a", 1, None, state="crashed")])[0])["comparisons"] == []
+
+
+def test_every_experiment_spec_in_the_repo_builds_its_climbers():
+    """The specs under experiments/ are what people copy: every experiment of
+    every one must resolve to a climber whose loop builds — a param the
+    policy does not have, or a selector setting misplaced, fails here rather
+    than an hour into a study."""
+    import pytest
+
+    from hillclimb.climber import resolve_climber
+
+    specs = sorted((Path(__file__).resolve().parents[1] / "experiments").glob("*.yaml"))
+    assert specs
+    for path in specs:
+        study = load_study(path)
+        for name in study.experiments:
+            config = Config()
+            config.apply_overrides(study.experiment_overrides(name))
+            if config.climber.select == "map-elites":
+                pytest.importorskip("openevolve")
+            climber = resolve_climber(config.climber, path.parent)
+            climber.operator_set()
+            climber.build_loop(parallelism=config.concurrency.parallel_agents, log=lambda *_: None)
+

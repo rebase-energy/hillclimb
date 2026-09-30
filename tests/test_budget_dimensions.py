@@ -9,7 +9,7 @@ from hillclimb.harness.budget import Spend, journal_spend
 from hillclimb.harness.candidate import AgentInfo, Candidate
 from hillclimb.harness.journal import Journal
 from hillclimb.harness.loop import PolicyLoop, Loop
-from hillclimb.modules.policies.greedy import GreedyPolicy
+from hillclimb.modules.policies.greedy import Greedy
 from hillclimb.modules.policies.base import Action
 from hillclimb.harness.status import SearchStatus, StatusWriter
 from tests.conftest import ok_script
@@ -44,7 +44,7 @@ def test_evaluation_budget_ends_the_search_like_the_clock_does(task, config):
         agent.queue(script=ok_script(score), notes="d\n")
     harness, journal, _ = make_harness(task, config, agent)
 
-    selected = harness.execute(PolicyLoop(GreedyPolicy()))
+    selected = harness.execute(PolicyLoop(Greedy()))
 
     assert len(agent.requests) == 3 and harness.spend().evaluations == 3
     assert selected.val_score == 0.7
@@ -92,7 +92,7 @@ def test_token_budget_closes_the_harness(task, config):
     harness, _journal, _ = make_harness(task, config, agent)
     assert harness.view().budget.tokens_remaining == 1500
 
-    harness.execute(PolicyLoop(GreedyPolicy()))
+    harness.execute(PolicyLoop(Greedy()))
 
     # the second call crossed the line; a third never starts
     assert len(agent.requests) == 2 and harness.spend().tokens == 2000

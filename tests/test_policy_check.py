@@ -11,7 +11,7 @@ import pytest
 
 from hillclimb.harness.candidate import Candidate
 from hillclimb.harness.journal import Journal
-from hillclimb.modules.policies.greedy import GreedyPolicy
+from hillclimb.modules.policies.greedy import Greedy
 from hillclimb.modules.policies.base import Action, SearchState
 from hillclimb.modules.policies.check import JournalCase, check_policy
 from tests.test_policy import add_candidate
@@ -40,7 +40,7 @@ def _by_check(report, check: str, journal: str | None = None):
 
 
 def test_greedy_conforms(config, tmp_path):
-    report = check_policy(lambda: GreedyPolicy(), _cases(tmp_path), config)
+    report = check_policy(lambda: Greedy(), _cases(tmp_path), config)
     assert report.ok, report.render()
     assert report.policy == "greedy"
     checks = {f.check for f in report.findings}
@@ -139,7 +139,7 @@ class WritingPolicy:
 
 class SingletonFactory:
     def __init__(self):
-        self.instance = GreedyPolicy()
+        self.instance = Greedy()
 
     def __call__(self):
         return self.instance
@@ -268,11 +268,11 @@ def test_prompt_override_lint_is_part_of_the_check(config, tmp_path):
     prompts = tmp_path / "prompts"
     prompts.mkdir()
     (prompts / "draft.md").write_text("{{description}} and {{no_such_token}}\n")
-    report = check_policy(lambda: GreedyPolicy(), [], config, prompts_dir=prompts)
+    report = check_policy(lambda: Greedy(), [], config, prompts_dir=prompts)
     templates = _by_check(report, "templates")[0]
     assert not templates.ok and "{{no_such_token}}" in templates.detail
     (prompts / "draft.md").write_text("{{description}} only\n")
-    report = check_policy(lambda: GreedyPolicy(), [], config, prompts_dir=prompts)
+    report = check_policy(lambda: Greedy(), [], config, prompts_dir=prompts)
     assert _by_check(report, "templates")[0].ok
 
 

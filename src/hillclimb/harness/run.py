@@ -87,6 +87,11 @@ class SearchMeta(BaseModel):
     # how a search recorded before 0.6 named its climber (a bundled name, a
     # directory, one file); None on every search since
     climber_ref: str | None = None
+    # param values memory learned for this search before its first step (a
+    # draft-complexity offset), laid under the block's params. Recorded when
+    # the search first runs, so a resume starts from the same ones; None
+    # until then
+    memory_priors: dict | None = None
     hillclimb_version: str | None = None
     routing: dict = Field(default_factory=dict)  # RouteConfig dumps by operator
     metric: str
@@ -179,7 +184,7 @@ class SearchMeta(BaseModel):
                 block = expand_name(data["climber"])
             except ValueError:
                 block = {}
-        params = {**(manifest.get("params") or {}), **overlay}
+        params = {**(block.get("params") or {}), **overlay}
         if params:
             block["params"] = params
         if tuner:

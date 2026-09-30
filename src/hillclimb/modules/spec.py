@@ -22,7 +22,12 @@ DEFAULT_POLICY = "greedy"
 # a bare name stands for one of these blocks
 PRESETS: dict[str, dict[str, Any]] = {
     "greedy": {"policy": "greedy"},
-    "openevolve": {"policy": "openevolve"},
+    # quality-diversity search: greedy's schedule over the MAP-Elites
+    # selector, without the moves OpenEvolve has no counterpart for
+    "openevolve": {
+        "name": "openevolve", "policy": "greedy", "select": "map-elites",
+        "params": {"ensemble": False, "tune_budget": 0},
+    },
     "gepa": {"loop": "gepa"},
 }
 
@@ -34,6 +39,15 @@ _GONE = {
 }
 
 
+# what a policy's params could hold in 0.5 that was the schedule's; in an
+# `openevolve` block, anything else was a MAP-Elites setting
+_OPENEVOLVE_SCHEDULE_KNOBS = (
+    "num_drafts", "max_debug_depth", "debug", "complexity_start",
+    "ensemble", "ensemble_reserve_fraction", "ensemble_top_k", "ensemble_max_attempts",
+    "tune_budget", "tune_gate", "tune_parallel", "tune_burst",
+)
+
+
 def _from_05_config(data: dict) -> dict:
     """The `climber:` block hillclimb.yaml held in 0.4/0.5 named a climber
     (`ref:`) and what the user laid over it; `operators:` was that overlay,
@@ -42,13 +56,20 @@ def _from_05_config(data: dict) -> dict:
     if "ref" not in data and not isinstance(data.get("operators"), dict):
         return data
     data = dict(data)
-    base = expand_name(data.pop("ref")) if "ref" in data else {}
+    ref = data.pop("ref", None)
+    base = expand_name(ref) if ref is not None else {}
     overlay = data.pop("operators", None)
     merged = dict(base)
     for key, value in data.items():
         if value is None:  # 0.5 wrote None for "whatever the climber says"
             continue
         merged[key] = {**base.get(key, {}), **value} if key == "params" and isinstance(value, dict) else value
+    if ref == "openevolve" and isinstance(data.get("params"), dict):
+        # 0.5's openevolve policy kept MAP-Elites' settings among its own
+        # params; they are the selector's now
+        theirs = {k: v for k, v in data["params"].items() if k not in _OPENEVOLVE_SCHEDULE_KNOBS}
+        merged["params"] = {k: v for k, v in merged["params"].items() if k not in theirs}
+        merged["select_params"] = {**theirs, **(merged.get("select_params") or {})}
     if isinstance(overlay, dict):
         if overlay:
             merged["operator_params"] = {**overlay, **(merged.get("operator_params") or {})}
@@ -92,6 +113,10 @@ class ClimberSpec(BaseModel):
     policy: str | None = None
     loop: str | None = None
     params: dict[str, Any] = Field(default_factory=dict)
+    # which candidate a policy expands next (`best` unless the policy says
+    # otherwise; `map-elites` for a quality-diversity archive). Only with `policy:`
+    select: str | None = None
+    select_params: dict[str, Any] = Field(default_factory=dict)
     # which operators: names or refs, each optionally with params
     # (`- draft: {retrieval: true}`). None = what the policy/loop declares,
     # else the built-in four — plus any Operator its own file defines
@@ -129,6 +154,8 @@ class ClimberSpec(BaseModel):
             raise ValueError("name one of `policy:` (what to try next) or `loop:` (the whole control flow), not both")
         if self.policy is None and self.loop is None:
             self.policy = DEFAULT_POLICY
+        if self.loop is not None and (self.select is not None or self.select_params):
+            raise ValueError("`select:` picks what a policy expands; a `loop:` does its own selection")
         return self
 
     # --- reading it ---
@@ -159,7 +186,10 @@ class ClimberSpec(BaseModel):
 
     def module_refs(self) -> list[str]:
         """Every module this block names."""
-        return [self.brain, self.tuner, self.graph, *(ref for ref, _ in self.operator_items() or [])]
+        return [
+            self.brain, *([self.select] if self.select else []), self.tuner, self.graph,
+            *(ref for ref, _ in self.operator_items() or []),
+        ]
 
     def map_refs(self, change: Callable[[str], str]) -> ClimberSpec:
         """A copy with every module ref passed through `change`."""
@@ -168,6 +198,8 @@ class ClimberSpec(BaseModel):
             "tuner": change(self.tuner),
             "graph": change(self.graph),
         }
+        if self.select is not None:
+            update["select"] = change(self.select)
         if self.operators is not None:
             update["operators"] = [
                 change(entry) if isinstance(entry, str) else {change(ref): params for ref, params in entry.items()}

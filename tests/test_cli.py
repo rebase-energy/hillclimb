@@ -167,7 +167,7 @@ def test_run_suite_hands_each_child_the_climber_its_entry_defines(config, tmp_pa
     assert "--set" not in second and "--climber" not in second  # no climber named: the child reads the folder's
     written = yaml.safe_load((iter_run_dirs(config.paths.runs_dir)[0] / "spec.yaml").read_text())["problems"]
     assert written[0]["climber"]["policy"] == str(root / "mine.py") and written[0]["climber"]["params"] == {"k": 1}
-    assert written[1]["climber"]["policy"] == "openevolve"  # the full block, though the entry named none
+    assert written[1]["climber"]["select"] == "map-elites"  # the full block, though the entry named none
 
     calls.clear()
     _run_suite(str(suite), config, budget="10m", agent="dummy", model=None, holdout=True, name="Demo2", climber="gepa")
@@ -267,12 +267,12 @@ def test_create_search_persists_policy_and_routing(task, config, tmp_path):
     from hillclimb.config import RouteConfig
 
     name_climber(config, "greedy")
-    config.climber.params = {"beam": 3}
+    config.climber.params = {"num_drafts": 2}
     config.routing = {"draft": RouteConfig(model="opus-4.8")}
     search_dir = create_search(config, task, tmp_path / "runs" / "r1", "r1", total_s=600)
     meta = load_search_meta(search_dir)
     assert meta.climber == "greedy" and meta.schema_version == SCHEMA_VERSION
-    assert meta.climber_spec["policy"] == "greedy" and meta.climber_spec["params"] == {"beam": 3}
+    assert meta.climber_spec["policy"] == "greedy" and meta.climber_spec["params"] == {"num_drafts": 2}
     assert meta.climber_ref is None  # only a pre-0.6 record names its climber by reference
     assert meta.routing == {"draft": {"model": "opus-4.8"}}
 
@@ -295,7 +295,7 @@ def test_resume_restores_policy_and_routing(config, tmp_path, monkeypatch):
         SearchMeta(
             search_id="a", run_id="run-1", problem="p", problem_id="a",
             agent="dummy", model="m", metric="score", budget_s=600,
-            policy="openevolve", policy_params={"depth": 2},
+            policy="openevolve", policy_params={"num_drafts": 2},
             routing={"draft": {"model": "opus-4.8"}},
         ),
     )
@@ -313,8 +313,8 @@ def test_resume_restores_policy_and_routing(config, tmp_path, monkeypatch):
     resume("run-1/a")
 
     restored = captured["config"]
-    assert restored.climber.policy == "openevolve"
-    assert restored.climber.params == {"depth": 2}
+    assert (restored.climber.label, restored.climber.select) == ("openevolve", "map-elites")
+    assert restored.climber.params == {"ensemble": False, "tune_budget": 0, "num_drafts": 2}
     assert restored.routing["draft"].model == "opus-4.8"
     assert restored.routing["draft"].agent is None
 

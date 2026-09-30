@@ -25,8 +25,9 @@ FORBIDDEN = {
 }
 
 # files under modules/<kind>/ that are the contract or harness-side glue, not climber code
-NOT_IMPLEMENTATIONS = {"__init__.py", "base.py", "check.py", "compute.py"}
-EXCHANGE_KINDS = ("policies", "operators", "tuners", "similarity")  # memory/ joins with its ABC
+# (`compat.py`: what pre-0.6 snapshots still name — harness-side, never a template)
+NOT_IMPLEMENTATIONS = {"__init__.py", "base.py", "check.py", "compute.py", "compat.py"}
+EXCHANGE_KINDS = ("policies", "selectors", "operators", "tuners", "similarity")  # memory/ joins with its ABC
 
 # the only files that may import hillclimb.sdk at module top level
 SDK_EAGER_IMPORTERS = set(CLIMBER_MODULES) | {"climbers/gepa/evaluator.py"}

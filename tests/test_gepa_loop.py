@@ -229,14 +229,14 @@ def test_gepa_is_a_loop_every_other_climber_a_policy(config):
     assert isinstance(build_loop(config, log=lambda *_: None), GepaLoop)
     assert holdout_timing(config) == "after"  # the loop's class asks; the user's holdout.timing cannot loosen it
     name_climber(config, "greedy")
-    assert isinstance(build_loop(config, complexity_start=2), PolicyLoop)
+    assert isinstance(build_loop(config, priors={"complexity_start": 2}), PolicyLoop)
     assert holdout_timing(config) == "inline"
     config.holdout.timing = "after"
     assert holdout_timing(config) == "after"
     with pytest.raises(ValueError, match="Unknown climber: nope .presets: gepa, greedy, openevolve"):
         name_climber(config, "nope")
     config.climber.policy = "nope"
-    with pytest.raises(ValueError, match="unknown policy 'nope' .available: greedy, openevolve"):
+    with pytest.raises(ValueError, match="unknown policy 'nope' .available: greedy"):
         build_loop(config)
 
 

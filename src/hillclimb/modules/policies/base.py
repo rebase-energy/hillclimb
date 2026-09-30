@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from hillclimb.harness.candidate import Candidate
@@ -136,19 +136,152 @@ class SearchState:
             object.__setattr__(self, "journal", JournalView(self.journal))
 
 
-class Policy(Protocol):
-    """What to expand next, with which operator — nothing else."""
+class Policy:
+    """What to expand next, with which operator — nothing else.
 
-    name: str
-    params: dict  # persisted verbatim into SearchMeta for resume
+    Subclass it, list your knobs in `DEFAULTS`, implement `propose`. The
+    base carries what every policy ends up needing: the knobs (`param`,
+    `resolved_params`), the selector that picks a parent (`self.selector`,
+    `default_selector` unless the climber's block names another) and the
+    journal questions a schedule asks (`debuggable_tip`,
+    `prospective_branches`, `draft_complexity`, `top_distinct`).
 
-    def propose(self, view: SearchState) -> Action | None:
+    A class with `propose` and `observe` and no base still runs — the
+    contract is the two methods — it just brings its own helpers.
+    """
+
+    name: str = ""
+    # every knob and its default, merged over the class hierarchy: a
+    # subclass lists only what it adds or changes
+    DEFAULTS: Mapping[str, Any] = {
+        "max_debug_depth": 3,  # failed fixes per failing chain
+        "complexity_start": 0,  # offset of the draft-complexity cue (memory may have learned one)
+    }
+    # the selector a policy of this class uses when the block names none
+    default_selector: str | None = "best"
+    # a param the block sets must be one of `DEFAULTS` (a typo fails before
+    # any spend). False for a class that takes free-form params
+    strict_params: bool = True
+
+    def __init__(self, params: Mapping | None = None, selector=None):
+        # held, never copied: what the climber resolved IS the policy's params
+        self.params = params if params is not None else {}
+        self._selector = selector
+
+    # --- knobs ---
+
+    @classmethod
+    def defaults(cls) -> dict[str, Any]:
+        """Every knob and its default: `DEFAULTS` of the class and its bases."""
+        merged: dict[str, Any] = {}
+        for klass in reversed(cls.__mro__):
+            merged.update(vars(klass).get("DEFAULTS") or {})
+        return merged
+
+    def param(self, name: str):
+        """One knob: the climber's `params[name]`, else its default."""
+        value = self.params.get(name, _MISSING)
+        return self.defaults()[name] if value is _MISSING else value
+
+    def resolved_params(self) -> dict:
+        """Every knob the policy reads, fully resolved — the single dict that
+        describes this exploration process."""
+        return {name: self.param(name) for name in self.defaults()}
+
+    @property
+    def selector(self):
+        """Picks the candidate to expand (`modules/selectors`)."""
+        if self._selector is None and self.default_selector:
+            from hillclimb.modules.selectors import get_selector
+
+            self._selector = get_selector(self.default_selector)
+        return self._selector
+
+    # --- the contract ---
+
+    def propose(self, state: SearchState) -> Action | None:
         """Next action given current state; None = hold (keep the slot empty
         until an in-flight result lands)."""
-        ...
+        raise NotImplementedError(f"{type(self).__name__} must implement propose(state)")
 
-    def observe(self, view: SearchState, candidate: Candidate) -> None:
+    def observe(self, state: SearchState, candidate: Candidate) -> None:
         """Called after every journaled terminal result (and replayed for
-        every existing candidate on construction). Stateless policies ignore
-        it; stateful ones rebuild caches here."""
-        ...
+        every existing candidate when a search starts or resumes). A policy
+        whose state is the journal ignores it; the selector is kept in sync."""
+        selector = self.selector
+        if selector is not None:
+            selector.sync(state)
+
+    # --- journal questions a schedule asks ---
+
+    @staticmethod
+    def improvable(candidate: Candidate) -> bool:
+        """Can an attempt start from this candidate? (A declared floor —
+        `baseline: 0.5` — is scored but has no code.)"""
+        from hillclimb.modules.selectors.base import improvable
+
+        return improvable(candidate)
+
+    def debuggable_tip(self, state: SearchState) -> Candidate | None:
+        """Newest failing/buggy candidate with no active child and chain depth
+        under `max_debug_depth`. In serial history this is exactly the serial
+        debug rule."""
+        journal = state.journal
+        for candidate in reversed(list(journal.candidates.values())):
+            if candidate.status not in ("failing", "buggy") or candidate.pruned:
+                continue
+            children = journal.children(candidate.candidate_id, include_pruned=True)
+            if any(c.status in ("pending", "passing", "failing", "buggy") for c in children):
+                continue
+            chain = journal.debug_chain(candidate.candidate_id)
+            depth = sum(1 for c in chain if c.operator == "debug")
+            if depth < int(self.param("max_debug_depth")):
+                return candidate
+        return None
+
+    def prospective_branches(self, state: SearchState) -> int:
+        """Draft branches whose subtree holds a scored OR pending candidate —
+        in-flight work counts toward a number-of-drafts target."""
+        journal = state.journal
+        count = 0
+        for draft in journal.drafts():
+            frontier = [draft]
+            while frontier:
+                candidate = frontier.pop()
+                if candidate.is_scored or candidate.status == "pending":
+                    count += 1
+                    break
+                frontier.extend(journal.children(candidate.candidate_id))
+        return count
+
+    def draft_complexity(self, state: SearchState) -> str:
+        """The complexity cue for the next draft: it escalates per draft."""
+        index = len(state.journal.drafts()) + int(self.param("complexity_start"))
+        return "minimal" if index == 0 else "moderate" if index == 1 else "advanced"
+
+    def top_distinct(self, state: SearchState, k: int, skip_operator: str | None = None) -> list[Candidate]:
+        """The top-k scored candidates by val score, deduped by solution
+        content so near-identical ones don't fill the slots; candidates an
+        operator named `skip_operator` made are left out. (`holdout.selection`
+        decides what SHIPS; a policy never sees holdout.)"""
+        import hashlib
+        from pathlib import Path
+
+        picked, seen_hashes = [], set()
+        for candidate in state.journal.ranked_candidates(state.higher_is_better, "val"):
+            if skip_operator is not None and candidate.operator == skip_operator:
+                continue
+            solution = Path(candidate.candidate_dir) / "solution.py"
+            if not solution.exists():
+                continue
+            digest = hashlib.md5(solution.read_bytes()).hexdigest()
+            if digest in seen_hashes:
+                continue
+            seen_hashes.add(digest)
+            picked.append(candidate)
+            if len(picked) >= k:
+                break
+        return picked
+
+
+_MISSING = object()

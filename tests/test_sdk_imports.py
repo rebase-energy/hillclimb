@@ -23,7 +23,8 @@ CLIMBER_MODULES = [
     "climbers/gepa/proposer.py",
     "modules/operators/builtin.py",
     "modules/policies/greedy.py",
-    "modules/policies/openevolve.py",
+    "modules/selectors/best.py",
+    "modules/selectors/map_elites.py",
     "modules/tuners/random_search.py",
     "modules/tuners/optuna.py",
     "modules/similarity/builtin.py",
@@ -32,8 +33,6 @@ CLIMBER_MODULES = [
 
 # (module, imported name) -> why it is still allowed, and until when
 ALLOWED = {
-    ("modules/policies/openevolve.py", "hillclimb.modules.policies.greedy"):
-        "reuses greedy's draft/debug decisions; becomes an sdk helper with the climber bundle (7a)",
     ("modules/similarity/solution_card.py", "hillclimb.agents.openrouter"):
         "direct LLM + embedding client; moves behind an sdk completion service (7a)",
     ("modules/similarity/solution_card.py", "hillclimb.modules.similarity.base"):

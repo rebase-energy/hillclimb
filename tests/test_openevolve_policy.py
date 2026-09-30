@@ -1,5 +1,6 @@
-"""OpenEvolve as a Policy: its MAP-Elites database picks parents and
-inspirations, hillclimb's harness does the rest. Needs the `openevolve` extra."""
+"""OpenEvolve as a selector: its MAP-Elites database picks parents and
+inspirations, greedy's schedule decides when to expand, hillclimb's harness
+does the rest. Needs the `openevolve` extra."""
 
 from __future__ import annotations
 
@@ -17,12 +18,28 @@ from hillclimb.harness.budget import BudgetManager
 from hillclimb.harness.candidate import Candidate
 from hillclimb.harness.dirs import create_search_dir
 from hillclimb.harness.journal import Journal
-from hillclimb.modules.policies.openevolve import OpenEvolvePolicy
+from hillclimb.modules.policies.greedy import Greedy
+from hillclimb.modules.selectors.map_elites import MapElites
 from tests.harness_factory import SearchRig
 from tests.conftest import local_executor, ok_script
 from tests.test_policy import make_view
 
 PARAMS = {"num_islands": 2, "num_inspirations": 2, "feature_dimensions": ["complexity", "score"]}
+SCHEDULE_KNOBS = ("num_drafts", "max_debug_depth", "debug")  # greedy's; the rest are the selector's
+
+
+def block(params: dict = PARAMS) -> dict:
+    """The `openevolve` preset with `params` sorted into the two places they
+    belong: the policy's schedule knobs, the selector's settings."""
+    return {
+        "name": "openevolve", "policy": "greedy", "select": "map-elites",
+        "params": {"ensemble": False, "tune_budget": 0, **{k: v for k, v in params.items() if k in SCHEDULE_KNOBS}},
+        "select_params": {k: v for k, v in params.items() if k not in SCHEDULE_KNOBS},
+    }
+
+
+def openevolve(params: dict = PARAMS) -> Greedy:
+    return make_policy(block(params))
 
 
 def scored(journal: Journal, tmp_path: Path, cid: str, op: str, score: float,
@@ -40,20 +57,36 @@ def scored(journal: Journal, tmp_path: Path, cid: str, op: str, score: float,
     return cand
 
 
-def replayed(journal: Journal, config, params=PARAMS) -> tuple[OpenEvolvePolicy, object]:
-    policy = make_policy("openevolve", params)
+def replayed(journal: Journal, config, params=PARAMS) -> tuple[Greedy, object]:
+    policy = openevolve(params)
     view = make_view(journal, config)
     for cand in journal.candidates.values():
         policy.observe(view, cand)
     return policy, view
 
 
-def test_registry_and_params_reach_openevolve(config):
-    policy = make_policy("openevolve", PARAMS)
-    assert policy.name == "openevolve"
-    assert policy.db_config.num_islands == 2
-    assert policy.feature_dimensions == ["complexity", "score"]
-    assert PARAMS.items() <= policy.params.items()  # laid over the climber's own
+def test_the_preset_is_greedy_over_map_elites(config):
+    """`openevolve` is a composition, not a policy of its own: greedy's
+    schedule (without ensemble and tune) over the MAP-Elites selector, whose
+    settings are `select_params`."""
+    from hillclimb.climber import ClimberLoadError, load_climber
+
+    preset = load_climber("openevolve")
+    policy = preset.build_loop().policy
+    assert preset.name == "openevolve" and type(policy) is Greedy and isinstance(policy.selector, MapElites)
+    assert (policy.param("ensemble"), policy.param("tune_budget")) == (False, 0)
+    assert policy.selector.num_inspirations == 2  # the selector's own default
+    policy = openevolve(PARAMS)
+    assert policy.selector.db_config.num_islands == 2
+    assert policy.selector.feature_dimensions == ["complexity", "score"]
+    # MAP-Elites' settings are the selector's: among the policy's params they are a mistake, said out loud
+    with pytest.raises(ClimberLoadError, match="greedy has no param 'num_islands'.*select_params"):
+        make_policy("openevolve", {"num_islands": 2})
+    with pytest.raises(ClimberLoadError, match="map-elites has no setting .'num_island'."):
+        make_policy({**block(), "select_params": {"num_island": 2}})
+    # any policy's schedule can run over it — and greedy over another selector
+    assert isinstance(make_policy({"policy": "greedy", "select": "map-elites"}).selector, MapElites)
+    assert type(make_policy({"policy": "greedy"}).selector).__name__ == "Best"
 
 
 def test_drafts_until_population_seeded_then_evolves(config, tmp_path):
@@ -66,7 +99,7 @@ def test_drafts_until_population_seeded_then_evolves(config, tmp_path):
     scored(journal, tmp_path, "c001", "draft", 0.5, code="a = 1\n" * 10)
     scored(journal, tmp_path, "c002", "draft", 0.7, code="b = 2\n" * 30)
     policy, view = replayed(journal, config, {**PARAMS, "num_drafts": 1})
-    assert set(policy.db.programs) == {"c000", "c001", "c002"}
+    assert set(policy.selector.db.programs) == {"c000", "c001", "c002"}
 
     action = policy.propose(view)
     assert action.operator == "improve"
@@ -107,7 +140,7 @@ def test_custom_feature_dimension_reads_trial_metrics(config, tmp_path):
     journal = Journal(tmp_path / "j.jsonl")
     scored(journal, tmp_path, "c001", "draft", 0.5, metrics={"runtime_s": 1.0})
     policy, view = replayed(journal, config, params)
-    assert policy.db.programs["c001"].metrics == {"combined_score": 0.5, "runtime_s": 1.0}
+    assert policy.selector.db.programs["c001"].metrics == {"combined_score": 0.5, "runtime_s": 1.0}
 
     journal2 = Journal(tmp_path / "j2.jsonl")
     scored(journal2, tmp_path, "c001", "draft", 0.5)  # verifier wrote no runtime_s
@@ -119,11 +152,11 @@ def test_lower_is_better_flips_fitness(config, tmp_path):
     journal = Journal(tmp_path / "j.jsonl")
     scored(journal, tmp_path, "c001", "draft", 2.0)
     scored(journal, tmp_path, "c002", "draft", 1.0)
-    policy = make_policy("openevolve", PARAMS)
+    policy = openevolve(PARAMS)
     view = make_view(journal, config, higher_is_better=False)
     for cand in journal.candidates.values():
         policy.observe(view, cand)
-    assert policy.db.get_best_program().id == "c002"
+    assert policy.selector.db.get_best_program().id == "c002"
 
 
 def test_buggy_and_code_less_floor_are_not_programs(config, tmp_path):
@@ -133,19 +166,18 @@ def test_buggy_and_code_less_floor_are_not_programs(config, tmp_path):
     journal.candidate_result(Candidate(candidate_id="c001", operator="draft", status="buggy",
                                        candidate_dir=str(tmp_path)))
     policy, view = replayed(journal, config, {**PARAMS, "num_drafts": 1})
-    assert policy.db.programs == {}
+    assert policy.selector.db.programs == {}
     assert policy.propose(view).operator == "debug"  # hillclimb's debug rule survives
 
 
 def test_openevolve_policy_drives_search_end_to_end(task, config):
-    name_climber(config, "openevolve")
-    config.climber.params = {**PARAMS, "num_drafts": 2}
+    config.apply_overrides({"climber": block({**PARAMS, "num_drafts": 2})})
     agent = FakeAgent()
     agent.queue(script=ok_script(0.6), notes="one\n")
     agent.queue(script=ok_script(0.7), notes="two\n")
     agent.queue(script=ok_script(0.8), notes="three\n")
     search_dir = create_search_dir(config.paths.runs_dir, "test-run")
-    policy = make_policy("openevolve", config.climber.params)
+    policy = make_policy(config.climber)
     searcher = SearchRig(
         problem=task, config=config, journal=Journal(search_dir / "journal.jsonl"),
         agent=agent, executor=local_executor(), budget=BudgetManager(3600, stop_margin_s=1),
@@ -163,8 +195,8 @@ def test_openevolve_policy_drives_search_end_to_end(task, config):
         assert (d / f"candidate_{i}.py").exists()
     # MAP-Elites keeps the cell winner: c003 displaced c002 (same code length,
     # better score) rather than piling up alongside it
-    assert policy.db.get_best_program().id == "c003"
-    assert "c002" not in policy.db.programs
+    assert policy.selector.db.get_best_program().id == "c003"
+    assert "c002" not in policy.selector.db.programs
 
 
 # --- live vs resume -----------------------------------------------------------
@@ -180,7 +212,7 @@ def _catch_up(journal: Journal, config, params=PARAMS):
 
     from hillclimb.harness.loop import PolicyLoop
 
-    policy = make_policy("openevolve", params)
+    policy = openevolve(params)
     PolicyLoop(policy).catch_up(SimpleNamespace(view=lambda: make_view(journal, config)))
     return policy
 
@@ -198,7 +230,7 @@ def _pending(journal: Journal, cid: str, op: str, parent_id: str | None = None) 
 
 
 def _db_state(policy) -> dict:
-    db = policy.db
+    db = policy.selector.db
     return {
         "iteration_found": {pid: p.iteration_found for pid, p in sorted(db.programs.items())},
         "fitness": {pid: p.metrics["combined_score"] for pid, p in sorted(db.programs.items())},
@@ -223,7 +255,7 @@ LANDED = [
 
 def test_resumed_database_is_the_live_one(config, tmp_path):
     journal = Journal(tmp_path / "j.jsonl")
-    live = make_policy("openevolve", PARAMS)
+    live = openevolve(PARAMS)
     for cid, op, score, parent, code in LANDED:
         scored(journal, tmp_path, cid, op, score, parent_id=parent, code=code)
         _observe_live(live, journal, config, cid)
@@ -234,7 +266,7 @@ def test_resumed_database_is_the_live_one(config, tmp_path):
 
 def test_resumed_database_ignores_the_order_results_landed_in(config, tmp_path):
     journal = Journal(tmp_path / "j.jsonl")
-    live = make_policy("openevolve", PARAMS)
+    live = openevolve(PARAMS)
     _pending(journal, "c001", "draft")
     _pending(journal, "c002", "draft")
     for cid, score, code in (("c002", 0.7, "b = 2\n" * 30), ("c001", 0.5, "a = 1\n" * 10)):
@@ -246,7 +278,7 @@ def test_resumed_database_ignores_the_order_results_landed_in(config, tmp_path):
 
 def test_resumed_database_matches_after_a_tune_trial(config, tmp_path):
     journal = Journal(tmp_path / "j.jsonl")
-    live = make_policy("openevolve", PARAMS)
+    live = openevolve(PARAMS)
     for cid, score in (("c001", 0.5), ("c002", 0.6)):
         scored(journal, tmp_path, cid, "draft", score, code=f"v = '{cid}'\n" * 10)
         _observe_live(live, journal, config, cid)

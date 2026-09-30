@@ -1,4 +1,4 @@
-"""Policy seam: GreedyPolicy decision surface over synthetic journals,
+"""Policy seam: Greedy decision surface over synthetic journals,
 and a scripted custom policy driving the harness end-to-end."""
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from tests.conftest import local_executor
 from hillclimb.harness.journal import Journal
 from hillclimb.harness.evaluation import accept_band
 from hillclimb.climber import ClimberLoadError, climber_label
-from hillclimb.modules.policies.greedy import GreedyPolicy
+from hillclimb.modules.policies.greedy import Greedy
 from hillclimb.modules.policies.base import Action, BudgetView, InflightRef, SearchState
 from tests.harness_factory import SearchRig
 from hillclimb.harness.dirs import create_search_dir
@@ -81,22 +81,22 @@ def journal(tmp_path: Path) -> Journal:
 
 
 def test_propose_drafts_on_empty_journal(journal, config):
-    policy = GreedyPolicy()
+    policy = Greedy()
     action = policy.propose(make_view(journal, config))
     assert action == Action(operator="draft", args={"complexity": "minimal"})
 
 
 def test_complexity_escalates_per_draft_with_offset(journal, config, tmp_path):
-    assert GreedyPolicy(complexity_start=1).draft_complexity(
+    assert Greedy({"complexity_start": 1}).draft_complexity(
         make_view(journal, config)
     ) == "moderate"
     add_candidate(journal, "c001", "draft", status="buggy")
     add_candidate(journal, "c002", "draft", val_score=0.5)
-    assert GreedyPolicy().draft_complexity(make_view(journal, config)) == "advanced"
+    assert Greedy().draft_complexity(make_view(journal, config)) == "advanced"
 
 
 def test_propose_debugs_newest_buggy_tip_until_depth_cap(journal, config):
-    policy = GreedyPolicy()
+    policy = Greedy()
     add_candidate(journal, "c001", "draft", status="buggy")
     action = policy.propose(make_view(journal, config))
     assert (action.operator, action.target_id) == ("debug", "c001")
@@ -110,7 +110,7 @@ def test_propose_debugs_newest_buggy_tip_until_depth_cap(journal, config):
 
 
 def test_propose_skips_tip_with_active_child(journal, config):
-    policy = GreedyPolicy()
+    policy = Greedy()
     add_candidate(journal, "c001", "draft", status="buggy")
     add_candidate(journal, "c002", "debug", status="pending", parent_id="c001")
     action = policy.propose(make_view(journal, config))
@@ -118,7 +118,7 @@ def test_propose_skips_tip_with_active_child(journal, config):
 
 
 def test_propose_spreads_improves_across_busy_targets(journal, config, tmp_path):
-    policy = GreedyPolicy()
+    policy = Greedy()
     for i, score in enumerate((0.9, 0.8, 0.7), start=1):
         add_candidate(journal, f"c00{i}", "draft", val_score=score)
     view = make_view(journal, config)
@@ -131,7 +131,7 @@ def test_propose_spreads_improves_across_busy_targets(journal, config, tmp_path)
 
 
 def test_propose_ensemble_in_final_window_with_drain(journal, config, tmp_path):
-    policy = GreedyPolicy()
+    policy = Greedy()
     add_candidate(journal, "c001", "draft", val_score=0.9, solution="a\n", tmp_path=tmp_path)
     add_candidate(journal, "c002", "draft", val_score=0.8, solution="b\n", tmp_path=tmp_path)
     add_candidate(journal, "c003", "draft", val_score=0.7, solution="c\n", tmp_path=tmp_path)
@@ -154,11 +154,16 @@ def test_propose_ensemble_in_final_window_with_drain(journal, config, tmp_path):
 
 
 def test_a_bundled_name_resolves_greedy_and_an_unknown_one_is_refused():
-    policy = make_policy("greedy", {"note": "x"}, complexity_start=2)
-    assert isinstance(policy, GreedyPolicy)
+    policy = make_policy("greedy", {"num_drafts": 5}, priors={"complexity_start": 2, "not_a_knob": 1})
+    assert isinstance(policy, Greedy)
     assert policy.name == "greedy"
-    assert policy.params["note"] == "x"  # laid over the climber's own params
-    assert policy.complexity_start == 2
+    # the caller's params over the block's; what memory learned under both,
+    # and only the knobs the policy declares
+    assert policy.params == {"num_drafts": 5, "complexity_start": 2}
+    assert make_policy("greedy", {"complexity_start": 0}, priors={"complexity_start": 2}).param("complexity_start") == 0
+    # a param the policy does not have is refused before anything runs
+    with pytest.raises(ClimberLoadError, match="greedy has no param 'note' .it has: .*num_drafts.*select_params"):
+        make_policy("greedy", {"note": "x"})
     with pytest.raises(ClimberLoadError, match="bundled: gepa, greedy, openevolve"):
         make_policy("map-elites")
 
@@ -242,35 +247,35 @@ def test_policy_replay_on_resume(task, config, tmp_path):
 
 def test_every_knob_is_one_dict_with_defaults(config):
     """A policy never sees the harness's config: knobs come from the
-    climber's params (the manifest's, with the user's `climber.params` laid
-    over them), else DEFAULTS."""
+    climber's `params`, else the class's DEFAULTS."""
     from hillclimb.harness.glue import build_loop
 
-    assert GreedyPolicy().resolved_params()["num_drafts"] == 3
-    resolved = build_loop(config).policy.resolved_params()  # the bundled manifest's params
+    assert Greedy().resolved_params()["num_drafts"] == 3
+    resolved = build_loop(config).policy.resolved_params()  # the folder's block: greedy, no params
     assert resolved["num_drafts"] == 3 and resolved["ensemble_top_k"] == 3 and resolved["tune_budget"] == 8
-    # the user's overlay wins over the manifest
+    # the block's params win over the defaults
     config.climber.params = {"num_drafts": 1, "ensemble": False, "tune_budget": 0}
     resolved = build_loop(config).policy.resolved_params()
     assert resolved["num_drafts"] == 1 and resolved["ensemble"] is False and resolved["tune_budget"] == 0
-    assert resolved["max_debug_depth"] == 3  # untouched keys keep the manifest's value
+    assert resolved["max_debug_depth"] == 3  # untouched knobs keep their default
     assert set(resolved) == {
-        "num_drafts", "max_debug_depth", "ensemble", "ensemble_reserve_fraction",
-        "ensemble_top_k", "ensemble_max_attempts",
+        "num_drafts", "debug", "max_debug_depth", "complexity_start",  # the last two: every Policy's
+        "ensemble", "ensemble_reserve_fraction", "ensemble_top_k", "ensemble_max_attempts",
         "tune_budget", "tune_gate", "tune_parallel", "tune_burst",
     }
+    assert set(resolved) == set(Greedy.defaults())  # DEFAULTS merge over the class hierarchy
 
 
 def test_num_drafts_and_debug_depth_from_policy_params(journal, config):
     add_candidate(journal, "c001", "draft", val_score=0.5)
-    assert GreedyPolicy().propose(make_view(journal, config)).operator == "draft"  # config: 3 drafts
-    action = GreedyPolicy(params={"num_drafts": 1}).propose(make_view(journal, config))
+    assert Greedy().propose(make_view(journal, config)).operator == "draft"  # config: 3 drafts
+    action = Greedy(params={"num_drafts": 1}).propose(make_view(journal, config))
     assert (action.operator, action.target_id) == ("improve", "c001")
 
     add_candidate(journal, "c002", "draft", status="buggy")
     add_candidate(journal, "c003", "debug", status="buggy", parent_id="c002")
-    assert GreedyPolicy().propose(make_view(journal, config)).operator == "debug"  # depth 1 < 3
-    action = GreedyPolicy(params={"num_drafts": 1, "max_debug_depth": 1}).propose(make_view(journal, config))
+    assert Greedy().propose(make_view(journal, config)).operator == "debug"  # depth 1 < 3
+    action = Greedy(params={"num_drafts": 1, "max_debug_depth": 1}).propose(make_view(journal, config))
     assert action.operator == "improve"  # chain exhausted at depth 1
 
 
@@ -278,19 +283,19 @@ def test_ensemble_knobs_from_policy_params(journal, config, tmp_path):
     for i, (score, text) in enumerate(zip((0.9, 0.8, 0.7, 0.6), "abcd"), start=1):
         add_candidate(journal, f"c00{i}", "draft", val_score=score, solution=text + "\n", tmp_path=tmp_path)
     in_window = dict(remaining_s=100.0, total_s=3600, stop_margin_s=300)
-    assert GreedyPolicy().propose(make_view(journal, config, **in_window)).operator == "ensemble"
-    assert GreedyPolicy(params={"ensemble": False}).propose(
+    assert Greedy().propose(make_view(journal, config, **in_window)).operator == "ensemble"
+    assert Greedy(params={"ensemble": False}).propose(
         make_view(journal, config, **in_window)
     ).operator != "ensemble"
     # a wider reserve opens the window earlier; a bigger top_k blends more
     mid = dict(remaining_s=1500.0, total_s=3600, stop_margin_s=300)
-    assert GreedyPolicy().propose(make_view(journal, config, **mid)).operator != "ensemble"
-    action = GreedyPolicy(params={"ensemble_reserve_fraction": 0.4, "ensemble_top_k": 4}).propose(
+    assert Greedy().propose(make_view(journal, config, **mid)).operator != "ensemble"
+    action = Greedy(params={"ensemble_reserve_fraction": 0.4, "ensemble_top_k": 4}).propose(
         make_view(journal, config, **mid)
     )
     assert action.operator == "ensemble" and len(action.inspiration_ids) == 4
     # max_attempts=0 disables it outright
-    assert GreedyPolicy(params={"ensemble_max_attempts": 0}).propose(
+    assert Greedy(params={"ensemble_max_attempts": 0}).propose(
         make_view(journal, config, **in_window)
     ).operator != "ensemble"
 
@@ -298,11 +303,11 @@ def test_ensemble_knobs_from_policy_params(journal, config, tmp_path):
 # --- file policies: an edited exploration process loaded from a path ---
 
 FILE_POLICY = '''
-from hillclimb.modules.policies.greedy import GreedyPolicy
+from hillclimb.modules.policies.greedy import Greedy
 from hillclimb.modules.policies.base import Action
 
 
-class DraftsOnly(GreedyPolicy):
+class DraftsOnly(Greedy):
     """Never improves: drafts forever (a deliberately different process)."""
 
     name = "drafts-only"
@@ -321,9 +326,9 @@ def test_file_policy_loads_by_path_and_is_hashed(tmp_path, journal, config):
     path = tmp_path / "hillclimb" / "policies" / "drafts_only.py"
     path.parent.mkdir(parents=True)
     path.write_text(FILE_POLICY)
-    policy = make_policy(str(path), {"num_drafts": 1}, complexity_start=1)
-    assert policy.name == "drafts-only" and policy.params == {"num_drafts": 1}
-    assert policy.complexity_start == 1
+    policy = make_policy(str(path), {"num_drafts": 1}, priors={"complexity_start": 1})
+    assert policy.name == "drafts-only" and policy.params == {"num_drafts": 1, "complexity_start": 1}
+    assert policy.param("complexity_start") == 1
     add_candidate(journal, "c001", "draft", val_score=0.5)
     assert policy.propose(make_view(journal, config)).operator == "draft"  # greedy would improve
 
@@ -346,14 +351,14 @@ def test_file_policy_loads_by_path_and_is_hashed(tmp_path, journal, config):
 def test_file_policy_exposes_POLICY_class_or_factory(tmp_path):
     factory_file = tmp_path / "factory.py"
     factory_file.write_text(
-        "from hillclimb.modules.policies.greedy import GreedyPolicy\n"
-        "class A(GreedyPolicy):\n    name = 'a'\n"
-        "class B(GreedyPolicy):\n    name = 'b'\n"
-        "def POLICY(params, *, complexity_start=0):\n"
-        "    return B(params=params, complexity_start=complexity_start + 10)\n"
+        "from hillclimb.modules.policies.greedy import Greedy\n"
+        "class A(Greedy):\n    name = 'a'\n"
+        "class B(Greedy):\n    name = 'b'\n"
+        "def POLICY(params):\n"
+        "    return B(params={**params, 'num_drafts': 9})\n"
     )
-    policy = make_policy(str(factory_file), {"x": 1})
-    assert policy.name == "b" and policy.complexity_start == 10 and policy.params == {"x": 1}
+    policy = make_policy(str(factory_file), {"x": 1})  # a factory takes whatever params it likes
+    assert policy.name == "b" and policy.params == {"x": 1, "num_drafts": 9}
 
     # a bare protocol class with no constructor arguments still loads and
     # gets a name and params stamped on it
@@ -376,8 +381,8 @@ def test_file_policy_errors_name_the_file(tmp_path):
         make_policy(str(broken))
     two = tmp_path / "two.py"
     two.write_text(
-        "from hillclimb.modules.policies.greedy import GreedyPolicy\n"
-        "class A(GreedyPolicy): pass\nclass B(GreedyPolicy): pass\n"
+        "from hillclimb.modules.policies.greedy import Greedy\n"
+        "class A(Greedy): pass\nclass B(Greedy): pass\n"
     )
     with pytest.raises(ValueError, match="exactly one policy class"):
         make_policy(str(two))
@@ -483,7 +488,7 @@ def test_greedy_ensemble_inputs_ignore_holdout(journal, config, tmp_path):
     for cid, val, hold in (("c001", 0.9, 0.1), ("c002", 0.8, 0.5), ("c003", 0.7, 0.9)):
         _add_with_holdout(journal, tmp_path, cid, val, hold)
     config.holdout.selection = "holdout"
-    action = GreedyPolicy(params={"ensemble_top_k": 2}).propose(
+    action = Greedy(params={"ensemble_top_k": 2}).propose(
         make_view(journal, config, remaining_s=100.0, total_s=3600, stop_margin_s=300)
     )
     assert action.operator == "ensemble"
@@ -493,7 +498,7 @@ def test_greedy_ensemble_inputs_ignore_holdout(journal, config, tmp_path):
 def test_searcher_hands_observe_a_holdout_blind_candidate(task, config, tmp_path):
     seen: list[Candidate] = []
 
-    class Spy(GreedyPolicy):
+    class Spy(Greedy):
         def observe(self, view, candidate):
             seen.append(candidate)
             seen.extend(view.journal.candidates.values())

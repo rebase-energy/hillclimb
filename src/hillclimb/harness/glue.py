@@ -80,9 +80,11 @@ def build_tuner(config: Config, search_dir=None):
     return search_climber(config, search_dir).tuner()
 
 
-def build_loop(config: Config, *, complexity_start: int = 0, log=print, search_dir=None) -> Loop:
+def build_loop(config: Config, *, priors=None, log=print, search_dir=None) -> Loop:
+    """The search's loop. `priors` are param values memory learned for this
+    search (they sit under the block's own params)."""
     return search_climber(config, search_dir).build_loop(
-        complexity_start=complexity_start,
+        priors=priors,
         parallelism=max(1, config.concurrency.parallel_agents),
         log=log,
     )

@@ -20,10 +20,22 @@ MOVED = {
 }
 
 
+# classes that were renamed, or replaced by a composition, in 0.6 — by the
+# exact `module:Class` a run folder may hold
+RENAMED = {
+    "hillclimb.modules.policies.greedy:GreedyPolicy": "hillclimb.modules.policies.greedy:Greedy",
+    # the openevolve policy is greedy over the map-elites selector now; a
+    # pre-0.6 snapshot keeps MAP-Elites' settings among the policy's params
+    "hillclimb.modules.policies.openevolve:OpenEvolvePolicy": "hillclimb.modules.policies.compat:OpenEvolvePolicy",
+}
+
+
 def modernize(ref: str) -> str:
-    """`hillclimb.policies.greedy:GreedyPolicy` -> its current module path;
-    anything that did not move comes back unchanged."""
+    """`hillclimb.policies.greedy:GreedyPolicy` -> where that class lives
+    today (its module path, then its name); anything that did not move comes
+    back unchanged."""
     for old in sorted(MOVED, key=len, reverse=True):
         if ref.startswith(old):
-            return MOVED[old] + ref[len(old):]
-    return ref
+            ref = MOVED[old] + ref[len(old):]
+            break
+    return RENAMED.get(ref, ref)
