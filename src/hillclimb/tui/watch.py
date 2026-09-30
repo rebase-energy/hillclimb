@@ -25,7 +25,7 @@ from hillclimb.harness.candidate import Candidate
 from hillclimb.config import Config
 from hillclimb.harness.control import request_prune, request_stop
 from hillclimb.harness.journal import Journal
-from hillclimb.modules.policies import policy_label
+from hillclimb.climber import climber_label
 from hillclimb.harness.run import RunMeta, SearchMeta, run_display_name
 from hillclimb.harness.run import search_ref as _search_ref
 from hillclimb.harness.status import SearchStatus, live_remaining_s, live_spent_s
@@ -83,7 +83,7 @@ class RunRow:
 class SearchRow:
     search_id: str
     problem: str
-    policy: str  # the optimizer driving the search: greedy, openevolve, gepa, …
+    climber: str  # what drives the search: greedy, openevolve, gepa, a file's stem
     agent: str  # the agent harness the operators run in: claude-code, codex, …
     model: str
     tokens: str  # summed agent tokens across the search's candidates
@@ -408,20 +408,20 @@ def _search_row(store: DataStore, record: SearchRecord) -> SearchRow:
     return SearchRow(
         search_id=search_dir.name,
         # a study's experiment is what tells the searches of one run apart, so
-        # it rides along with the problem — unless it is just the policy's
-        # name (a mixed fleet, an optimizer comparison), which the policy
+        # it rides along with the problem — unless it is just the climber's
+        # name (a mixed fleet, an optimizer comparison), which the climber
         # column already shows
         problem=(
             f"{meta.problem_id} [{meta.experiment}]"
-            if meta.experiment and meta.experiment != policy_label(meta.climber)
+            if meta.experiment and meta.experiment != climber_label(meta.climber)
             else meta.problem_id
         ),
         # the role is the problem's doing (a meta-problem runs its climber
         # as an improver); a solver is the norm and goes unlabelled
-        policy=(
-            f"{policy_label(meta.climber)} (improver)"
+        climber=(
+            f"{climber_label(meta.climber)} (improver)"
             if meta.role == "improver"
-            else policy_label(meta.climber)
+            else climber_label(meta.climber)
         ),
         agent=_display_agent(meta.agent, journal),
         model=_display_model(meta.model, _resolved_model_id(journal, status, search_dir)),
@@ -2343,7 +2343,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         table.add_columns(
             "search",
             "problem",
-            "policy",
+            "climber",
             "agent",
             "model",
             "tokens",
@@ -2376,7 +2376,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
             state = Text(row.state, style=STATE_STYLE.get(row.state, ""))
             candidates = Text(row.candidates, style=candidates_style(row))
             table.add_row(
-                row.search_id, row.problem, row.policy, row.agent, row.model, row.tokens, row.spend,
+                row.search_id, row.problem, row.climber, row.agent, row.model, row.tokens, row.spend,
                 state, candidates, row.best_val, row.selected, row.duration, key=row.search_id,
             )
         _restore_table(table, snapshot)

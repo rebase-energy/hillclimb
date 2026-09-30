@@ -1,7 +1,7 @@
 """Operator registry: name -> class, mirroring policies and tuners.
 
 The registry is the harness's operator vocabulary: `candidate.OPERATORS`,
-`policy check`'s known operators and the route preflight all derive from it,
+`climber check`'s known operators and the route preflight all derive from it,
 so registering an operator is the only step that makes it usable.
 """
 

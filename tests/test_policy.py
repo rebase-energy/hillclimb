@@ -3,7 +3,7 @@ and a scripted custom policy driving the harness end-to-end."""
 
 from __future__ import annotations
 
-from tests.factories import trial as mk_trial
+from tests.factories import make_policy, trial as mk_trial
 
 import sys
 from pathlib import Path
@@ -16,7 +16,7 @@ from hillclimb.harness.candidate import Candidate
 from tests.conftest import local_executor
 from hillclimb.harness.journal import Journal
 from hillclimb.harness.evaluation import accept_band
-from hillclimb.modules.policies import get_policy
+from hillclimb.climber import ClimberLoadError, climber_label
 from hillclimb.modules.policies.greedy import GreedyPolicy
 from hillclimb.modules.policies.base import Action, BudgetView, InflightRef, SearchState
 from tests.harness_factory import SearchRig
@@ -153,14 +153,14 @@ def test_propose_ensemble_in_final_window_with_drain(journal, config, tmp_path):
     assert action.operator != "ensemble"
 
 
-def test_registry_resolves_greedy_and_rejects_unknown():
-    policy = get_policy("greedy", {"note": "x"}, complexity_start=2)
+def test_a_bundled_name_resolves_greedy_and_an_unknown_one_is_refused():
+    policy = make_policy("greedy", {"note": "x"}, complexity_start=2)
     assert isinstance(policy, GreedyPolicy)
     assert policy.name == "greedy"
-    assert policy.params == {"note": "x"}
+    assert policy.params["note"] == "x"  # laid over the climber's own params
     assert policy.complexity_start == 2
-    with pytest.raises(ValueError, match="Unknown policy"):
-        get_policy("map-elites")
+    with pytest.raises(ClimberLoadError, match="bundled: gepa, greedy, openevolve"):
+        make_policy("map-elites")
 
 
 class ScriptedPolicy:
@@ -318,29 +318,28 @@ class DraftsOnly(GreedyPolicy):
 def test_file_policy_loads_by_path_and_is_hashed(tmp_path, journal, config):
     import hashlib
 
-    from hillclimb.modules.policies import get_policy, policy_label, policy_path, policy_sha256
+    from hillclimb.climber import load_climber
 
     path = tmp_path / "hillclimb" / "policies" / "drafts_only.py"
     path.parent.mkdir(parents=True)
     path.write_text(FILE_POLICY)
-    policy = get_policy(str(path), {"num_drafts": 1}, complexity_start=1)
+    policy = make_policy(str(path), {"num_drafts": 1}, complexity_start=1)
     assert policy.name == "drafts-only" and policy.params == {"num_drafts": 1}
     assert policy.complexity_start == 1
     add_candidate(journal, "c001", "draft", val_score=0.5)
     assert policy.propose(make_view(journal, config)).operator == "draft"  # greedy would improve
 
-    # relative paths anchor at the folder holding the hillclimb dir
-    assert policy_path("hillclimb/policies/drafts_only.py", tmp_path) == path
-    assert policy_path("greedy") is None and policy_sha256("greedy") is None
-    assert policy_sha256("hillclimb/policies/drafts_only.py", tmp_path) == hashlib.sha256(path.read_bytes()).hexdigest()
-    assert policy_label(str(path)) == "drafts_only" and policy_label("greedy") == "greedy"
-    with pytest.raises(FileNotFoundError):
-        policy_sha256("hillclimb/policies/missing.py", tmp_path)
+    # relative paths anchor at the folder holding the hillclimb dir; a
+    # one-file climber's identity is the hash of its bytes
+    relative = load_climber("hillclimb/policies/drafts_only.py", tmp_path)
+    assert relative.source == path
+    assert relative.sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert climber_label(str(path)) == "drafts_only" and climber_label("greedy") == "greedy"
+    with pytest.raises(ClimberLoadError, match="climber file not found"):
+        load_climber("hillclimb/policies/missing.py", tmp_path)
 
 
 def test_file_policy_exposes_POLICY_class_or_factory(tmp_path):
-    from hillclimb.modules.policies import get_policy
-
     factory_file = tmp_path / "factory.py"
     factory_file.write_text(
         "from hillclimb.modules.policies.greedy import GreedyPolicy\n"
@@ -349,7 +348,7 @@ def test_file_policy_exposes_POLICY_class_or_factory(tmp_path):
         "def POLICY(params, *, complexity_start=0):\n"
         "    return B(params=params, complexity_start=complexity_start + 10)\n"
     )
-    policy = get_policy(str(factory_file), {"x": 1})
+    policy = make_policy(str(factory_file), {"x": 1})
     assert policy.name == "b" and policy.complexity_start == 10 and policy.params == {"x": 1}
 
     # a bare protocol class with no constructor arguments still loads and
@@ -360,36 +359,32 @@ def test_file_policy_exposes_POLICY_class_or_factory(tmp_path):
         "    def propose(self, view):\n        return None\n"
         "    def observe(self, view, candidate):\n        pass\n"
     )
-    policy = get_policy(str(bare), {"k": 2})
+    policy = make_policy(str(bare), {"k": 2})
     assert policy.name == "bare" and policy.params == {"k": 2}
 
 
 def test_file_policy_errors_name_the_file(tmp_path):
-    from hillclimb.modules.policies import get_policy
-
-    with pytest.raises(ValueError, match="policy file not found"):
-        get_policy(str(tmp_path / "nope.py"))
+    with pytest.raises(ValueError, match="climber file not found"):
+        make_policy(str(tmp_path / "nope.py"))
     broken = tmp_path / "broken.py"
     broken.write_text("import definitely_not_a_module\n")
     with pytest.raises(ValueError, match="failed to import: ModuleNotFoundError"):
-        get_policy(str(broken))
+        make_policy(str(broken))
     two = tmp_path / "two.py"
     two.write_text(
         "from hillclimb.modules.policies.greedy import GreedyPolicy\n"
         "class A(GreedyPolicy): pass\nclass B(GreedyPolicy): pass\n"
     )
     with pytest.raises(ValueError, match="exactly one policy class"):
-        get_policy(str(two))
+        make_policy(str(two))
     none = tmp_path / "none.py"
     none.write_text("x = 1\n")
     with pytest.raises(ValueError, match="exactly one policy class"):
-        get_policy(str(none))
+        make_policy(str(none))
     not_policy = tmp_path / "notpolicy.py"
     not_policy.write_text("class Thing:\n    pass\nPOLICY = Thing\n")
     with pytest.raises(ValueError, match="has no propose"):
-        get_policy(str(not_policy))
-    with pytest.raises(ValueError, match="Unknown policy: map-elites"):
-        get_policy("map-elites")
+        make_policy(str(not_policy))
 
 
 def test_file_policy_drives_a_search_and_is_recorded(task, config, tmp_path):

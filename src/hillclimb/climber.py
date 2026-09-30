@@ -55,6 +55,18 @@ HARNESS_TEMPLATES = frozenset(
 )
 
 
+def climber_label(ref: str) -> str:
+    """A short display name for a climber reference: a bundled name as it
+    is, a one-file climber's stem."""
+    return Path(ref).stem if ref.endswith(".py") else ref
+
+
+def climber_base_dir(config) -> Path | None:
+    """Where a relative climber (or graph, or similarity-score) path resolves
+    from: the hillclimb dir, like `paths.runs_dir`; None when no dir is known."""
+    return getattr(config, "hillclimb_dir", None)
+
+
 class ClimberLoadError(ValueError):
     """The climber cannot be loaded; the message names the file and the fix."""
 

@@ -1241,12 +1241,12 @@ def mixed_fleet(
         raise ValueError("repeats must be >= 1")
     if not climbers:
         raise ValueError("a mixed fleet needs at least one climber")
-    from hillclimb.modules.policies import policy_label
+    from hillclimb.climber import climber_label
 
     experiments: list[tuple[str, str]] = []
     seen: dict[str, int] = {}
     for climber in climbers:
-        label = policy_label(climber)  # a one-file climber's experiment is its stem
+        label = climber_label(climber)  # a one-file climber's experiment is its stem
         count = seen.get(label, 0) + 1
         seen[label] = count
         experiments.append((label if count == 1 else f"{label}-{count}", climber))

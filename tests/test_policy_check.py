@@ -341,6 +341,12 @@ def test_cli_checks_a_file_policy_relative_to_the_hillclimb_dir(tmp_path, monkey
     assert "never start" in capsys.readouterr().out
 
     with pytest.raises(SystemExit) as exc:
-        cli_main(["policy", "check", "--policy", "policies/missing.py"])  # the old spelling still works
+        cli_main(["climber", "check", "--climber", "policies/missing.py"])
     assert exc.value.code == 2
     assert "climber file not found" in capsys.readouterr().err
+
+    # 0.6 removed the old spellings outright
+    for gone in (["policy", "check"], ["climber", "check", "--policy", "greedy"]):
+        with pytest.raises(SystemExit) as exc:
+            cli_main(gone)
+        assert exc.value.code == 2

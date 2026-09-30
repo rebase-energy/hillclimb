@@ -63,3 +63,14 @@ def candidate(candidate_id: str, *scores: float | None, trials: list[Trial] | No
     if trials is None:
         trials = [trial(*scores)] if scores else []
     return Candidate(candidate_id=candidate_id, trials=trials, **fields)
+
+
+def make_policy(ref: str, params: dict | None = None, *, complexity_start: int = 0, base_dir=None):
+    """A policy built the way a search builds it: through the climber `ref`
+    names (a bundled name or a .py file), with `params` laid over its own."""
+    from hillclimb.climber import load_climber
+
+    loop = load_climber(ref, base_dir).build_loop(
+        params=params or {}, complexity_start=complexity_start, log=lambda *_: None
+    )
+    return loop.policy

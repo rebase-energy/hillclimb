@@ -100,7 +100,7 @@ def test_watch_labels_only_the_improver(task, config):
     task.solution_kind = "program"
     api.create_search(config, task, run_dir, "r1", 600)
     with closing(open_store(config)) as store:
-        labels = sorted(row.policy for row in scan_searches(store, "r1"))
+        labels = sorted(row.climber for row in scan_searches(store, "r1"))
     assert labels == ["greedy", "greedy (improver)"]
 
 

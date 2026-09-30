@@ -1,4 +1,4 @@
-"""`hillclimb climber list|new|check` (and the hidden old `policy check`)."""
+"""`hillclimb climber list|new|check`."""
 
 from __future__ import annotations
 
@@ -29,10 +29,6 @@ climber_app = typer.Typer(
 app.add_typer(climber_app, name="climber")
 
 
-policy_app = typer.Typer(cls=HillclimbGroup, hidden=True, help="Old spelling of `hillclimb climber`")
-
-
-app.add_typer(policy_app, name="policy", hidden=True)
 
 
 LOCAL_CLIMBERS_DIRNAME = "climbers"  # <hillclimb dir>/climbers/<name>/ — where `climber new` writes
@@ -58,10 +54,10 @@ def climber_list(as_json: bool = typer.Option(False, "--json", help="Machine-rea
     """The climbers `hillclimb run --climber` accepts: the bundled ones and
     every directory or one-file climber under climbers/."""
     from hillclimb.climber import ClimberLoadError, bundled_climbers, load_climber
-    from hillclimb.modules.policies import policy_base_dir
+    from hillclimb.climber import climber_base_dir
 
     config = common.load_config()
-    base_dir = policy_base_dir(config)
+    base_dir = climber_base_dir(config)
     refs = [(name, "bundled") for name in bundled_climbers()]
     local = _local_climbers_dir(config)
     if local is not None and local.is_dir():
@@ -118,7 +114,7 @@ def climber_new(
     import yaml
 
     from hillclimb.climber import ClimberLoadError, load_climber
-    from hillclimb.modules.policies import policy_base_dir
+    from hillclimb.climber import climber_base_dir
 
     config = common.load_config()
     local = _local_climbers_dir(config)
@@ -126,7 +122,7 @@ def climber_new(
         raise typer.BadParameter("no hillclimb dir here — run `hillclimb init` (or `hillclimb problem get`) first")
     if not _re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", name):
         raise typer.BadParameter(f"{name!r}: a climber name is letters, digits, - and _")
-    base_dir = policy_base_dir(config)
+    base_dir = climber_base_dir(config)
     try:
         source = load_climber(from_, base_dir)
     except ClimberLoadError as exc:
@@ -176,11 +172,8 @@ def climber_new(
 
 
 @climber_app.command("check")
-@policy_app.command("check", hidden=True)
 def climber_check(
-    ctx: typer.Context,
     climber: str = typer.Option(None, "--climber", help="Climber ref (default: config climber.ref)"),
-    policy: str = typer.Option(None, "--policy", hidden=True),
     problem: str = typer.Option(
         None, "--problem", help="Replay only this problem's recorded searches (default: every search)"
     ),
@@ -204,21 +197,20 @@ def climber_check(
     a short `--agent dummy` search so the whole loop — prompts included —
     runs once before an agent hour is spent on it.
     """
-    if ctx.parent is not None and ctx.parent.info_name == "policy":
-        warn("note: `hillclimb policy check` is now `hillclimb climber check`")
-    if policy:
-        warn("note: `--policy` is now `--climber` (same values)")
     from hillclimb.api import run_search
-    from hillclimb.climber import ClimberLoadError, load_climber
-    from hillclimb.modules.policies import policy_base_dir, policy_path
+    from hillclimb.climber import ClimberLoadError, climber_base_dir, load_climber
     from hillclimb.modules.policies.check import JournalCase, check_policy
 
     config = common.load_config()
     config.apply_overrides(common._parse_set(set_ or []))
-    name = climber or policy or config.climber.ref
+    name = climber or config.climber.ref
     params = dict(config.climber.params)  # the user's overlay; the manifest's params are the base
-    base_dir = policy_base_dir(config)
-    source = policy_path(name, base_dir)
+    base_dir = climber_base_dir(config)
+    source = None
+    if name.endswith(".py"):  # a one-file climber: say so before anything is imported
+        source = Path(name).expanduser()
+        if not source.is_absolute() and base_dir is not None:
+            source = base_dir / source
     if source is not None and not source.is_file():
         raise typer.BadParameter(f"climber file not found: {source}")
     try:

@@ -550,7 +550,7 @@ def similarity_scores(
     a .py file. 1.0 = the same; representations are cached per file content
     in ~/.cache/hillclimb/similarity/, nothing is written into the run.
     """
-    from hillclimb.modules.policies import policy_base_dir
+    from hillclimb.climber import climber_base_dir
     from hillclimb.modules.similarity import (
         SimilarityUnavailable,
         Solution,
@@ -592,7 +592,7 @@ def similarity_scores(
     results = []
     for name, params in requested.items():
         try:
-            instance = get_score(name, params, base_dir=policy_base_dir(config))
+            instance = get_score(name, params, base_dir=climber_base_dir(config))
         except ValueError as exc:
             raise typer.BadParameter(str(exc)) from exc
         try:

@@ -142,7 +142,7 @@ def test_scan_runs_and_searches_with_status(tmp_path: Path):
     search_rows = scan_searches(runs_dir, "20260701-run")
     assert len(search_rows) == 1
     assert search_rows[0].problem == "circle-packing"
-    assert search_rows[0].policy == "greedy"  # the default optimizer
+    assert search_rows[0].climber == "greedy"  # the default optimizer
     assert search_rows[0].agent == "claude-code"
     assert search_rows[0].candidates == "3 (2 passing)"
     assert search_rows[0].buggy == 1  # c002 crashed: the cell goes red
@@ -391,12 +391,12 @@ def test_scan_searches_shows_the_policy_and_the_arm_when_it_differs(tmp_path: Pa
     meta.climber, meta.study, meta.experiment = "gepa", "optimizers", "gepa"
     write_search_meta(search_dir, meta)
     row = scan_searches(runs_dir, "exp-run")[0]
-    assert (row.problem, row.policy) == ("circle-packing", "gepa")
+    assert (row.problem, row.climber) == ("circle-packing", "gepa")
 
     meta.climber, meta.experiment = "greedy", "opus"
     write_search_meta(search_dir, meta)
     row = scan_searches(runs_dir, "exp-run")[0]
-    assert (row.problem, row.policy) == ("circle-packing [opus]", "greedy")
+    assert (row.problem, row.climber) == ("circle-packing [opus]", "greedy")
 
 
 def test_scan_searches_agent_lists_every_harness_a_route_used(tmp_path: Path):
@@ -417,7 +417,7 @@ def test_sort_search_rows_best_first_within_each_problem():
 
     def row(search_id: str, problem: str, score: float | None, higher: bool = True) -> SearchRow:
         return SearchRow(
-            search_id=search_id, problem=problem, policy="greedy", agent="dummy", model="m",
+            search_id=search_id, problem=problem, climber="greedy", agent="dummy", model="m",
             tokens="-", spend="-", state="done", candidates="-", best_val="-", selected="-",
             duration="-", best_score=score, higher_is_better=higher,
         )

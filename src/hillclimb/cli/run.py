@@ -278,7 +278,6 @@ def run(
             "on the problem, under one run, each tagged as an experiment"
         ),
     ),
-    policy: list[str] = typer.Option(None, "--policy", hidden=True),
     holdout: bool = typer.Option(True, "--holdout/--no-holdout", help="Hidden selection holdout"),
     learning: bool = typer.Option(
         True, "--learning/--no-learning",
@@ -339,9 +338,7 @@ def run(
         config.holdout.enabled = False
     if not learning:
         config.learning.enabled = False
-    if policy:
-        warn("note: `--policy` is now `--climber` (same values)")
-    climbers = [*(climber or []), *(policy or [])]
+    climbers = list(climber or [])
     mixed = len(climbers) > 1
     experiment_overrides = common._parse_experiment_set(experiment_set or [])
     if experiment_overrides and not mixed:
@@ -538,13 +535,13 @@ def resume(
     config.climber.params = meta.climber_params
     if meta.climber_sha256 is not None:
         from hillclimb.climber import ClimberLoadError, load_climber, load_snapshot
-        from hillclimb.modules.policies import policy_base_dir
+        from hillclimb.climber import climber_base_dir
 
         # the search resumes from the snapshot in its own folder, so an
         # edited (or deleted) live climber changes nothing — but say so
         snapshot = load_snapshot(search_dir)
         try:
-            now = load_climber(meta.climber, policy_base_dir(config)).sha256
+            now = load_climber(meta.climber, climber_base_dir(config)).sha256
         except ClimberLoadError as exc:
             if snapshot is None:  # nothing left to resume WITH
                 raise typer.BadParameter(

@@ -1,4 +1,4 @@
-"""Tuner registry: name -> factory, mirroring policies.get_policy."""
+"""Tuner registry: name -> factory."""
 
 from __future__ import annotations
 

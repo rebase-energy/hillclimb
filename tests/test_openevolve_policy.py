@@ -3,7 +3,7 @@ inspirations, hillclimb's harness does the rest. Needs the `openevolve` extra.""
 
 from __future__ import annotations
 
-from tests.factories import trial as mk_trial
+from tests.factories import make_policy, trial as mk_trial
 
 import random
 from pathlib import Path
@@ -17,7 +17,6 @@ from hillclimb.harness.budget import BudgetManager
 from hillclimb.harness.candidate import Candidate
 from hillclimb.harness.dirs import create_search_dir
 from hillclimb.harness.journal import Journal
-from hillclimb.modules.policies import get_policy
 from hillclimb.modules.policies.openevolve import OpenEvolvePolicy
 from tests.harness_factory import SearchRig
 from tests.conftest import local_executor, ok_script
@@ -42,7 +41,7 @@ def scored(journal: Journal, tmp_path: Path, cid: str, op: str, score: float,
 
 
 def replayed(journal: Journal, config, params=PARAMS) -> tuple[OpenEvolvePolicy, object]:
-    policy = get_policy("openevolve", params)
+    policy = make_policy("openevolve", params)
     view = make_view(journal, config)
     for cand in journal.candidates.values():
         policy.observe(view, cand)
@@ -50,11 +49,11 @@ def replayed(journal: Journal, config, params=PARAMS) -> tuple[OpenEvolvePolicy,
 
 
 def test_registry_and_params_reach_openevolve(config):
-    policy = get_policy("openevolve", PARAMS)
+    policy = make_policy("openevolve", PARAMS)
     assert policy.name == "openevolve"
     assert policy.db_config.num_islands == 2
     assert policy.feature_dimensions == ["complexity", "score"]
-    assert policy.params == PARAMS  # persisted verbatim for resume
+    assert PARAMS.items() <= policy.params.items()  # laid over the climber's own
 
 
 def test_drafts_until_population_seeded_then_evolves(config, tmp_path):
@@ -120,7 +119,7 @@ def test_lower_is_better_flips_fitness(config, tmp_path):
     journal = Journal(tmp_path / "j.jsonl")
     scored(journal, tmp_path, "c001", "draft", 2.0)
     scored(journal, tmp_path, "c002", "draft", 1.0)
-    policy = get_policy("openevolve", PARAMS)
+    policy = make_policy("openevolve", PARAMS)
     view = make_view(journal, config, higher_is_better=False)
     for cand in journal.candidates.values():
         policy.observe(view, cand)
@@ -146,7 +145,7 @@ def test_openevolve_policy_drives_search_end_to_end(task, config):
     agent.queue(script=ok_script(0.7), notes="two\n")
     agent.queue(script=ok_script(0.8), notes="three\n")
     search_dir = create_search_dir(config.paths.runs_dir, "test-run")
-    policy = get_policy("openevolve", config.climber.params)
+    policy = make_policy("openevolve", config.climber.params)
     searcher = SearchRig(
         problem=task, config=config, journal=Journal(search_dir / "journal.jsonl"),
         agent=agent, executor=local_executor(), budget=BudgetManager(3600, stop_margin_s=1),
@@ -181,7 +180,7 @@ def _catch_up(journal: Journal, config, params=PARAMS):
 
     from hillclimb.harness.loop import PolicyLoop
 
-    policy = get_policy("openevolve", params)
+    policy = make_policy("openevolve", params)
     PolicyLoop(policy).catch_up(SimpleNamespace(view=lambda: make_view(journal, config)))
     return policy
 
@@ -224,7 +223,7 @@ LANDED = [
 
 def test_resumed_database_is_the_live_one(config, tmp_path):
     journal = Journal(tmp_path / "j.jsonl")
-    live = get_policy("openevolve", PARAMS)
+    live = make_policy("openevolve", PARAMS)
     for cid, op, score, parent, code in LANDED:
         scored(journal, tmp_path, cid, op, score, parent_id=parent, code=code)
         _observe_live(live, journal, config, cid)
@@ -235,7 +234,7 @@ def test_resumed_database_is_the_live_one(config, tmp_path):
 
 def test_resumed_database_ignores_the_order_results_landed_in(config, tmp_path):
     journal = Journal(tmp_path / "j.jsonl")
-    live = get_policy("openevolve", PARAMS)
+    live = make_policy("openevolve", PARAMS)
     _pending(journal, "c001", "draft")
     _pending(journal, "c002", "draft")
     for cid, score, code in (("c002", 0.7, "b = 2\n" * 30), ("c001", 0.5, "a = 1\n" * 10)):
@@ -247,7 +246,7 @@ def test_resumed_database_ignores_the_order_results_landed_in(config, tmp_path):
 
 def test_resumed_database_matches_after_a_tune_trial(config, tmp_path):
     journal = Journal(tmp_path / "j.jsonl")
-    live = get_policy("openevolve", PARAMS)
+    live = make_policy("openevolve", PARAMS)
     for cid, score in (("c001", 0.5), ("c002", 0.6)):
         scored(journal, tmp_path, cid, "draft", score, code=f"v = '{cid}'\n" * 10)
         _observe_live(live, journal, config, cid)

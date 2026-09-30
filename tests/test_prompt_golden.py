@@ -90,7 +90,7 @@ def test_openevolve_prompts_match_golden(task, config, tmp_path):
     from hillclimb.harness.budget import BudgetManager
     from hillclimb.harness.dirs import create_search_dir
     from hillclimb.harness.journal import Journal
-    from hillclimb.modules.policies import get_policy
+    from tests.factories import make_policy
     from tests.harness_factory import SearchRig
     from tests.conftest import local_executor, ok_script
     from tests.test_openevolve_policy import PARAMS
@@ -105,7 +105,7 @@ def test_openevolve_prompts_match_golden(task, config, tmp_path):
         problem=task, config=config, journal=Journal(search_dir / "journal.jsonl"),
         agent=agent, executor=local_executor(), budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir, max_candidates=4, log=lambda *_: None,
-        policy=get_policy("openevolve", config.climber.params),
+        policy=make_policy("openevolve", config.climber.params),
     ).run()
     _check("openevolve", collect_prompts(search_dir, tmp_path))
 

@@ -32,21 +32,19 @@ def search_climber(config: Config, search_dir=None) -> Climber:
     """The climber this config names (relative paths resolve from the folder
     holding the hillclimb dir) — or, for a search that already exists, the
     snapshot it was started with. A `ClimberLoadError` names the unknowns."""
-    from hillclimb.climber import load_climber, load_snapshot
-    from hillclimb.modules.policies import policy_base_dir, policy_label
+    from hillclimb.climber import climber_base_dir, climber_label, load_climber, load_snapshot
 
     if search_dir is not None:
-        snapshot = load_snapshot(search_dir, name=policy_label(config.climber.ref))
+        snapshot = load_snapshot(search_dir, name=climber_label(config.climber.ref))
         if snapshot is not None:
             return snapshot
-    return load_climber(config.climber.ref, policy_base_dir(config))
+    return load_climber(config.climber.ref, climber_base_dir(config))
 
 
 def is_loop_climber(name: str, config: Config | None = None) -> bool:
-    from hillclimb.climber import load_climber
-    from hillclimb.modules.policies import policy_base_dir
+    from hillclimb.climber import climber_base_dir, load_climber
 
-    return load_climber(name, policy_base_dir(config) if config is not None else None).is_loop
+    return load_climber(name, climber_base_dir(config) if config is not None else None).is_loop
 
 
 def holdout_timing(config: Config, search_dir=None) -> str:
@@ -102,10 +100,10 @@ def build_graph_module(config: Config, search_dir=None, log=None):
     from hillclimb.climber import ClimberLoadError
     from hillclimb.modules.memory.base import DEFAULT_GRAPH
     from hillclimb.modules.memory.graphs import get_graph
-    from hillclimb.modules.policies import policy_base_dir
+    from hillclimb.climber import climber_base_dir
 
     if config.climber.graph is not None:  # the user named one: it wins
-        return get_graph(config.climber.graph, base_dir=policy_base_dir(config))
+        return get_graph(config.climber.graph, base_dir=climber_base_dir(config))
     try:
         return search_climber(config, search_dir).graph_module()
     except ClimberLoadError as exc:

@@ -138,7 +138,7 @@ def _load_import_path(spec: str) -> type[GraphModule]:
 
 def get_graph(name: str, *, base_dir: Path | None = None) -> GraphModule:
     """A graph module instance by registry name, `.py` path (`base_dir`
-    anchors a relative one — pass `policies.policy_base_dir(config)`), or
+    anchors a relative one — pass `climber.climber_base_dir(config)`), or
     `module:Class`. A class without a `name` is named after the file stem or
     the class, so logs and stats stay labelled."""
     path: Path | None = None

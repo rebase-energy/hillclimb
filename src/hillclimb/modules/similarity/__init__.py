@@ -142,7 +142,7 @@ def get_score(
     name: str, params: Mapping[str, Any] | None = None, *, base_dir: Path | None = None,
 ) -> SimilarityScore:
     """A score instance by registry name, `.py` path (`base_dir` anchors a
-    relative one — pass `policies.policy_base_dir(config)`), or
+    relative one — pass `climber.climber_base_dir(config)`), or
     `module:Class`. A class without a `name` is named after the file stem
     or class, so matrices and caches stay labelled."""
     if name.endswith(SCORE_FILE_SUFFIX):
