@@ -350,3 +350,66 @@ def test_cli_checks_a_file_policy_relative_to_the_hillclimb_dir(tmp_path, monkey
         with pytest.raises(SystemExit) as exc:
             cli_main(gone)
         assert exc.value.code == 2
+
+
+def test_climber_check_takes_a_run_spec_and_checks_every_entrys_climber(tmp_path, monkeypatch, capsys):
+    """The run config defines the climber, so the check reads it from there:
+    every entry's block (its `set` pairs applied), each distinct one once."""
+    import yaml
+
+    from hillclimb.cli import main as cli_main
+    from tests.test_cli import write_problem
+
+    (tmp_path / "hillclimb.yaml").write_text("")
+    write_problem(tmp_path / "problems", "p")
+    (tmp_path / "stalls.py").write_text(
+        "class Stalls:\n    name = 'stalls'\n    def propose(self, view):\n        return None\n"
+        "    def observe(self, view, candidate):\n        pass\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
+    spec = tmp_path / "run.yaml"
+    spec.write_text(yaml.safe_dump({"problems": [
+        {"target": "p", "climber": "greedy", "set": ["climber.params.num_drafts=1"]},
+        {"target": "p", "name": "again", "climber": {"policy": "greedy", "params": {"num_drafts": 1}}},
+    ]}))
+    with pytest.raises(SystemExit) as exc:
+        cli_main(["climber", "check", "run.yaml", "--json"])
+    assert exc.value.code == 0
+    (payload,) = json.loads(capsys.readouterr().out)  # two entries, one climber
+    assert payload["ok"] and payload["resolved_params"]["num_drafts"] == 1 and payload["entry"].endswith("[1]")
+
+    spec.write_text(yaml.safe_dump({"climber": "greedy", "problems": ["p", {"target": "p", "climber": "stalls.py"}]}))
+    with pytest.raises(SystemExit) as exc:
+        cli_main(["climber", "check", "run.yaml"])
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "policy greedy" in out and "policy stalls" in out and "never start" in out
+
+    spec.write_text(yaml.safe_dump({"problems": [{"target": "p", "climber": {"policy": "nope"}}]}))
+    with pytest.raises(SystemExit) as exc:
+        cli_main(["climber", "check", "run.yaml"])
+    assert exc.value.code == 2 and "unknown policy 'nope'" in capsys.readouterr().err
+
+
+def test_the_config_init_writes_shows_a_block_that_loads():
+    """The commented `climber:` block in a fresh hillclimb.yaml is the
+    documentation most people read: uncommented, it must be a valid block."""
+    import re
+
+    import yaml
+
+    from hillclimb.cli.common import INIT_CONFIG
+    from hillclimb.config import Config
+
+    lines = INIT_CONFIG.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("# climber:") and "whole block" in line)
+    block = []
+    for line in lines[start:]:
+        if not line.startswith("#"):
+            break
+        block.append(re.sub(r"^# ?", "", line))
+    config = Config.model_validate(yaml.safe_load("\n".join(block)))
+    assert config.climber.policy == "greedy" and config.climber.operators == ["draft", "debug", "improve", "ensemble"]
+    shorthand = next(line for line in lines if line.startswith("# climber: greedy"))
+    assert Config.model_validate(yaml.safe_load(shorthand[2:])).climber.policy == "greedy"

@@ -1,18 +1,23 @@
                                                                                                                         
- Usage: root climber check [OPTIONS]                                                                                    
+ Usage: root climber check [OPTIONS] [SPEC]                                                                             
                                                                                                                         
  Conformance check for a climber — the cheap pre-verifier.                                                              
                                                                                                                         
- Replays every recorded journal (plus an empty one) through the climber's                                               
- policy with no agent or verifier: two fresh instances must propose the                                                 
- same action at every budget point (the resume contract), every referenced                                              
- candidate must exist, the policy must never write, and the climber's                                                   
- prompts must lint clean. Exit 1 on any breach. `--smoke` follows up with                                               
- a short `--agent dummy` search so the whole loop — prompts included —                                                  
- runs once before an agent hour is spent on it.                                                                         
+ Resolves every module the block names, then replays every recorded                                                     
+ journal (plus an empty one) through the climber's policy with no agent or                                              
+ verifier: two fresh instances must propose the same action at every                                                    
+ budget point and a resumed one must agree with a live one (the resume                                                  
+ contract), every referenced candidate must exist, the policy must never                                                
+ write, and the climber's prompts must lint clean. Exit 1 on any breach.                                                
+ `--smoke` follows up with a short `--agent dummy` search so the whole                                                  
+ loop — prompts included — runs once before an agent hour is spent on it.                                               
+ Given a run spec, every entry's climber is checked.                                                                    
                                                                                                                         
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│   [spec]      TEXT  A run spec: check the climber of every entry (default: this folder's `climber:` block)           │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ --climber               TEXT     A preset or one .py file (default: this folder's `climber:` block)                  │
+│ --climber               TEXT     A preset or one .py file, instead of the folder's block                             │
 │ --problem               TEXT     Replay only this problem's recorded searches (default: every search)                │
 │ --set                   TEXT     Config override, dotted: --set climber.params.num_drafts=1                          │
 │ --limit                 INTEGER  Newest recorded searches to replay [default: 20]                                    │

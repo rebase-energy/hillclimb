@@ -94,6 +94,14 @@ def climber_list(as_json: bool = typer.Option(False, "--json", help="Machine-rea
             f"{mark} [path]{_m(row['ref']):<{width}}[/]  {_m(row['origin']):<7} {_m(row['kind']):<6} "
             f"[note]{_m(row['description'])}[/]"
         )
+    # what a block is built from: every registered module, by slot
+    from hillclimb.modules import refs as module_refs
+    from hillclimb.modules.memory.base import MEMORY_KINDS
+
+    say("\n[head]Building blocks[/] [note](a `climber:` block names one per slot; a .py file or package.module:Class works too)[/]")
+    for slot, kind in (("policy", "policy"), ("loop", "loop"), ("operators", "operator"), ("tuner", "tuner")):
+        say(f"  {slot:<10} [path]{_m(', '.join(module_refs.registered_names(kind)))}[/]")
+    say(f"  {'memory':<10} [path]{_m(', '.join(MEMORY_KINDS))}[/]")
     say("\n[note]* = this folder's default.[/]  Run one:        [cmd]hillclimb run <problem> --climber <name>[/]")
     say("                              See its block:  [cmd]hillclimb climber show <name>[/]")
     say("                              Start your own: [cmd]hillclimb climber new <name> --from greedy[/]")
@@ -205,7 +213,10 @@ def climber_new(
 
 @climber_app.command("check")
 def climber_check(
-    climber: str = typer.Option(None, "--climber", help="A preset or one .py file (default: this folder's `climber:` block)"),
+    spec: str = typer.Argument(
+        None, help="A run spec: check the climber of every entry (default: this folder's `climber:` block)"
+    ),
+    climber: str = typer.Option(None, "--climber", help="A preset or one .py file, instead of the folder's block"),
     problem: str = typer.Option(
         None, "--problem", help="Replay only this problem's recorded searches (default: every search)"
     ),
@@ -221,23 +232,22 @@ def climber_check(
 ):
     """Conformance check for a climber — the cheap pre-verifier.
 
-    Replays every recorded journal (plus an empty one) through the climber's
-    policy with no agent or verifier: two fresh instances must propose the
-    same action at every budget point (the resume contract), every referenced
-    candidate must exist, the policy must never write, and the climber's
-    prompts must lint clean. Exit 1 on any breach. `--smoke` follows up with
-    a short `--agent dummy` search so the whole loop — prompts included —
-    runs once before an agent hour is spent on it.
+    Resolves every module the block names, then replays every recorded
+    journal (plus an empty one) through the climber's policy with no agent or
+    verifier: two fresh instances must propose the same action at every
+    budget point and a resumed one must agree with a live one (the resume
+    contract), every referenced candidate must exist, the policy must never
+    write, and the climber's prompts must lint clean. Exit 1 on any breach.
+    `--smoke` follows up with a short `--agent dummy` search so the whole
+    loop — prompts included — runs once before an agent hour is spent on it.
+    Given a run spec, every entry's climber is checked.
     """
-    from hillclimb.api import run_search
-    from hillclimb.climber import ClimberLoadError, climber_base_dir, load_climber
-    from hillclimb.modules.policies.check import JournalCase, check_policy
-
-    from hillclimb.climber import as_spec, resolve_climber
+    from hillclimb.climber import ClimberLoadError, as_spec, climber_base_dir, load_climber
+    from hillclimb.problem import load_suite
 
     config = common.load_config()
     base_dir = climber_base_dir(config)
-    name = climber or config.climber.label
+    overrides = common._parse_set(set_ or [])
     source = None
     if climber and climber.endswith(".py"):  # a one-file climber: say so before anything is imported
         source = Path(climber).expanduser()
@@ -245,29 +255,79 @@ def climber_check(
             source = base_dir / source
     if source is not None and not source.is_file():
         raise typer.BadParameter(f"climber file not found: {source}")
+    # what to check: (label, the config whose `climber:` block it is)
+    targets: list[tuple[str | None, Config]] = []
     try:
-        if climber:
-            try:
-                config.climber = as_spec(climber)  # a preset, one file
-            except ClimberLoadError:
-                # a pre-0.6 directory: read it as the block it is
-                config.climber = load_climber(climber, base_dir).spec
-        config.apply_overrides(common._parse_set(set_ or []))  # edits the block, like `hillclimb run --set`
-        loaded = resolve_climber(config.climber, base_dir)
+        if spec:
+            if climber:
+                raise typer.BadParameter("give a run spec or --climber, not both")
+            seen: list[dict] = []
+            for index, entry in enumerate(load_suite(spec, config).problems, 1):
+                entry_config = config.model_copy(deep=True)
+                entry_config.hillclimb_dir = config.hillclimb_dir
+                if entry.climber is not None:
+                    entry_config.climber = as_spec(entry.climber)
+                entry_config.apply_overrides(common._parse_set(entry.set))
+                entry_config.apply_overrides(overrides)
+                block = entry_config.climber.block()
+                if block not in seen:  # several entries on one climber: checked once
+                    seen.append(block)
+                    targets.append((f"{entry.name or entry.target} [{index}]", entry_config))
+        else:
+            if climber:
+                try:
+                    config.climber = as_spec(climber)  # a preset, one file
+                except ClimberLoadError:
+                    # a pre-0.6 directory: read it as the block it is
+                    config.climber = load_climber(climber, base_dir).spec
+            config.apply_overrides(overrides)  # edits the block, like `hillclimb run --set`
+            targets.append((None, config))
+    except (ClimberLoadError, ValueError, KeyError, FileNotFoundError) as exc:
+        if isinstance(exc, typer.BadParameter):
+            raise
+        fail(_m(exc))
+        raise typer.Exit(2) from exc
+
+    payloads, worst = [], 0
+    for label, target_config in targets:
+        if label is not None and not as_json:
+            say(f"[head]{_m(label)}[/]")
+        code, payload = _check_climber(
+            target_config, problem=problem, limit=limit, smoke=smoke, smoke_budget=smoke_budget,
+            as_json=as_json, source=source,
+        )
+        worst = max(worst, code)
+        if payload is not None:
+            payloads.append({"entry": label, **payload} if label is not None else payload)
+    if as_json and payloads:
+        typer.echo(json.dumps(payloads if spec else payloads[0], indent=2, default=str))
+    if worst:
+        raise typer.Exit(worst)
+
+
+def _check_climber(config: Config, *, problem, limit, smoke, smoke_budget, as_json, source) -> tuple[int, dict | None]:
+    """Check the climber `config.climber` defines. -> (exit code, the JSON
+    payload when one was asked for): 2 it does not load, 1 a breach, 0 conforms."""
+    from hillclimb.api import run_search
+    from hillclimb.climber import ClimberLoadError, climber_base_dir, resolve_climber
+    from hillclimb.modules.policies.check import JournalCase, check_policy
+
+    try:
+        loaded = resolve_climber(config.climber, climber_base_dir(config))
         loaded.brain  # noqa: B018 — every module must resolve, before an agent hour is spent
         loaded.operator_set()
         loaded.tuner()
         loaded.graph_module()
     except (ClimberLoadError, ValueError, KeyError) as exc:
         fail(_m(exc))
-        raise typer.Exit(2) from exc
+        return 2, None
     params = dict(loaded.spec.params)
     if loaded.is_loop:
         fail(
-            f"{_m(name)} brings its own Loop; "
+            f"{_m(loaded.name)} brings its own Loop; "
             "the conformance check covers climbers built on a Policy"
         )
-        raise typer.Exit(2)
+        return 2, None
 
     def make_policy():
         # a fresh policy per call, exactly as a search builds it
@@ -322,13 +382,13 @@ def climber_check(
             "scored": len(journal.scored_candidates()),
             "best": outcome.selected.val_score if outcome.selected is not None else None,
         }
+    payload = None
     if as_json:
         payload = report.to_dict()
         payload["resolved_params"] = resolved_params
         payload["journals"] = [c.label for c in cases]
         if smoke_result is not None:
             payload["smoke"] = smoke_result
-        typer.echo(json.dumps(payload, indent=2, default=str))
     else:
         typer.echo(report.render())
         say(f"[head]resolved params:[/] {_m(json.dumps(resolved_params, default=str))}")
@@ -341,5 +401,5 @@ def climber_check(
             )
         elif smoke:
             warn("smoke skipped: fix the breaches above first")
-    if not report.ok or (smoke_result is not None and smoke_result["state"] != "done"):
-        raise typer.Exit(1)
+    breach = not report.ok or (smoke_result is not None and smoke_result["state"] != "done")
+    return (1 if breach else 0), payload

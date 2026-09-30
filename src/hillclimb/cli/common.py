@@ -255,11 +255,14 @@ INIT_CONFIG = """\
 model: sonnet
 # agent: claude-code
 
-# climber: greedy          # HOW to climb: greedy | openevolve | gepa | climbers/<name>
-# climber:                 # ...or with your overrides on the climber's own params
-#   ref: greedy
+# climber: greedy          # HOW to climb, this folder's default. A preset: greedy | openevolve | gepa,
+#                          # or one .py file. A run spec's own `climber:` replaces it
+# climber:                 # ...or the whole block (`hillclimb climber show greedy` prints one to edit)
+#   policy: greedy         # a name, a file (mine.py or mine.py:Class) or package.module:Class
 #   params: {num_drafts: 3}
+#   operators: [draft, debug, improve, ensemble]
 #   tuner: random          # random | optuna (parameter tuning of candidates that declare params.json)
+#   memory: files          # files | none
 
 # budget:
 #   total_s: 7200
