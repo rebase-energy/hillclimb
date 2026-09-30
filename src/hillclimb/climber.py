@@ -278,12 +278,14 @@ class Climber:
 
     @property
     def description(self) -> str:
-        """The first line of what the policy or loop says about itself."""
-        target = self.brain.target
-        doc = (getattr(target, "__doc__", None) if "__doc__" in vars(target) else None) or (
-            getattr(inspect.getmodule(target), "__doc__", None) or ""
-        )
-        return doc.strip().splitlines()[0] if doc.strip() else ""
+        """One line on what it does: what the policy or loop says about
+        itself — and, for a policy over a selector the block names, what
+        that selector picks."""
+        text = _doc_line(self.brain.target)
+        if self.spec.select and not self.is_loop:
+            picks = _doc_line(self._resolve(self.spec.select, "select").target)
+            return f"{climber_label(self.spec.brain)} over {climber_label(self.spec.select)}: {picks}"
+        return text
 
     @property
     def holdout_timing(self) -> str | None:
@@ -742,6 +744,14 @@ def _compose(*, policy, loop, select, operators, tuner, memory, params, prompts,
 
 
 # --- helpers ---
+
+
+def _doc_line(target) -> str:
+    """The first line of a class's own docstring, else of its module's."""
+    doc = (getattr(target, "__doc__", None) if "__doc__" in vars(target) else None) or (
+        getattr(inspect.getmodule(target), "__doc__", None) or ""
+    )
+    return doc.strip().splitlines()[0] if doc.strip() else ""
 
 
 def _accepts(target, name: str) -> bool:
