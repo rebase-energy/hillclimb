@@ -41,6 +41,21 @@ from typing import Any
 from hillclimb._moved import modernize
 
 FILE_SUFFIX = ".py"
+KNOBS = "knobs"  # the `**knobs` of a module's constructor: its params, by keyword
+
+
+def with_knobs(params, knobs: Mapping, known: Mapping | None = None, who: str = "") -> Any:
+    """A module's params with keyword knobs laid over them. Without knobs
+    the params come back AS GIVEN (the same object: a caller may hold a live
+    mapping); with a `known` set, a knob that is not in it is a TypeError —
+    a typo in `Greedy(num_draft=3)` fails where it was written."""
+    if not knobs:
+        return params if params is not None else {}
+    if known is not None:
+        unknown = sorted(set(knobs) - set(known))
+        if unknown:
+            raise TypeError(f"{who} has no param {', '.join(map(repr, unknown))} (it has: {', '.join(sorted(known))})")
+    return {**dict(params or {}), **knobs}
 
 
 class ClimberLoadError(ValueError):
@@ -260,6 +275,15 @@ def closure_sha256(files: Sequence[Path], root: Path) -> str:
     return digest.hexdigest()
 
 
+# how many climber files are being imported right now (a file that starts a
+# search at import time would start it again when the search imports it)
+_IMPORTING = 0
+
+
+def importing() -> bool:
+    return _IMPORTING > 0
+
+
 class FileScope:
     """The local files one climber (or one standalone ref) reaches, imported
     as a single package. `files` are the entry points; the closure, its
@@ -295,10 +319,14 @@ class FileScope:
         except ValueError:
             raise ClimberLoadError(f"{noun} file {path} is outside {self.root}") from None
         self._ensure_package()
+        global _IMPORTING
+        _IMPORTING += 1
         try:
             return importlib.import_module(".".join((self.package, *relative.parts)))
         except Exception as exc:  # noqa: BLE001 — an author's import error, reported with its file
             raise ClimberLoadError(f"{noun} file {path} failed to import: {type(exc).__name__}: {exc}") from exc
+        finally:
+            _IMPORTING -= 1
 
 
 # --- resolving -------------------------------------------------------------------
@@ -405,6 +433,10 @@ def construct(target, offered: Mapping[str, Any], source: Any = ""):
         accepted = inspect.signature(target).parameters
     except (TypeError, ValueError):
         accepted = {}
-    takes_any = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in accepted.values())
+    # `**knobs` is how a person composing in Python sets params by keyword
+    # (`Greedy(num_drafts=3)`); it never takes what the loader offers
+    takes_any = any(
+        p.kind is inspect.Parameter.VAR_KEYWORD and p.name != KNOBS for p in accepted.values()
+    )
     kwargs = {name: value for name, value in offered.items() if takes_any or name in accepted}
     return target(**kwargs)

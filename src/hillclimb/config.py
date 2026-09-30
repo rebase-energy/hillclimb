@@ -4,10 +4,10 @@ import os
 
 from pathlib import Path
 
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import PrivateAttr, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from hillclimb.project import (
     find_hillclimb_dir,
@@ -409,6 +409,10 @@ class Config(BaseModel):
     # Resolved at load time; None for embedders that construct Config()
     # directly and set absolute paths themselves (e.g. the hosted container).
     hillclimb_dir: Path | None = Field(default=None, exclude=True)
+    # a `hillclimb.Climber` composed in Python from classes that exist only
+    # in this process: it cannot be a block, so it rides beside the config
+    # (in-process runs only — see `api.run`)
+    _live_climber: Any = PrivateAttr(default=None)
 
     @model_validator(mode="before")
     @classmethod

@@ -56,7 +56,12 @@ from hillclimb.project import MARKER_FILE
 DEFAULT_SPEC = "meta.yaml"
 NESTED_DIRNAME = "hillclimb"  # the inner searches' hillclimb dir, under the verifier's cwd
 # what an improver's candidate may import from hillclimb
-ALLOWED_HILLCLIMB_IMPORTS = ("hillclimb.sdk", "hillclimb.spaces", "hillclimb")
+ALLOWED_HILLCLIMB_IMPORTS = (
+    "hillclimb.sdk", "hillclimb.spaces", "hillclimb",
+    # the prebuilt blocks, by name (`hillclimb.policies.Greedy`)
+    "hillclimb.policies", "hillclimb.selectors", "hillclimb.operators", "hillclimb.tuners",
+    "hillclimb.memory", "hillclimb.loops",
+)
 # the outer verifier's own contract, which an inner engine must never inherit
 _OUTER_VERIFIER_KEYS = (
     "HILLCLIMB_PYTHON", "HILLCLIMB_SOLUTION", "HILLCLIMB_RESULT", "HILLCLIMB_SPLIT",
@@ -121,14 +126,7 @@ class MetaSpec(BaseModel):
         return len(self.problems) * self.repeats * (self.budget_s + _STARTUP_ALLOWANCE_S)
 
 
-def parse_budget(value: str) -> int:
-    import re
-
-    match = re.fullmatch(r"(\d+)\s*([hms]?)", str(value).strip())
-    if not match:
-        raise ValueError(f"cannot parse budget {value!r} (use e.g. 2h, 30m, 90s)")
-    amount, unit = int(match.group(1)), match.group(2)
-    return amount * {"h": 3600, "m": 60, "s": 1, "": 1}[unit]
+from hillclimb.harness.budget import parse_budget  # noqa: E402,F401 — the one parser (it lived here too)
 
 
 def load_meta_spec(path: Path) -> MetaSpec:

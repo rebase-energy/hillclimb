@@ -119,8 +119,8 @@ class Memory:
     # False: a search under this memory neither reads nor writes cross-search memory
     enabled: ClassVar[bool] = True
 
-    def __init__(self, params: Mapping | None = None):
-        self.params = dict(params or {})
+    def __init__(self, params: Mapping | None = None, **knobs):
+        self.params = {**dict(params or {}), **knobs}  # `FilesMemory(max_cards=1)`
         unknown = sorted(set(self.params) - set(self.DEFAULTS))
         if unknown:
             raise ValueError(

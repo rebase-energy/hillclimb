@@ -61,6 +61,9 @@ def search_climber(config: Config, search_dir=None) -> Climber:
     `ClimberLoadError` names the unknowns."""
     from hillclimb.climber import climber_base_dir, resolve_climber
 
+    live = getattr(config, "_live_climber", None)
+    if live is not None:
+        return live  # composed in this process from classes no snapshot can rebuild
     if search_dir is not None:
         snapshot = _snapshot(search_dir, config.climber.label)
         if snapshot is not None:

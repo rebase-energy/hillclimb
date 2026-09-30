@@ -50,8 +50,8 @@ class Selector:
     # every knob and its default; `params` are laid over them
     DEFAULTS: ClassVar[Mapping[str, Any]] = {}
 
-    def __init__(self, params: Mapping | None = None):
-        self.params = dict(params or {})
+    def __init__(self, params: Mapping | None = None, **knobs):
+        self.params = {**dict(params or {}), **knobs}  # `MapElites(num_islands=3)`
 
     def param(self, name: str):
         return self.params.get(name, self.DEFAULTS[name])

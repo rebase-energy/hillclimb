@@ -205,8 +205,8 @@ class Operator(ABC):
     role: str
     needs_target: bool = False
 
-    def __init__(self, params: Mapping | None = None):
-        self.params = dict(params or {})
+    def __init__(self, params: Mapping | None = None, **knobs):
+        self.params = {**dict(params or {}), **knobs}  # `Draft(retrieval=False)`
 
     def valid_target(self, target: Candidate | None) -> str | None:
         """Why this operator cannot run on `target`, or None when it can.

@@ -31,8 +31,6 @@ def sample_param(spec: ParamSpec, rng: random.Random):
 class RandomSearch(Tuner):
     name = "random"
 
-    def __init__(self, params: dict | None = None):
-        self.params = dict(params or {})
 
     def ask(
         self,

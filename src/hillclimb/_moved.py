@@ -27,6 +27,14 @@ RENAMED = {
     # the openevolve policy is greedy over the map-elites selector now; a
     # pre-0.6 snapshot keeps MAP-Elites' settings among the policy's params
     "hillclimb.modules.policies.openevolve:OpenEvolvePolicy": "hillclimb.modules.policies.compat:OpenEvolvePolicy",
+    # 0.6 dropped the kind from class names (`hillclimb.operators.Draft` says it)
+    "hillclimb.modules.operators.builtin:DraftOperator": "hillclimb.modules.operators.builtin:Draft",
+    "hillclimb.modules.operators.builtin:DebugOperator": "hillclimb.modules.operators.builtin:Debug",
+    "hillclimb.modules.operators.builtin:ImproveOperator": "hillclimb.modules.operators.builtin:Improve",
+    "hillclimb.modules.operators.builtin:EnsembleOperator": "hillclimb.modules.operators.builtin:Ensemble",
+    "hillclimb.climbers.gepa.operator:GepaReflectOperator": "hillclimb.climbers.gepa.operator:GepaReflect",
+    "hillclimb.modules.tuners.random_search:RandomTuner": "hillclimb.modules.tuners.random_search:RandomSearch",
+    "hillclimb.modules.tuners.optuna:OptunaTuner": "hillclimb.modules.tuners.optuna:Optuna",
 }
 
 

@@ -56,9 +56,9 @@ def distributions_for(optuna, space: ParamSpace) -> dict:
 class Optuna(Tuner):
     name = "optuna"
 
-    def __init__(self, params: dict | None = None):
+    def __init__(self, params: dict | None = None, **knobs):
+        super().__init__(params, **knobs)
         self.optuna = _require_optuna()
-        self.params = dict(params or {})
         accepted = set(inspect.signature(self.optuna.samplers.TPESampler.__init__).parameters)
         self.sampler_kwargs = {
             k: v for k, v in self.params.items()

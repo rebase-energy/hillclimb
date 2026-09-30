@@ -103,7 +103,12 @@ def test_package_inits_under_harness_and_modules_import_nothing():
 
 # the flat top level is the public surface and nothing else
 FLAT = {"__init__", "_moved", "api", "benchmark_providers", "climber", "config",
-        "connect", "experiment", "meta", "problem", "project", "spaces"}
+        "connect", "experiment", "meta", "problem", "project", "spaces",
+        # the building blocks by name, for composing in Python: lazy windows
+        # onto hillclimb.modules (single modules — `_moved.py` owns the
+        # `hillclimb.policies.` prefix of pre-move refs)
+        "policies", "selectors", "operators", "tuners", "memory", "loops"}
+FACADES = ("policies", "selectors", "operators", "tuners", "memory", "loops")
 
 
 def test_top_level_is_only_the_public_surface():

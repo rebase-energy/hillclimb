@@ -27,7 +27,7 @@ from hillclimb.agents import get_agent
 from hillclimb.agents.base import AgentRequest
 from hillclimb.harness.budget import BudgetManager
 from hillclimb.harness.candidate import Candidate
-from hillclimb.config import Config
+from hillclimb.config import Config, parse_set_overrides
 from hillclimb.harness.journal import Journal
 from hillclimb.problem import ProblemSpec, load_problem
 from hillclimb.harness.run import RunMeta, SearchMeta, new_search_uid
@@ -420,7 +420,7 @@ def create_search(
     problem.unit_tests = freeze_for_run(problem, run_dir)
     search_dir = allocate_search_dir(run_dir, problem.problem_id)
     snapshot_climber(climber, search_dir)  # what the engine — and a resume — loads
-    taken = load_snapshot(search_dir)
+    taken = load_snapshot(search_dir) if climber.portable else climber
     if taken is None or taken.sha256 != climber.sha256:
         # the copy is not the climber: a file it needs was not reached (it is
         # imported some way the snapshot cannot follow). Better no search
@@ -443,6 +443,7 @@ def create_search(
         role="improver" if problem.solution_kind == "climber" else "solver",
         climber_sha256=climber.sha256,
         climber_spec=climber.spec.block(),
+        climber_portable=climber.portable,
         hillclimb_version=__version__,
         routing={
             op: route.model_dump(exclude_none=True)
@@ -937,6 +938,125 @@ def run_search(
 # dir's live knowledge cards. Processes, not threads: status.json carries the
 # engine's pid, so two searches in one process would be indistinguishable to
 # every viewer.
+
+
+# --- the Python front door --------------------------------------------------------------
+
+
+def _not_while_importing(what: str) -> None:
+    from hillclimb.modules import refs
+
+    if refs.importing():
+        raise RuntimeError(
+            f"hillclimb.{what}() was called while a climber file was being imported — a search "
+            "loads the file your classes live in, which runs it again. Put the call under "
+            "`if __name__ == \"__main__\":`"
+        )
+
+
+def _with_climber(config: Config, climber: Any) -> None:
+    """Make `climber` — a name, a block, a `ClimberSpec` or a composed
+    `Climber` — the config's climber. File refs written in Python resolve
+    from the working directory."""
+    from hillclimb.climber import Climber, as_spec
+
+    if isinstance(climber, Climber):
+        config.climber = climber.spec
+        config._live_climber = None if climber.portable else climber
+    else:
+        config.climber = as_spec(climber).anchored(Path.cwd())
+        config._live_climber = None
+
+
+def run(
+    problem: str,
+    *,
+    climber: Any = None,
+    budget: str | int | None = None,
+    agent: str | None = None,
+    model: str | None = None,
+    config: Config | None = None,
+    holdout: bool = True,
+    seed_from: Path | str | None = None,
+    name: str | None = None,
+    log: Log = print,
+) -> SearchOutcome:
+    """Run one search, here, to completion — the Python counterpart of
+    `hillclimb run PROBLEM --no-detach`.
+
+        import hillclimb as hc
+
+        outcome = hc.run("heilbronn-11", climber=hc.Climber(policy=hc.policies.Greedy(num_drafts=5)),
+                         budget="10m")
+        outcome.selected.val_score
+
+    `climber` is a preset's name, a block, or a composed `hillclimb.Climber`
+    (None: the folder's `climber:` block). `budget` is `"10m"` / `"2h"` or
+    seconds (None: the problem's own). The folder's hillclimb.yaml supplies
+    everything else unless a `config` is given."""
+    from hillclimb.harness.budget import parse_budget
+
+    _not_while_importing("run")
+    config = config.model_copy(deep=True) if config is not None else Config.load(agent=agent, model=model)
+    if climber is not None:
+        _with_climber(config, climber)
+    return run_search(
+        problem,
+        budget_s=parse_budget(budget) if budget is not None else None,
+        name=name, config=config, agent=agent, model=model, holdout=holdout,
+        seed_from=seed_from, log=log,
+    )
+
+
+def run_spec(path: Path | str, *, config: Config | None = None, log: Log = print) -> list[SearchOutcome]:
+    """Run every search of a run spec, here, one after the other — the
+    Python counterpart of `hillclimb run SPEC` (which detaches one engine per
+    entry). One run holds them all and carries its own `spec.yaml`."""
+    from hillclimb.climber import as_spec
+    from hillclimb.harness.budget import parse_budget
+    from hillclimb.problem import load_suite, suite_problem_targets
+
+    _not_while_importing("run_spec")
+    base = config if config is not None else Config.load()
+    suite = load_suite(path, base)
+    targets = suite_problem_targets(suite, base)
+    run_id = new_run_id(suite.suite_id)
+    problem_ids = list(dict.fromkeys(load_problem(target, base).problem_id for target in targets))
+    run_dir = create_run(base, RunMeta(
+        run_id=run_id, name=suite.suite_id, kind="suite", target=str(path), problem_ids=problem_ids,
+    ))
+    configs, entries = [], []
+    for entry, target in zip(suite.problems, targets):
+        entry_config = base.model_copy(deep=True)
+        entry_config.hillclimb_dir = base.hillclimb_dir
+        if entry.agent:
+            entry_config.agent = entry.agent
+        if entry.model:
+            entry_config.model = entry.model
+        if entry.climber is not None:
+            entry_config.climber = as_spec(entry.climber)
+        if entry.parallel_agents is not None:
+            entry_config.concurrency.parallel_agents = entry.parallel_agents
+        if entry.n_replicates is not None:
+            entry_config.evaluation.n_replicates = entry.n_replicates
+        entry_config.apply_overrides(parse_set_overrides(entry.set))
+        seed = Path(entry.seed_from) if entry.seed_from else None
+        if seed is not None and not seed.is_absolute():
+            seed = (suite.suite_path.parent / seed).resolve()
+        configs.append((entry_config, seed))
+        entries.append(spec_entry(
+            target, name=entry.name, budget=entry.budget, agent=entry_config.agent, model=entry_config.model,
+            climber=entry_config.climber_block(), parallel_agents=entry.parallel_agents,
+            n_replicates=entry.n_replicates, seed_from=seed, set=entry.set,
+        ))
+    write_run_spec(run_dir, entries, source=path)
+    return [
+        run_search(
+            target, budget_s=parse_budget(entry.budget) if entry.budget else None,
+            run_id=run_id, run_name=suite.suite_id, config=entry_config, seed_from=seed, log=log,
+        )
+        for (entry_config, seed), entry, target in zip(configs, suite.problems, targets)
+    ]
 
 
 def child_launch_context(config: Config) -> tuple[Path, dict[str, str]]:

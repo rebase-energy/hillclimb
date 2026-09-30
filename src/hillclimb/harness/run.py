@@ -92,6 +92,9 @@ class SearchMeta(BaseModel):
     # the search first runs, so a resume starts from the same ones; None
     # until then
     memory_priors: dict | None = None
+    # False for a climber composed in Python from classes that existed only
+    # in the launching process: the search ran, but cannot be resumed
+    climber_portable: bool = True
     hillclimb_version: str | None = None
     routing: dict = Field(default_factory=dict)  # RouteConfig dumps by operator
     metric: str

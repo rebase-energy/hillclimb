@@ -394,11 +394,12 @@ def owned_paths(root: Path, config) -> list[Path]:
 
 
 def parse_budget(value: str) -> int:
-    match = re.fullmatch(r"(\d+)\s*([hms]?)", value.strip())
-    if not match:
-        raise typer.BadParameter(f"Cannot parse budget {value!r} (use e.g. 2h, 30m, 3600s)")
-    amount, unit = int(match.group(1)), match.group(2)
-    return amount * {"h": 3600, "m": 60, "s": 1, "": 1}[unit]
+    from hillclimb.harness.budget import parse_budget as parse
+
+    try:
+        return parse(value)
+    except ValueError:
+        raise typer.BadParameter(f"Cannot parse budget {value!r} (use e.g. 2h, 30m, 3600s)") from None
 
 
 def open_search(config: Config, ref: str | None) -> tuple[DataStore, SearchRecord]:

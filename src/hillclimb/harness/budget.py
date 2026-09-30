@@ -32,6 +32,18 @@ def journal_spend(journal: Journal) -> Spend:
     return Spend(evaluations=evaluations, tokens=tokens, cost_usd=cost)
 
 
+def parse_budget(value: str | int) -> int:
+    """A wall-clock budget as people write it — `2h`, `30m`, `90s`, plain
+    seconds — in seconds."""
+    import re
+
+    match = re.fullmatch(r"(\d+)\s*([hms]?)", str(value).strip())
+    if not match:
+        raise ValueError(f"cannot parse budget {value!r} (use e.g. 2h, 30m, 90s)")
+    amount, unit = int(match.group(1)), match.group(2)
+    return amount * {"h": 3600, "m": 60, "s": 1, "": 1}[unit]
+
+
 def format_remaining(seconds: float) -> str:
     """How the clock reads in prompts: `1h 05m` or `59 minutes` — prose an
     agent reads. Logs use `format_clock`."""

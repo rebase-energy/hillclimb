@@ -76,8 +76,8 @@ class MapElites(Selector):
     name = "map-elites"
     DEFAULTS = {"num_inspirations": 2, "random_seed": DEFAULT_SEED}
 
-    def __init__(self, params: dict | None = None):
-        super().__init__(params)
+    def __init__(self, params: dict | None = None, **knobs):
+        super().__init__(params, **knobs)
         DatabaseConfig, self._Program, self._ProgramDatabase = _require_openevolve()
         db_fields = {f.name for f in dataclass_fields(DatabaseConfig)}
         unknown = sorted(set(self.params) - db_fields - set(OWN_PARAMS))

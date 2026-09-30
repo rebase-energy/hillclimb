@@ -28,7 +28,7 @@ COMPLEXITY_CUES = {
 }
 
 
-class DraftOperator(Operator):
+class Draft(Operator):
     """A new solution from the problem alone. `retrieval` (default on) adds
     the research cue; the first draft of a search also gets memory's proven
     reference solution as a scaffold — later drafts must diverge, so seeding
@@ -75,7 +75,7 @@ class DraftOperator(Operator):
         )
 
 
-class DebugOperator(Operator):
+class Debug(Operator):
     """A fix of a candidate that failed. The chain's earlier failed fixes ride
     in the prompt; where the agent can, the target's agent session is
     continued as well."""
@@ -113,7 +113,7 @@ class DebugOperator(Operator):
         return Attempt(prompt=prompt, copy_parent=True, inherit_params=True, fork_session=True)
 
 
-class ImproveOperator(Operator):
+class Improve(Operator):
     """A change to a scored candidate. `ablation` (default on) asks the agent
     to measure which components carry the score, and hands the next improve
     of the same target what the last one measured."""
@@ -163,7 +163,7 @@ class ImproveOperator(Operator):
         return ""
 
 
-class EnsembleOperator(Operator):
+class Ensemble(Operator):
     """One solution out of several: the action's inspirations are copied in
     and tabled with their validation scores."""
 
@@ -190,4 +190,4 @@ class EnsembleOperator(Operator):
         return Attempt(prompt=prompt)
 
 
-BUILTIN_OPERATORS = (DraftOperator, DebugOperator, ImproveOperator, EnsembleOperator)
+BUILTIN_OPERATORS = (Draft, Debug, Improve, Ensemble)

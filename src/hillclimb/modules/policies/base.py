@@ -163,9 +163,13 @@ class Policy:
     # any spend). False for a class that takes free-form params
     strict_params: bool = True
 
-    def __init__(self, params: Mapping | None = None, selector=None):
-        # held, never copied: what the climber resolved IS the policy's params
-        self.params = params if params is not None else {}
+    def __init__(self, params: Mapping | None = None, selector=None, **knobs):
+        # held, never copied: what the climber resolved IS the policy's params.
+        # `**knobs` is the same by keyword, for composing in Python: `Greedy(num_drafts=3)`
+        from hillclimb.modules.refs import with_knobs
+
+        known = self.defaults() if self.strict_params else None
+        self.params = with_knobs(params, knobs, known, type(self).__name__)
         self._selector = selector
 
     # --- knobs ---

@@ -15,7 +15,7 @@ OPERATOR_NAME = "gepa-reflect"
 FEEDBACK_FILE = "feedback.json"
 
 
-class GepaReflectOperator(Operator):
+class GepaReflect(Operator):
     name = OPERATOR_NAME
     role = "refine"
     needs_target = True

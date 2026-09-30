@@ -41,9 +41,10 @@ class Tuner:
 
     name: str = ""
 
-    def __init__(self, params: Mapping | None = None):
-        # the climber's `tuner_params` (a `seed` among them seeds every ask)
-        self.params = dict(params or {})
+    def __init__(self, params: Mapping | None = None, **knobs):
+        # the climber's `tuner_params` (a `seed` among them seeds every ask);
+        # by keyword when composing in Python: `RandomSearch(seed=7)`
+        self.params = {**dict(params or {}), **knobs}
 
     def ask(
         self,

@@ -47,8 +47,8 @@ import hashlib
 import inspect
 import json
 import shutil
+import sys
 from collections.abc import Mapping
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -124,22 +124,128 @@ class OperatorSet:
         return entry[0].role if entry is not None else None
 
 
-@dataclass
-class Climber:
-    """A resolved `ClimberSpec`: its modules importable, its identity known."""
+class NotPortableError(ClimberLoadError):
+    """The climber holds a block that exists only as a class in this process
+    (defined in a notebook or a REPL): it runs here, but cannot be written
+    down, snapshotted for a resume, or handed to another engine."""
 
-    spec: ClimberSpec  # anchored: every file ref absolute
-    scope: FileScope  # its local files, one package
-    sha256: str
-    ref: str = ""  # how it was named, when it was named by a string
-    # a pre-0.6 manifest could ask for `holdout_timing: after`
-    legacy_holdout_timing: str | None = None
-    _brain: Resolved | None = field(default=None, repr=False)
-    _brain_kind: str = field(default="", repr=False)
+
+LIVE = "live"  # `live:ClassName`: a block that is a class of this process and nothing else
+
+
+class Climber:
+    """A climber: the block (`ClimberSpec`) with its modules importable and
+    its identity known.
+
+    Compose one from building blocks — names, classes or instances:
+
+        import hillclimb as hc
+
+        climber = hc.Climber(
+            policy=hc.policies.Greedy(num_drafts=3),
+            select=hc.selectors.MapElites(num_islands=2),
+            operators=[hc.operators.Draft(retrieval=False), hc.operators.Debug(), MyCrossover],
+            tuner="optuna",
+            memory=hc.memory.FilesMemory(max_cards=1),
+        )
+        hc.run("heilbronn-11", climber=climber, budget="10m")
+        climber.to_spec()          # the same climber as the block a run config takes
+
+    A preset's name stands for its block: `hc.Climber("openevolve",
+    params={"num_drafts": 5})`. An instance stands for its class and params (`Greedy(num_drafts=3)` is
+    `policy: greedy` + `params: {num_drafts: 3}`): a search always builds its
+    own. A class is written down the most portable way it can be — a
+    registry name, `module:Class`, else `its_file.py:Class` — and a class
+    that exists only in this process (a notebook cell) still runs here, but
+    makes the climber not `portable`: `to_spec()`, resume and detached
+    engines refuse it, saying why.
+
+    `resolve_climber(block)` (or `Climber.from_spec`) is the same thing
+    starting from a block.
+    """
+
+    def __init__(self, policy=None, *, loop=None, select=None, operators=None, tuner=None,
+                 memory=None, params: Mapping | None = None, prompts=None, name: str | None = None,
+                 base_dir: Path | None = None):
+        preset: dict[str, Any] = {}
+        if isinstance(policy, str) and policy in PRESETS and loop is None:
+            # `Climber("openevolve", params=...)`: a preset's name stands for
+            # its whole block, and the other arguments lie over it
+            preset, policy = expand_name(policy), None
+        block, live = _compose(
+            policy=policy, loop=loop, select=select, operators=operators, tuner=tuner,
+            memory=memory, params=params, prompts=prompts, name=name,
+        )
+        if preset:
+            block = {**preset, **block, "params": {**preset.get("params", {}), **block.get("params", {})}}
+            if not block["params"]:
+                del block["params"]
+        self._setup(as_spec(block).anchored(base_dir if base_dir is not None else Path.cwd()), live=live)
+
+    @classmethod
+    def from_spec(cls, spec: Any, base_dir: Path | None = None, *, ref: str = "") -> Climber:
+        """The climber a block defines (relative file refs resolve from `base_dir`)."""
+        climber = cls.__new__(cls)
+        climber._setup(as_spec(spec).anchored(base_dir), ref=ref)
+        return climber
+
+    def _setup(self, spec: ClimberSpec, *, ref: str = "", live: Mapping[str, type] | None = None) -> None:
+        try:
+            files = spec.file_paths()
+        except ValueError as exc:
+            raise ClimberLoadError(str(exc)) from exc
+        for path in files:
+            if not path.is_file():
+                raise ClimberLoadError(f"climber file not found: {path}")
+        self.spec = spec  # anchored: every file ref absolute
+        self.scope = FileScope(files)  # its local files, one package
+        self.ref = ref  # how it was named, when it was named by a string
+        # blocks that are classes of this process only: `live:Name` -> the class
+        self._live: dict[str, type] = dict(live or {})
+        # a pre-0.6 manifest could ask for `holdout_timing: after`
+        self.legacy_holdout_timing: str | None = None
+        self._brain: Resolved | None = None
+        self._brain_kind = ""
+        self.sha256 = identity(spec, self.scope, self._live)
+
+    def __repr__(self) -> str:
+        return f"Climber({self.spec.block()!r}, sha256={self.sha256[:12]!r})"
+
+    def __deepcopy__(self, memo) -> Climber:
+        return self  # a climber is not edited after it is built (and holds modules)
 
     @property
     def name(self) -> str:
         return self.spec.label
+
+    @property
+    def portable(self) -> bool:
+        """Can it be written down and rebuilt elsewhere? False when a block
+        exists only as a class in this process."""
+        return not self._live
+
+    def to_spec(self) -> ClimberSpec:
+        """The block a run config takes for this climber."""
+        if self._live:
+            raise NotPortableError(
+                f"climber {self.name}: {', '.join(sorted(self._live))} "
+                f"exist{'s' if len(self._live) == 1 else ''} only in this process — put the "
+                "class in a .py file (or an importable module) to write the climber down, "
+                "resume it, or run it in a detached engine"
+            )
+        return self.spec
+
+    def write(self, path: Path | str) -> Path:
+        """Write the climber as a `climber:` block — the top of a run spec
+        (add `problems:`), or what goes into hillclimb.yaml."""
+        path = Path(path)
+        path.write_text(yaml.safe_dump({"climber": self.to_spec().block()}, sort_keys=False))
+        return path
+
+    def _resolve(self, ref: str, kind: str) -> Resolved:
+        if ref in self._live:
+            return Resolved(self._live[ref], LIVE, ref)
+        return refs.resolve_ref(ref, kind, scope=self.scope)
 
     @property
     def source(self) -> str:
@@ -160,7 +266,7 @@ class Climber:
                 explicit = getattr(module, refs.KINDS["policy"].attr, None)
                 if explicit is None and _classes(module, Loop):
                     kind = "loop"
-            resolved = refs.resolve_ref(ref, kind, scope=self.scope)
+            resolved = self._resolve(ref, kind)
             if kind == "policy" and inspect.isclass(resolved.target) and issubclass(resolved.target, Loop):
                 kind = "loop"
             self._brain, self._brain_kind = resolved, kind
@@ -217,6 +323,8 @@ class Climber:
             if self.spec.select_params:
                 raise ClimberLoadError(f"{self.source}: `select_params` without a selector to give them to")
             return None
+        if ref in self._live:
+            return self._live[ref](dict(self.spec.select_params))
         return get_selector(ref, self.spec.select_params, scope=self.scope)
 
     def build_loop(self, *, params: Mapping | None = None, priors: Mapping | None = None,
@@ -276,7 +384,7 @@ class Climber:
             if inspect.isclass(ref):  # a class names its operators by class
                 operator_cls = ref
             else:
-                operator_cls = refs.resolve_ref(ref, "operator", scope=self.scope).target
+                operator_cls = self._resolve(ref, "operator").target
             if not (inspect.isclass(operator_cls) and issubclass(operator_cls, Operator)):
                 raise ClimberLoadError(f"{self.source}: operator {ref!r} is not an Operator subclass")
             entries[operator_cls.name] = (operator_cls, params)
@@ -296,12 +404,18 @@ class Climber:
         """The tuner the block names, built with its `tuner_params`."""
         from hillclimb.modules.tuners import get_tuner
 
+        if self.spec.tuner in self._live:
+            return self._live[self.spec.tuner](dict(self.spec.tuner_params))
         return get_tuner(self.spec.tuner, self.spec.tuner_params, scope=self.scope)
 
     def memory(self):
         """The memory the block names, built with its `memory_params`."""
         from hillclimb.modules.memory.files import get_memory
 
+        if self.spec.memory in self._live:
+            memory = self._live[self.spec.memory](dict(self.spec.memory_params))
+            memory.scope = self.scope
+            return memory
         return get_memory(self.spec.memory, self.spec.memory_params, scope=self.scope)
 
     def graph_module(self) -> GraphModule:
@@ -333,9 +447,12 @@ class Climber:
 
 
 def as_spec(value: Any) -> ClimberSpec:
-    """A `ClimberSpec` from whatever named it: a spec, a block, a bare string."""
+    """A `ClimberSpec` from whatever named it: a spec, a block, a bare
+    string, or a composed `Climber` (which must be portable)."""
     if isinstance(value, ClimberSpec):
         return value
+    if isinstance(value, Climber):
+        return value.to_spec()
     try:
         return ClimberSpec.model_validate(value)
     except ValueError as exc:
@@ -347,22 +464,16 @@ def resolve_climber(spec: Any, base_dir: Path | None = None, *, ref: str = "") -
     `base_dir`. Every failure is a `ClimberLoadError` naming the file and the
     fix — never a traceback from deep inside engine start-up. The modules
     themselves are imported when they are first asked for."""
-    spec = as_spec(spec).anchored(base_dir)
-    try:
-        files = spec.file_paths()
-    except ValueError as exc:
-        raise ClimberLoadError(str(exc)) from exc
-    for path in files:
-        if not path.is_file():
-            raise ClimberLoadError(f"climber file not found: {path}")
-    scope = FileScope(files)
-    return Climber(spec=spec, scope=scope, sha256=identity(spec, scope), ref=ref)
+    if isinstance(spec, Climber):
+        return spec
+    return Climber.from_spec(spec, base_dir, ref=ref)
 
 
-def identity(spec: ClimberSpec, scope: FileScope) -> str:
+def identity(spec: ClimberSpec, scope: FileScope, live: Mapping[str, type] | None = None) -> str:
     """What a climber IS: its block (without the label), the bytes of every
     local file it reaches, and its prompts. Files count by their place below
-    the common root, so a snapshot has the identity of what it was taken of."""
+    the common root, so a snapshot has the identity of what it was taken of.
+    A class that exists only in this process counts by its source."""
 
     def portable(ref: str) -> str:
         path = refs.ref_path(ref)
@@ -378,6 +489,7 @@ def identity(spec: ClimberSpec, scope: FileScope) -> str:
             "climber": spec.map_refs(portable).model_dump(exclude={"name", "prompts"}),
             "files": scope.digest if scope.files else None,
             "prompts": tree_sha256(prompts) if prompts is not None and prompts.is_dir() else None,
+            **({"live": {ref: _live_source(cls) for ref, cls in sorted(live.items())}} if live else {}),
         },
         sort_keys=True,
         default=str,
@@ -454,6 +566,12 @@ def snapshot_climber(climber: Climber, search_dir: Path) -> Path:
         return target
     target.mkdir(parents=True)
     scope = climber.scope
+    for ref, cls in climber._live.items():
+        # a class of the launching process: its source is kept for the
+        # record, but the snapshot cannot rebuild the climber
+        copy = target / LIVE / f"{cls.__name__}.py"
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        copy.write_text(_live_source(cls))
     for path in scope.files:
         copy = target / SNAPSHOT_FILES / scope.relative(path)
         copy.parent.mkdir(parents=True, exist_ok=True)
@@ -476,7 +594,7 @@ def snapshot_climber(climber: Climber, search_dir: Path) -> Path:
         spec = spec.model_copy(update={"prompts": SNAPSHOT_PROMPTS})
     else:
         spec = spec.model_copy(update={"prompts": None})
-    block = {"snapshot": SNAPSHOT_VERSION, **spec.block()}
+    block = {"snapshot": SNAPSHOT_VERSION, **({"portable": False} if climber._live else {}), **spec.block()}
     (target / MANIFEST).write_text(
         "# The climber this search runs, as resolved when it started. Paths are relative to this folder.\n"
         + yaml.safe_dump(block, sort_keys=False)
@@ -498,7 +616,13 @@ def load_snapshot(search_dir: Path, name: str | None = None) -> Climber | None:
         except yaml.YAMLError as exc:
             raise ClimberLoadError(f"{manifest_path}: {exc}") from exc
         if isinstance(data, dict) and data.get("snapshot") == SNAPSHOT_VERSION:
-            data = {key: value for key, value in data.items() if key != "snapshot"}
+            if data.get("portable") is False:
+                raise NotPortableError(
+                    f"{manifest_path}: this search ran a climber composed from classes that existed "
+                    "only in the process that started it (their source is under climber/live/ for "
+                    "the record); it cannot be rebuilt — not resumed, not loaded here"
+                )
+            data = {key: value for key, value in data.items() if key not in ("snapshot", "portable")}
             try:
                 return resolve_climber(data, root, ref=str(root))
             except ClimberLoadError as exc:
@@ -523,6 +647,98 @@ def tree_sha256(root: Path) -> str:
         digest.update(path.read_bytes())
         digest.update(b"\0")
     return digest.hexdigest()
+
+
+# --- composing in Python ---------------------------------------------------------------
+
+
+def _live_source(cls: type) -> str:
+    try:
+        return inspect.getsource(cls)
+    except (OSError, TypeError):
+        return f"# source not available: {cls!r}\n"
+
+
+def _named(value: Any, kind: str) -> tuple[str | None, dict, type | None]:
+    """How a building block given in Python is written in a block:
+    (ref, its params, None) — or (None, params, the class) when the class
+    exists only in this process. An instance stands for its class and params."""
+    if isinstance(value, str):
+        return value, {}, None
+    cls = value if inspect.isclass(value) else type(value)
+    params = {} if inspect.isclass(value) else dict(getattr(value, "params", None) or {})
+    spelled = f"{cls.__module__}:{cls.__name__}"
+    for name, target in refs.kind_of(kind).load().registry.items():  # 1. a registry name
+        if target is cls or target == spelled:
+            return name, params, None
+    nested = "<locals>" in cls.__qualname__ or "." in cls.__qualname__
+    if not nested and cls.__module__ != "__main__" and _importable(cls):
+        return spelled, params, None  # 2. importable anywhere this package is
+    try:
+        source = inspect.getsourcefile(cls)
+    except (OSError, TypeError):
+        source = None
+    if not nested and source and Path(source).is_file():
+        return f"{Path(source).resolve()}:{cls.__name__}", params, None  # 3. its file
+    return None, params, cls  # 4. only here
+
+
+def _importable(cls: type) -> bool:
+    """Would `module:Class` find this class in a fresh process? Its top-level
+    package must be on the import path (not merely in `sys.modules`: a file
+    a climber loaded is there too) and the name must lead back to the class."""
+    from importlib.machinery import PathFinder
+
+    try:
+        if PathFinder.find_spec(cls.__module__.partition(".")[0]) is None:
+            return False
+    except (ImportError, ValueError):
+        return False
+    return getattr(sys.modules.get(cls.__module__), cls.__name__, None) is cls
+
+
+def _compose(*, policy, loop, select, operators, tuner, memory, params, prompts, name) -> tuple[dict, dict[str, type]]:
+    """The block — and the classes that exist only in this process — for
+    building blocks given as names, classes or instances."""
+    if policy is not None and loop is not None:
+        raise ClimberLoadError("name one of `policy` (what to try next) or `loop` (the whole control flow), not both")
+    block: dict[str, Any] = {}
+    live: dict[str, type] = {}
+    if name:
+        block["name"] = name
+
+    def written(value: Any, kind: str) -> tuple[str, dict]:
+        ref, its_params, cls = _named(value, kind)
+        if cls is not None:
+            ref = f"{LIVE}:{cls.__name__}"
+            live[ref] = cls
+        return ref, its_params
+
+    def place(slot: str, value: Any, kind: str, params_key: str) -> None:
+        if value is None:
+            return
+        block[slot], its_params = written(value, kind)
+        if its_params:
+            block[params_key] = its_params
+
+    place("loop" if loop is not None else "policy", loop if loop is not None else policy,
+          "loop" if loop is not None else "policy", "params")
+    if select is None and policy is not None and not isinstance(policy, (str, type)):
+        select = getattr(policy, "_selector", None)  # `Greedy(selector=MapElites())` brings its own
+    place("select", select, "select", "select_params")
+    place("tuner", tuner, "tuner", "tuner_params")
+    place("memory", memory, "memory", "memory_params")
+    if operators is not None:
+        entries: list = []
+        for operator in operators:
+            ref, its_params = written(operator, "operator")
+            entries.append({ref: its_params} if its_params else ref)
+        block["operators"] = entries
+    if params:
+        block["params"] = {**block.get("params", {}), **dict(params)}
+    if prompts is not None:
+        block["prompts"] = str(prompts)
+    return block, live
 
 
 # --- helpers ---
