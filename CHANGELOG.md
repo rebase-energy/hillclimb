@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.0 — unreleased
+## 0.6.0 — 2026-09-30
 
 The climber becomes something you compose. It is one block of config,
 defined where the run is defined, built from prebuilt or your own modules —
