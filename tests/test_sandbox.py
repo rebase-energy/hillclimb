@@ -28,6 +28,12 @@ from hillclimb.harness.sandbox import SandboxPolicy
 from tests import test_claude_agent, test_codex_agent, test_pi_agent
 
 
+# Windows has no sandbox (the harness runs unsandboxed there, and says so):
+# what wraps an agent or writes a seatbelt profile is POSIX-only, and the
+# agent stubs below are shebang scripts Windows cannot start.
+posix_only = pytest.mark.skipif(os.name == "nt", reason="no sandbox on Windows; the agent stubs are shebang scripts")
+
+
 @pytest.fixture
 def sandbox_on(monkeypatch):
     """The sandbox asked for, on a machine that has one (nothing is started)."""
@@ -203,6 +209,7 @@ def test_candidate_root():
     assert sandbox.candidate_root(Path("/x/elsewhere")) == Path("/x/elsewhere")
 
 
+@posix_only
 def test_seatbelt_profile(tmp_path):
     policy = SandboxPolicy().writable(tmp_path / 'a "b"', prefix=(str(tmp_path / ".state.json"),))
     profile = sandbox.seatbelt_profile(policy.unreadable(tmp_path / "secret").through_proxy(["h"], [8000]), 4321)
@@ -253,6 +260,7 @@ def test_host_allowed():
 # --- how the agents start ---
 
 
+@posix_only
 def test_claude_runs_inside_the_sandbox(tmp_path, launches):
     agent = ClaudeCodeAgent(claude_bin=recording_stub(tmp_path, test_claude_agent.STUB_OK))
     request = request_with(test_claude_agent.make_request(tmp_path))
@@ -267,6 +275,7 @@ def test_claude_runs_inside_the_sandbox(tmp_path, launches):
     assert "--disallowedTools" not in seen["argv"]
 
 
+@posix_only
 def test_claude_without_internet_reaches_only_anthropic(tmp_path, launches):
     agent = ClaudeCodeAgent(claude_bin=recording_stub(tmp_path, test_claude_agent.STUB_OK))
     request = request_with(test_claude_agent.make_request(tmp_path), allow_internet=False)
@@ -279,6 +288,7 @@ def test_claude_without_internet_reaches_only_anthropic(tmp_path, launches):
     assert "--strict-mcp-config" in argv
 
 
+@posix_only
 def test_claude_unsandboxed_is_started_as_before(tmp_path, launches):
     agent = ClaudeCodeAgent(claude_bin=recording_stub(tmp_path, test_claude_agent.STUB_OK))
     assert agent.invoke(test_claude_agent.make_request(tmp_path)).ok
@@ -302,6 +312,7 @@ def test_no_internet_without_a_sandbox_is_refused(tmp_path, make_agent, requests
     assert not (tmp_path / "argv.json").exists()  # nothing was started
 
 
+@posix_only
 def test_codex_keeps_its_own_sandbox(tmp_path, launches):
     agent = CodexCliAgent(codex_bin=recording_stub(tmp_path, test_codex_agent.STUB_OK))
     request = request_with(test_codex_agent.make_request(tmp_path), allow_internet=False)
@@ -313,6 +324,7 @@ def test_codex_keeps_its_own_sandbox(tmp_path, launches):
     assert argv[argv.index("--sandbox") + 1] == "workspace-write"
 
 
+@posix_only
 def test_pi_runs_inside_the_sandbox(tmp_path, monkeypatch, launches):
     monkeypatch.setenv("STUB_EXPECT_SAMPLING", "absent")
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
