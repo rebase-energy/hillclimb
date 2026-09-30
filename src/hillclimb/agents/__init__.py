@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from hillclimb.agents.base import Agent, OperatorRequest, OperatorResult
+from hillclimb.agents.base import Agent, AgentRequest, AgentResult
 
 
 def _make_claude_code(auth: str) -> Agent:
@@ -51,4 +51,4 @@ def get_agent(
     return _AGENTS[name](auth)
 
 
-__all__ = ["Agent", "OperatorRequest", "OperatorResult", "get_agent"]
+__all__ = ["Agent", "AgentRequest", "AgentResult", "get_agent"]

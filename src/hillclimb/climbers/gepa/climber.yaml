@@ -3,7 +3,7 @@
 # does everything that costs or counts. Serial (one attempt at a time).
 # Needs the optional extra: pip install 'hillclimb[gepa]'
 name: gepa
-description: Reflective Pareto search; brings its own SearchLoop. Experimental.
+description: Reflective Pareto search; brings its own Loop. Experimental.
 loop: hillclimb.integrations.gepa.loop:GepaLoop
 params:
   max_metric_calls: 50

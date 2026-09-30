@@ -1,13 +1,13 @@
 """The search-loop seam: control flow over a harness.
 
-A `SearchLoop` decides WHEN to ask for work and how to react to results; it
+A `Loop` decides WHEN to ask for work and how to react to results; it
 does so only through the `Harness` interface below. Everything with a side
 effect — candidate dirs, agents, verifier runs, the journal, `best/`, budgets,
 the control queue, holdout — happens inside the harness, so a loop is small
 enough to edit and cannot reach what judges it.
 
-Most climbers never write a loop: a `SearchPolicy` (the pure "given the
-state, what next?") runs on the built-in `PolicyLoop`. Write a `SearchLoop`
+Most climbers never write a loop: a `Policy` (the pure "given the
+state, what next?") runs on the built-in `PolicyLoop`. Write a `Loop`
 when the idea IS control flow — synchronized generations, islands, an
 external optimizer that drives its own iteration.
 
@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from hillclimb.harness.candidate import Candidate
     from hillclimb.harness.evaluation import EvalResult
-    from hillclimb.modules.policies.base import Action, InflightRef, PolicyInput, SearchPolicy
+    from hillclimb.modules.policies.base import Action, InflightRef, SearchState, Policy
 
 
 class HarnessClosed(Exception):
@@ -86,14 +86,14 @@ class Outcome:
 
 
 class Harness(Protocol):
-    """All a `SearchLoop` ever touches. `view`, `capacity`, `inflight` and
+    """All a `Loop` ever touches. `view`, `capacity`, `inflight` and
     `open` are pure reads; `submit`, `wait` and `run` must be called from the
     thread that runs the loop — results are committed on it."""
 
     info: SearchInfo
     state_dir: Path  # durable, loop-private (checkpoints, identity files)
 
-    def view(self) -> PolicyInput: ...
+    def view(self) -> SearchState: ...
 
     @property
     def capacity(self) -> int:
@@ -125,7 +125,7 @@ class Harness(Protocol):
         """A candidate's solution text (None when it has none)."""
 
 
-class SearchLoop(ABC):
+class Loop(ABC):
     """Control flow of a search. `run` returns when the loop is done; the
     harness then commits whatever is still in flight and ends the search."""
 
@@ -135,14 +135,14 @@ class SearchLoop(ABC):
     def run(self, harness: Harness) -> None: ...
 
 
-class PolicyLoop(SearchLoop):
+class PolicyLoop(Loop):
     """Keep every free slot busy with whatever the policy proposes; show it
     every result. The policy's whole state is re-derivable from the journal,
     so a resumed search catches up by replaying it through `observe`."""
 
     name = "policy"
 
-    def __init__(self, policy: SearchPolicy):
+    def __init__(self, policy: Policy):
         self.policy = policy
         self._caught_up: set[str] = set()
 

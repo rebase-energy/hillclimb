@@ -584,11 +584,11 @@ def test_check_command_reports_what_got_through(monkeypatch, sandbox_on):
 
     from hillclimb.cli import app
     from hillclimb.harness import sandbox_check
-    from hillclimb.harness.sandbox_check import Attempt
+    from hillclimb.harness.sandbox_check import Probe
 
     attempts = [
-        Attempt("own", "files", "write to its own candidate folder", "write", "x", "allowed", "allowed"),
-        Attempt("home", "files", "write to your home folder", "write", "y", "blocked", "blocked"),
+        Probe("own", "files", "write to its own candidate folder", "write", "x", "allowed", "allowed"),
+        Probe("home", "files", "write to your home folder", "write", "y", "blocked", "blocked"),
     ]
     monkeypatch.setattr(sandbox_check, "run_check", lambda config: attempts)
     result = CliRunner().invoke(app, ["sandbox", "check"])

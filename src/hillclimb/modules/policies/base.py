@@ -1,7 +1,7 @@
 """The search-policy seam: WHAT to try next is a policy decision; everything
 else is the harness.
 
-A `SearchPolicy` proposes `Action`s over a read-only `PolicyInput`; the
+A `Policy` proposes `Action`s over a read-only `SearchState`; the
 harness (`hillclimb.harness.Harness`) materializes each action into a candidate dir, prompt,
 and agent call, executes it, and journals the outcome.
 
@@ -12,18 +12,18 @@ Contracts every policy must honor:
   access. Policies may read candidate candidate dirs from disk (greedy hashes
   solution.py to dedupe ensemble inputs) but must never write.
 - Decisions must be derivable from replayed journal state: either compute
-  every proposal from the `PolicyInput` alone, or rebuild internal caches via
+  every proposal from the `SearchState` alone, or rebuild internal caches via
   `observe()` — on construction the harness replays every existing candidate
   through `observe()` in journal order, so `hillclimb resume` works.
 - Ensemble-style actions must carry their inputs in `inspiration_ids`; the
   harness copies those candidates' solutions into the new candidate_dir.
-- A policy never sees holdout: `PolicyInput.journal` is a `PolicyJournal`
+- A policy never sees holdout: `SearchState.journal` is a `JournalView`
   (holdout-blind copies, unwritable) and `observe()` gets the candidate from
   that view. A process that may be optimized — by hand or by a meta-search —
   must not be able to select on the split that judges it.
 
 Harness-owned, NOT policy: candidate-dir creation, journal writes, prompt
-assembly, `OperatorRequest` construction, trials, holdout gating and scoring
+assembly, `AgentRequest` construction, trials, holdout gating and scoring
 (`_holdout_threshold` is query-budget hygiene, not strategy), `is_best`/
 selection syncing into `best/`, the control queue, and the cost ceiling.
 Survival-style strategies (keep worse-but-diverse candidates alive) need none
@@ -77,7 +77,7 @@ class Action:
     # bulk input for the operator, NEVER journaled: the source an `inject`
     # scores, the feedback `gepa-reflect` is shown
     payload: Mapping = field(default_factory=dict)
-    policy_meta: dict = field(default_factory=dict)  # journaled on the candidate
+    climber_meta: dict = field(default_factory=dict)  # journaled on the candidate
 
 
 @dataclass(frozen=True)
@@ -112,10 +112,10 @@ class BudgetView:
 
 
 @dataclass(frozen=True)
-class PolicyInput:
+class SearchState:
     """Read-only view of search state handed to the policy on every call,
     all of it a snapshot computed at call time. The journal is always a
-    `PolicyJournal` — holdout-blind and unwritable; a plain `Journal` passed
+    `JournalView` — holdout-blind and unwritable; a plain `Journal` passed
     in is wrapped here, so no construction site can forget the mask."""
 
     journal: Journal
@@ -130,24 +130,24 @@ class PolicyInput:
     accept_band: float = 0.0
 
     def __post_init__(self) -> None:
-        from hillclimb.harness.journal import PolicyJournal
+        from hillclimb.harness.journal import JournalView
 
-        if not isinstance(self.journal, PolicyJournal):
-            object.__setattr__(self, "journal", PolicyJournal(self.journal))
+        if not isinstance(self.journal, JournalView):
+            object.__setattr__(self, "journal", JournalView(self.journal))
 
 
-class SearchPolicy(Protocol):
+class Policy(Protocol):
     """What to expand next, with which operator — nothing else."""
 
     name: str
     params: dict  # persisted verbatim into SearchMeta for resume
 
-    def propose(self, view: PolicyInput) -> Action | None:
+    def propose(self, view: SearchState) -> Action | None:
         """Next action given current state; None = hold (keep the slot empty
         until an in-flight result lands)."""
         ...
 
-    def observe(self, view: PolicyInput, candidate: Candidate) -> None:
+    def observe(self, view: SearchState, candidate: Candidate) -> None:
         """Called after every journaled terminal result (and replayed for
         every existing candidate on construction). Stateless policies ignore
         it; stateful ones rebuild caches here."""

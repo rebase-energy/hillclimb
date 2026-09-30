@@ -12,7 +12,7 @@ import pytest
 from hillclimb.harness.candidate import Candidate
 from hillclimb.harness.journal import Journal
 from hillclimb.modules.policies.greedy import GreedyPolicy
-from hillclimb.modules.policies.base import Action, PolicyInput
+from hillclimb.modules.policies.base import Action, SearchState
 from hillclimb.modules.policies.check import JournalCase, check_policy
 from tests.test_policy import add_candidate
 
@@ -201,13 +201,13 @@ class CrossoverPolicy:
 def test_a_climbers_own_operator_is_known_to_the_check(config, tmp_path):
     from hillclimb.climber import OperatorSet
     from hillclimb.modules.operators import Operator
-    from hillclimb.modules.operators.base import Preparation
+    from hillclimb.modules.operators.base import Attempt
 
     class Crossover(Operator):
         name, role = "crossover", "combine"
 
         def prepare(self, ctx):
-            return Preparation(prompt="cross")
+            return Attempt(prompt="cross")
 
     cases = _cases(tmp_path)
     report = check_policy(CrossoverPolicy, cases, config)
@@ -305,11 +305,11 @@ def test_cli_replays_the_stores_journals(tmp_path, monkeypatch, capsys):
     replay = next(f for f in payload["findings"] if f["check"] == "replay" and f["journal"] == "r1/p")
     assert "improve -> c001" in replay["detail"]  # one draft satisfied num_drafts=1
 
-    # a climber that brings its own SearchLoop is out of scope, and says so
+    # a climber that brings its own Loop is out of scope, and says so
     with pytest.raises(SystemExit) as exc:
         cli_main(["climber", "check", "--climber", "gepa"])
     assert exc.value.code == 2
-    assert "brings its own SearchLoop" in capsys.readouterr().err
+    assert "brings its own Loop" in capsys.readouterr().err
 
 
 def test_cli_checks_a_file_policy_relative_to_the_hillclimb_dir(tmp_path, monkeypatch, capsys):

@@ -10,7 +10,7 @@ import threading
 
 import pytest
 
-from hillclimb.agents.base import OperatorRequest
+from hillclimb.agents.base import AgentRequest
 from hillclimb.agents.pi_cli import PiCliAgent
 
 
@@ -72,7 +72,7 @@ def test_real_pi_sampling_tools_fork_and_provider_error(tmp_path: Path, monkeypa
         }}}))
         agent = PiCliAgent(auth="api-key", models_file=models)
         parent_dir = tmp_path / "search" / "candidates" / "c001"
-        request = OperatorRequest(
+        request = AgentRequest(
             operator="draft", prompt="Write marker.txt then reply pong.",
             candidate_dir=parent_dir, timeout_s=30, model="hillclimb-test/test-model",
             sampling={"temperature": 0.7, "top_k": 40},

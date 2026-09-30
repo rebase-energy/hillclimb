@@ -130,7 +130,7 @@ def build_tree(
     right; a parent sits over the centre of its children; roots (baseline,
     drafts) line up at depth 0 in creation order. Ensemble inputs beyond the
     parent become extra `ensemble-input` edges (journaled in
-    `policy_meta.inspiration_ids`).
+    `climber_meta.inspiration_ids`).
 
     `layout` pins node positions to another tree's (by id): a scrubbed-back
     view keeps every node exactly where the live tree draws it, so stepping
@@ -207,7 +207,7 @@ def build_tree(
         if parent is not None:
             edges.append(TreeEdge(parent, cand.candidate_id, "parent",
                                   on_path=parent in on_path and cand.candidate_id in on_path))
-        for source in cand.policy_meta.get("inspiration_ids", []) or []:
+        for source in cand.climber_meta.get("inspiration_ids", []) or []:
             if source != parent and source in by_id:
                 edges.append(TreeEdge(source, cand.candidate_id, "ensemble-input"))
     return SearchTree(nodes=tuple(nodes), edges=tuple(edges), accepted=tuple(accepted))

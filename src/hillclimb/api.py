@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
 from hillclimb.agents import get_agent
-from hillclimb.agents.base import OperatorRequest
+from hillclimb.agents.base import AgentRequest
 from hillclimb.harness.budget import BudgetManager
 from hillclimb.harness.candidate import Candidate
 from hillclimb.config import Config
@@ -752,7 +752,7 @@ def _preflight_pi_routes(config: Config, search_dir: Path, router, agents, log: 
             + (f" sampling={route.sampling}" if route.sampling else "")
         )
         result = preflight(
-            OperatorRequest(
+            AgentRequest(
                 operator=operator,
                 prompt="Reply with exactly pong.",
                 candidate_dir=work_dir,

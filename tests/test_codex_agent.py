@@ -11,7 +11,7 @@ import time
 import pytest
 
 import hillclimb.harness.pricing as pricing
-from hillclimb.agents.base import OperatorRequest
+from hillclimb.agents.base import AgentRequest
 from hillclimb.agents.codex_cli import CodexCliAgent
 
 # what OpenRouter would quote for the test model: $1/M prompt, $2/M completion
@@ -91,10 +91,10 @@ def make_stub(tmp_path: Path, body: str) -> str:
     return str(stub)
 
 
-def make_request(tmp_path: Path, resume: str | None = None) -> OperatorRequest:
+def make_request(tmp_path: Path, resume: str | None = None) -> AgentRequest:
     candidate_dir = tmp_path / "candidate"
     candidate_dir.mkdir(exist_ok=True)
-    return OperatorRequest(
+    return AgentRequest(
         operator="draft",
         prompt="write code",
         candidate_dir=candidate_dir,

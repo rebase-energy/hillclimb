@@ -36,7 +36,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from hillclimb.sdk import TUNE_ACTION, Action, Candidate, PolicyInput, improves
+from hillclimb.sdk import TUNE_ACTION, Action, Candidate, SearchState, improves
 
 # the whole exploration process in one dict: every knob and its default
 DEFAULTS = {
@@ -72,9 +72,9 @@ class GreedyPolicy:
         describes this exploration process."""
         return {name: self.param(name) for name in PARAM_NAMES}
 
-    # --- SearchPolicy protocol ---
+    # --- Policy protocol ---
 
-    def propose(self, view: PolicyInput) -> Action | None:
+    def propose(self, view: SearchState) -> Action | None:
         """Pool policy: generalizes the serial rule to in-flight state.
         Priority: debug buggy tips (one per chain) > ensemble solo in the
         final window (drain first) > drafts until num_drafts branches are
@@ -108,10 +108,10 @@ class GreedyPolicy:
                 return Action(operator="improve", target_id=candidate.candidate_id)
         return Action(operator="improve", target_id=ranked[0].candidate_id)
 
-    def observe(self, view: PolicyInput, candidate: Candidate) -> None:
+    def observe(self, view: SearchState, candidate: Candidate) -> None:
         pass  # greedy is a pure function of the journal
 
-    def action_for(self, view: PolicyInput, operator: str, target_id: str | None) -> Action:
+    def action_for(self, view: SearchState, operator: str, target_id: str | None) -> Action:
         """Fully-populated Action for an explicitly requested operator — the
         run_operator/smoke path, where the harness names the move and the
         policy fills in its decision-time details."""
@@ -129,7 +129,7 @@ class GreedyPolicy:
     def tune_param(self, name: str):
         return self.param(name)
 
-    def tune_target(self, view: PolicyInput) -> Candidate | None:
+    def tune_target(self, view: SearchState) -> Candidate | None:
         """The candidate to spend the next tune trial on, or None. Derived
         from the journal + in-flight refs only: `spent` on a candidate is its
         trial count beyond the defaults trial plus its in-flight tune jobs, so
@@ -185,10 +185,10 @@ class GreedyPolicy:
             best.val_score, candidate.val_score, higher_is_better=higher_is_better, band=band
         )
 
-    def _draft_action(self, view: PolicyInput) -> Action:
+    def _draft_action(self, view: SearchState) -> Action:
         return Action(operator="draft", args={"complexity": self.draft_complexity(view)})
 
-    def _ensemble_action(self, view: PolicyInput) -> Action:
+    def _ensemble_action(self, view: SearchState) -> Action:
         picks = self.ensemble_candidates(view)
         return Action(
             operator="ensemble",
@@ -198,7 +198,7 @@ class GreedyPolicy:
 
     # --- decision helpers (moved verbatim from the old searcher) ---
 
-    def debuggable_tip(self, view: PolicyInput) -> Candidate | None:
+    def debuggable_tip(self, view: SearchState) -> Candidate | None:
         """Newest failing/buggy candidate with no active child and chain depth under
         the cap. In serial history this is exactly the serial debug rule."""
         journal = view.journal
@@ -214,7 +214,7 @@ class GreedyPolicy:
                 return candidate
         return None
 
-    def prospective_branches(self, view: PolicyInput) -> int:
+    def prospective_branches(self, view: SearchState) -> int:
         """Draft branches whose subtree holds a scored OR pending candidate —
         in-flight work counts toward the num_drafts target."""
         journal = view.journal
@@ -229,7 +229,7 @@ class GreedyPolicy:
                 frontier.extend(journal.children(candidate.candidate_id))
         return count
 
-    def in_ensemble_window(self, view: PolicyInput) -> bool:
+    def in_ensemble_window(self, view: SearchState) -> bool:
         # window sits ABOVE the stop margin, else margin swallows it: with a
         # 45m budget, reserve(540s) - margin(300s) left a 240s slot that one
         # improve cycle stepped over entirely
@@ -237,7 +237,7 @@ class GreedyPolicy:
         reserve = budget.total_s * float(self.param("ensemble_reserve_fraction"))
         return budget.remaining_s <= reserve + budget.stop_margin_s
 
-    def should_ensemble(self, view: PolicyInput) -> bool:
+    def should_ensemble(self, view: SearchState) -> bool:
         if not bool(self.param("ensemble")) or not self.in_ensemble_window(view):
             return False
         attempts = sum(
@@ -248,7 +248,7 @@ class GreedyPolicy:
             return False
         return len(self.ensemble_candidates(view)) >= 2
 
-    def ensemble_succeeded(self, view: PolicyInput) -> bool:
+    def ensemble_succeeded(self, view: SearchState) -> bool:
         for candidate in view.journal.candidates.values():
             if candidate.status != "passing":
                 continue
@@ -257,7 +257,7 @@ class GreedyPolicy:
                 return True
         return False
 
-    def ensemble_candidates(self, view: PolicyInput) -> list[Candidate]:
+    def ensemble_candidates(self, view: SearchState) -> list[Candidate]:
         """Top-k scored non-ensemble candidates by val score, deduped by
         script content so near-identical improves don't fill the slots.
         (`holdout.selection` decides what SHIPS; a policy never sees holdout.)"""
@@ -279,7 +279,7 @@ class GreedyPolicy:
                 break
         return picked
 
-    def draft_complexity(self, view: PolicyInput) -> str:
+    def draft_complexity(self, view: SearchState) -> str:
         index = len(view.journal.drafts()) + self.complexity_start
         return "minimal" if index == 0 else "moderate" if index == 1 else "advanced"
 

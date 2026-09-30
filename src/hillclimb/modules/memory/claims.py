@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
-from hillclimb.agents.base import OperatorRequest
+from hillclimb.agents.base import AgentRequest
 from hillclimb.harness.candidate import utcnow
 from hillclimb.config import Config
 from hillclimb.prompts.render import render
@@ -443,7 +443,7 @@ def invoke_knowledge_agent(
         agent_name, auth=auth, pi_models_file=config.pi.models_file
     )
     return agent.invoke(
-        OperatorRequest(
+        AgentRequest(
             operator=operator, prompt=prompt, candidate_dir=work_dir,
             timeout_s=timeout_s, model=model, sampling=sampling,
             allow_internet=config.allow_internet_for_agents,

@@ -142,7 +142,7 @@ uv run hillclimb experiment report [spec]       # compare the experiments on hol
 uv run hillclimb climber list                     # bundled climbers (greedy | openevolve | gepa) + climbers/* — the `--climber` refs
 uv run hillclimb climber new mine --from greedy   # copy a climber into climbers/mine/ (manifest + policy source + prompts) to edit
 uv run hillclimb climber check [--climber climbers/mine] [--set climber.params.k=v] [--problem P --smoke]  # replay recorded journals through the climber's policy (no agent): resume-determinism, dangling ids, writes, prompt lint; exit 1 on a breach
-uv run hillclimb run <problem> --climber climbers/mine  # a climber dir (climber.yaml) or one .py file (a SearchPolicy class, or POLICY=...) instead of a bundled name; search.yaml records climber_sha256 and snapshots it
+uv run hillclimb run <problem> --climber climbers/mine  # a climber dir (climber.yaml) or one .py file (a Policy class, or POLICY=...) instead of a bundled name; search.yaml records climber_sha256 and snapshots it
 uv run hillclimb run <problem> --set climber.ref=openevolve --study S --experiment E  # one experiment by hand (counts in the report)
 uv run hillclimb run <problem> --climber greedy --climber openevolve --climber gepa --experiment-set gepa:concurrency.parallel_agents=1  # mixed fleet: one search per climber under one run; `experiment report <run-id>` compares
 ```

@@ -1,7 +1,7 @@
 """Climbers: the shareable unit of "how to hillclimb".
 
-A climber bundles the exchangeable modules of a search — a `SearchPolicy`
-(or, for climbers that own their control flow, a `SearchLoop`), the operators
+A climber bundles the exchangeable modules of a search — a `Policy`
+(or, for climbers that own their control flow, a `Loop`), the operators
 it may use with their prompts, a memory, a tuner, similarity scores — behind
 one manifest. Everything else is the harness, the same for every climber.
 
@@ -9,8 +9,8 @@ A climber reference (`--climber`, `climber:` in config.yaml) is one of
 
 - a bundled name            greedy | openevolve | gepa
 - a directory               holding `climber.yaml` (+ its own .py files, `prompts/`)
-- one `.py` file            a one-file climber: the single SearchPolicy or
-                            SearchLoop it defines, plus any Operator subclasses
+- one `.py` file            a one-file climber: the single Policy or
+                            Loop it defines, plus any Operator subclasses
 
 Inside a manifest a module is named `file.py[:Class]` (relative to the
 climber's directory) or `package.module:Class`. A directory climber's files
@@ -39,7 +39,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from hillclimb._moved import modernize
-from hillclimb.harness.loop import PolicyLoop, SearchLoop
+from hillclimb.harness.loop import PolicyLoop, Loop
 from hillclimb.modules.operators import Operator
 from hillclimb.modules.operators.builtin import BUILTIN_OPERATORS
 from hillclimb.modules.memory.base import DEFAULT_GRAPH, GraphModule, MemoryKind
@@ -163,18 +163,18 @@ class Climber:
         return {**self.manifest.params, **dict(overlay or {})}
 
     def build_loop(self, *, params: Mapping | None = None, complexity_start: int = 0,
-                   parallelism: int = 1, log=print) -> SearchLoop:
+                   parallelism: int = 1, log=print) -> Loop:
         merged = self.resolved_params(params)
         offered = {"params": merged, "complexity_start": complexity_start, "parallelism": parallelism, "log": log}
         if self.manifest.loop is not None:
             loop = _construct(self._resolve(self.manifest.loop, "loop"), offered, self.source)
-            if not isinstance(loop, SearchLoop):
-                raise ClimberLoadError(f"{self.source}: `loop:` must name a SearchLoop, got {type(loop).__name__}")
+            if not isinstance(loop, Loop):
+                raise ClimberLoadError(f"{self.source}: `loop:` must name a Loop, got {type(loop).__name__}")
             return loop
         policy = _construct(self._resolve(self.manifest.policy, "policy"), offered, self.source)
         for method in ("propose", "observe"):
             if not callable(getattr(policy, method, None)):
-                raise ClimberLoadError(f"{self.source}: the policy has no {method}() — not a SearchPolicy")
+                raise ClimberLoadError(f"{self.source}: the policy has no {method}() — not a Policy")
         if not getattr(policy, "name", None):
             policy.name = self.name
         if getattr(policy, "params", None) is None:
@@ -241,7 +241,7 @@ class Climber:
                 if target is None:
                     raise ClimberLoadError(f"{self.source}: `{key}: {ref}` — {file_name} defines no {attr}")
                 return target
-            base = SearchLoop if key == "loop" else GraphModule if key == "graph" else None
+            base = Loop if key == "loop" else GraphModule if key == "graph" else None
             return _only_class(module, key, self.source, base)
         if ":" in ref:
             module_name, _, attr = modernize(ref).partition(":")  # a ref recorded before a move
@@ -374,7 +374,7 @@ def _load_file(ref: str, path: Path) -> Climber:
         except Exception as exc:  # noqa: BLE001
             del sys.modules[module_name]
             raise ClimberLoadError(f"climber file {path} failed to import: {type(exc).__name__}: {exc}") from exc
-    is_loop = bool(_classes(module, SearchLoop))
+    is_loop = bool(_classes(module, Loop))
     key = "loop" if is_loop else "policy"
     manifest = ClimberManifest(name=path.stem, **{key: path.name})
     return Climber(ref=ref, manifest=manifest, root=None, sha256=digest, source=path, _module=module)
@@ -413,7 +413,7 @@ def _classes(module: types.ModuleType, base: type) -> list[type]:
 
 
 def _only_class(module: types.ModuleType, key: str, source: Path, base: type | None):
-    """The one policy (duck-typed: propose + observe), the one SearchLoop,
+    """The one policy (duck-typed: propose + observe), the one Loop,
     or the one GraphModule a file defines; `POLICY = <class or factory>` /
     `KNOWLEDGE_GRAPH = <class>` names it explicitly."""
     explicit = getattr(module, POLICY_ATTR, None)

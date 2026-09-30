@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from hillclimb.agents.base import OperatorRequest
+from hillclimb.agents.base import AgentRequest
 from hillclimb.agents.claude_code import ClaudeCodeAgent
 
 RESULT_LINE = json.dumps(
@@ -74,10 +74,10 @@ def make_stub(tmp_path: Path, body: str) -> str:
     return str(stub)
 
 
-def make_request(tmp_path: Path, timeout_s: int = 30) -> OperatorRequest:
+def make_request(tmp_path: Path, timeout_s: int = 30) -> AgentRequest:
     candidate_dir = tmp_path / "ws"
     candidate_dir.mkdir(exist_ok=True)
-    return OperatorRequest(
+    return AgentRequest(
         operator="draft", prompt="write code", candidate_dir=candidate_dir, timeout_s=timeout_s
     )
 

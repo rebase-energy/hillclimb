@@ -18,7 +18,7 @@ import threading
 import time
 from pathlib import Path
 
-from hillclimb.agents.base import OperatorRequest, OperatorResult
+from hillclimb.agents.base import AgentRequest, AgentResult
 from hillclimb.agents.claude_code import (
     PID_FILE,
     RATE_LIMIT_MARKERS,
@@ -285,7 +285,7 @@ class PiCliAgent:
         session_dir.mkdir(parents=True, exist_ok=True)
         return session_dir
 
-    def _command(self, request: OperatorRequest, *, no_tools: bool = False) -> list[str]:
+    def _command(self, request: AgentRequest, *, no_tools: bool = False) -> list[str]:
         cmd = [
             self.pi_bin,
             "-p",
@@ -338,7 +338,7 @@ class PiCliAgent:
         return hosts, ports
 
     def _sandboxed(
-        self, cmd: list[str], request: OperatorRequest, candidate_dir: Path, env: dict[str, str]
+        self, cmd: list[str], request: AgentRequest, candidate_dir: Path, env: dict[str, str]
     ) -> sandbox.Launch:
         """The command as it starts: inside the sandbox, writing only to the
         candidate dir, its sessions and pi's isolated home, and without
@@ -355,14 +355,14 @@ class PiCliAgent:
         ).for_agent(request.allow_internet, hosts=hosts, local_ports=ports)
         return sandbox.launch(list(cmd), policy)
 
-    def preflight(self, request: OperatorRequest) -> OperatorResult:
+    def preflight(self, request: AgentRequest) -> AgentResult:
         """Make the cheap, tool-free provider call used before search work."""
         return self._invoke(request, no_tools=True)
 
-    def invoke(self, request: OperatorRequest) -> OperatorResult:
+    def invoke(self, request: AgentRequest) -> AgentResult:
         return self._invoke(request, no_tools=False)
 
-    def _invoke(self, request: OperatorRequest, *, no_tools: bool) -> OperatorResult:
+    def _invoke(self, request: AgentRequest, *, no_tools: bool) -> AgentResult:
         candidate_dir = Path(request.candidate_dir).resolve()
         candidate_dir.mkdir(parents=True, exist_ok=True)
         cmd = self._command(request, no_tools=no_tools)
@@ -389,7 +389,7 @@ class PiCliAgent:
                     request.sampling, sort_keys=True, separators=(",", ":")
                 )
         except (RuntimeError, OSError, ValueError) as exc:
-            return OperatorResult(ok=False, error_kind="error", error_message=str(exc))
+            return AgentResult(ok=False, error_kind="error", error_message=str(exc))
 
         try:
             with stderr_path.open("w") as stderr_sink:
@@ -472,21 +472,21 @@ class PiCliAgent:
             )
 
         if spawn_error:
-            return OperatorResult(
+            return AgentResult(
                 ok=False,
                 error_kind="error",
                 error_message=f"could not start pi CLI: {spawn_error}",
                 **common,
             )
         if aborted:
-            return OperatorResult(
+            return AgentResult(
                 ok=False,
                 error_kind="aborted",
                 error_message="agent call aborted (stop requested)",
                 **common,
             )
         if timed_out:
-            return OperatorResult(
+            return AgentResult(
                 ok=False,
                 error_kind="timeout",
                 error_message=f"agent call exceeded {request.timeout_s}s",
@@ -494,27 +494,27 @@ class PiCliAgent:
             )
         assert proc is not None and reader is not None
         if reader.reader_error:
-            return OperatorResult(
+            return AgentResult(
                 ok=False, error_kind="error", error_message=reader.reader_error, **common
             )
         error_text = reader.error_message or stderr_text
         failed = proc.returncode != 0 or reader.last_stop_reason not in {"stop", "toolUse"}
         if failed and (reader.out_of_credits or _has_marker(error_text, CREDIT_MARKERS)):
-            return OperatorResult(
+            return AgentResult(
                 ok=False,
                 error_kind="out_of_credits",
                 error_message=error_text[:500],
                 **common,
             )
         if failed and (reader.rate_limited or _has_marker(error_text, RATE_LIMIT_MARKERS)):
-            return OperatorResult(
+            return AgentResult(
                 ok=False,
                 error_kind="rate_limited",
                 error_message=error_text[:500],
                 **common,
             )
         if reader.last_stop_reason in {"error", "aborted", "length"}:
-            return OperatorResult(
+            return AgentResult(
                 ok=False,
                 error_kind="aborted" if reader.last_stop_reason == "aborted" else "error",
                 error_message=(error_text or f"pi stopped with {reader.last_stop_reason}")[:500],
@@ -524,14 +524,14 @@ class PiCliAgent:
             message = error_text or (
                 f"pi exited {proc.returncode} without a completed assistant message"
             )
-            return OperatorResult(
+            return AgentResult(
                 ok=False, error_kind="error", error_message=message[:500], **common
             )
         if proc.returncode != 0:
-            return OperatorResult(
+            return AgentResult(
                 ok=False,
                 error_kind="error",
                 error_message=(stderr_text or f"pi exited {proc.returncode}")[:500],
                 **common,
             )
-        return OperatorResult(ok=True, **common)
+        return AgentResult(ok=True, **common)

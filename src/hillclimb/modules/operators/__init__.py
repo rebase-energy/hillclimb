@@ -17,7 +17,7 @@ from hillclimb.modules.operators.base import (
     Operator,
     OperatorContext,
     OperatorServices,
-    Preparation,
+    Attempt,
     ProblemInfo,
     inspiration_filename,
 )
@@ -62,7 +62,7 @@ __all__ = [
     "Operator",
     "OperatorContext",
     "OperatorServices",
-    "Preparation",
+    "Attempt",
     "ProblemInfo",
     "get_operator",
     "inspiration_filename",

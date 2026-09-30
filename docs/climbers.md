@@ -3,7 +3,7 @@
 A climber is the shareable bundle that decides *how* to hillclimb — a search policy (or a whole loop), the operators it may use, their prompts and a tuner — that the fixed harness runs.
 
 *What to try next* is the climber's, and it is a seam of its own:
-`src/hillclimb/modules/policies/base.py` defines the `SearchPolicy` protocol,
+`src/hillclimb/modules/policies/base.py` defines the `Policy` protocol,
 `src/hillclimb/modules/policies/` holds the implementations, and
 `src/hillclimb/climbers/<name>/climber.yaml` bundles one with its operators,
 prompts and tuner. Everything else — candidate dirs, prompts, agent calls,
@@ -14,7 +14,7 @@ touches it.
 |---|---|
 | `greedy` | debug the newest failing/buggy tip > ensemble in the final budget window > draft until `num_drafts` branches are scored > improve the best |
 | `openevolve` | [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve)'s MAP-Elites database decides what to expand: a population kept diverse over feature dimensions, split across islands with migration; parent + inspirations sampled per island (exploration / elite archive / fitness-weighted). Hillclimb's operators do the mutating, the verifier the scoring, and the `debug` rule is kept. `pip install 'hillclimb[openevolve]'` |
-| `gepa` | [GEPA](https://github.com/gepa-ai/gepa) owns the whole loop — reflective mutation over evaluation feedback and Pareto selection over the verifier's per-instance scores — while hillclimb evaluates, journals, and holds the private holdout. A climber that brings its own `SearchLoop`, not a policy (see below). `pip install 'hillclimb[gepa]'` |
+| `gepa` | [GEPA](https://github.com/gepa-ai/gepa) owns the whole loop — reflective mutation over evaluation feedback and Pareto selection over the verifier's per-instance scores — while hillclimb evaluates, journals, and holds the private holdout. A climber that brings its own `Loop`, not a policy (see below). `pip install 'hillclimb[gepa]'` |
 
 ```yaml
 # hillclimb.yaml — OpenEvolve's quality-diversity search over hillclimb's operators
@@ -62,21 +62,21 @@ spec, noise floors and a control experiment, use `hillclimb experiment run` (see
 Any other feature dimension must be a numeric key the verifier writes next
 to `score` (see [Replicate metrics](problems.md#replicate-metrics-optional)),
 e.g. `feature_dimensions: [runtime_s, score]`. Each evolved candidate's
-`policy_meta` records its island, grid cell and inspirations in the journal
+`climber_meta` records its island, grid cell and inspirations in the journal
 (`hillclimb show <candidate>` prints it); the watch TUI and knowledge graph
 don't surface it yet.
 
 ## Writing a search policy
 
-A policy is two methods over a read-only `PolicyInput`:
+A policy is two methods over a read-only `SearchState`:
 
 ```python
-class SearchPolicy(Protocol):
+class Policy(Protocol):
     name: str
     params: dict   # persisted into SearchMeta, so `resume` restores them
 
-    def propose(self, view: PolicyInput) -> Action | None: ...
-    def observe(self, view: PolicyInput, candidate: Candidate) -> None: ...
+    def propose(self, view: SearchState) -> Action | None: ...
+    def observe(self, view: SearchState, candidate: Candidate) -> None: ...
 ```
 
 `propose` returns one `Action` — an operator (`draft`/`debug`/`improve`/
@@ -91,7 +91,7 @@ Three rules the harness relies on, spelled out in `modules/policies/base.py`:
 - `propose`/`observe` run only on the scheduler thread, under the search's
   state lock. A policy may read candidate dirs; it must never write.
 - Every decision must be derivable from replayed journal state — compute it
-  from the `PolicyInput`, or rebuild your caches in `observe`.
+  from the `SearchState`, or rebuild your caches in `observe`.
 - Ensemble-style actions must carry their inputs in `inspiration_ids`; the
   harness copies those solutions into the new candidate dir.
 
@@ -204,7 +204,7 @@ run is the user's choice in `hillclimb.yaml`, never a climber's. The user's
 ## GEPA: a climber with its own loop (optional extra)
 
 Some optimizers cannot be reduced to "what next?" — they own proposal,
-reflection, and selection themselves. Those bring their own **`SearchLoop`**:
+reflection, and selection themselves. Those bring their own **`Loop`**:
 the manifest names `loop:` instead of `policy:`, and the loop drives the
 harness (`submit`/`wait`/`run`) instead of answering `propose`. The
 architecture is `optimizer-host-plan.md`; GEPA is the first such climber:

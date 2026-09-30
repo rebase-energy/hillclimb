@@ -33,7 +33,7 @@ def make_harness(task, config, agent, *, name: str = "test-search", **kwargs):
 from hillclimb.harness.candidate import Candidate  # noqa: E402
 from hillclimb.harness.loop import PolicyLoop  # noqa: E402
 from hillclimb.modules.policies.greedy import GreedyPolicy  # noqa: E402
-from hillclimb.modules.policies.base import TUNE_ACTION, Action, SearchPolicy  # noqa: E402
+from hillclimb.modules.policies.base import TUNE_ACTION, Action, Policy  # noqa: E402
 
 
 class LiveParams(dict):
@@ -67,7 +67,7 @@ class SearchRig(Harness):
     `run()` with no action runs the whole search; with one it is
     `Harness.run(action)`."""
 
-    def __init__(self, *args, complexity_start: int = 0, policy: SearchPolicy | None = None, **kwargs):
+    def __init__(self, *args, complexity_start: int = 0, policy: Policy | None = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.complexity_start = complexity_start
         self.policy = policy or GreedyPolicy(

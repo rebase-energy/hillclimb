@@ -9,7 +9,7 @@ back count as "did not propose" instead of a scored duplicate.
 
 from __future__ import annotations
 
-from hillclimb.sdk import Candidate, Operator, OperatorContext, Preparation
+from hillclimb.sdk import Candidate, Operator, OperatorContext, Attempt
 
 OPERATOR_NAME = "gepa-reflect"
 FEEDBACK_FILE = "feedback.json"
@@ -26,7 +26,7 @@ class GepaReflectOperator(Operator):
             reason = f"{self.name} targets {target.candidate_id} which has no solution to mutate"
         return reason
 
-    def prepare(self, ctx: OperatorContext) -> Preparation:
+    def prepare(self, ctx: OperatorContext) -> Attempt:
         feedback = str(ctx.action.payload.get("feedback", ""))
         extra = ""
         if ctx.memory.text:
@@ -41,7 +41,7 @@ class GepaReflectOperator(Operator):
             extra=extra,
             remaining=ctx.budget.remaining_str(),
         )
-        return Preparation(
+        return Attempt(
             prompt=prompt,
             copy_parent=True,
             inherit_params=True,

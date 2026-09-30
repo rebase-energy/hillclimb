@@ -217,12 +217,12 @@ def show(
         say(f"\n[head]# Where it moved vs parent [path]{_m(parent.candidate_id)}[/][/]\n")
         typer.echo(delta)
 
-    if cand.metrics or cand.policy_meta:
+    if cand.metrics or cand.climber_meta:
         say("\n[head]# search metadata[/]\n")
         if cand.metrics:
             typer.echo("metrics: " + json.dumps(cand.metrics, sort_keys=True))
-        if cand.policy_meta:
-            typer.echo("policy_meta: " + json.dumps(cand.policy_meta, sort_keys=True))
+        if cand.climber_meta:
+            typer.echo("climber_meta: " + json.dumps(cand.climber_meta, sort_keys=True))
 
     candidate_dir = Path(cand.candidate_dir) if cand.candidate_dir else None
     solution = candidate_dir / "solution.py" if candidate_dir else None

@@ -503,7 +503,7 @@ def ping(agent_name: str, auth: str, model: str, *, models_file: Path | None = N
     Runs in the machine cache, never in a run: it is not a candidate.
     """
     from hillclimb.agents import get_agent
-    from hillclimb.agents.base import OperatorRequest
+    from hillclimb.agents.base import AgentRequest
     from hillclimb.project import machine_cache_dir
 
     # the same dir `mark_connected` records into, so a failed re-ping also
@@ -513,7 +513,7 @@ def ping(agent_name: str, auth: str, model: str, *, models_file: Path | None = N
         shutil.rmtree(work_dir, ignore_errors=True)
     work_dir.mkdir(parents=True, exist_ok=True)
     agent = get_agent(agent_name, auth=auth, pi_models_file=models_file)
-    request = OperatorRequest(
+    request = AgentRequest(
         operator="draft",  # the routed operators all look alike to a provider
         prompt=PING_PROMPT,
         candidate_dir=work_dir,

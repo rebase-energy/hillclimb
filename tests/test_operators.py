@@ -13,7 +13,7 @@ from hillclimb.agents.fake import FakeAgent
 from hillclimb.harness.candidate import Candidate
 from hillclimb.harness.journal import Journal
 from hillclimb.modules.policies.base import Action
-from hillclimb.sdk import Operator, OperatorContext, Preparation
+from hillclimb.sdk import Operator, OperatorContext, Attempt
 from tests.conftest import ok_script
 from tests.factories import trial as mk_trial
 from tests.test_parallel_search import make_searcher
@@ -30,9 +30,9 @@ class ReflectOperator(Operator):
     needs_target = True
     seen: list[OperatorContext] = []
 
-    def prepare(self, ctx: OperatorContext) -> Preparation:
+    def prepare(self, ctx: OperatorContext) -> Attempt:
         type(self).seen.append(ctx)
-        return Preparation(prompt=f"Reflect on {ctx.target.candidate_id} and do better.", copy_parent=True)
+        return Attempt(prompt=f"Reflect on {ctx.target.candidate_id} and do better.", copy_parent=True)
 
 
 @pytest.fixture
@@ -131,7 +131,7 @@ def test_operator_registry_rejects_an_unknown_role():
         name, role = "odd", "measure"
 
         def prepare(self, ctx):  # pragma: no cover
-            return Preparation(prompt="")
+            return Attempt(prompt="")
 
     with pytest.raises(ValueError, match="role 'measure'"):
         operators.register_operator(Odd)
@@ -143,7 +143,7 @@ def test_extra_files_must_be_bare_names(task, config):
         name, role = "escaper", "create"
 
         def prepare(self, ctx):
-            return Preparation(prompt="x", files={"../evil.py": Path(__file__)})
+            return Attempt(prompt="x", files={"../evil.py": Path(__file__)})
 
     operators.register_operator(Escaper)
     try:

@@ -1,6 +1,6 @@
 """The operator seam: HOW one attempt is made.
 
-An `Operator` turns a policy's `Action` into a `Preparation` — the prompt for
+An `Operator` turns a policy's `Action` into an `Attempt` — the prompt for
 the agent plus what the harness should put in the new candidate dir. It never
 touches the filesystem, the journal or a agent itself: the harness executes
 the preparation, fills in the problem's contract (an operator cannot drop
@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from hillclimb.harness.candidate import Candidate
-    from hillclimb.harness.journal import PolicyJournal
+    from hillclimb.harness.journal import JournalView
     from hillclimb.modules.policies.base import Action, BudgetView
 
 # What an operator's candidates ARE to the rest of the system. Views colour
@@ -105,7 +105,7 @@ class OperatorContext:
     action: Action
     target: Candidate | None
     inspirations: tuple[Candidate, ...]
-    journal: PolicyJournal
+    journal: JournalView
     problem: ProblemInfo
     budget: BudgetView
     memory: MemoryContext
@@ -182,7 +182,7 @@ class OperatorContext:
 
 
 @dataclass(frozen=True)
-class Preparation:
+class Attempt:
     """What the harness should set up for one attempt."""
 
     prompt: str
@@ -216,4 +216,4 @@ class Operator(ABC):
         return None
 
     @abstractmethod
-    def prepare(self, ctx: OperatorContext) -> Preparation: ...
+    def prepare(self, ctx: OperatorContext) -> Attempt: ...

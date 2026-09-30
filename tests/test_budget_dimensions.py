@@ -8,7 +8,7 @@ from hillclimb.agents.fake import FakeAgent
 from hillclimb.harness.budget import Spend, journal_spend
 from hillclimb.harness.candidate import AgentInfo, Candidate
 from hillclimb.harness.journal import Journal
-from hillclimb.harness.loop import PolicyLoop, SearchLoop
+from hillclimb.harness.loop import PolicyLoop, Loop
 from hillclimb.modules.policies.greedy import GreedyPolicy
 from hillclimb.modules.policies.base import Action
 from hillclimb.harness.status import SearchStatus, StatusWriter
@@ -52,7 +52,7 @@ def test_evaluation_budget_ends_the_search_like_the_clock_does(task, config):
     assert harness.view().budget.evaluations_remaining == 0
 
 
-class FillEverySlot(SearchLoop):
+class FillEverySlot(Loop):
     """Asks for as much as the harness will take, then records what it saw."""
 
     def __init__(self):

@@ -44,6 +44,42 @@ def test_legacy_workspace_key_loads_as_candidate_dir():
     assert cur.candidate_dir == "/old"
 
 
+# 0.6 renamed these, with no aliases. They survive only where an old spelling
+# is read (the journal key, the sdk's "renamed" table).
+RENAMED_IN_06 = re.compile(
+    r"\b(SearchPolicy|SearchLoop|PolicyInput|PolicyJournal|Preparation|OperatorRequest|OperatorResult|policy_meta)\b"
+)
+RENAMED_OK = re.compile(r"_legacy_policy_meta_key|\"policy_meta\"|\"(SearchPolicy|SearchLoop|PolicyInput|PolicyJournal|Preparation)\": \"")
+META_PROBLEM = SRC.parents[1] / "problems" / "meta-heilbronn"
+
+
+def test_no_pre_06_names_in_source():
+    offenders = []
+    for root in (SRC, META_PROBLEM):
+        for path in root.rglob("*"):
+            if path.suffix not in {".py", ".md", ".yaml"}:
+                continue
+            for n, line in enumerate(path.read_text().splitlines(), 1):
+                if RENAMED_IN_06.search(line) and not RENAMED_OK.search(line):
+                    offenders.append(f"{path.relative_to(root)}:{n}: {line.strip()}")
+    assert not offenders, "\n".join(offenders)
+
+
+def test_legacy_policy_meta_key_loads_as_climber_meta():
+    cand = Candidate.model_validate(
+        {"candidate_id": "c001", "operator": "draft", "policy_meta": {"island": 1}}
+    )
+    assert cand.climber_meta == {"island": 1}
+    assert "policy_meta" not in cand.model_dump()
+
+
+def test_a_renamed_sdk_name_says_where_it_went():
+    import pytest
+
+    with pytest.raises(ImportError, match="PolicyInput was renamed SearchState"):
+        from hillclimb.sdk import PolicyInput  # noqa: F401
+
+
 # Score direction is `higher_is_better` (hillclimb climbs). `lower_is_better`
 # survives only in the load-time shim and where an external library's own
 # field is read — those lines carry a `# legacy-key` marker.

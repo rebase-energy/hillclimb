@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 
-from hillclimb.agents.base import OperatorRequest, OperatorResult
+from hillclimb.agents.base import AgentRequest, AgentResult
 
 
 class FakeAgent:
@@ -17,7 +17,7 @@ class FakeAgent:
 
     def __init__(self, responses: list[dict] | None = None):
         self.responses = list(responses or [])
-        self.requests: list[OperatorRequest] = []
+        self.requests: list[AgentRequest] = []
         self._lock = threading.Lock()
 
     def queue(
@@ -35,7 +35,7 @@ class FakeAgent:
              "files": files}
         )
 
-    def _pop_response(self, request: OperatorRequest) -> dict:
+    def _pop_response(self, request: AgentRequest) -> dict:
         for index, response in enumerate(self.responses):
             if response.get("operator") in (None, request.operator):
                 return self.responses.pop(index)
@@ -43,7 +43,7 @@ class FakeAgent:
             f"FakeAgent queue exhausted (no response for operator {request.operator!r})"
         )
 
-    def invoke(self, request: OperatorRequest) -> OperatorResult:
+    def invoke(self, request: AgentRequest) -> AgentResult:
         with self._lock:
             self.requests.append(request)
             response = self._pop_response(request)
@@ -55,7 +55,7 @@ class FakeAgent:
             path = request.candidate_dir / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
-        return OperatorResult(**{"ok": True, **response.get("result", {})})
+        return AgentResult(**{"ok": True, **response.get("result", {})})
 
 
 class GateAgent(FakeAgent):
@@ -77,14 +77,14 @@ class GateAgent(FakeAgent):
         for gate in self.gates:
             gate.set()
 
-    def invoke(self, request: OperatorRequest) -> OperatorResult:
+    def invoke(self, request: AgentRequest) -> AgentResult:
         with self._lock:
             gate = threading.Event()
             self.gates.append(gate)
         self.started.release()
         while not gate.wait(timeout=0.05):
             if self.abort is not None and self.abort.is_set():
-                return OperatorResult(
+                return AgentResult(
                     ok=False, error_kind="aborted", error_message="aborted in gate"
                 )
         return super().invoke(request)

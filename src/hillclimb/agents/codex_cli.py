@@ -16,7 +16,7 @@ import threading
 import time
 from pathlib import Path
 
-from hillclimb.agents.base import OperatorRequest, OperatorResult
+from hillclimb.agents.base import AgentRequest, AgentResult
 from hillclimb.agents.claude_code import (
     PID_FILE,
     RATE_LIMIT_MARKERS,
@@ -300,7 +300,7 @@ class CodexCliAgent:
         self.auth = auth
         self.abort = abort
 
-    def _command(self, request: OperatorRequest) -> list[str]:
+    def _command(self, request: AgentRequest) -> list[str]:
         cmd = [self.codex_bin]
         if self.auth == "openrouter":
             cmd += ["-c", OPENROUTER_PROVIDER, "-c", "model_provider=openrouter"]
@@ -331,7 +331,7 @@ class CodexCliAgent:
             cmd += ["--json", "--skip-git-repo-check", "-"]
         return cmd
 
-    def invoke(self, request: OperatorRequest) -> OperatorResult:
+    def invoke(self, request: AgentRequest) -> AgentResult:
         cmd = self._command(request)
         candidate_dir = Path(request.candidate_dir)
         stream_path = candidate_dir / STREAM_FILE
@@ -349,7 +349,7 @@ class CodexCliAgent:
         try:
             child_env = codex_env(self.auth)
         except RuntimeError as exc:
-            return OperatorResult(ok=False, error_kind="error", error_message=str(exc))
+            return AgentResult(ok=False, error_kind="error", error_message=str(exc))
 
         try:
             with stderr_path.open("w") as stderr_sink:
@@ -432,7 +432,7 @@ class CodexCliAgent:
             "cpu_s": reaper.cpu_s if reaper is not None else None,
         }
         if spawn_error:
-            return OperatorResult(
+            return AgentResult(
                 ok=False,
                 error_kind="error",
                 error_message=f"could not start Codex CLI: {spawn_error}",
@@ -448,14 +448,14 @@ class CodexCliAgent:
             if self.auth == "openrouter":
                 common["cost_usd"] = cost_usd(request.model, common["token_usage"])
         if aborted:
-            return OperatorResult(
+            return AgentResult(
                 ok=False,
                 error_kind="aborted",
                 error_message="agent call aborted (stop requested)",
                 **common,
             )
         if timed_out:
-            return OperatorResult(
+            return AgentResult(
                 ok=False,
                 error_kind="timeout",
                 error_message=f"agent call exceeded {request.timeout_s}s",
@@ -463,7 +463,7 @@ class CodexCliAgent:
             )
         assert proc is not None and reader is not None
         if reader.out_of_credits or _has_credit_marker(stderr_text):
-            return OperatorResult(
+            return AgentResult(
                 ok=False,
                 session_id=reader.session_id,
                 num_turns=reader.num_turns,
@@ -472,7 +472,7 @@ class CodexCliAgent:
                 **common,
             )
         if reader.rate_limited or _has_rate_limit_marker(stderr_text):
-            return OperatorResult(
+            return AgentResult(
                 ok=False,
                 session_id=reader.session_id,
                 num_turns=reader.num_turns,
@@ -481,7 +481,7 @@ class CodexCliAgent:
                 **common,
             )
         if proc.returncode != 0 or reader.error_message:
-            return OperatorResult(
+            return AgentResult(
                 ok=False,
                 session_id=reader.session_id,
                 num_turns=reader.num_turns,
@@ -490,7 +490,7 @@ class CodexCliAgent:
                 **common,
             )
         if not reader.completed:
-            return OperatorResult(
+            return AgentResult(
                 ok=False,
                 session_id=reader.session_id,
                 num_turns=reader.num_turns,
@@ -498,7 +498,7 @@ class CodexCliAgent:
                 error_message="Codex exited 0 without a completed turn",
                 **common,
             )
-        return OperatorResult(
+        return AgentResult(
             ok=True,
             session_id=reader.session_id,
             num_turns=reader.num_turns,

@@ -7,7 +7,7 @@ a prompts dir without touching this file.
 
 from __future__ import annotations
 
-from hillclimb.sdk import Candidate, Operator, OperatorContext, Preparation, inspiration_filename
+from hillclimb.sdk import Candidate, Operator, OperatorContext, Attempt, inspiration_filename
 
 COMPLEXITY_CUES = {
     "minimal": (
@@ -37,7 +37,7 @@ class DraftOperator(Operator):
     name = "draft"
     role = "create"
 
-    def prepare(self, ctx: OperatorContext) -> Preparation:
+    def prepare(self, ctx: OperatorContext) -> Attempt:
         problem = ctx.problem
         prior = "\n\n".join(part for part in (ctx.memory.text, ctx.live_experience()) if part)
         research_cue = (
@@ -69,7 +69,7 @@ class DraftOperator(Operator):
             prior_experience=prior or "(no prior searches recorded)",
             prior_drafts=ctx.summaries(ctx.journal.drafts()) or "(none yet)",
         )
-        return Preparation(
+        return Attempt(
             prompt=prompt,
             files={"reference_solution.py": reference} if wants_reference else {},
         )
@@ -90,7 +90,7 @@ class DebugOperator(Operator):
             reason = f"debug targets {target.candidate_id} whose status is {target.status}"
         return reason
 
-    def prepare(self, ctx: OperatorContext) -> Preparation:
+    def prepare(self, ctx: OperatorContext) -> Attempt:
         target = ctx.target
         chain = ctx.journal.debug_chain(target.candidate_id)
         root, attempts = chain[0], chain[1:]
@@ -110,7 +110,7 @@ class DebugOperator(Operator):
             ),
             debug_history=ctx.summaries(attempts) or "(none — this is the first fix attempt)",
         )
-        return Preparation(prompt=prompt, copy_parent=True, inherit_params=True, fork_session=True)
+        return Attempt(prompt=prompt, copy_parent=True, inherit_params=True, fork_session=True)
 
 
 class ImproveOperator(Operator):
@@ -128,7 +128,7 @@ class ImproveOperator(Operator):
             reason = f"improve targets unscored {target.candidate_id}"
         return reason
 
-    def prepare(self, ctx: OperatorContext) -> Preparation:
+    def prepare(self, ctx: OperatorContext) -> Attempt:
         problem, target = ctx.problem, ctx.target
         last_replicate = target.last_replicate
         live = ctx.live_experience()
@@ -147,7 +147,7 @@ class ImproveOperator(Operator):
             prior_ablations=self._prior_ablations(ctx) if ablation else "",
             ablation_cue=ctx.render("ablation_cue").rstrip() + "\n" if ablation else "",
         )
-        return Preparation(prompt=prompt, copy_parent=True, inherit_params=True)
+        return Attempt(prompt=prompt, copy_parent=True, inherit_params=True)
 
     @staticmethod
     def _prior_ablations(ctx: OperatorContext) -> str:
@@ -171,7 +171,7 @@ class EnsembleOperator(Operator):
     role = "combine"
     needs_target = True
 
-    def prepare(self, ctx: OperatorContext) -> Preparation:
+    def prepare(self, ctx: OperatorContext) -> Attempt:
         if not ctx.inspirations:
             raise ValueError("ensemble needs inspiration_ids: the solutions to combine")
         problem = ctx.problem
@@ -187,7 +187,7 @@ class EnsembleOperator(Operator):
             direction=problem.direction,
             candidates_table=table,
         )
-        return Preparation(prompt=prompt)
+        return Attempt(prompt=prompt)
 
 
 BUILTIN_OPERATORS = (DraftOperator, DebugOperator, ImproveOperator, EnsembleOperator)

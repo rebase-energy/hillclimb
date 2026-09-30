@@ -1,4 +1,4 @@
-"""The harness as a `SearchLoop` sees it: submit / wait / run, the closed
+"""The harness as a `Loop` sees it: submit / wait / run, the closed
 latch, refusals — without any policy in the picture."""
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import pytest
 
 from hillclimb.agents.fake import FakeAgent
 from hillclimb.harness.control import ControlCommand
-from hillclimb.harness.loop import ClimberError, HarnessClosed, SearchLoop
+from hillclimb.harness.loop import ClimberError, HarnessClosed, Loop
 from hillclimb.modules.policies.base import Action
 from hillclimb.harness.glue import StopRequested
 from tests.conftest import ok_script
@@ -24,7 +24,7 @@ def audit_lines(search_dir, event):
     return [r for r in map(json.loads, lines) if r.get("event") == event]
 
 
-class Generations(SearchLoop):
+class Generations(Loop):
     """Not a policy: synchronized generations — fill every slot with drafts,
     wait for ALL of them, then refine the generation's best."""
 
@@ -62,7 +62,7 @@ def test_a_loop_that_is_not_a_policy_drives_a_search(task, config):
     assert harness.info.metric_name == task.metric_name and harness.info.parallelism == 2
 
 
-class Stubborn(SearchLoop):
+class Stubborn(Loop):
     """Swallows everything and keeps asking for work."""
 
     name = "stubborn"
@@ -162,7 +162,7 @@ def test_a_closed_harness_refuses_work_and_says_why(task, config):
         harness.submit(Action(operator="draft"))
 
 
-class LeavesWorkBehind(SearchLoop):
+class LeavesWorkBehind(Loop):
     name = "careless"
 
     def run(self, harness):
@@ -209,7 +209,7 @@ def test_running_out_of_budget_is_a_quiet_refusal_not_an_error(task, config):
 from hillclimb.modules import operators  # noqa: E402
 from hillclimb.harness.candidate import source_hash  # noqa: E402
 from hillclimb.modules.policies.base import INJECT_ACTION  # noqa: E402
-from hillclimb.sdk import Operator, Preparation  # noqa: E402
+from hillclimb.sdk import Operator, Attempt  # noqa: E402
 
 
 def test_inject_scores_a_text_the_loop_already_has(task, config):
@@ -221,7 +221,7 @@ def test_inject_scores_a_text_the_loop_already_has(task, config):
     child = harness.run(
         Action(
             operator=INJECT_ACTION, target_id=first.candidate.candidate_id,
-            payload={"source": ok_script(0.6) + marker}, policy_meta={"optimizer": "mine"},
+            payload={"source": ok_script(0.6) + marker}, climber_meta={"optimizer": "mine"},
         )
     )
 
@@ -229,7 +229,7 @@ def test_inject_scores_a_text_the_loop_already_has(task, config):
     assert (first.kind, first.candidate.val_score) == ("evaluated", 0.4)
     assert child.candidate.parent_id == first.candidate.candidate_id
     assert child.candidate.operator == "inject" and child.candidate.role == "inject"
-    assert child.candidate.policy_meta == {"optimizer": "mine"}
+    assert child.candidate.climber_meta == {"optimizer": "mine"}
     assert child.candidate.solution_sha256 == source_hash(ok_script(0.6) + marker)
     assert harness.source(child.candidate.candidate_id) == ok_script(0.6) + marker
     # the scored view a loop consumes — and the source text is never journaled
@@ -254,7 +254,7 @@ class Mutate(Operator):
     name, role, needs_target = "mutate", "refine", True
 
     def prepare(self, ctx):
-        return Preparation(
+        return Attempt(
             prompt="Change solution.py.", copy_parent=True, require_change=True,
             texts={"feedback.json": ctx.action.payload["feedback"]},
         )

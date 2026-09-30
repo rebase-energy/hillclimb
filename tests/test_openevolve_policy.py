@@ -1,4 +1,4 @@
-"""OpenEvolve as a SearchPolicy: its MAP-Elites database picks parents and
+"""OpenEvolve as a Policy: its MAP-Elites database picks parents and
 inspirations, hillclimb's harness does the rest. Needs the `openevolve` extra."""
 
 from __future__ import annotations
@@ -28,13 +28,13 @@ PARAMS = {"num_islands": 2, "num_inspirations": 2, "feature_dimensions": ["compl
 
 def scored(journal: Journal, tmp_path: Path, cid: str, op: str, score: float,
            parent_id: str | None = None, code: str = "x = 1\n", metrics: dict | None = None,
-           policy_meta: dict | None = None) -> Candidate:
+           climber_meta: dict | None = None) -> Candidate:
     d = tmp_path / "cands" / cid
     d.mkdir(parents=True, exist_ok=True)
     (d / "solution.py").write_text(code)
     cand = Candidate(
         candidate_id=cid, operator=op, status="passing", parent_id=parent_id,
-        candidate_dir=str(d), policy_meta=policy_meta or {},
+        candidate_dir=str(d), climber_meta=climber_meta or {},
         trials=[mk_trial(val_score=score, submission_ok=True, metrics=metrics or {})],
     )
     journal.candidate_result(cand)
@@ -61,7 +61,7 @@ def test_drafts_until_population_seeded_then_evolves(config, tmp_path):
     journal = Journal(tmp_path / "j.jsonl")
     policy, view = replayed(journal, config, {**PARAMS, "num_drafts": 2})
     first = policy.propose(view)
-    assert first.operator == "draft" and "island" in first.policy_meta
+    assert first.operator == "draft" and "island" in first.climber_meta
 
     scored(journal, tmp_path, "c000", "baseline", 0.1, code="pass\n")
     scored(journal, tmp_path, "c001", "draft", 0.5, code="a = 1\n" * 10)
@@ -74,8 +74,8 @@ def test_drafts_until_population_seeded_then_evolves(config, tmp_path):
     assert action.target_id in {"c000", "c001", "c002"}
     assert action.target_id not in action.inspiration_ids
     assert set(action.inspiration_ids) <= {"c000", "c001", "c002"}
-    assert action.policy_meta["island"] in (0, 1)
-    assert len(action.policy_meta["cell"]) == 2
+    assert action.climber_meta["island"] in (0, 1)
+    assert len(action.climber_meta["cell"]) == 2
     assert "MAP-Elites" in action.extra_prompt_context
     for i, _ in enumerate(action.inspiration_ids, 1):
         assert f"candidate_{i}.py" in action.extra_prompt_context
@@ -98,8 +98,8 @@ def test_proposals_are_replay_deterministic_and_rng_isolated(config, tmp_path):
     assert after == before  # global RNG state untouched by the policy
     p2, v2 = replayed(Journal(tmp_path / "j.jsonl"), config)
     a2 = p2.propose(v2)
-    assert (a1.target_id, a1.inspiration_ids, a1.policy_meta) == (
-        a2.target_id, a2.inspiration_ids, a2.policy_meta
+    assert (a1.target_id, a1.inspiration_ids, a1.climber_meta) == (
+        a2.target_id, a2.inspiration_ids, a2.climber_meta
     )
 
 
@@ -157,10 +157,10 @@ def test_openevolve_policy_drives_search_end_to_end(task, config):
     assert [r.operator for r in agent.requests] == ["draft", "draft", "improve"]
     evolved = searcher.journal.get("c003")
     assert evolved.operator == "improve" and evolved.parent_id in {"c001", "c002"}
-    assert "island" in evolved.policy_meta and "cell" in evolved.policy_meta
+    assert "island" in evolved.climber_meta and "cell" in evolved.climber_meta
     d = Path(evolved.candidate_dir)
     assert "MAP-Elites" in (d / "prompt.md").read_text()
-    for i, _ in enumerate(evolved.policy_meta["inspirations"], 1):
+    for i, _ in enumerate(evolved.climber_meta["inspirations"], 1):
         assert (d / f"candidate_{i}.py").exists()
     # MAP-Elites keeps the cell winner: c003 displaced c002 (same code length,
     # better score) rather than piling up alongside it
@@ -210,7 +210,7 @@ def _db_state(policy) -> dict:
 
 def _next(policy, journal: Journal, config):
     action = policy.propose(make_view(journal, config))
-    return action.operator, action.target_id, action.inspiration_ids, action.policy_meta
+    return action.operator, action.target_id, action.inspiration_ids, action.climber_meta
 
 
 LANDED = [

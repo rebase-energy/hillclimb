@@ -41,6 +41,21 @@
   and `FleetEngine` take the new names, and `load_experiment` /
   `ExperimentSpec` are `load_study` / `StudySpec`.
 
+### Renamed, without aliases
+A climber written for 0.5 needs these edits before it loads; `hillclimb.sdk`
+raises an `ImportError` that names the new spelling. Run records are not
+affected: old journals and `search.yaml` files read as before.
+
+| 0.5 | 0.6 |
+|---|---|
+| `SearchPolicy` | `Policy` |
+| `SearchLoop` | `Loop` |
+| `PolicyInput` | `SearchState` |
+| `PolicyJournal` | `JournalView` |
+| `Preparation` | `Attempt` |
+| `Action.policy_meta`, `Candidate.policy_meta` | `climber_meta` (the journal key `policy_meta` is read as before) |
+| `OperatorRequest`, `OperatorResult` (agents) | `AgentRequest`, `AgentResult` |
+
 ### Fixed
 - **A resumed `openevolve` search has the database the live one had.** The
   MAP-Elites database is now rebuilt from the journal alone (scored

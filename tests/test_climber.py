@@ -9,7 +9,7 @@ import pytest
 
 from hillclimb.agents.fake import FakeAgent
 from hillclimb.climber import ClimberLoadError, bundled_climbers, load_climber, tree_sha256
-from hillclimb.harness.loop import PolicyLoop, SearchLoop
+from hillclimb.harness.loop import PolicyLoop, Loop
 from hillclimb.modules.policies.greedy import GreedyPolicy
 from hillclimb.modules.policies.base import Action
 from tests.conftest import ok_script
@@ -36,13 +36,13 @@ class DraftsThenCross:
 '''
 
 OPERATORS_PY = '''\
-from hillclimb.sdk import Operator, Preparation, inspiration_filename
+from hillclimb.sdk import Operator, Attempt, inspiration_filename
 
 class Cross(Operator):
     name, role, needs_target = "cross", "combine", True
     def prepare(self, ctx):
         files = ", ".join(inspiration_filename(i) for i, _ in enumerate(ctx.inspirations, 1))
-        return Preparation(prompt=ctx.render("cross", files=files, style=self.params.get("style", "plain")))
+        return Attempt(prompt=ctx.render("cross", files=files, style=self.params.get("style", "plain")))
 '''
 
 
@@ -126,8 +126,8 @@ def test_a_one_file_climber_is_the_ten_line_story(task, config, tmp_path):
 def test_a_one_file_loop_is_recognised(tmp_path):
     path = tmp_path / "two_shots.py"
     path.write_text(
-        "from hillclimb.sdk import Action, SearchLoop\n\n"
-        "class TwoShots(SearchLoop):\n"
+        "from hillclimb.sdk import Action, Loop\n\n"
+        "class TwoShots(Loop):\n"
         "    name = 'two-shots'\n"
         "    def __init__(self, params=None, parallelism=1):\n"
         "        self.shots = int((params or {}).get('shots', 2)); self.parallelism = parallelism\n"
@@ -137,7 +137,7 @@ def test_a_one_file_loop_is_recognised(tmp_path):
     )
     climber = load_climber(str(path))
     loop = climber.build_loop(params={"shots": 3}, parallelism=4)
-    assert climber.is_loop and isinstance(loop, SearchLoop) and (loop.shots, loop.parallelism) == (3, 4)
+    assert climber.is_loop and isinstance(loop, Loop) and (loop.shots, loop.parallelism) == (3, 4)
 
 
 def test_identity_is_the_tree_and_ignores_caches(tmp_path):

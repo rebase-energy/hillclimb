@@ -119,7 +119,7 @@ places they are imported.
   (`executor.SINGLE_THREAD_ENV`, parent values win). CPU accounting:
   `harness/procs.py` (`Reaper`) reaps every child the harness spawns — verifier
   runs and agent calls — through `os.wait4`, sampling live descendants with `ps`
-  before a group kill; `OperatorResult.cpu_s` → `AgentInfo.cpu_s` is the agent
+  before a group kill; `AgentResult.cpu_s` → `AgentInfo.cpu_s` is the agent
   call's local CPU and the chart's cost fold adds it to the trials'. Starter
   verifiers call their scorer plainly, never `exec` it (macOS drops the shell's
   child CPU at an exec; `tests/test_verifier_scripts.py`). `hillclimb ps` lists the
@@ -148,7 +148,7 @@ places they are imported.
   meta-problem's verifier never. Verifier/unit-test/holdout runs get
   `verifier_policy` through `run_logged(sandbox=…)`; network is the problem's
   `allow_internet_during_solution` (`allow_network` is the legacy key), now
-  enforced. `allow_internet_for_agents: false` → `OperatorRequest.
+  enforced. `allow_internet_for_agents: false` → `AgentRequest.
   allow_internet=False` → network `proxy`: `AllowlistProxy` (a thread of the
   engine, CONNECT only) lets the agent's `MODEL_HOSTS` through; on Linux the
   netns reaches it through `sandbox.py bridge` (localhost:3128 → unix socket).
@@ -248,8 +248,8 @@ places they are imported.
   scores [search] [-s name] [-c ids] [-f file…] [--explain] [--json]`
 - Harness + climber restructure (in progress on branch `harness-climber`;
   vocabulary: **Harness** = the fixed core, **Climber** = the shareable
-  bundle of exchangeable modules, **SearchPolicy** = the pure what-next
-  decision, **SearchLoop** = control flow, plus **Operator**, **Memory**,
+  bundle of exchangeable modules, **Policy** = the pure what-next
+  decision, **Loop** = control flow, plus **Operator**, **Memory**,
   **Tuner**, **SimilarityScore**). `hillclimb.sdk` is the one import a
   climber needs — a lazy facade, so modules it re-exports may import it back;
   `tests/test_sdk_imports.py` AST-scans the bundled climber modules
@@ -260,8 +260,8 @@ places they are imported.
 - Climbers (`climber.py`, bundled manifests in `src/hillclimb/climbers/<name>/climber.yaml`):
   the shareable unit. `load_climber(ref, base_dir)` resolves a bundled name
   (`greedy | openevolve | gepa`), a directory holding `climber.yaml`, or ONE
-  `.py` file (a one-file climber: the single SearchPolicy — duck-typed
-  `propose`+`observe`, or `POLICY = …` — or SearchLoop subclass it defines,
+  `.py` file (a one-file climber: the single Policy — duck-typed
+  `propose`+`observe`, or `POLICY = …` — or Loop subclass it defines,
   plus any `Operator` subclasses in it); every failure is a
   `ClimberLoadError` naming the file and the fix. `ClimberManifest`
   (`extra="forbid"`): `name`, exactly one of `policy` | `loop`, `params`,
@@ -309,7 +309,7 @@ places they are imported.
 - Harness + loop (`harness/core.py`, `harness/loop.py`): `Harness` is the fixed core
   (candidate dirs, agent calls, trials, the journal's single writer, `best/`,
   accept band, budgets, control queue, crash recovery, holdout) and knows no
-  policy. A `SearchLoop.run(harness)` reaches it only through
+  policy. A `Loop.run(harness)` reaches it only through
   `view()`/`capacity`/`inflight`/`open`/`closed_reason` (pure reads) and
   `submit(action) -> Ticket` / `wait(timeout) -> [Outcome]` / `run(action) ->
   Outcome` / `source(cid)`; `Harness.execute(loop)` writes baseline + seed,
@@ -340,8 +340,8 @@ places they are imported.
   args={"source": text}, target_id=parent)` scores a text the loop already
   has; `--seed-from` runs through the same path as operator `seed`; the text
   is never journaled, its `Candidate.solution_sha256` — `candidate.source_hash`,
-  newline-normalized — is, on every scored candidate). `Preparation.texts`
-  writes extra files from text; `Preparation.require_change` turns an agent
+  newline-normalized — is, on every scored candidate). `Attempt.texts`
+  writes extra files from text; `Attempt.require_change` turns an agent
   that hands the parent back into Outcome `unchanged` (abandoned, never
   scored, no evaluation spent). `Outcome.result` is an `EvalResult` projected
   from the holdout-blind copy. `Harness.request_stop(reason)` closes it from a
@@ -367,7 +367,7 @@ places they are imported.
   config); `Harness(max_candidates=…)` survives only as a test knob
 - Operators (`modules/operators/`): HOW one attempt is made. An `Operator` subclass
   sets `name` + `role` (`create | repair | refine | combine`) and implements
-  `prepare(ctx) -> Preparation(prompt, copy_parent, inherit_params,
+  `prepare(ctx) -> Attempt(prompt, copy_parent, inherit_params,
   copy_inspirations, fork_session, files)`; it never touches disk, journal or
   agent. The harness (`search._prepare` → `_prepare_attempt`, pure, so a
   refusal leaves no dir/journal/spend) checks `valid_target`, executes the
@@ -386,8 +386,8 @@ places they are imported.
 - Search policies (`modules/policies/`): `greedy` (default) and `openevolve`
   (OpenEvolve's MAP-Elites database as the what-next brain; optional extra,
   `climber.params` pass through to its `DatabaseConfig`). A policy
-  owns only `propose`/`observe` and is holdout-blind: `PolicyInput` wraps
-  whatever journal it is given in `journal.PolicyJournal` (snapshot of
+  owns only `propose`/`observe` and is holdout-blind: `SearchState` wraps
+  whatever journal it is given in `journal.JournalView` (snapshot of
   `Candidate.holdout_blind()` copies — no holdout fields, no `is_selected`,
   no `path`, writes raise), and `observe()` receives the candidate from that
   view, so `holdout.selection` decides what ships and never what a policy
@@ -395,7 +395,7 @@ places they are imported.
   openevolve policy seeds/restores the global RNG around every OpenEvolve call
   because that library samples via the `random` module. The exploration
   process is ONE dict: a policy's knobs arrive through its constructor's
-  `params` and nothing else — `PolicyInput` carries NO config (it has
+  `params` and nothing else — `SearchState` carries NO config (it has
   `journal`, `inflight`, `budget`, `higher_is_better`, `accept_band`; a
   policy agrees with the harness on "better" via `view.accept_band`).
   `GreedyPolicy.DEFAULTS` lists every greedy knob (`num_drafts`,
@@ -428,7 +428,7 @@ places they are imported.
   `SearchMeta.templates_sha256` + `templates_overridden` at `create_search`.
   Tests that activate an override dir must restore the previous setting
 - GEPA (`integrations/gepa/`, extra `hillclimb[gepa]`): a climber that
-  brings its own `SearchLoop`. gepa drives proposal order, Pareto selection
+  brings its own `Loop`. gepa drives proposal order, Pareto selection
   and its checkpoint; everything that costs or counts is `harness.run(...)`:
   a reflective mutation is one `gepa-reflect` attempt (`operator.py`, a real
   operator with template `prompts/gepa_reflect.md`, `require_change`, the

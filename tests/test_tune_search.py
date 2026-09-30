@@ -17,7 +17,7 @@ from hillclimb.harness.dirs import create_search_dir
 from hillclimb.harness.journal import Journal
 from hillclimb.modules.policies.greedy import GreedyPolicy
 from hillclimb.harness.evaluation import accept_band
-from hillclimb.modules.policies.base import TUNE_ACTION, Action, BudgetView, InflightRef, PolicyInput
+from hillclimb.modules.policies.base import TUNE_ACTION, Action, BudgetView, InflightRef, SearchState
 from tests.harness_factory import SearchRig
 from hillclimb.harness.core import OutcomeMsg
 from tests.conftest import executor_for, ok_script
@@ -218,8 +218,8 @@ def test_run_operator_tune_refuses_an_untunable_target(task, config):
 # --- the greedy rule, as a pure function of journal + in-flight refs ---
 
 
-def make_view(journal, config, inflight=(), remaining_s=3600.0) -> PolicyInput:
-    return PolicyInput(
+def make_view(journal, config, inflight=(), remaining_s=3600.0) -> SearchState:
+    return SearchState(
         journal=journal, inflight=tuple(inflight),
         budget=BudgetView(remaining_s=remaining_s, total_s=3600, stop_margin_s=1),
         higher_is_better=True, accept_band=accept_band(config, journal),

@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, FiniteFloat
 from hillclimb.harness.sandbox import SandboxPolicy
 
 
-class OperatorRequest(BaseModel):
+class AgentRequest(BaseModel):
     operator: str  # the operator's name (routing and logs key on it)
     role: str | None = None  # create | repair | refine | combine — what kind of attempt this is
     prompt: str
@@ -25,7 +25,7 @@ class OperatorRequest(BaseModel):
     sandbox: SandboxPolicy | None = None
 
 
-class OperatorResult(BaseModel):
+class AgentResult(BaseModel):
     ok: bool
     session_id: str | None = None
     # fully-qualified model the agent actually ran (e.g.
@@ -61,4 +61,4 @@ class OperatorResult(BaseModel):
 class Agent(Protocol):
     name: str
 
-    def invoke(self, request: OperatorRequest) -> OperatorResult: ...
+    def invoke(self, request: AgentRequest) -> AgentResult: ...

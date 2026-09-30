@@ -1,7 +1,7 @@
 """hillclimb.sdk — the one import a climber needs.
 
-A climber is the shareable bundle of exchangeable modules (a `SearchPolicy`
-or `SearchLoop`, operators, memory, a tuner, similarity scores) that decides
+A climber is the shareable bundle of exchangeable modules (a `Policy`
+or `Loop`, operators, memory, a tuner, similarity scores) that decides
 HOW to hillclimb. Everything else — running agents, scoring, holdout, the
 journal, budgets — is the harness, and a climber only ever meets it through
 the names exported here. `tests/test_sdk_imports.py` enforces the other half
@@ -22,12 +22,12 @@ _LAZY = {
     "Route": ("hillclimb.modules.policies.base", "Route"),
     "InflightRef": ("hillclimb.modules.policies.base", "InflightRef"),
     "BudgetView": ("hillclimb.modules.policies.base", "BudgetView"),
-    "PolicyInput": ("hillclimb.modules.policies.base", "PolicyInput"),
-    "SearchPolicy": ("hillclimb.modules.policies.base", "SearchPolicy"),
+    "SearchState": ("hillclimb.modules.policies.base", "SearchState"),
+    "Policy": ("hillclimb.modules.policies.base", "Policy"),
     "TUNE_ACTION": ("hillclimb.modules.policies.base", "TUNE_ACTION"),
     "INJECT_ACTION": ("hillclimb.modules.policies.base", "INJECT_ACTION"),
-    # control flow over the harness (most climbers only need a SearchPolicy)
-    "SearchLoop": ("hillclimb.harness.loop", "SearchLoop"),
+    # control flow over the harness (most climbers only need a Policy)
+    "Loop": ("hillclimb.harness.loop", "Loop"),
     "PolicyLoop": ("hillclimb.harness.loop", "PolicyLoop"),
     "Harness": ("hillclimb.harness.loop", "Harness"),
     "SearchInfo": ("hillclimb.harness.loop", "SearchInfo"),
@@ -39,7 +39,7 @@ _LAZY = {
     "Candidate": ("hillclimb.harness.candidate", "Candidate"),
     "Trial": ("hillclimb.harness.candidate", "Trial"),
     "Replicate": ("hillclimb.harness.candidate", "Replicate"),
-    "PolicyJournal": ("hillclimb.harness.journal", "PolicyJournal"),
+    "JournalView": ("hillclimb.harness.journal", "JournalView"),
     "source_hash": ("hillclimb.harness.candidate", "source_hash"),
     "EvalResult": ("hillclimb.harness.evaluation", "EvalResult"),
     "eval_result_for": ("hillclimb.harness.evaluation", "eval_result_for"),
@@ -51,7 +51,7 @@ _LAZY = {
     # how one attempt is made
     "Operator": ("hillclimb.modules.operators.base", "Operator"),
     "OperatorContext": ("hillclimb.modules.operators.base", "OperatorContext"),
-    "Preparation": ("hillclimb.modules.operators.base", "Preparation"),
+    "Attempt": ("hillclimb.modules.operators.base", "Attempt"),
     "ProblemInfo": ("hillclimb.modules.operators.base", "ProblemInfo"),
     "MemoryContext": ("hillclimb.modules.operators.base", "MemoryContext"),
     "inspiration_filename": ("hillclimb.modules.operators.base", "inspiration_filename"),
@@ -75,8 +75,19 @@ _LAZY = {
 
 __all__ = sorted(_LAZY)
 
+# 0.6 renamed these; there are no aliases, the old name says where it went
+_RENAMED = {
+    "SearchPolicy": "Policy",
+    "SearchLoop": "Loop",
+    "PolicyInput": "SearchState",
+    "PolicyJournal": "JournalView",
+    "Preparation": "Attempt",
+}
+
 
 def __getattr__(name: str):
+    if name in _RENAMED:
+        raise ImportError(f"hillclimb.sdk.{name} was renamed {_RENAMED[name]} in hillclimb 0.6")
     if name in _LAZY:
         import importlib
 
@@ -94,7 +105,7 @@ def __dir__() -> list[str]:
 if TYPE_CHECKING:  # eager for type checkers and editors only
     from hillclimb.harness.candidate import Candidate, Replicate, Trial, source_hash
     from hillclimb.harness.evaluation import EvalResult, accept_band, eval_result_for, improves
-    from hillclimb.harness.journal import PolicyJournal
+    from hillclimb.harness.journal import JournalView
     from hillclimb.harness.loop import (
         ClimberError,
         Harness,
@@ -102,7 +113,7 @@ if TYPE_CHECKING:  # eager for type checkers and editors only
         Outcome,
         PolicyLoop,
         SearchInfo,
-        SearchLoop,
+        Loop,
         Ticket,
     )
     from hillclimb.modules.operators.base import (
@@ -110,7 +121,7 @@ if TYPE_CHECKING:  # eager for type checkers and editors only
         MemoryContext,
         Operator,
         OperatorContext,
-        Preparation,
+        Attempt,
         ProblemInfo,
         inspiration_filename,
     )
@@ -121,9 +132,9 @@ if TYPE_CHECKING:  # eager for type checkers and editors only
         Action,
         BudgetView,
         InflightRef,
-        PolicyInput,
+        SearchState,
         Route,
-        SearchPolicy,
+        Policy,
     )
     from hillclimb.modules.similarity.base import SimilarityScore, SimilarityUnavailable, Solution
     from hillclimb.modules.memory.base import GraphEdge, GraphModule, GraphNode, KnowledgeGraph

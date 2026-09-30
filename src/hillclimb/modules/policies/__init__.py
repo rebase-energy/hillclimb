@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Callable
 
 from hillclimb.modules.policies.greedy import GreedyPolicy
-from hillclimb.modules.policies.base import SearchPolicy
+from hillclimb.modules.policies.base import Policy
 
 POLICY_FILE_SUFFIX = ".py"
 
@@ -34,13 +34,13 @@ def _make_greedy(params: dict, *, complexity_start: int = 0) -> GreedyPolicy:
     return GreedyPolicy(complexity_start=complexity_start, params=params)
 
 
-def _make_openevolve(params: dict, *, complexity_start: int = 0) -> SearchPolicy:
+def _make_openevolve(params: dict, *, complexity_start: int = 0) -> Policy:
     from hillclimb.modules.policies.openevolve import OpenEvolvePolicy  # optional extra
 
     return OpenEvolvePolicy(params=params, complexity_start=complexity_start)
 
 
-_POLICIES: dict[str, Callable[..., SearchPolicy]] = {
+_POLICIES: dict[str, Callable[..., Policy]] = {
     "greedy": _make_greedy,
     "openevolve": _make_openevolve,
 }
@@ -71,7 +71,7 @@ def policy_sha256(name: str, base_dir: Path | None = None) -> str | None:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def load_policy_file(path: Path) -> Callable[..., SearchPolicy]:
+def load_policy_file(path: Path) -> Callable[..., Policy]:
     """Import the file and return a factory `(params, *, complexity_start)`
     for the policy it exposes. Import errors and a missing/ambiguous class
     surface as ValueError naming the file, never as a bare traceback deep
@@ -109,7 +109,7 @@ def load_policy_file(path: Path) -> Callable[..., SearchPolicy]:
     if not callable(target):
         raise ValueError(f"{POLICY_ATTR} in {path} is not a class or factory: {target!r}")
 
-    def factory(params: dict, *, complexity_start: int = 0) -> SearchPolicy:
+    def factory(params: dict, *, complexity_start: int = 0) -> Policy:
         kwargs: dict = {}
         try:
             accepted = inspect.signature(target).parameters
@@ -123,7 +123,7 @@ def load_policy_file(path: Path) -> Callable[..., SearchPolicy]:
         policy = target(**kwargs)
         for attr in ("propose", "observe"):
             if not callable(getattr(policy, attr, None)):
-                raise ValueError(f"policy from {path} has no {attr}() — not a SearchPolicy")
+                raise ValueError(f"policy from {path} has no {attr}() — not a Policy")
         if not getattr(policy, "name", None):
             policy.name = path.stem
         if getattr(policy, "params", None) is None:
@@ -139,7 +139,7 @@ def get_policy(
     *,
     complexity_start: int = 0,
     base_dir: Path | None = None,
-) -> SearchPolicy:
+) -> Policy:
     """A policy by registry name or file path (`base_dir` anchors a relative
     path — pass `policy_base_dir(config)`)."""
     path = policy_path(name, base_dir)

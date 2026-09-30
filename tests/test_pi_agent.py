@@ -12,9 +12,9 @@ import time
 import pytest
 
 import hillclimb.harness.pricing as pricing
-from hillclimb.agents.base import OperatorRequest
+from hillclimb.agents.base import AgentRequest
 from hillclimb.agents.pi_cli import PiCliAgent, pi_env
-from hillclimb.agents.base import OperatorResult
+from hillclimb.agents.base import AgentResult
 from hillclimb.config import Config
 from hillclimb.harness.routing import AgentPool, Router
 
@@ -120,10 +120,10 @@ def make_request(
     *,
     sampling: dict[str, float] | None = None,
     resume: str | None = None,
-) -> OperatorRequest:
+) -> AgentRequest:
     candidate_dir = tmp_path / "run" / "searches" / "s1" / "candidates" / "c001"
     candidate_dir.mkdir(parents=True, exist_ok=True)
-    return OperatorRequest(
+    return AgentRequest(
         operator="draft",
         prompt="write code",
         candidate_dir=candidate_dir,
@@ -134,7 +134,7 @@ def make_request(
     )
 
 
-def raw_command(request: OperatorRequest) -> list[str]:
+def raw_command(request: AgentRequest) -> list[str]:
     return json.loads((request.candidate_dir / "agent_raw.json").read_text())["cmd"]
 
 
@@ -308,11 +308,11 @@ def test_pi_stream_is_visible_to_live_usage_and_transcript(tmp_path: Path, monke
 class _PreflightPi:
     name = "pi"
 
-    def __init__(self, result: OperatorResult | None = None):
-        self.requests: list[OperatorRequest] = []
-        self.result = result or OperatorResult(ok=True)
+    def __init__(self, result: AgentResult | None = None):
+        self.requests: list[AgentRequest] = []
+        self.result = result or AgentResult(ok=True)
 
-    def preflight(self, request: OperatorRequest) -> OperatorResult:
+    def preflight(self, request: AgentRequest) -> AgentResult:
         self.requests.append(request)
         return self.result
 
@@ -347,7 +347,7 @@ def test_preflight_surfaces_provider_rejection(tmp_path: Path):
         routing={"default": {"sampling": {"temperature": 0.9}}},
     )
     agent = _PreflightPi(
-        OperatorResult(
+        AgentResult(
             ok=False,
             error_kind="error",
             error_message="temperature is deprecated for this model",

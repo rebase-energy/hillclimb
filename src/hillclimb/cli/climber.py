@@ -231,8 +231,8 @@ def climber_check(
         warn("note: `memory: knowledge-graph` is now `memory: files` (the old spelling still loads)")
     if loaded.is_loop:
         fail(
-            f"{_m(name)} brings its own SearchLoop; "
-            "the conformance check covers climbers built on a SearchPolicy"
+            f"{_m(name)} brings its own Loop; "
+            "the conformance check covers climbers built on a Policy"
         )
         raise typer.Exit(2)
 

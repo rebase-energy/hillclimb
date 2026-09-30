@@ -35,7 +35,7 @@ from hillclimb.sdk import (
     Harness,
     HarnessClosed,
     ParkedSearch,
-    SearchLoop,
+    Loop,
     eval_result_for,
     source_hash,
 )
@@ -71,7 +71,7 @@ class _Halt(Exception):
     wall): unwind out of gepa.optimize — evaluate-path exceptions propagate."""
 
 
-class GepaLoop(SearchLoop):
+class GepaLoop(Loop):
     name = "gepa"
 
     def __init__(self, params: GEPAParams | Mapping | None = None, driver: GEPADriver | None = None,
@@ -88,7 +88,7 @@ class GepaLoop(SearchLoop):
         self._misses = 0
         self._give_up: Exception | None = None
 
-    # --- SearchLoop ---
+    # --- Loop ---
 
     def run(self, harness: Harness) -> None:
         self._harness = harness
@@ -158,7 +158,7 @@ class GepaLoop(SearchLoop):
                     operator=OPERATOR_NAME,
                     target_id=parent_id,
                     payload={"feedback": feedback_json(reflective_dataset)},
-                    policy_meta={"optimizer": "gepa", "parent_source_hash": parent_hash},
+                    climber_meta={"optimizer": "gepa", "parent_source_hash": parent_hash},
                 )
             )
         except HarnessClosed as exc:
@@ -188,7 +188,7 @@ class GepaLoop(SearchLoop):
             Action(
                 operator=INJECT_ACTION,
                 payload={"source": source},
-                policy_meta={"optimizer": "gepa"},
+                climber_meta={"optimizer": "gepa"},
             )
         )
         if outcome.kind != "evaluated":

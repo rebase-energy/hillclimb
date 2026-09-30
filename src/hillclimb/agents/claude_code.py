@@ -12,7 +12,7 @@ from hillclimb.harness import quota
 from hillclimb.harness.candidate import utcnow
 from hillclimb.harness.oscompat import new_group_kwargs, runnable
 from hillclimb.harness import sandbox
-from hillclimb.agents.base import OperatorRequest, OperatorResult
+from hillclimb.agents.base import AgentRequest, AgentResult
 
 
 def subscription_env(auth: str = "subscription") -> dict[str, str]:
@@ -216,7 +216,7 @@ class ClaudeCodeAgent:
         self.auth = auth  # subscription | api-key (see subscription_env)
         self.abort = abort  # set → kill the agent and report error_kind="aborted"
 
-    def _sandboxed(self, cmd: list[str], request: OperatorRequest) -> sandbox.Launch:
+    def _sandboxed(self, cmd: list[str], request: AgentRequest) -> sandbox.Launch:
         """The command as it starts: inside the sandbox, writing only to the
         candidate dir and Claude Code's own state, and without internet
         reaching only Anthropic."""
@@ -238,7 +238,7 @@ class ClaudeCodeAgent:
         ).for_agent(request.allow_internet, hosts=MODEL_HOSTS)
         return sandbox.launch(cmd, policy)
 
-    def invoke(self, request: OperatorRequest) -> OperatorResult:
+    def invoke(self, request: AgentRequest) -> AgentResult:
         cmd = [
             self.claude_bin,
             "-p",
@@ -255,7 +255,7 @@ class ClaudeCodeAgent:
         try:
             started = self._sandboxed(cmd, request)
         except sandbox.SandboxUnavailable as exc:
-            return OperatorResult(ok=False, error_kind="error", error_message=str(exc))
+            return AgentResult(ok=False, error_kind="error", error_message=str(exc))
 
         candidate_dir = Path(request.candidate_dir)
         stream_path = candidate_dir / STREAM_FILE
@@ -336,7 +336,7 @@ class ClaudeCodeAgent:
             "cpu_s": reaper.cpu_s if reaper is not None else None,
         }
         if aborted:
-            return OperatorResult(
+            return AgentResult(
                 ok=False,
                 **burn,
                 duration_s=duration,
@@ -345,7 +345,7 @@ class ClaudeCodeAgent:
                 error_message="agent call aborted (stop requested)",
             )
         if timed_out:
-            return OperatorResult(
+            return AgentResult(
                 ok=False,
                 **burn,
                 duration_s=duration,
@@ -354,7 +354,7 @@ class ClaudeCodeAgent:
                 error_message=f"agent call exceeded {request.timeout_s}s",
             )
         if reader.rate_limited or _has_rate_limit_marker(stderr_text):
-            return OperatorResult(
+            return AgentResult(
                 ok=False,
                 session_id=payload.get("session_id"),
                 cost_usd=payload.get("total_cost_usd"),
@@ -366,7 +366,7 @@ class ClaudeCodeAgent:
                 error_message=str(payload.get("result") or stderr_text)[:500],
             )
         if proc.returncode != 0 or payload.get("is_error"):
-            return OperatorResult(
+            return AgentResult(
                 ok=False,
                 session_id=payload.get("session_id"),
                 cost_usd=payload.get("total_cost_usd"),
@@ -378,7 +378,7 @@ class ClaudeCodeAgent:
                 error_message=str(payload.get("result") or stderr_text or "")[:500],
             )
         if not payload:
-            return OperatorResult(
+            return AgentResult(
                 ok=False,
                 **burn,
                 duration_s=duration,
@@ -386,7 +386,7 @@ class ClaudeCodeAgent:
                 error_kind="error",
                 error_message="agent exited 0 but emitted no result message",
             )
-        return OperatorResult(
+        return AgentResult(
             ok=True,
             session_id=payload.get("session_id"),
             cost_usd=payload.get("total_cost_usd"),

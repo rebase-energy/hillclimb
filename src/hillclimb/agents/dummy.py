@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from hillclimb.agents.base import OperatorRequest, OperatorResult
+from hillclimb.agents.base import AgentRequest, AgentResult
 
 # Generic tabular solver used for quota-free end-to-end testing. It infers the
 # id/target columns from sample_submission.csv, so it works on spaceship-titanic
@@ -102,7 +102,7 @@ class DummyAgent:
     def __init__(self):
         self.calls = 0
 
-    def invoke(self, request: OperatorRequest) -> OperatorResult:
+    def invoke(self, request: AgentRequest) -> AgentResult:
         self.calls += 1
         if not (request.candidate_dir / "problem" / "sample_submission.csv").exists():
             # problems whose verifier drives solution.py directly have no
@@ -112,13 +112,13 @@ class DummyAgent:
             (request.candidate_dir / "notes.md").write_text(
                 "dummy: prints a number for the problem's verifier to score\n"
             )
-            return OperatorResult(ok=True, session_id=f"dummy-{self.calls}", duration_s=0.0)
+            return AgentResult(ok=True, session_id=f"dummy-{self.calls}", duration_s=0.0)
         if not (request.candidate_dir / "data" / "train.csv").exists():
             script = VERIFIER_PROBLEM_TEMPLATE
             note = "baseline copy for verifier-defined problem"
             (request.candidate_dir / "solution.py").write_text(script)
             (request.candidate_dir / "notes.md").write_text(note + "\n")
-            return OperatorResult(ok=True, session_id=f"dummy-{self.calls}", duration_s=0.0)
+            return AgentResult(ok=True, session_id=f"dummy-{self.calls}", duration_s=0.0)
         # canned behaviour follows the KIND of attempt, so a climber's own
         # operators get a sensible stand-in too
         from hillclimb.modules.operators import role_of
@@ -141,4 +141,4 @@ class DummyAgent:
             note = f"draft #{self.calls} (HistGradientBoosting, 100 iters)"
         (request.candidate_dir / "solution.py").write_text(script)
         (request.candidate_dir / "notes.md").write_text(note + "\n")
-        return OperatorResult(ok=True, session_id=f"dummy-{self.calls}", duration_s=0.0)
+        return AgentResult(ok=True, session_id=f"dummy-{self.calls}", duration_s=0.0)

@@ -51,7 +51,7 @@ class AgentInfo(BaseModel):
     quota_start: dict | None = None
     quota_end: dict | None = None
     agent_duration_s: float | None = None
-    # local CPU seconds of the agent call (see OperatorResult.cpu_s); None
+    # local CPU seconds of the agent call (see AgentResult.cpu_s); None
     # on journals predating the field
     cpu_s: float | None = None
     error_kind: str | None = None
@@ -223,7 +223,7 @@ class Candidate(BaseModel):
     is_selected: bool = False   # best by holdout score (final-submission signal)
     # opaque annotation from the search policy that proposed this candidate
     # (e.g. a MAP-Elites cell); the engine never reads it
-    policy_meta: dict = Field(default_factory=dict)
+    climber_meta: dict = Field(default_factory=dict)
     pruned: bool = False        # user cut this lineage; status stays intact
     pruned_reason: str | None = None
     summary: str = ""
@@ -245,6 +245,16 @@ class Candidate(BaseModel):
         if isinstance(data, dict) and "backend" in data:
             data = dict(data)
             data.setdefault("agent", data.pop("backend"))
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_policy_meta_key(cls, data):
+        """Journals written before 0.6 record what a climber notes on a
+        candidate as "policy_meta"."""
+        if isinstance(data, dict) and "policy_meta" in data:
+            data = dict(data)
+            data.setdefault("climber_meta", data.pop("policy_meta"))
         return data
 
     @model_validator(mode="before")
@@ -398,7 +408,7 @@ class Candidate(BaseModel):
     def holdout_blind(self) -> Candidate:
         """A copy with everything the hidden split produced removed: the
         trials' holdout fields and `is_selected` (one bit of the same
-        signal). What a search policy is handed (`journal.PolicyJournal`) —
+        signal). What a search policy is handed (`journal.JournalView`) —
         a process that may be optimized must never see what it must not
         optimize. A trial that FAILED holdout keeps its not-passing verdict:
         that is an execution failure, not a score."""

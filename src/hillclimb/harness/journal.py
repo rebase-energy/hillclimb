@@ -216,16 +216,16 @@ class Journal:
         ]
 
 
-class PolicyJournal(Journal):
+class JournalView(Journal):
     """What a search policy sees of a journal: every query, no holdout, no
     writes. The candidates are `holdout_blind()` copies taken at construction,
     so `ranked_candidates`/`selected_candidate` degrade to val order whatever
     mode they are asked for — the hidden split stays the host's. Snapshot
     semantics: a view never follows later appends; build one per policy call
-    (`PolicyInput` does)."""
+    (`SearchState` does)."""
 
     def __init__(self, source: Journal):
-        if isinstance(source, PolicyJournal):
+        if isinstance(source, JournalView):
             source = source.source
         self.source = source
         self.lock = source.lock

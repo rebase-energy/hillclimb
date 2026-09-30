@@ -1,4 +1,4 @@
-"""GEPA as a hillclimb climber (`search.policy: gepa`): a `SearchLoop` that
+"""GEPA as a hillclimb climber (`search.policy: gepa`): a `Loop` that
 lets gepa drive the iteration over the harness.
 
 Everything here except driver.py runs without the optional `gepa` package —

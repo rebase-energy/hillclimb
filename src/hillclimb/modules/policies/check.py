@@ -1,7 +1,7 @@
 """Policy conformance check: the cheap pre-verifier for an edited
 exploration process.
 
-A `SearchPolicy` that violates its contract (base.py) does not fail
+A `Policy` that violates its contract (base.py) does not fail
 loudly — it stalls a search, proposes a target that does not exist, or
 makes `resume` diverge from the run it resumes. Each of those burns a
 real budget hour before anyone notices. This module replays recorded
@@ -43,7 +43,7 @@ from hillclimb.harness.evaluation import accept_band
 from hillclimb.modules.operators import get_operator, operator_names
 from hillclimb.config import Config
 from hillclimb.harness.journal import Journal
-from hillclimb.modules.policies.base import INJECT_ACTION, TUNE_ACTION, Action, BudgetView, PolicyInput, SearchPolicy
+from hillclimb.modules.policies.base import INJECT_ACTION, TUNE_ACTION, Action, BudgetView, SearchState, Policy
 
 # Fractions of the budget still remaining at which every journal is
 # probed: fresh, mid-search, and inside the ensemble window.
@@ -128,8 +128,8 @@ class JournalCase:
     search_dir: Path | None = None
 
 
-def _view(case: JournalCase, config: Config, fraction: float) -> PolicyInput:
-    return PolicyInput(
+def _view(case: JournalCase, config: Config, fraction: float) -> SearchState:
+    return SearchState(
         journal=case.journal,
         inflight=(),
         budget=BudgetView(
@@ -142,7 +142,7 @@ def _view(case: JournalCase, config: Config, fraction: float) -> PolicyInput:
     )
 
 
-def _replayed(make_policy: Callable[[], SearchPolicy], case: JournalCase, config: Config) -> SearchPolicy:
+def _replayed(make_policy: Callable[[], Policy], case: JournalCase, config: Config) -> Policy:
     """A fresh policy that has observed the journal in order — exactly what
     `PolicyLoop.catch_up` does when a search starts."""
     policy = make_policy()
@@ -161,7 +161,7 @@ def _prefix(journal: Journal, n: int) -> Journal:
     return prefix
 
 
-def _grown(make_policy: Callable[[], SearchPolicy], case: JournalCase, config: Config) -> SearchPolicy:
+def _grown(make_policy: Callable[[], Policy], case: JournalCase, config: Config) -> Policy:
     """A fresh policy that watched the journal grow: shown each new result
     through a view of the journal as it stood then — what `PolicyLoop.observe`
     does during a live search. (Long journals grow in `RESUME_STEPS` strides.)"""
@@ -241,7 +241,7 @@ def _reference_problems(action: Action, journal: Journal, operators=None) -> lis
 
 
 def check_policy(
-    make_policy: Callable[[], SearchPolicy],
+    make_policy: Callable[[], Policy],
     cases: Sequence[JournalCase],
     config: Config,
     *,

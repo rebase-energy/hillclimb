@@ -1,4 +1,4 @@
-"""SearchPolicy seam: GreedyPolicy decision surface over synthetic journals,
+"""Policy seam: GreedyPolicy decision surface over synthetic journals,
 and a scripted custom policy driving the harness end-to-end."""
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from hillclimb.harness.journal import Journal
 from hillclimb.harness.evaluation import accept_band
 from hillclimb.modules.policies import get_policy
 from hillclimb.modules.policies.greedy import GreedyPolicy
-from hillclimb.modules.policies.base import Action, BudgetView, InflightRef, PolicyInput
+from hillclimb.modules.policies.base import Action, BudgetView, InflightRef, SearchState
 from tests.harness_factory import SearchRig
 from hillclimb.harness.dirs import create_search_dir
 from tests.conftest import ok_script
@@ -32,8 +32,8 @@ def make_view(
     total_s: int = 3600,
     stop_margin_s: int = 1,
     higher_is_better: bool = True,
-) -> PolicyInput:
-    return PolicyInput(
+) -> SearchState:
+    return SearchState(
         journal=journal,
         inflight=inflight,
         budget=BudgetView(
@@ -164,7 +164,7 @@ def test_registry_resolves_greedy_and_rejects_unknown():
 
 
 class ScriptedPolicy:
-    """Minimal non-greedy policy: drafts forever, stamping policy_meta and
+    """Minimal non-greedy policy: drafts forever, stamping climber_meta and
     extra prompt context; records every observe() call."""
 
     name = "scripted"
@@ -174,15 +174,15 @@ class ScriptedPolicy:
         self.observed: list[str] = []
         self.proposals = 0
 
-    def propose(self, view: PolicyInput) -> Action | None:
+    def propose(self, view: SearchState) -> Action | None:
         self.proposals += 1
         return Action(
             operator="draft",
-            policy_meta={"proposal": self.proposals},
+            climber_meta={"proposal": self.proposals},
             extra_prompt_context="Try simulated annealing.",
         )
 
-    def observe(self, view: PolicyInput, candidate: Candidate) -> None:
+    def observe(self, view: SearchState, candidate: Candidate) -> None:
         self.observed.append(candidate.candidate_id)
 
 
@@ -209,7 +209,7 @@ def test_custom_policy_drives_search(task, config):
     assert best.val_score == 0.7
     assert [r.operator for r in agent.requests] == ["draft", "draft"]
     draft = searcher.journal.get("c001")
-    assert draft.policy_meta == {"proposal": 1}
+    assert draft.climber_meta == {"proposal": 1}
     prompt = Path(draft.candidate_dir, "prompt.md").read_text()
     assert "# Additional context from the search strategy" in prompt
     assert "Try simulated annealing." in prompt

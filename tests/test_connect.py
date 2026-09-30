@@ -341,7 +341,7 @@ def test_connect_runs_the_agents_own_login_when_logged_out(monkeypatch, tmp_path
 
 
 def test_connect_fails_when_the_ping_fails(monkeypatch, tmp_path):
-    from hillclimb.agents.base import OperatorResult
+    from hillclimb.agents.base import AgentResult
 
     folder = _hillclimb_dir(tmp_path)
     monkeypatch.setenv("HILLCLIMB_DIR", str(folder))
@@ -352,7 +352,7 @@ def test_connect_fails_when_the_ping_fails(monkeypatch, tmp_path):
     monkeypatch.setattr(
         connect,
         "ping",
-        lambda *a, **k: OperatorResult(ok=False, error_kind="error", error_message="model not supported"),
+        lambda *a, **k: AgentResult(ok=False, error_kind="error", error_message="model not supported"),
     )
     result = CliRunner().invoke(cli.app, ["connect", "codex", "--model", "gpt-5"])
     assert result.exit_code == 1
@@ -548,7 +548,7 @@ def test_connect_codex_pings_the_clis_default_model_for_a_claude_alias(monkeypat
     CLI's default model, says so, and records what answered."""
     import json
 
-    from hillclimb.agents.base import OperatorResult
+    from hillclimb.agents.base import AgentResult
 
     monkeypatch.setenv("HILLCLIMB_DIR", str(_hillclimb_dir(tmp_path)))
     monkeypatch.setattr(
@@ -559,7 +559,7 @@ def test_connect_codex_pings_the_clis_default_model_for_a_claude_alias(monkeypat
 
     def fake_ping(agent, auth, model, *, models_file=None):
         pinged.append((agent, auth, model))
-        return OperatorResult(ok=True, model_id="gpt-5-codex", total_tokens=12, duration_s=1.0)
+        return AgentResult(ok=True, model_id="gpt-5-codex", total_tokens=12, duration_s=1.0)
 
     monkeypatch.setattr(connect, "ping", fake_ping)
     result = CliRunner().invoke(cli.app, ["connect", "codex"])

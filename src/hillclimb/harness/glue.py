@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from hillclimb.climber import Climber, OperatorSet
     from hillclimb.config import Config
-    from hillclimb.harness.loop import SearchLoop
+    from hillclimb.harness.loop import Loop
 
 
 class ParkedSearch(Exception):
@@ -66,7 +66,7 @@ def build_tuner(config: Config, search_dir=None):
     return get_tuner(manifest.tuner, {**manifest.tuner_params, **config.climber.tuner_params})
 
 
-def build_loop(config: Config, *, complexity_start: int = 0, log=print, search_dir=None) -> SearchLoop:
+def build_loop(config: Config, *, complexity_start: int = 0, log=print, search_dir=None) -> Loop:
     return search_climber(config, search_dir).build_loop(
         params=config.climber.params,  # the user's overlay on the manifest's params
         complexity_start=complexity_start,

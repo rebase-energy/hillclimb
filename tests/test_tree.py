@@ -62,7 +62,7 @@ def forest() -> list[Candidate]:
         cand("c005", parent="c004", status="buggy", t=5),
         cand("c006", parent="c004", score=0.9, t=6, pruned=True),
         cand("c007", "ensemble", parent="c004", score=0.8, t=7,
-             policy_meta={"inspiration_ids": ["c004", "c001"]}),
+             climber_meta={"inspiration_ids": ["c004", "c001"]}),
     ]
 
 

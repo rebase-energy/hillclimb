@@ -1,4 +1,4 @@
-"""OpenEvolve as a SearchPolicy: its MAP-Elites program database (feature
+"""OpenEvolve as a Policy: its MAP-Elites program database (feature
 grid, islands, migration, elite archive) and its parent/inspiration sampler
 decide WHAT to try next; hillclimb's harness, verifier and agentic operators
 do everything else.
@@ -38,7 +38,7 @@ from datetime import datetime
 from pathlib import Path
 
 from hillclimb.modules.policies.greedy import GreedyPolicy, _improvable
-from hillclimb.sdk import Action, Candidate, PolicyInput
+from hillclimb.sdk import Action, Candidate, SearchState
 
 BUILTIN_FEATURES = ("complexity", "diversity", "score")
 DEFAULT_SEED = 42
@@ -93,9 +93,9 @@ class OpenEvolvePolicy:
         # what the database was built from, in journal order: (id, score)
         self._synced: list[tuple[str, float]] = []
 
-    # --- SearchPolicy protocol ---
+    # --- Policy protocol ---
 
-    def propose(self, view: PolicyInput) -> Action | None:
+    def propose(self, view: SearchState) -> Action | None:
         self._sync(view)
         if self.debug_enabled:
             tip = self._greedy.debuggable_tip(view)
@@ -106,13 +106,13 @@ class OpenEvolvePolicy:
             return self._draft_action(view)
         return self._evolve_action(view)
 
-    def observe(self, view: PolicyInput, candidate: Candidate) -> None:
+    def observe(self, view: SearchState, candidate: Candidate) -> None:
         """Bin every scored candidate into the grid. Buggy/abandoned ones are
         not programs (OpenEvolve drops failed evaluations too); the debug
         chain is hillclimb's way of recovering them."""
         self._sync(view)
 
-    def _sync(self, view: PolicyInput) -> None:
+    def _sync(self, view: SearchState) -> None:
         """Bring the database up to date with the journal. The database is a
         function of the journal alone — the scored candidates in JOURNAL
         order, each added at its own position — never of the order results
@@ -138,7 +138,7 @@ class OpenEvolvePolicy:
         # a declared floor has no code to evolve from
         return not (candidate.operator == "baseline" and not _improvable(candidate))
 
-    def _add(self, view: PolicyInput, candidate: Candidate, position: int) -> None:
+    def _add(self, view: SearchState, candidate: Candidate, position: int) -> None:
         metrics = self._metrics(view, candidate)
         missing = [
             dim for dim in self.feature_dimensions
@@ -163,7 +163,7 @@ class OpenEvolvePolicy:
             metrics=metrics,
             metadata={"candidate_id": candidate.candidate_id, "operator": candidate.operator},
         )
-        island = candidate.policy_meta.get("island")
+        island = candidate.climber_meta.get("island")
         if island is None:
             island = (
                 parent.metadata.get("island")
@@ -178,7 +178,7 @@ class OpenEvolvePolicy:
                 self.db.migrate_programs()
         self._added += 1
 
-    def action_for(self, view: PolicyInput, operator: str, target_id: str | None) -> Action:
+    def action_for(self, view: SearchState, operator: str, target_id: str | None) -> Action:
         """Explicitly requested operator (run_operator/smoke): fill in the
         decision-time details the harness cannot know."""
         if operator == "draft":
@@ -189,13 +189,13 @@ class OpenEvolvePolicy:
 
     # --- introspection shared with the TUI/status surfaces ---
 
-    def debuggable_tip(self, view: PolicyInput) -> Candidate | None:
+    def debuggable_tip(self, view: SearchState) -> Candidate | None:
         return self._greedy.debuggable_tip(view) if self.debug_enabled else None
 
-    def prospective_branches(self, view: PolicyInput) -> int:
+    def prospective_branches(self, view: SearchState) -> int:
         return self._greedy.prospective_branches(view)
 
-    def draft_complexity(self, view: PolicyInput) -> str:
+    def draft_complexity(self, view: SearchState) -> str:
         return self._greedy.draft_complexity(view)
 
     def island_stats(self) -> list[dict]:
@@ -203,14 +203,14 @@ class OpenEvolvePolicy:
 
     # --- decisions ---
 
-    def _draft_action(self, view: PolicyInput) -> Action:
+    def _draft_action(self, view: SearchState) -> Action:
         return Action(
             operator="draft",
             args={"complexity": self._greedy.draft_complexity(view)},
-            policy_meta={"island": self._added % self.db_config.num_islands},
+            climber_meta={"island": self._added % self.db_config.num_islands},
         )
 
-    def _evolve_action(self, view: PolicyInput) -> Action:
+    def _evolve_action(self, view: SearchState) -> Action:
         iteration = len(view.journal.candidates)
         island = iteration % self.db_config.num_islands
         pool = self._parent_pool(view)
@@ -229,7 +229,7 @@ class OpenEvolvePolicy:
             target_id=parent.id,
             inspiration_ids=tuple(p.id for p in inspirations),
             extra_prompt_context=context,
-            policy_meta={
+            climber_meta={
                 "island": island,
                 "cell": cell,
                 "parent_fitness": self._fitness(parent),
@@ -239,7 +239,7 @@ class OpenEvolvePolicy:
 
     # --- helpers ---
 
-    def _parent_pool(self, view: PolicyInput) -> dict[str, Candidate]:
+    def _parent_pool(self, view: SearchState) -> dict[str, Candidate]:
         """Programs in the database that can still be expanded: scored,
         unpruned, with a solution.py on disk."""
         pool = {}
@@ -262,7 +262,7 @@ class OpenEvolvePolicy:
             return None
         return max(members, key=self._fitness)
 
-    def _metrics(self, view: PolicyInput, candidate: Candidate) -> dict[str, float]:
+    def _metrics(self, view: SearchState, candidate: Candidate) -> dict[str, float]:
         score = float(candidate.val_score)
         fitness = score if view.higher_is_better else -score  # OpenEvolve maximizes
         return {"combined_score": fitness, **candidate.metrics}

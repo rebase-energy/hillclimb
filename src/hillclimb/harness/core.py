@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from hillclimb.agents.base import Agent, OperatorRequest, OperatorResult
+from hillclimb.agents.base import Agent, AgentRequest, AgentResult
 from hillclimb.harness.baseline import write_baseline
 from hillclimb.harness.budget import BudgetManager, Spend, journal_spend
 from hillclimb.harness.candidate import AgentInfo, Candidate, source_hash, utcnow
@@ -17,17 +17,17 @@ from hillclimb.harness.control import ControlCommand, apply_prune, drain_command
 from hillclimb.harness import evaluation
 from hillclimb.harness.evaluation import CandidateEvaluator
 from hillclimb.harness.executor import Executor
-from hillclimb.harness.journal import Journal, PolicyJournal
+from hillclimb.harness.journal import Journal, JournalView
 from hillclimb.harness.params import ParamsFile, read_candidate_space, write_inherited_params
-from hillclimb.harness.loop import ClimberError, HarnessClosed, Outcome, SearchInfo, SearchLoop, Ticket
-from hillclimb.modules.policies.base import INJECT_ACTION, TUNE_ACTION, Action, BudgetView, InflightRef, PolicyInput
+from hillclimb.harness.loop import ClimberError, HarnessClosed, Outcome, SearchInfo, Loop, Ticket
+from hillclimb.modules.policies.base import INJECT_ACTION, TUNE_ACTION, Action, BudgetView, InflightRef, SearchState
 from hillclimb.climber import OperatorSet
 from hillclimb.modules.operators import (
     CONTRACT_TOKEN,
     MemoryContext,
     Operator,
     OperatorContext,
-    Preparation,
+    Attempt,
     ProblemInfo,
     get_operator,
     inspiration_filename,
@@ -52,7 +52,7 @@ class Job:
     by the worker until _commit (the journal holds its own deep copy)."""
 
     candidate: Candidate
-    request: OperatorRequest | None  # None for the agent-less seed candidate
+    request: AgentRequest | None  # None for the agent-less seed candidate
     candidate_dir: Path
     ensemble_inputs: "list[Candidate] | None" = None
     agent: Agent | None = None  # routed instance; None = harness default
@@ -60,7 +60,7 @@ class Job:
     # deep copy the worker may mutate, the live object is only touched in
     # _commit_tune under the state lock
     kind: str = "operator"  # operator | tune
-    # `Preparation.require_change`: the parent's source hash — an agent that
+    # `Attempt.require_change`: the parent's source hash — an agent that
     # hands back the same text made no attempt
     unchanged_hash: str | None = None
     trial_index: int | None = None
@@ -82,7 +82,7 @@ class OutcomeMsg:
 
     job: Job
     kind: str  # parked | aborted | agent_failed | no_solution | unchanged | executed | tuned
-    result: OperatorResult | None = None
+    result: AgentResult | None = None
     all_ok: bool = False  # every replicate passed AND (when scored) the hidden split did too
     # the verifier ran under a timeout clamped by the search's remaining
     # budget rather than the problem's own execution limit: a trial killed
@@ -115,7 +115,7 @@ class _OperatorServices:
 
 
 class Harness:
-    """The fixed core of a search: runs whatever a `SearchLoop` submits and
+    """The fixed core of a search: runs whatever a `Loop` submits and
     owns every state invariant — candidate dirs, agent calls, verifier trials,
     the journal (single writer), `best/` selection, the accept band, budgets,
     the control queue, crash recovery and holdout. A loop reaches it only
@@ -230,10 +230,10 @@ class Harness:
     def data_dir(self) -> Path:
         return self.problem.data_dir
 
-    def _view(self) -> PolicyInput:
+    def _view(self) -> SearchState:
         """Snapshot of search state for a policy call. Scheduler-thread only —
         same discipline as every other journal touch."""
-        return PolicyInput(
+        return SearchState(
             journal=self.journal,
             inflight=self.inflight,
             budget=self._budget_view(),
@@ -259,7 +259,7 @@ class Harness:
             ),
         )
 
-    # --- the interface a SearchLoop sees (hillclimb.harness.loop.Harness) ---
+    # --- the interface a Loop sees (hillclimb.harness.loop.Harness) ---
 
     @property
     def info(self) -> SearchInfo:
@@ -282,7 +282,7 @@ class Harness:
     def parallelism(self) -> int:
         return max(1, self.config.concurrency.parallel_agents)
 
-    def view(self) -> PolicyInput:
+    def view(self) -> SearchState:
         return self._view()
 
     @property
@@ -407,7 +407,7 @@ class Harness:
 
     # --- running a search ---
 
-    def execute(self, loop: SearchLoop) -> Candidate | None:
+    def execute(self, loop: Loop) -> Candidate | None:
         """Run `loop` to the end of the search. Raises ParkedSearch /
         StopRequested once everything in flight has been committed."""
         if not self.journal.candidates:
@@ -868,7 +868,7 @@ class Harness:
             candidate_dir=str(candidate_dir),
             summary=summary,
             args=dict(action.args),
-            policy_meta=dict(action.policy_meta),
+            climber_meta=dict(action.climber_meta),
         )
         self.journal.candidate_created(candidate)
         if self.status is not None:
@@ -885,7 +885,7 @@ class Harness:
 
     def _prepare(self, action: Action) -> Job:
         """Scheduler-side setup: id, candidate_dir, prompt, journal `created`.
-        The operator says what the attempt needs (`Preparation`); everything
+        The operator says what the attempt needs (`Attempt`); everything
         that touches disk, the journal or a agent happens here."""
         operator = action.operator
         target = self.journal.candidates.get(action.target_id) if action.target_id else None
@@ -952,8 +952,8 @@ class Harness:
             candidate_dir=str(candidate_dir),
             # inspiration ids ride along so the tree view can draw an
             # ensemble's extra in-edges (parent_id only carries the first)
-            policy_meta={
-                **dict(action.policy_meta),
+            climber_meta={
+                **dict(action.climber_meta),
                 **({"inspiration_ids": list(action.inspiration_ids)} if action.inspiration_ids else {}),
             },
         )
@@ -965,7 +965,7 @@ class Harness:
         )
         self.journal.candidate_created(candidate)
 
-        request = OperatorRequest(
+        request = AgentRequest(
             operator=operator,
             prompt=prompt,
             candidate_dir=candidate_dir,
@@ -1024,12 +1024,12 @@ class Harness:
         }.get(name)
         return get_operator(name, params)
 
-    def _prepare_attempt(self, action: Action, target: Candidate | None) -> tuple[Operator, Preparation]:
+    def _prepare_attempt(self, action: Action, target: Candidate | None) -> tuple[Operator, Attempt]:
         """Ask the operator what this attempt needs. Everything it sees is
         holdout-blind; nothing is created, journaled or spent here, so a
         refusal leaves no trace."""
         op = self._operator(action.operator)
-        blind = PolicyJournal(self.journal)
+        blind = JournalView(self.journal)
 
         def masked(candidate: Candidate) -> Candidate:
             return blind.candidates.get(candidate.candidate_id) or candidate.holdout_blind()
@@ -1142,7 +1142,7 @@ class Harness:
 
         return self._evaluate_job(job, result)
 
-    def _evaluate_job(self, job: Job, result: OperatorResult | None) -> OutcomeMsg:
+    def _evaluate_job(self, job: Job, result: AgentResult | None) -> OutcomeMsg:
         """Worker-side: score whatever solution the attempt left behind."""
         candidate = job.candidate
         solution = job.candidate_dir / "solution.py"

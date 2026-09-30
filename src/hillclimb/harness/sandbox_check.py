@@ -28,7 +28,7 @@ TIMEOUT_S = 90
 
 
 @dataclass
-class Attempt:
+class Probe:
     id: str
     group: str  # files | secrets | network | processes
     label: str
@@ -55,7 +55,7 @@ def _present(path: Path) -> bool:
         return False
 
 
-def _run(attempts: list[Attempt], policy: sandbox.SandboxPolicy, cwd: Path) -> None:
+def _run(attempts: list[Probe], policy: sandbox.SandboxPolicy, cwd: Path) -> None:
     spec = [{"id": a.id, "kind": a.kind, "target": a.target} for a in attempts]
     started = sandbox.launch([sys.executable, str(PROBE), json.dumps(spec)], policy)
     done = subprocess.run(
@@ -79,7 +79,7 @@ def _run(attempts: list[Attempt], policy: sandbox.SandboxPolicy, cwd: Path) -> N
             item.outcome, item.detail = "blocked", answer["error"] or "hidden"
 
 
-def run_check(config) -> list[Attempt]:
+def run_check(config) -> list[Probe]:
     """Every attempt with its outcome. Raises SandboxUnavailable when the
     sandbox is on and does not start; returns [] when there is none to check
     (`sandbox: off`, or an OS without one)."""
@@ -95,39 +95,39 @@ def run_check(config) -> list[Attempt]:
         (search_dir / "journal.jsonl").write_text('{"holdout_score": 1.0}\n')
         outside = [home / f".hillclimb-sandbox-check-{tag}"]
         files = [
-            Attempt("own", "files", "write to its own candidate folder", "write",
+            Probe("own", "files", "write to its own candidate folder", "write",
                     str(candidate_dir / "output.txt"), "allowed"),
-            Attempt("home", "files", "write to your home folder", "write", str(outside[0]), "blocked"),
+            Probe("home", "files", "write to your home folder", "write", str(outside[0]), "blocked"),
         ]
         if hillclimb_dir is not None and not _inside_temp(Path(hillclimb_dir)):
             outside.append(Path(hillclimb_dir) / f".sandbox-check-{tag}")
-            files.append(Attempt("dir", "files", "write to the hillclimb dir", "write",
+            files.append(Probe("dir", "files", "write to the hillclimb dir", "write",
                                  str(outside[-1]), "blocked"))
-        secrets = [Attempt("journal", "secrets", "read the search's journal (it holds holdout scores)",
+        secrets = [Probe("journal", "secrets", "read the search's journal (it holds holdout scores)",
                            "read", str(search_dir / "journal.jsonl"), "blocked")]
         known = [("ssh", "read ~/.ssh", home / ".ssh"), ("aws", "read ~/.aws", home / ".aws"),
                  ("claude", "read Claude Code's login and history (~/.claude)", home / ".claude")]
         if hillclimb_dir is not None:
             known.append(("env", "read the hillclimb dir's .env", Path(hillclimb_dir) / ".env"))
         secrets += [
-            Attempt(name, "secrets", label, "read", str(path), "blocked")
+            Probe(name, "secrets", label, "read", str(path), "blocked")
             for name, label, path in known if _present(path)
         ]
         verifier = [
             *files,
             *secrets,
-            Attempt("connect", "network", f"connect to the internet ({OUTSIDE_ADDRESS})", "connect",
+            Probe("connect", "network", f"connect to the internet ({OUTSIDE_ADDRESS})", "connect",
                     OUTSIDE_ADDRESS, "blocked"),
-            Attempt("resolve", "network", f"look up a name ({ALLOWED_HOST})", "resolve", ALLOWED_HOST, "blocked"),
-            Attempt("signal", "processes", "signal a process outside the sandbox", "signal",
+            Probe("resolve", "network", f"look up a name ({ALLOWED_HOST})", "resolve", ALLOWED_HOST, "blocked"),
+            Probe("signal", "processes", "signal a process outside the sandbox", "signal",
                     str(os.getpid()), "blocked"),
         ]
         agent = [
-            Attempt("proxy-other", "agent without internet", f"reach a host that is not allowed ({OTHER_HOST})",
+            Probe("proxy-other", "agent without internet", f"reach a host that is not allowed ({OTHER_HOST})",
                     "proxy", f"{OTHER_HOST}:443", "blocked"),
-            Attempt("proxy-bypass", "agent without internet", "connect past the proxy", "connect",
+            Probe("proxy-bypass", "agent without internet", "connect past the proxy", "connect",
                     OUTSIDE_ADDRESS, "blocked"),
-            Attempt("proxy-allowed", "agent without internet",
+            Probe("proxy-allowed", "agent without internet",
                     f"reach an allowed host ({ALLOWED_HOST} here, the model provider in a search)",
                     "proxy", f"{ALLOWED_HOST}:443", "allowed"),
         ]
@@ -141,5 +141,5 @@ def run_check(config) -> list[Attempt]:
         return verifier + agent
 
 
-def as_dicts(attempts: list[Attempt]) -> list[dict]:
+def as_dicts(attempts: list[Probe]) -> list[dict]:
     return [{**asdict(a), "holds": a.holds} for a in attempts]

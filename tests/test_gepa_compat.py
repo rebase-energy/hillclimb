@@ -71,7 +71,7 @@ def test_full_stack_with_real_gepa_loop(task, config, tmp_path):
     improves = [c for c in search.journal.candidates.values() if c.operator == OPERATOR_NAME]
     assert improves, "real gepa never called the proposer"
     for candidate in improves:
-        assert candidate.policy_meta["optimizer"] == "gepa"
+        assert candidate.climber_meta["optimizer"] == "gepa"
         assert candidate.parent_id is not None
     # every text real gepa evaluated resolved to a journaled candidate: nothing was scored twice
     hashes = [c.solution_sha256 for c in search.journal.candidates.values() if c.solution_sha256]
