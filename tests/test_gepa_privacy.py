@@ -18,6 +18,7 @@ from hillclimb.harness.journal import Journal
 from hillclimb.harness.glue import holdout_timing
 from tests.conftest import executor_for, ok_script
 from tests.gepa_fakes import FakeGEPADriver, make_gepa
+from tests.factories import name_climber
 
 SENTINEL_SCORE = 77.777
 SENTINEL_TEXT = "HOLDOUT-SENTINEL-9f3a"
@@ -50,7 +51,7 @@ class DoneMarkingDriver(FakeGEPADriver):
 
 
 def run_search(task, config, tmp_path):
-    config.climber.ref = "gepa"
+    name_climber(config, "gepa")
     config.holdout.top_k = 2
     holdout = SentinelHoldout()
     driver = DoneMarkingDriver(holdout, steps=2)

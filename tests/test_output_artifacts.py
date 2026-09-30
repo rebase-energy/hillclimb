@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tests.factories import trial as mk_trial
+from tests.factories import trial as mk_trial, name_climber
 
 import sys
 from pathlib import Path
@@ -139,7 +139,7 @@ def test_gepa_runner_preserves_json_artifact(tmp_path, task, config):
     problem = json_problem(tmp_path, task).model_copy(
         update={"baseline_text": json_solution(0.1)}
     )
-    config.climber.ref = "gepa"
+    name_climber(config, "gepa")
     agent = FakeAgent()
     agent.queue(script=json_solution(0.8), notes="json improvement\n")
     search_dir = create_search_dir(tmp_path / "runs" / "gepa", "s")

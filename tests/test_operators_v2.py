@@ -47,7 +47,7 @@ def test_draft_prompt_carries_research_cue_by_default(task, config):
 
 
 def test_draft_research_cue_gated_off(task, config):
-    config.climber.operators.setdefault("draft", {})["retrieval"] = False
+    config.climber.operator_params.setdefault("draft", {})["retrieval"] = False
     searcher, _, _ = make_searcher(task, config, FakeAgent())
     prompt = searcher.build_prompt("draft", None, "minimal")
     assert "# Research first" not in prompt
@@ -87,7 +87,7 @@ def test_improve_prompt_carries_ablation_cue_by_default(task, config):
 
 
 def test_improve_ablation_cue_gated_off(task, config):
-    config.climber.operators.setdefault("improve", {})["ablation"] = False
+    config.climber.operator_params.setdefault("improve", {})["ablation"] = False
     searcher, _, target = scored_target(task, config, FakeAgent())
     prompt = searcher.build_prompt("improve", target, None)
     assert "Ablation study" not in prompt
@@ -119,5 +119,5 @@ def test_prior_ablations_empty_without_files_or_when_gated(task, config):
     agent.queue(script=ok_script(0.7), notes="tweak\n")
     child = searcher.run_operator("improve", target)
     Path(child.candidate_dir, "ablation.md").write_text("- model: +0.02\n")
-    config.climber.operators.setdefault("improve", {})["ablation"] = False
+    config.climber.operator_params.setdefault("improve", {})["ablation"] = False
     assert "Prior ablation findings" not in searcher.build_prompt("improve", target, None)

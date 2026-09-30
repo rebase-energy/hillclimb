@@ -189,11 +189,13 @@ def test_run_parallel_searches_spawns_detached_engines(tmp_path, monkeypatch):
     # the fleet's own spec: one entry per search, with what it launched with
     import yaml
 
+    from hillclimb.config import Config
+
     spec = yaml.safe_load((run_dir / "spec.yaml").read_text())
     assert len(spec["problems"]) == 3
     assert spec["problems"][0] == {
         "target": DEMO_PROBLEM_ID, "budget": "10m", "agent": "dummy", "model": "sonnet",
-        "climber": "greedy", "parallel_agents": 2,
+        "climber": Config().climber.block(), "parallel_agents": 2,  # the full block, as resolved
     }
     assert launched[0][3:] == [
         "run", DEMO_PROBLEM_ID, "--run-id", run_dir.name, "--run-name", DEMO_PROBLEM_ID,

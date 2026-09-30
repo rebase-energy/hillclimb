@@ -7,7 +7,7 @@ shown and answers `hillclimb knowledge query`:
 - a registry name: `knowledge-graph` (the built-in, in graph.py);
 - a Python file, any name ending in `.py` (in a manifest: relative to the
   climber dir; in config: relative to the folder holding the hillclimb dir,
-  like `climber.ref`): the file sets `KNOWLEDGE_GRAPH = <class>` or defines
+  like every file a climber block names): the file sets `KNOWLEDGE_GRAPH = <class>` or defines
   exactly one `GraphModule` subclass;
 - `package.module:ClassName` for modules shipped in an installed package;
 - or `register_graph(cls)` from code that embeds hillclimb.

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tests.factories import trial as mk_trial
+from tests.factories import trial as mk_trial, name_climber
 
 import pytest
 import typer
@@ -11,6 +11,7 @@ from hillclimb.cli.common import resolve_search_dir
 from hillclimb.cli.run import _run_problem, _run_suite
 from hillclimb.cli import main as cli_main
 from hillclimb.harness.run import (
+    SCHEMA_VERSION,
     RunMeta,
     SearchMeta,
     iter_run_dirs,
@@ -57,13 +58,13 @@ def test_run_problem_creates_run_and_search_metadata(config, tmp_path, monkeypat
     run_dirs = iter_run_dirs(config.paths.runs_dir)
     assert len(run_dirs) == 1
     run_meta = load_run_meta(run_dirs[0])
-    assert run_meta.schema_version == 3
+    assert run_meta.schema_version == SCHEMA_VERSION
     assert run_meta.name == "My Run"
     assert run_meta.problem_ids == ["a"]
     search_dir = executed[0][1]
     assert search_dir == run_dirs[0] / "searches" / "a"
     search_meta = load_search_meta(search_dir)
-    assert search_meta.schema_version == 3
+    assert search_meta.schema_version == SCHEMA_VERSION
     assert search_meta.run_id == run_meta.run_id
     assert search_meta.problem_id == "a"
     assert search_meta.budget_s == 600
@@ -123,6 +124,55 @@ def test_run_suite_launches_one_child_per_problem(config, tmp_path, monkeypatch)
         (str(root / "a"), "10m", "dummy"), (str(root / "b"), "10m", "dummy"),
     ]
     assert "# launched from:" in (run_dirs[0] / "spec.yaml").read_text()
+
+
+def test_run_suite_hands_each_child_the_climber_its_entry_defines(config, tmp_path, monkeypatch):
+    """The spec defines the climber per search: a child whose entry carries
+    a block gets it (before the entry's `set` pairs), the run's own spec
+    records every search's FULL block, and `--climber` on the command line
+    overrides the spec for every entry."""
+    import json
+
+    import yaml
+
+    root = tmp_path / "problems"
+    for name in ("a", "b"):
+        write_problem(root, name)
+    (root / "mine.py").write_text(
+        "class Mine:\n    def propose(self, view):\n        return None\n"
+        "    def observe(self, view, candidate):\n        pass\n"
+    )
+    suite = root / "suite.yaml"
+    suite.write_text(yaml.safe_dump({"problems": [
+        {"target": "a", "climber": {"policy": "mine.py", "params": {"k": 1}}, "set": ["climber.params.k=2"]},
+        "b",
+    ]}))
+    config.paths.problems_dir = root
+    config.paths.runs_dir = tmp_path / "runs"
+    config.apply_overrides({"climber": "openevolve"})  # the folder's default, for the entry that names none
+    calls = []
+
+    class DummyProc:
+        pid = 123
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("subprocess.Popen", lambda cmd, **kwargs: calls.append(cmd) or DummyProc())
+
+    _run_suite(str(suite), config, budget="10m", agent="dummy", model=None, holdout=True, name="Demo")
+
+    first, second = calls
+    sets = [first[i + 1] for i, word in enumerate(first) if word == "--set"]
+    assert json.loads(sets[0].removeprefix("climber="))["policy"] == str(root / "mine.py")  # relative to the spec
+    assert sets[1:] == ["climber.params.k=2"] and "--climber" not in first
+    assert "--set" not in second and "--climber" not in second  # no climber named: the child reads the folder's
+    written = yaml.safe_load((iter_run_dirs(config.paths.runs_dir)[0] / "spec.yaml").read_text())["problems"]
+    assert written[0]["climber"]["policy"] == str(root / "mine.py") and written[0]["climber"]["params"] == {"k": 1}
+    assert written[1]["climber"]["policy"] == "openevolve"  # the full block, though the entry named none
+
+    calls.clear()
+    _run_suite(str(suite), config, budget="10m", agent="dummy", model=None, holdout=True, name="Demo2", climber="gepa")
+    assert all(cmd[cmd.index("--climber") + 1] == "gepa" for cmd in calls)
+    assert not any(pair.startswith("climber={") for cmd in calls for pair in cmd)
 
 
 def test_run_suite_threads_no_learning_flag(config, tmp_path, monkeypatch):
@@ -208,7 +258,7 @@ def test_search_meta_defaults_for_pre_policy_files(tmp_path):
     )
     meta = load_search_meta(search_dir)
     assert meta.climber == "greedy"
-    assert meta.climber_params == {}
+    assert meta.climber_spec == {} and meta.climber_ref is None  # nothing recorded: the default
     assert meta.routing == {}
 
 
@@ -216,19 +266,21 @@ def test_create_search_persists_policy_and_routing(task, config, tmp_path):
     from hillclimb.api import create_search
     from hillclimb.config import RouteConfig
 
-    config.climber.ref = "greedy"
+    name_climber(config, "greedy")
     config.climber.params = {"beam": 3}
     config.routing = {"draft": RouteConfig(model="opus-4.8")}
     search_dir = create_search(config, task, tmp_path / "runs" / "r1", "r1", total_s=600)
     meta = load_search_meta(search_dir)
-    assert meta.climber == "greedy"
-    assert meta.climber_params == {"beam": 3}
+    assert meta.climber == "greedy" and meta.schema_version == SCHEMA_VERSION
+    assert meta.climber_spec["policy"] == "greedy" and meta.climber_spec["params"] == {"beam": 3}
+    assert meta.climber_ref is None  # only a pre-0.6 record names its climber by reference
     assert meta.routing == {"draft": {"model": "opus-4.8"}}
 
 
 def test_resume_restores_policy_and_routing(config, tmp_path, monkeypatch):
     """A search resumes under the policy/routing it started with, regardless
-    of what the live candidate_dir config says."""
+    of what the live config says. (This one predates climber snapshots: the
+    record is all there is.)"""
     from hillclimb.cli.run import resume
 
     config.paths.runs_dir = tmp_path / "runs"
@@ -243,7 +295,7 @@ def test_resume_restores_policy_and_routing(config, tmp_path, monkeypatch):
         SearchMeta(
             search_id="a", run_id="run-1", problem="p", problem_id="a",
             agent="dummy", model="m", metric="score", budget_s=600,
-            policy="scripted", policy_params={"depth": 2},
+            policy="openevolve", policy_params={"depth": 2},
             routing={"draft": {"model": "opus-4.8"}},
         ),
     )
@@ -261,7 +313,7 @@ def test_resume_restores_policy_and_routing(config, tmp_path, monkeypatch):
     resume("run-1/a")
 
     restored = captured["config"]
-    assert restored.climber.ref == "scripted"
+    assert restored.climber.policy == "openevolve"
     assert restored.climber.params == {"depth": 2}
     assert restored.routing["draft"].model == "opus-4.8"
     assert restored.routing["draft"].agent is None
@@ -1060,7 +1112,7 @@ def test_run_with_several_policies_launches_a_mixed_fleet(config, monkeypatch, t
         FleetEngine(experiment="gepa", climber="gepa", overrides=("concurrency.parallel_agents=1",)),
     ]
     assert call["study"] == "three-way" and call["overrides"] == ["learning.enabled=false"]
-    assert config.climber.ref == "greedy"  # the parent's config is not bent to any one experiment
+    assert config.climber.policy == "greedy"  # the parent's config is not bent to any one experiment
     assert "3 searches (greedy, openevolve, gepa)" in result.output
     assert "hillclimb experiment report three-way" in result.output
 
@@ -1093,9 +1145,56 @@ def test_run_mixed_fleet_repeats_every_arm_and_rejects_stray_flags(config, monke
     assert len(calls) == 1
 
 
-def test_resume_warns_when_the_policy_file_changed(config, tmp_path, monkeypatch, capsys):
-    """A file policy resumes from its recorded path; a changed hash is said
-    out loud (replay may diverge), a missing file is a usage error."""
+def _resumable(config, tmp_path, monkeypatch):
+    captured = {}
+    monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config.model_copy(deep=True))
+    monkeypatch.setattr("hillclimb.cli.common.require_sandbox", lambda *a, **k: None)
+    monkeypatch.setattr("hillclimb.cli.run.load_problem", lambda *a, **k: object())
+    monkeypatch.setattr("hillclimb.cli.run._execute", lambda config_arg, *a, **k: captured.__setitem__("config", config_arg))
+    return captured
+
+
+def test_resume_runs_the_snapshot_and_says_when_the_live_climber_changed(task, config, tmp_path, monkeypatch, capsys):
+    """A search resumes as the climber it started as — its snapshot, the
+    whole block: policy, params, operators, tuner, memory — whatever the live
+    config says by now. An edited live file is said out loud; a deleted one
+    changes nothing."""
+    from hillclimb.api import create_run, create_search
+    from hillclimb.cli.run import resume
+    from tests.test_policy import FILE_POLICY
+
+    policy_file = tmp_path / "drafts_only.py"
+    policy_file.write_text(FILE_POLICY)
+    config.apply_overrides({"climber": {
+        "policy": str(policy_file), "params": {"num_drafts": 2}, "operators": ["draft", "debug"],
+        "operator_params": {"draft": {"retrieval": False}}, "tuner_params": {"seed": 5}, "memory": "none",
+    }})
+    run_dir = create_run(config, RunMeta(run_id="run-1", name="run-1", kind="problem", target="x", problem_ids=[task.problem_id]))
+    search_dir = create_search(config, task, run_dir, "run-1", 600)
+    (search_dir / "journal.jsonl").write_text("")
+    config.apply_overrides({"climber": "gepa"})  # the live config has moved on since
+    captured = _resumable(config, tmp_path, monkeypatch)
+
+    resume(f"run-1/{search_dir.name}")
+    restored = captured["config"].climber
+    assert restored.policy == str(search_dir / "climber" / "files" / "drafts_only.py") and restored.loop is None
+    assert (restored.params, restored.operators, restored.memory) == ({"num_drafts": 2}, ["draft", "debug"], "none")
+    assert restored.operator_params == {"draft": {"retrieval": False}} and restored.tuner_params == {"seed": 5}
+    assert "changed since" not in capsys.readouterr().err
+
+    policy_file.write_text(FILE_POLICY + "# edited\n")
+    resume(f"run-1/{search_dir.name}")
+    assert "changed since the search started" in capsys.readouterr().err
+    assert captured["config"].climber.policy == restored.policy  # still the version it started with
+
+    policy_file.unlink()
+    resume(f"run-1/{search_dir.name}")  # gone: the snapshot is what runs
+    assert captured["config"].climber.policy == restored.policy
+
+
+def test_resume_of_a_search_without_a_snapshot_needs_the_live_climber(config, tmp_path, monkeypatch, capsys):
+    """A search from before snapshots resumes from the live file its record
+    names; a missing file is a usage error."""
     from hillclimb.cli.run import resume
     from tests.test_policy import FILE_POLICY
 
@@ -1114,15 +1213,11 @@ def test_resume_warns_when_the_policy_file_changed(config, tmp_path, monkeypatch
         ),
     )
     (search_dir / "journal.jsonl").write_text("")
-    captured = {}
-    monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config.model_copy(deep=True))
-    monkeypatch.setattr("hillclimb.cli.run.load_problem", lambda *a, **k: object())
-    monkeypatch.setattr("hillclimb.cli.run._execute", lambda config_arg, *a, **k: captured.setdefault("config", config_arg))
+    captured = _resumable(config, tmp_path, monkeypatch)
 
     resume("run-1/a")
-    assert captured["config"].climber.ref == str(policy_file)
-    err = capsys.readouterr().err
-    assert "changed since the search started" in err and "000000000000 ->" in err
+    assert captured["config"].climber.policy == str(policy_file)
+    assert "predates climber snapshots" in capsys.readouterr().err
 
     policy_file.unlink()
     with pytest.raises(typer.BadParameter, match="is gone"):

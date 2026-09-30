@@ -84,6 +84,35 @@ class TestSpec:
         with pytest.raises(FileNotFoundError, match="experiments/"):
             resolve_study_path("nope", hillclimb_dir)
 
+    def test_an_experiment_names_or_defines_its_climber(self, tmp_path):
+        """`climber:` in an experiment is the climber — a preset's name or the
+        whole block, never flattened into per-field overrides — and it is
+        applied FIRST, so `climber.<field>` overrides (the experiment's own,
+        or the study's defaults) edit the block it names."""
+        spec = load_study(write_spec(
+            tmp_path / "s.yaml",
+            "problems: [p]\n"
+            "defaults: {climber.params.num_drafts: 2, model: sonnet}\n"
+            "experiments:\n"
+            "  a: {climber.params.tune_budget: 0, climber: openevolve}\n"
+            "  b: {climber: {policy: greedy, tuner: optuna, params: {ensemble: false}}}\n",
+        ))
+        a, b = spec.experiment_overrides("a"), spec.experiment_overrides("b")
+        assert list(a) == ["climber", "climber.params.num_drafts", "model", "climber.params.tune_budget"]
+        assert b["climber"] == {"policy": "greedy", "tuner": "optuna", "params": {"ensemble": False}}
+        config = Config()
+        config.apply_overrides(a)
+        assert config.climber.policy == "openevolve" and config.climber.params == {"num_drafts": 2, "tune_budget": 0}
+        config = Config()
+        config.apply_overrides(b)
+        assert (config.climber.tuner, config.climber.params) == ("optuna", {"ensemble": False, "num_drafts": 2})
+        # and as a child engine receives it: every value a `--set KEY=<json>` pair
+        from hillclimb.cli.experiment import _set_value
+
+        child = Config()
+        child.apply_overrides(parse_set_overrides([f"{key}={_set_value(value)}" for key, value in b.items()]))
+        assert child.climber.block() == config.climber.block()
+
     def test_flatten_keeps_dict_valued_settings_whole(self):
         assert flatten_overrides({"search": {"policy_params": {"k": 1}, "n_replicates": 2}}) == {
             "search.policy_params": {"k": 1}, "search.n_replicates": 2,
@@ -97,7 +126,7 @@ class TestOverrides:
             "search.policy=openevolve", "learning.enabled=false", "search.n_replicates=3",
             "search.policy_params={population_size: 50}", "search.policy_params.seed=7", "model=opus",
         ]))
-        assert config.climber.ref == "openevolve"
+        assert config.climber.policy == "openevolve"
         assert config.learning.enabled is False
         assert config.evaluation.n_replicates == 3
         assert config.climber.params == {"population_size": 50, "seed": 7}

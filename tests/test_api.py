@@ -197,6 +197,28 @@ def test_fleet_argv_carries_every_engine_option(tmp_path):
     assert fleet_argv("circle-packing", run_dir, "cp") == ["circle-packing", "--run-id", run_dir.name, "--run-name", "cp"]
 
 
+def test_a_climber_block_crosses_to_a_child_engine_as_the_first_set_pair(tmp_path):
+    """A child engine gets nothing but argv. A name travels as `--climber`;
+    a block as `--set climber=<json>`, ahead of the other pairs (they may
+    edit its fields) — and the child ends up with exactly that block."""
+    from hillclimb.api import climber_argv, fleet_argv
+    from hillclimb.config import Config, parse_set_overrides
+
+    assert climber_argv(None) == [] and climber_argv("gepa") == ["--climber", "gepa"]
+    block = {"policy": str(tmp_path / "mine.py"), "params": {"num_drafts": 2, "note": "a: b, c"},
+             "operators": ["draft", {"improve": {"ablation": False}}], "tuner": "optuna", "memory": "none"}
+    run_dir = tmp_path / "runs" / "r1"
+    argv = fleet_argv("cp", run_dir, "cp", climber=block, overrides=["climber.params.num_drafts=5", "model=opus"])
+    sets = [argv[i + 1] for i, word in enumerate(argv) if word == "--set"]
+    assert sets[0].startswith("climber={") and sets[1:] == ["climber.params.num_drafts=5", "model=opus"]
+    assert "--climber" not in argv
+
+    child = Config()
+    child.apply_overrides(parse_set_overrides(sets))  # what `hillclimb run --set ...` does in the child
+    expected = Config.model_validate({"climber": {**block, "params": {**block["params"], "num_drafts": 5}}})
+    assert child.climber.block() == expected.climber.block() and child.model == "opus"
+
+
 def test_run_fleet_spawns_one_engine_per_search(config, monkeypatch):
     """run_fleet writes run.yaml once, builds the venv once, and starts N
     detached engines with identical argv; the handle reaps them."""

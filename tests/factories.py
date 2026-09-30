@@ -74,3 +74,13 @@ def make_policy(ref: str, params: dict | None = None, *, complexity_start: int =
         params=params or {}, complexity_start=complexity_start, log=lambda *_: None
     )
     return loop.policy
+
+
+def name_climber(config, ref: str) -> None:
+    """Name the config's policy or loop by a preset or one file, keeping the
+    rest of its `climber:` block (params set before or after still apply)."""
+    from hillclimb.modules.spec import expand_name
+
+    block = expand_name(ref)
+    config.climber.name = block.get("name")
+    config.climber.policy, config.climber.loop = block.get("policy"), block.get("loop")

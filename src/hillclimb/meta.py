@@ -245,7 +245,7 @@ def nested_config(outer: Config, climber: Path, spec: MetaSpec, nested_dir: Path
     concurrency and problems; the candidate as the climber; its own runs and
     store; learning off (every candidate meets the same world)."""
     data = outer.model_dump(mode="json")
-    data["climber"] = {"ref": str(Path(climber).resolve())}
+    data["climber"] = str(Path(climber).resolve())  # a one-file climber, by its file
     data["paths"]["runs_dir"] = str(nested_dir / "runs")
     data["paths"]["problems_dir"] = str(outer.paths.problems_dir)
     data["budget"]["total_s"] = spec.budget_s

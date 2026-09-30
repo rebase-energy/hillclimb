@@ -1,6 +1,7 @@
 from hillclimb.modules.operators.builtin import COMPLEXITY_CUES
 from hillclimb.prompts.render import render
 import pytest
+from tests.factories import name_climber
 
 
 def test_render_replaces_tokens():
@@ -148,7 +149,7 @@ def test_search_record_pins_the_climber_and_snapshots_it(config, tmp_path):
     climber, whose tree hash is the search's identity and whose files are
     snapshotted into the search dir — what the engine and a resume load."""
     from hillclimb.api import create_run, create_search
-    from hillclimb.climber import load_climber, load_snapshot
+    from hillclimb.climber import load_snapshot, resolve_climber
     from hillclimb.problem import load_problem
     from hillclimb.harness.run import RunMeta, load_search_meta
     from tests.test_cli import write_problem
@@ -161,20 +162,18 @@ def test_search_record_pins_the_climber_and_snapshots_it(config, tmp_path):
     climber_dir = tmp_path / "mine"
     (climber_dir / "prompts").mkdir(parents=True)
     (climber_dir / "prompts" / "improve.md").write_text("tighter improve prompt: {{best_score}}\n\n{{contract}}\n")
-    (climber_dir / "climber.yaml").write_text(
-        "policy: hillclimb.modules.policies.greedy:GreedyPolicy\nparams: {num_drafts: 1}\nprompts: prompts\n"
-    )
-    config.climber.ref = str(climber_dir)
+    block = {"name": "mine", "policy": "greedy", "params": {"num_drafts": 1}, "prompts": str(climber_dir / "prompts")}
+    config.apply_overrides({"climber": block})
     search_dir = create_search(config, load_problem("p", config), run_dir, "r1", 60)
     meta = load_search_meta(search_dir)
-    before = load_climber(str(climber_dir)).sha256
-    assert (meta.climber, meta.climber_sha256) == (str(climber_dir), before)
-    assert meta.climber_manifest["params"] == {"num_drafts": 1} and meta.hillclimb_version
+    before = resolve_climber(block).sha256
+    assert (meta.climber, meta.climber_sha256) == ("mine", before)
+    assert meta.climber_spec["params"] == {"num_drafts": 1} and meta.hillclimb_version
 
-    # the author keeps iterating on the live dir; the search keeps what it started with
+    # the author keeps iterating on the live prompts; the search keeps what it started with
     (climber_dir / "prompts" / "improve.md").write_text("a different prompt: {{best_score}}\n\n{{contract}}\n")
-    assert load_climber(str(climber_dir)).sha256 != before
-    snapshot = load_snapshot(search_dir, name="mine")
+    assert resolve_climber(block).sha256 != before
+    snapshot = load_snapshot(search_dir)
     assert snapshot.sha256 == before and snapshot.name == "mine"
     assert (snapshot.prompts_dir / "improve.md").read_text().startswith("tighter improve prompt")
 
@@ -193,9 +192,8 @@ def test_a_search_refuses_to_start_on_a_climber_whose_prompts_do_not_lint(config
     run_dir = create_run(config, RunMeta(run_id="r1", name="r1", kind="problem", target="p", problem_ids=["p"]))
     climber = tmp_path / "mine"
     (climber / "prompts").mkdir(parents=True)
-    (climber / "climber.yaml").write_text("policy: hillclimb.modules.policies.greedy:GreedyPolicy\nprompts: prompts\n")
     (climber / "prompts" / "draft.md").write_text("{{typo_token}}\n")
-    config.climber.ref = str(climber)
+    config.apply_overrides({"climber": {"policy": "greedy", "prompts": str(climber / "prompts")}})
     with pytest.raises(ValueError, match="typo_token"):
         create_search(config, load_problem("p", config), run_dir, "r1", 60)
     assert not list((run_dir / "searches").glob("*"))  # nothing was allocated

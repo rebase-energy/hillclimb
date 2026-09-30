@@ -14,6 +14,7 @@ from hillclimb.api import (
     FleetEngine,
     build_evaluator,
     child_launch_context,
+    climber_argv,
     create_problem_run,
     create_run,
     create_search,
@@ -138,7 +139,7 @@ def _run_problem(
         # the run's own recipe, next to its record (spec.yaml)
         write_run_spec(run_dir, [spec_entry(
             target, budget=budget or total_s, agent=config.agent, model=config.model,
-            climber=config.climber.ref, parallel_agents=config.concurrency.parallel_agents,
+            climber=config.climber_block(), parallel_agents=config.concurrency.parallel_agents,
             n_replicates=config.evaluation.n_replicates, seed_from=seed_from,
             set=[f"{key}={value}" for key, value in (experiment_overrides or {}).items()],
         )])
@@ -161,6 +162,22 @@ def _run_problem(
         seed_from=seed_from,
         knowledge_context=knowledge_context,
     )
+
+
+def _spec_climber(config: Config, named) -> dict:
+    """What a run's spec records as a search's climber: the full block. A
+    spec entry's is one already (anchored at the spec); a name given on the
+    command line resolves from the hillclimb dir; none is the folder's."""
+    from hillclimb.climber import ClimberLoadError, as_spec
+
+    if named is None:
+        return config.climber_block()
+    if isinstance(named, dict):
+        return named
+    try:
+        return as_spec(named).anchored(config.hillclimb_dir).block()
+    except ClimberLoadError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--climber") from exc
 
 
 def _run_suite(
@@ -228,8 +245,9 @@ def _run_suite(
             cmd += ["--agent", child_agent]
         if child_model:
             cmd += ["--model", child_model]
-        if child_climber:
-            cmd += ["--climber", child_climber]
+        # a name goes as `--climber`, a block as the first `--set` (the
+        # pairs after it may edit its fields)
+        cmd += climber_argv(child_climber)
         if child_parallel is not None:
             cmd += ["--parallel-agents", str(child_parallel)]
         if child_replicates is not None:
@@ -248,7 +266,7 @@ def _run_suite(
             cmd += ["--set", pair]
         entries.append(spec_entry(
             problem_target, name=entry.name, budget=child_budget, agent=child_agent,
-            model=child_model, climber=child_climber, parallel_agents=child_parallel,
+            model=child_model, climber=_spec_climber(config, child_climber), parallel_agents=child_parallel,
             n_replicates=child_replicates, seed_from=seed_path, set=child_set,
         ))
         pid, log_path = _spawn_search(config, run_dir, index, slug, cmd)
@@ -272,8 +290,9 @@ def run(
     climber: list[str] = typer.Option(
         None, "--climber",
         help=(
-            "The climber (default: greedy): a bundled name, a directory holding climber.yaml, "
-            "or one .py file; params via config climber.params. Repeat it "
+            "The climber, by name: a preset (greedy | openevolve | gepa) or one .py file. It "
+            "replaces the `climber:` block of hillclimb.yaml (or of the run spec); --set "
+            "climber.params.k=v edits it. Repeat it "
             "(--climber greedy --climber gepa) for a mixed fleet: one search per climber "
             "on the problem, under one run, each tagged as an experiment"
         ),
@@ -304,7 +323,7 @@ def run(
         None, "--seed-from", help="Incumbent solution.py scored as the floor candidate"
     ),
     set_: list[str] = typer.Option(
-        None, "--set", help="Any config setting, dotted: --set climber.ref=openevolve --set learning.enabled=false",
+        None, "--set", help="Any config setting, dotted: --set climber.params.num_drafts=5 --set learning.enabled=false",
     ),
     experiment_set: list[str] = typer.Option(
         None, "--experiment-set", "--arm-set",
@@ -345,7 +364,12 @@ def run(
         raise typer.BadParameter("--experiment-set needs a mixed fleet (two or more --climber)")
     single_climber = None if mixed else (climbers[0] if climbers else None)
     if single_climber is not None:
-        config.climber.ref = single_climber
+        from hillclimb.climber import ClimberLoadError, as_spec
+
+        try:
+            config.climber = as_spec(single_climber)  # naming a climber replaces the folder's block
+        except ClimberLoadError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--climber") from exc
     if parallel_agents is not None:
         config.concurrency.parallel_agents = parallel_agents
     if n_replicates is not None:
@@ -529,35 +553,43 @@ def resume(
     meta, search_dir = record.meta, record.search_dir
     config = common.load_config(agent=meta.agent, model=meta.model)
     config.holdout.enabled = meta.holdout_enabled
-    # the search resumes under the policy/routing it started with, not
-    # whatever the live config currently says
-    config.climber.ref = meta.climber
-    config.climber.params = meta.climber_params
-    if meta.climber_sha256 is not None:
-        from hillclimb.climber import ClimberLoadError, load_climber, load_snapshot
-        from hillclimb.climber import climber_base_dir
+    # the search resumes as the climber it started as: its snapshot is the
+    # whole truth (policy, params, operators, tuner, memory), whatever the
+    # live config says by now
+    from hillclimb.climber import ClimberLoadError, as_spec, climber_base_dir, climber_label, load_snapshot, resolve_climber
 
-        # the search resumes from the snapshot in its own folder, so an
-        # edited (or deleted) live climber changes nothing — but say so
-        snapshot = load_snapshot(search_dir)
+    try:
+        snapshot = load_snapshot(search_dir, name=climber_label(meta.climber))
+    except ClimberLoadError as exc:
+        raise typer.BadParameter(f"this search's climber snapshot does not load: {exc}") from exc
+    if snapshot is not None:
+        config.climber = snapshot.spec
+    else:
+        # a search from before snapshots: all there is is what the record says
         try:
-            now = load_climber(meta.climber, climber_base_dir(config)).sha256
+            block = dict(meta.climber_spec)
+            if "policy" not in block and "loop" not in block:
+                # the record names it without saying what it is: a preset, a file
+                block = {**as_spec(meta.climber_ref or meta.climber).block(), **block}
+            config.climber = as_spec(block)
+            resolve_climber(config.climber, climber_base_dir(config)).brain  # noqa: B018
         except ClimberLoadError as exc:
-            if snapshot is None:  # nothing left to resume WITH
-                raise typer.BadParameter(
-                    f"climber {meta.climber} is gone and this search has no snapshot of it: {exc}"
-                ) from exc
-            now = None
-        if snapshot is None:
-            warn("note: this search predates climber snapshots; resuming from the live climber")
+            raise typer.BadParameter(
+                f"climber {meta.climber} is gone and this search has no snapshot of it: {exc}"
+            ) from exc
+        warn("note: this search predates climber snapshots; resuming from the live climber")
+    if snapshot is not None and meta.climber_ref is None and meta.climber_sha256 is not None and meta.climber_spec:
+        # say so when the climber it was launched from has changed since
+        # (a pre-0.6 record carries a hash of another kind: nothing to compare)
+        try:
+            now = resolve_climber(meta.climber_spec).sha256
+        except ClimberLoadError:
+            now = None  # its files are gone: the snapshot is what runs
         if now is not None and now != meta.climber_sha256:
             warn(
                 f"note: climber {_m(meta.climber)} changed since the search started "
                 f"({_m(meta.climber_sha256[:12])} -> {_m(now[:12])}); resuming the version it started with"
             )
-    if meta.tuner is not None:
-        config.climber.tuner = meta.tuner
-    config.climber.tuner_params = meta.tuner_params
     config.routing = {op: RouteConfig(**route) for op, route in meta.routing.items()}
     problem = load_problem(meta.problem, config)
     from hillclimb.harness.unit_tests import restore_frozen

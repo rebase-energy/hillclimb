@@ -12,7 +12,7 @@
  runs once before an agent hour is spent on it.                                                                         
                                                                                                                         
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ --climber               TEXT     Climber ref (default: config climber.ref)                                           │
+│ --climber               TEXT     A preset or one .py file (default: this folder's `climber:` block)                  │
 │ --problem               TEXT     Replay only this problem's recorded searches (default: every search)                │
 │ --set                   TEXT     Config override, dotted: --set climber.params.num_drafts=1                          │
 │ --limit                 INTEGER  Newest recorded searches to replay [default: 20]                                    │

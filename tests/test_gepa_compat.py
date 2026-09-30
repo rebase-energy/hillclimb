@@ -15,6 +15,7 @@ from hillclimb.climbers.gepa.driver import CoreOptimizeDriver  # noqa: E402
 from hillclimb.climbers.gepa.operator import OPERATOR_NAME  # noqa: E402
 from tests.conftest import ok_script  # noqa: E402
 from tests.gepa_fakes import make_gepa  # noqa: E402
+from tests.factories import name_climber
 
 
 def test_optimize_signature_carries_every_relied_upon_kwarg():
@@ -57,7 +58,7 @@ def test_full_stack_with_real_gepa_loop(task, config, tmp_path):
     """GepaLoop -> CoreOptimizeDriver -> real gepa.optimize, with the
     fake agent as the mutation agent and the real executor as the
     verifier. Deterministic, no network."""
-    config.climber.ref = "gepa"
+    name_climber(config, "gepa")
     config.climber.params = {"max_metric_calls": 6, "seed": 0}
     agent = FakeAgent()
     agent.queue(script=ok_script(0.6))

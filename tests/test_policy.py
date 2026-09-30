@@ -3,7 +3,7 @@ and a scripted custom policy driving the harness end-to-end."""
 
 from __future__ import annotations
 
-from tests.factories import make_policy, trial as mk_trial
+from tests.factories import make_policy, trial as mk_trial, name_climber
 
 import sys
 from pathlib import Path
@@ -403,7 +403,7 @@ def test_file_policy_drives_a_search_and_is_recorded(task, config, tmp_path):
 
     path = tmp_path / "drafts_only.py"
     path.write_text(FILE_POLICY)
-    config.climber.ref = str(path)
+    name_climber(config, str(path))
     config.climber.params = {"num_drafts": 1}
     agent = FakeAgent()
     agent.queue(script=ok_script(0.6), notes="one\n")
@@ -420,12 +420,12 @@ def test_file_policy_drives_a_search_and_is_recorded(task, config, tmp_path):
     config.paths.problems_dir = root
     run_dir = create_run(config, RunMeta(run_id="r1", name="r1", kind="problem", target="p", problem_ids=["p"]))
     meta = load_search_meta(create_search(config, load_problem("p", config), run_dir, "r1", 60))
-    assert meta.climber == str(path)
-    from hillclimb.climber import load_climber
-    assert meta.climber_sha256 == load_climber(str(path)).sha256
-    config.climber.ref = "greedy"
+    assert meta.climber == "drafts_only" and meta.climber_spec["policy"] == str(path)
+    from hillclimb.harness.glue import search_climber
+    assert meta.climber_sha256 == search_climber(config).sha256  # the block (its params too) + the file's bytes
+    name_climber(config, "greedy")
     meta = load_search_meta(create_search(config, load_problem("p", config), run_dir, "r1", 60))
-    assert meta.climber_sha256 == load_climber("greedy").sha256  # a bundled climber has an identity too
+    assert meta.climber == "greedy" and meta.climber_sha256 == search_climber(config).sha256  # a preset has an identity too
 
 
 def test_mixed_fleet_names_file_policy_experiments_by_stem():

@@ -18,16 +18,16 @@ defaults:
 
 experiments:
   greedy:
-    climber.ref: greedy
+    climber: greedy
     climber.params: {}
 
   openevolve:
-    climber.ref: openevolve
+    climber: openevolve
     climber.params:
       random_seed: 42
 
   gepa:
-    climber.ref: gepa
+    climber: gepa
     climber.params:
       # counted per instance (26 for circle-packing): 500 ~= 19 full
       # evaluations, so the 15m wall clock binds first, not this ceiling

@@ -9,7 +9,7 @@ from hillclimb.config import Config
 def test_defaults_load():
     config = Config.load()
     assert config.agent == "claude-code"
-    assert config.climber.ref == "greedy" and config.climber.params == {}  # the manifest holds the defaults
+    assert config.climber.policy == "greedy" and config.climber.params == {}  # the policy's class holds the defaults
 
 
 def test_overrides():
@@ -26,12 +26,12 @@ def test_none_overrides_ignored():
 
 def test_missing_file_uses_defaults(tmp_path: Path):
     config = Config.load(path=tmp_path / "nope.yaml")
-    assert config.climber.ref == "greedy" and config.concurrency.parallel_agents == 1
+    assert config.climber.policy == "greedy" and config.concurrency.parallel_agents == 1
 
 
 def test_policy_and_routing_defaults():
     config = Config()
-    assert config.climber.ref == "greedy"
+    assert config.climber.policy == "greedy"
     assert config.climber.params == {}
     assert config.routing == {}
 
@@ -53,13 +53,13 @@ search:
     assert config.routing["draft"].model == "opus-4.8"
     assert config.routing["improve"].agent is None  # inherits global agent
     assert config.routing["improve"].model == "haiku"
-    assert config.climber.ref == "greedy"
+    assert config.climber.policy == "greedy"
     assert config.climber.params == {"beam": 3}
 
 
 def test_policy_dotted_override():
-    config = Config.load(**{"search.policy": "greedy"})
-    assert config.climber.ref == "greedy"
+    config = Config.load(**{"search.policy": "openevolve"})
+    assert config.climber.policy == "openevolve"
 
 
 def test_subscription_env_strips_api_key(monkeypatch):
@@ -208,22 +208,44 @@ def test_explicit_config_loads_dotenv_and_local_models_path(tmp_path, monkeypatc
     assert os.environ["OPENROUTER_API_KEY"] == "local-test"
 
 
-# --- the 0.4 config surface: one `climber:` block, harness-only everything else ---
+# --- the config surface: one `climber:` block, harness-only everything else ---
 
 
-def test_climber_block_and_its_shorthand():
+def test_the_climber_block_is_the_climber():
+    """hillclimb.yaml's `climber:` is the same block a run spec entry takes:
+    it DEFINES the folder's climber. A bare name is a preset."""
     from hillclimb.config import parse_set_overrides
 
-    assert Config.model_validate({"climber": "openevolve"}).climber.ref == "openevolve"
+    assert Config.model_validate({"climber": "openevolve"}).climber.policy == "openevolve"
+    assert Config.model_validate({"climber": "gepa"}).climber.block()["loop"] == "gepa"
     config = Config.model_validate(
-        {"climber": {"ref": "greedy", "params": {"num_drafts": 5}, "tuner": "optuna", "memory": "none",
-                     "operators": {"draft": {"retrieval": False}}}}
+        {"climber": {"policy": "greedy", "params": {"num_drafts": 5}, "tuner": "optuna", "memory": "none",
+                     "operators": ["draft", "improve"], "operator_params": {"draft": {"retrieval": False}}}}
     )
     assert (config.climber.params, config.climber.tuner, config.climber.memory) == ({"num_drafts": 5}, "optuna", "none")
-    config.apply_overrides(parse_set_overrides(["climber.params.num_drafts=1", "climber.ref=gepa"]))
-    assert config.climber.params == {"num_drafts": 1} and config.climber.ref == "gepa"
+    assert config.climber.operators == ["draft", "improve"]
+    # `--set` edits the block's fields; one operator's params are addressed by its name
+    config.apply_overrides(parse_set_overrides(
+        ["climber.params.num_drafts=1", "climber.operators.improve.ablation=false", "climber.tuner_params.seed=3"]
+    ))
+    assert config.climber.params == {"num_drafts": 1} and config.climber.tuner_params == {"seed": 3}
+    assert config.climber.operator_params == {"draft": {"retrieval": False}, "improve": {"ablation": False}}
+    assert config.climber.operators == ["draft", "improve"]  # which operators run is untouched
+    # naming a climber replaces the block — whole, so one policy's params never reach another
+    config.apply_overrides(parse_set_overrides(["climber=gepa", "climber.params.max_metric_calls=9"]))
+    assert config.climber.block() == Config.model_validate(
+        {"climber": {"loop": "gepa", "params": {"max_metric_calls": 9}}}
+    ).climber.block()
+    # a block, inline, as a child engine receives it
+    config.apply_overrides(parse_set_overrides(['climber={"policy": "openevolve", "params": {"num_islands": 2}}']))
+    assert (config.climber.policy, config.climber.loop, config.climber.params) == ("openevolve", None, {"num_islands": 2})
+    # a climber has a policy or a loop: naming one drops the other
+    config.apply_overrides(parse_set_overrides(["climber.loop=gepa"]))
+    assert (config.climber.policy, config.climber.loop) == (None, "gepa")
     with pytest.raises(ValueError):
-        Config.model_validate({"climber": {"ref": "greedy", "polcy": "x"}})  # a typo is not silently ignored
+        Config.model_validate({"climber": {"policy": "greedy", "polcy": "x"}})  # a typo is not silently ignored
+    with pytest.raises(ValueError, match="Unknown climber: nope"):
+        Config().apply_overrides({"climber": "nope"})
     # the memory kind: `files` (the YAML under hillclimb/knowledge/), its pre-0.4
     # spelling `knowledge-graph` mapped on read, anything else refused by name
     assert Config.model_validate({"climber": {"memory": "knowledge-graph"}}).climber.memory == "files"
@@ -232,6 +254,49 @@ def test_climber_block_and_its_shorthand():
     assert config.climber.memory == "files"
     with pytest.raises(ValueError, match="memory"):
         Config.model_validate({"climber": {"memory": "sqlite"}})
+
+
+def test_the_0_5_climber_block_still_loads():
+    """0.4/0.5 wrote `climber: {ref: <name>, ...}`: a reference plus what the
+    user laid over it (`operators` a mapping by name, None for "the
+    climber's"). Read as the block it meant."""
+    from hillclimb.config import parse_set_overrides
+
+    config = Config.model_validate(
+        {"climber": {"ref": "openevolve", "params": {"num_islands": 3}, "tuner": None, "memory": None, "graph": None,
+                     "tuner_params": {"seed": 2}, "operators": {"draft": {"retrieval": False}}}}
+    )
+    assert config.climber.block() == Config.model_validate({"climber": {
+        "policy": "openevolve", "params": {"num_islands": 3}, "tuner_params": {"seed": 2},
+        "operator_params": {"draft": {"retrieval": False}},
+    }}).climber.block()
+    config.apply_overrides(parse_set_overrides(["climber.ref=gepa"]))  # the 0.5 way to name one
+    assert config.climber.loop == "gepa" and config.climber.params == {}
+    with pytest.raises(ValueError, match="hillclimb climber show climbers/mine"):
+        Config.model_validate({"climber": {"ref": "climbers/mine"}})  # a directory: show it as a block
+
+
+def test_the_folders_block_replaces_the_user_levels_whole(tmp_path, monkeypatch):
+    """Precedence between config files is per block: a folder that names a
+    climber gets that climber, not the user-level one's params under it."""
+    user = tmp_path / "user" / "config.yaml"
+    user.parent.mkdir()
+    user.write_text("model: opus\nclimber: {policy: mine.py, params: {x: 1}, tuner: optuna}\n")
+    folder = tmp_path / "proj"
+    folder.mkdir()
+    (folder / "hillclimb.yaml").write_text("climber: {loop: gepa}\n")
+    monkeypatch.setattr("hillclimb.config.user_config_path", lambda: user)
+    monkeypatch.setattr("hillclimb.config.user_env_path", lambda: tmp_path / "user" / ".env")
+    monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
+    monkeypatch.chdir(folder)
+    config = Config.load()
+    assert config.model == "opus"  # other settings still merge
+    assert config.climber.block() == Config.model_validate({"climber": "gepa"}).climber.block()
+    (folder / "hillclimb.yaml").write_text("model: sonnet\n")
+    config = Config.load()
+    assert config.model == "sonnet" and config.climber.tuner == "optuna"
+    # the user-level block's file refs resolve from ITS folder, wherever it is used from
+    assert config.climber.policy == str(user.parent / "mine.py")
 
 
 def test_a_config_file_written_for_0_3_still_loads():
@@ -243,11 +308,11 @@ def test_a_config_file_written_for_0_3_still_loads():
         "operators": {"draft_retrieval": False, "knowledge_tool": False},
     }
     config = Config.model_validate(old)
-    assert config.climber.ref == "openevolve" and config.climber.tuner == "optuna"
+    assert config.climber.policy == "openevolve" and config.climber.tuner == "optuna"
     assert config.climber.params == {
         "population_size": 50, "num_drafts": 2, "ensemble": False, "ensemble_top_k": 4,
     }
-    assert config.climber.operators == {"draft": {"retrieval": False}}
+    assert config.climber.operator_params == {"draft": {"retrieval": False}}
     assert config.learning.tool is False
     assert (config.concurrency.parallel_agents, config.evaluation.n_replicates, config.evaluation.noise_k) == (3, 4, 2.0)
     assert not hasattr(config, "search") and not hasattr(config, "ensemble")
@@ -261,79 +326,52 @@ def test_legacy_set_overrides_keep_working_and_removed_keys_say_what_to_do():
         ["search.policy=openevolve", "search.policy_params.population_size=9", "ensemble.top_k=5",
          "search.parallel_agents=2", "operators.improve_ablation=false"]
     ))
-    assert config.climber.ref == "openevolve"
+    assert config.climber.policy == "openevolve"
     assert config.climber.params == {"population_size": 9, "ensemble_top_k": 5}
     assert config.concurrency.parallel_agents == 2
-    assert config.climber.operators == {"improve": {"ablation": False}}
+    assert config.climber.operator_params == {"improve": {"ablation": False}}
     assert current_setting("budget.total_s") == "budget.total_s"  # today's keys pass through
-    with pytest.raises(KeyError, match="prompts belong to a climber now"):
+    with pytest.raises(KeyError, match="prompts belong to the climber"):
         config.apply_overrides({"paths.prompts_dir": "x"})
-    with pytest.raises(KeyError, match="hillclimb climber new"):
+    with pytest.raises(KeyError, match="climber: .prompts: prompts/."):
         Config.model_validate({"paths": {"prompts_dir": "hillclimb/prompts"}})
 
 
-def test_the_users_operator_overlay_reaches_the_operators():
+def test_the_blocks_operator_params_reach_the_operators():
     from hillclimb.harness.glue import build_operators, effective_memory
 
     config = Config()
     assert build_operators(config).get("draft").params == {}  # the operator's own defaults
-    config.climber.operators = {"draft": {"retrieval": False}}
+    config.climber.operator_params = {"draft": {"retrieval": False}}
     assert build_operators(config).get("draft").params == {"retrieval": False}
     assert build_operators(config).get("improve").params == {}
-    config.climber.operators = {"crossover": {"x": 1}}
+    config.climber.operator_params = {"crossover": {"x": 1}}
     with pytest.raises(ValueError, match="this climber has no operator 'crossover'"):
         build_operators(config)
-    # memory: the manifest's, the user's override, and the master switch
+    # memory: the block's, and the master switch
     config = Config()
     assert effective_memory(config) == "files"
     config.climber.memory = "none"
     assert effective_memory(config) == "none"
-    config.climber.memory = None
+    config.climber.memory = "files"
     config.learning.enabled = False
     assert effective_memory(config) == "none"
 
 
-def test_the_users_graph_module_wins_and_reading_memory_survives_a_broken_climber(tmp_path):
-    from hillclimb.harness.glue import build_graph_module
+def test_the_blocks_graph_module_is_used_and_reading_memory_survives_a_broken_climber(tmp_path):
+    from hillclimb.harness.glue import build_graph_module, search_climber
 
     config = Config()
-    assert build_graph_module(config).name == "knowledge-graph"  # the manifest's default
+    assert build_graph_module(config).name == "knowledge-graph"  # the default
     config.climber.graph = "hillclimb.modules.memory.graph:KnowledgeGraphBuilder"
     assert build_graph_module(config).key == "hillclimb.modules.memory.graph:KnowledgeGraphBuilder"
-    config.climber.graph = "nope"
+    # outside a search, a climber that will not load falls back to the built-in:
+    # `hillclimb knowledge …` must keep working whatever the block says
+    for broken in ({"graph": "nope"}, {"policy": str(tmp_path / "missing.py")}):
+        config = Config.model_validate({"climber": broken})
+        notes = []
+        assert build_graph_module(config, log=notes.append).name == "knowledge-graph"
+        assert notes and "using knowledge-graph" in notes[0]
+    # a search does not start on it
     with pytest.raises(ValueError, match="unknown graph module 'nope' \\(available: knowledge-graph"):
-        build_graph_module(config)
-    # outside a search, a climber that will not load falls back to the built-in
-    config = Config()
-    config.climber.ref = str(tmp_path / "missing.py")
-    notes = []
-    assert build_graph_module(config, log=notes.append).name == "knowledge-graph"
-    assert notes and "using knowledge-graph" in notes[0]
-
-
-def test_user_level_dotenv_is_read_under_the_folders(tmp_path: Path, monkeypatch):
-    """`hillclimb connect` stores keys beside the user config by default;
-    every folder reads that file, its own `.env` wins, the shell wins over
-    both — the same order as the config files."""
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    user_dir = tmp_path / "xdg" / "hillclimb"
-    user_dir.mkdir(parents=True)
-    (user_dir / ".env").write_text("OPENROUTER_API_KEY=sk-user\nONLY_USER=u\n")
-    # the folder sits beside, not above, the "no folder" cwd used below, so
-    # the upward search from there cannot find it
-    hillclimb_dir = tmp_path / "proj" / "hillclimb"
-    hillclimb_dir.mkdir(parents=True)
-    (hillclimb_dir / "hillclimb.yaml").write_text("model: sonnet\n")
-    (hillclimb_dir / ".env").write_text("OPENROUTER_API_KEY=sk-folder\n")
-    for name in ("OPENROUTER_API_KEY", "ONLY_USER"):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("HILLCLIMB_DIR", str(hillclimb_dir))
-    Config.load()
-    assert os.environ["OPENROUTER_API_KEY"] == "sk-folder"
-    assert os.environ["ONLY_USER"] == "u"
-    # no folder at all: the user file alone
-    monkeypatch.delenv("OPENROUTER_API_KEY")
-    monkeypatch.delenv("HILLCLIMB_DIR")
-    monkeypatch.chdir(tmp_path / "xdg")
-    Config.load(require_dir=False)
-    assert os.environ["OPENROUTER_API_KEY"] == "sk-user"
+        search_climber(Config.model_validate({"climber": {"graph": "nope"}})).graph_module()

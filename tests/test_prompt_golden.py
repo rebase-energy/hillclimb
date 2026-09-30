@@ -20,6 +20,7 @@ import pytest
 
 from hillclimb.agents.fake import FakeAgent
 from tests.test_parallel_search import GOLDEN_SCENARIOS, make_searcher
+from tests.factories import name_climber
 
 GOLDEN_DIR = Path(__file__).parent / "golden" / "prompts"
 UPDATE = os.environ.get("HILLCLIMB_UPDATE_GOLDENS") == "1"
@@ -95,7 +96,7 @@ def test_openevolve_prompts_match_golden(task, config, tmp_path):
     from tests.conftest import local_executor, ok_script
     from tests.test_openevolve_policy import PARAMS
 
-    config.climber.ref = "openevolve"
+    name_climber(config, "openevolve")
     config.climber.params = {**PARAMS, "num_drafts": 2}
     agent = FakeAgent()
     for score, note in ((0.6, "one\n"), (0.7, "two\n"), (0.8, "three\n")):

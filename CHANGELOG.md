@@ -41,6 +41,67 @@
   and `FleetEngine` take the new names, and `load_experiment` /
   `ExperimentSpec` are `load_study` / `StudySpec`.
 
+### The climber is a block in the run config
+A climber is no longer a separate `climber.yaml` referenced by name: it is
+DEFINED where the run is defined, as one block. The same block is an entry's
+`climber:` in a run spec, the spec's own top-level `climber:` (the default
+for its entries), and `climber:` in `hillclimb.yaml` (the folder's default).
+
+```yaml
+# run.yaml
+problems:
+  - target: heilbronn-11
+    budget: 30m
+    climber:
+      policy: greedy                  # or `loop: gepa`
+      params: {num_drafts: 5}
+      operators: [draft, debug, improve, crossover.py:Crossover]
+      operator_params: {draft: {retrieval: false}}
+      tuner: optuna
+      memory: files
+      prompts: prompts/
+```
+
+- **Every module is named the same three ways**: a registry name (`greedy`,
+  `optuna`), a `.py` file (`mine.py` or `mine.py:Class`), or
+  `package.module:Class`. Tuners took registry names only before. File refs
+  are relative to the file the block is written in.
+- **A bare name is a preset**: `climber: greedy | openevolve | gepa`, or one
+  `.py` file. `--climber NAME` is the same on the command line. Defaults
+  live on the classes, so `{policy: greedy}` and `{loop: gepa}` are complete.
+- **A run records what it ran.** `runs/<id>/spec.yaml` carries every
+  search's full block, and `hillclimb run runs/<id>/spec.yaml` runs it again.
+- **Precedence is per block.** A spec entry's block replaces the spec's
+  default, which replaces the folder's, which replaces the user-level one —
+  whole, never merged, so one policy's params cannot reach another. `--set
+  climber.params.k=v` then edits the block that was chosen; `--set
+  climber.operators.draft.retrieval=false` reaches one operator's params.
+- **A search resumes as exactly the climber it started as.** Its snapshot
+  (`searches/<id>/climber/`) holds the block, the local files it reaches and
+  its prompts; `resume` restores all of it (operators, memory and graph
+  module were taken from the live config before). A climber's identity
+  (`climber_sha256`) is its block, the bytes of every local file it reaches —
+  files only reached by a relative import included — and its prompts.
+- **`hillclimb climber show [NAME]`** prints a climber as a paste-able block.
+  `climber new NAME --from greedy` copies a policy's source into
+  `climbers/NAME.py` and prints the block that runs it.
+- **Experiments** name or define a climber with `climber:` (a preset, a
+  file, or the block); `climber.<field>` overrides edit it.
+
+**Migrating from 0.5**
+- A directory climber (`climbers/mine/climber.yaml`) is no longer a
+  reference: `hillclimb climber show climbers/mine` prints it as the block to
+  paste into your run config.
+- `climber: {ref: NAME, ...}` in `hillclimb.yaml`, `climber.ref` in `--set`
+  and experiment specs, and the `operators: {draft: {...}}` overlay still
+  load: they read as the block they meant.
+- In a block, `description`, `similarity` and `holdout_timing` are refused
+  with what to do instead (a loop declares `holdout_timing` on its class).
+- Searches started before 0.6 still load in every view and resume from
+  their snapshot. `search.yaml` is schema v4: `climber` (its label),
+  `climber_spec` (the block), `climber_sha256`; v2 and v3 records are mapped
+  on read.
+
 ### Renamed, without aliases
 A climber written for 0.5 needs these edits before it loads; `hillclimb.sdk`
 raises an `ImportError` that names the new spelling. Run records are not

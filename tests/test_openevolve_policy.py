@@ -3,7 +3,7 @@ inspirations, hillclimb's harness does the rest. Needs the `openevolve` extra.""
 
 from __future__ import annotations
 
-from tests.factories import make_policy, trial as mk_trial
+from tests.factories import make_policy, trial as mk_trial, name_climber
 
 import random
 from pathlib import Path
@@ -138,7 +138,7 @@ def test_buggy_and_code_less_floor_are_not_programs(config, tmp_path):
 
 
 def test_openevolve_policy_drives_search_end_to_end(task, config):
-    config.climber.ref = "openevolve"
+    name_climber(config, "openevolve")
     config.climber.params = {**PARAMS, "num_drafts": 2}
     agent = FakeAgent()
     agent.queue(script=ok_script(0.6), notes="one\n")

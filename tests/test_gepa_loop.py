@@ -19,6 +19,7 @@ from hillclimb.harness.loop import PolicyLoop
 from hillclimb.harness.glue import ParkedSearch, StopRequested, build_loop, holdout_timing
 from tests.conftest import ok_script
 from tests.gepa_fakes import FakeGEPADriver, make_gepa
+from tests.factories import name_climber
 
 
 def reflects(journal):
@@ -223,17 +224,19 @@ def test_resume_identity_mismatch_is_a_hard_error(task, config, tmp_path):
 
 
 def test_gepa_is_a_loop_every_other_climber_a_policy(config):
-    config.climber.ref = "gepa"
+    name_climber(config, "gepa")
 
     assert isinstance(build_loop(config, log=lambda *_: None), GepaLoop)
-    assert holdout_timing(config) == "after"  # the manifest asks; the user's holdout.timing cannot loosen it
-    config.climber.ref = "greedy"
+    assert holdout_timing(config) == "after"  # the loop's class asks; the user's holdout.timing cannot loosen it
+    name_climber(config, "greedy")
     assert isinstance(build_loop(config, complexity_start=2), PolicyLoop)
     assert holdout_timing(config) == "inline"
     config.holdout.timing = "after"
     assert holdout_timing(config) == "after"
-    config.climber.ref = "nope"
-    with pytest.raises(ValueError, match="Unknown climber: nope .bundled: gepa, greedy, openevolve"):
+    with pytest.raises(ValueError, match="Unknown climber: nope .presets: gepa, greedy, openevolve"):
+        name_climber(config, "nope")
+    config.climber.policy = "nope"
+    with pytest.raises(ValueError, match="unknown policy 'nope' .available: greedy, openevolve"):
         build_loop(config)
 
 

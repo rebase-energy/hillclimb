@@ -9,6 +9,7 @@ products embed them directly:
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
@@ -20,7 +21,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from hillclimb.agents import get_agent
 from hillclimb.agents.base import AgentRequest
@@ -336,7 +337,7 @@ def spec_entry(
     budget: int | str | None = None,
     agent: str | None = None,
     model: str | None = None,
-    climber: str | None = None,
+    climber: Any = None,
     parallel_agents: int | None = None,
     n_replicates: int | None = None,
     seed_from: Path | str | None = None,
@@ -345,11 +346,18 @@ def spec_entry(
     """One `problems:` entry of a run spec, from the parameters a search
     actually launched with (see `write_run_spec`). Keys left None are left
     out; a seed path is made absolute, since the file will not sit next to
-    the spec it came from; an integer budget is spelled in seconds."""
+    the spec it came from; an integer budget is spelled in seconds. The
+    climber (a name, a block, a `ClimberSpec`) is written as its full block —
+    pass it with its file refs absolute (`Config.climber_block()`), for the
+    same reason."""
     if isinstance(budget, int):
         budget = f"{budget}s"
     if seed_from is not None:
         seed_from = str(Path(seed_from).expanduser().resolve())
+    if climber is not None:
+        from hillclimb.climber import as_spec
+
+        climber = as_spec(climber).block()
     entry = {
         "target": target, "name": name, "budget": budget, "agent": agent, "model": model,
         "climber": climber, "parallel_agents": parallel_agents, "n_replicates": n_replicates,
@@ -389,19 +397,36 @@ def create_search(
     repeat: int = 0,
     experiment_overrides: dict | None = None,
 ) -> Path:
+    import shutil
+
     from hillclimb import __version__
-    from hillclimb.climber import snapshot_climber
+    from hillclimb.climber import ClimberLoadError, load_snapshot, snapshot_climber
     from hillclimb.harness.unit_tests import bundle_relative, freeze_for_run
 
-    # a climber that cannot be loaded — or whose prompts name a token nothing
-    # fills — fails here, before a search dir exists
+    # a climber that cannot be loaded — a module that does not resolve, a
+    # prompt that names a token nothing fills — fails here, before a search
+    # dir exists
     climber = search_climber(config)
+    climber.brain  # noqa: B018
+    climber.operator_set()
+    climber.tuner()
+    climber.graph_module()
     problems = climber.lint_prompts()
     if problems:
         raise ValueError(f"climber {climber.name}: prompts do not lint clean:\n  " + "\n  ".join(problems))
     problem.unit_tests = freeze_for_run(problem, run_dir)
     search_dir = allocate_search_dir(run_dir, problem.problem_id)
     snapshot_climber(climber, search_dir)  # what the engine — and a resume — loads
+    taken = load_snapshot(search_dir)
+    if taken is None or taken.sha256 != climber.sha256:
+        # the copy is not the climber: a file it needs was not reached (it is
+        # imported some way the snapshot cannot follow). Better no search
+        # than one that resumes as something else
+        shutil.rmtree(search_dir, ignore_errors=True)
+        raise ClimberLoadError(
+            f"climber {climber.name}: its snapshot does not reproduce it — every local file it "
+            "uses must be named in the block or imported relatively (`from .helpers import x`)"
+        )
     meta = SearchMeta(
         search_id=search_dir.name,
         run_id=run_id,
@@ -411,14 +436,11 @@ def create_search(
         problem_key=problem.problem_key,
         agent=config.agent,
         model=config.model,
-        climber=config.climber.ref,
+        climber=climber.name,
         role="improver" if problem.solution_kind == "climber" else "solver",
         climber_sha256=climber.sha256,
-        climber_manifest=climber.spec.model_dump(),
-        climber_params=config.climber.params,
+        climber_spec=climber.spec.block(),
         hillclimb_version=__version__,
-        tuner=config.climber.tuner,
-        tuner_params=config.climber.tuner_params,
         routing={
             op: route.model_dump(exclude_none=True)
             for op, route in config.routing.items()
@@ -1090,7 +1112,7 @@ def run_search(
     if run_dir_is_new:
         write_run_spec(run_dir, [spec_entry(
             target, budget=total_s, agent=config.agent, model=config.model,
-            climber=config.climber.ref, parallel_agents=config.concurrency.parallel_agents,
+            climber=config.climber_block(), parallel_agents=config.concurrency.parallel_agents,
             n_replicates=config.evaluation.n_replicates, seed_from=seed_path,
         )])
     search_dir = create_search(config, problem, run_dir, run_id, total_s, seed_from=seed_path)
@@ -1155,6 +1177,20 @@ def create_problem_run(config: Config, run_name: str, target: str, problem_id: s
     )
 
 
+def climber_argv(climber: Any) -> list[str]:
+    """How a climber reaches a child engine, which gets nothing but argv: a
+    name (a preset, one .py file) as `--climber`, a block as a `--set
+    climber=<json>` — it must come before the other `--set` pairs, which may
+    edit its fields."""
+    if climber is None:
+        return []
+    if isinstance(climber, str):
+        return ["--climber", climber]
+    from hillclimb.climber import as_spec
+
+    return ["--set", "climber=" + json.dumps(as_spec(climber).block())]
+
+
 def fleet_argv(
     target: str,
     run_dir: Path,
@@ -1163,7 +1199,7 @@ def fleet_argv(
     budget: int | str | None = None,
     agent: str | None = None,
     model: str | None = None,
-    climber: str | None = None,
+    climber: Any = None,
     parallel_agents: int | None = None,
     n_replicates: int | None = None,
     holdout: bool = True,
@@ -1190,8 +1226,7 @@ def fleet_argv(
         argv += ["--agent", agent]
     if model:
         argv += ["--model", model]
-    if climber:
-        argv += ["--climber", climber]
+    argv += climber_argv(climber)
     if parallel_agents is not None:
         argv += ["--parallel-agents", str(parallel_agents)]
     if n_replicates is not None:
@@ -1212,20 +1247,21 @@ def fleet_argv(
 @dataclass(frozen=True)
 class FleetEngine:
     """One engine of a mixed fleet: the experiment it is tagged as, the climber it
-    runs, and the `--set` overrides that apply to this engine only (after the
-    fleet-wide ones, so they win). `climber=None` keeps the fleet-wide climber.
+    runs (a preset's name, one .py file, a block or a `ClimberSpec`), and the
+    `--set` overrides that apply to this engine only (after the fleet-wide
+    ones, so they win). `climber=None` keeps the fleet-wide climber.
     Overrides are the one per-experiment knob — `concurrency.parallel_agents=1`
     for a serial climber like GEPA, `climber.params.seed=7`, anything
     `Config.apply_overrides` accepts."""
 
     experiment: str
-    climber: str | None = None
+    climber: Any = None
     overrides: tuple[str, ...] = ()
     repeat: int = 0
 
 
 def mixed_fleet(
-    climbers: Sequence[str],
+    climbers: Sequence[Any],
     *,
     repeats: int = 1,
     experiment_overrides: Mapping[str, Sequence[str]] | None = None,
@@ -1241,12 +1277,12 @@ def mixed_fleet(
         raise ValueError("repeats must be >= 1")
     if not climbers:
         raise ValueError("a mixed fleet needs at least one climber")
-    from hillclimb.climber import climber_label
+    from hillclimb.climber import as_spec
 
-    experiments: list[tuple[str, str]] = []
+    experiments: list[tuple[str, Any]] = []
     seen: dict[str, int] = {}
     for climber in climbers:
-        label = climber_label(climber)  # a one-file climber's experiment is its stem
+        label = as_spec(climber).label  # its name, else its policy's: a one-file climber's is its stem
         count = seen.get(label, 0) + 1
         seen[label] = count
         experiments.append((label if count == 1 else f"{label}-{count}", climber))
@@ -1320,7 +1356,7 @@ def run_fleet(
     budget: int | str | None = None,
     agent: str | None = None,
     model: str | None = None,
-    climber: str | None = None,
+    climber: Any = None,
     parallel_agents: int | None = None,
     n_replicates: int | None = None,
     holdout: bool = True,
@@ -1354,15 +1390,24 @@ def run_fleet(
         budget=budget, agent=agent or config.agent, model=model or config.model,
         parallel_agents=parallel_agents, n_replicates=n_replicates, seed_from=seed_from,
     )
+    from hillclimb.climber import as_spec
+
+    def block(named: Any) -> dict:
+        """The climber an engine runs, as the run's spec records it: the full
+        block, relative file refs resolved from the hillclimb dir."""
+        if named is None:
+            return config.climber_block()
+        return as_spec(named).anchored(config.hillclimb_dir).block()
+
     if engines is None:
         entries = [
-            spec_entry(target, climber=climber or config.climber.ref, set=overrides, **shared_entry)
+            spec_entry(target, climber=block(climber), set=overrides, **shared_entry)
             for _ in range(parallel_searches)
         ]
     else:
         entries = [
             spec_entry(
-                target, name=engine.experiment, climber=engine.climber or climber or config.climber.ref,
+                target, name=engine.experiment, climber=block(engine.climber or climber),
                 set=(*overrides, *engine.overrides), **shared_entry,
             )
             for engine in engines

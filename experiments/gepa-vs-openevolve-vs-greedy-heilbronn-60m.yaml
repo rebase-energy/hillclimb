@@ -36,16 +36,16 @@ defaults:
 
 experiments:
   greedy:
-    climber.ref: greedy
+    climber: greedy
     climber.params: {}
 
   openevolve:
-    climber.ref: openevolve
+    climber: openevolve
     climber.params:
       random_seed: 42
 
   gepa:
-    climber.ref: gepa
+    climber: gepa
     climber.params:
       # the heilbronn scorer emits no per-instance breakdown, so the
       # instance frontier degenerates to the aggregate score and metric

@@ -2,7 +2,7 @@
 the 0.6 split of integrations/).
 
 Run folders carry `module:Class` refs — a search's climber snapshot, the
-`climber_manifest` in search.yaml, a `similarity:` entry in config.yaml —
+the `climber_spec` in search.yaml, a `similarity:` entry in config.yaml —
 so a search recorded before the move must still resume. Like
 `config.LEGACY_SETTINGS`, the old spelling is mapped at the one place it is
 imported and nowhere else.

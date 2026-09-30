@@ -1018,11 +1018,7 @@ class Harness:
         (resolved per call: the config block is the live source of truth)."""
         if self.operators is not None:
             return self.operators.get(name)
-        params = {
-            "draft": {"retrieval": self.config.climber.operators.get("draft", {}).get("retrieval", True)},
-            "improve": {"ablation": self.config.climber.operators.get("improve", {}).get("ablation", True)},
-        }.get(name)
-        return get_operator(name, params)
+        return get_operator(name, self.config.climber.operator_params.get(name))
 
     def _prepare_attempt(self, action: Action, target: Candidate | None) -> tuple[Operator, Attempt]:
         """Ask the operator what this attempt needs. Everything it sees is

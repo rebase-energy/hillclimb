@@ -57,10 +57,11 @@ def _is_legacy_dir(path: Path) -> bool:
 def climber_list(as_json: bool = typer.Option(False, "--json", help="Machine-readable output")):
     """The climbers a bare name stands for: the presets, and every one-file
     climber under climbers/."""
-    from hillclimb.climber import ClimberLoadError, climber_base_dir, load_climber, presets
+    from hillclimb.climber import ClimberLoadError, climber_base_dir, climber_label, load_climber, presets
 
     config = common.load_config()
     base_dir = climber_base_dir(config)
+    default = config.climber.label  # the folder's climber, by what views call it
     refs = [(name, "preset") for name in presets()]
     local = _local_climbers_dir(config)
     if local is not None and local.is_dir():
@@ -74,14 +75,14 @@ def climber_list(as_json: bool = typer.Option(False, "--json", help="Machine-rea
             kind, description = ("loop" if climber.is_loop else "policy"), climber.description
         except (ClimberLoadError, ValueError) as exc:
             rows.append({"ref": ref, "origin": origin, "kind": "?", "description": f"BROKEN: {exc}",
-                         "sha256": None, "default": ref == config.climber.ref})
+                         "sha256": None, "default": climber_label(ref) == default})
             continue
         if base_dir is not None and _is_legacy_dir(base_dir / ref):
             description = f"pre-0.6 directory: `hillclimb climber show {ref}` prints it as a block"
         rows.append({
             "ref": ref, "origin": origin, "kind": kind,
             "description": description, "sha256": climber.sha256[:12],
-            "default": ref == config.climber.ref,
+            "default": climber_label(ref) == default,
         })
     if as_json:
         typer.echo(json.dumps(rows, indent=2))
@@ -136,12 +137,12 @@ def climber_show(
     """
     import yaml
 
-    from hillclimb.climber import ClimberLoadError, climber_base_dir, load_climber
+    from hillclimb.climber import ClimberLoadError, climber_base_dir, load_climber, resolve_climber
 
     config = common.load_config()
     base_dir = climber_base_dir(config)
     try:
-        climber = load_climber(ref or config.climber.ref, base_dir)
+        climber = load_climber(ref, base_dir) if ref else resolve_climber(config.climber, base_dir)
         climber.brain  # noqa: B018 — resolve it, so a broken ref is reported here
     except (ClimberLoadError, ValueError) as exc:
         fail(_m(exc))
@@ -204,7 +205,7 @@ def climber_new(
 
 @climber_app.command("check")
 def climber_check(
-    climber: str = typer.Option(None, "--climber", help="Climber ref (default: config climber.ref)"),
+    climber: str = typer.Option(None, "--climber", help="A preset or one .py file (default: this folder's `climber:` block)"),
     problem: str = typer.Option(
         None, "--problem", help="Replay only this problem's recorded searches (default: every search)"
     ),
@@ -232,25 +233,35 @@ def climber_check(
     from hillclimb.climber import ClimberLoadError, climber_base_dir, load_climber
     from hillclimb.modules.policies.check import JournalCase, check_policy
 
+    from hillclimb.climber import as_spec, resolve_climber
+
     config = common.load_config()
-    config.apply_overrides(common._parse_set(set_ or []))
-    name = climber or config.climber.ref
-    params = dict(config.climber.params)  # the user's overlay; the manifest's params are the base
     base_dir = climber_base_dir(config)
+    name = climber or config.climber.label
     source = None
-    if name.endswith(".py"):  # a one-file climber: say so before anything is imported
-        source = Path(name).expanduser()
+    if climber and climber.endswith(".py"):  # a one-file climber: say so before anything is imported
+        source = Path(climber).expanduser()
         if not source.is_absolute() and base_dir is not None:
             source = base_dir / source
     if source is not None and not source.is_file():
         raise typer.BadParameter(f"climber file not found: {source}")
     try:
-        loaded = load_climber(name, base_dir)
+        if climber:
+            try:
+                config.climber = as_spec(climber)  # a preset, one file
+            except ClimberLoadError:
+                # a pre-0.6 directory: read it as the block it is
+                config.climber = load_climber(climber, base_dir).spec
+        config.apply_overrides(common._parse_set(set_ or []))  # edits the block, like `hillclimb run --set`
+        loaded = resolve_climber(config.climber, base_dir)
         loaded.brain  # noqa: B018 — every module must resolve, before an agent hour is spent
+        loaded.operator_set()
+        loaded.tuner()
         loaded.graph_module()
-    except (ClimberLoadError, ValueError) as exc:
+    except (ClimberLoadError, ValueError, KeyError) as exc:
         fail(_m(exc))
         raise typer.Exit(2) from exc
+    params = dict(loaded.spec.params)
     if loaded.is_loop:
         fail(
             f"{_m(name)} brings its own Loop; "
@@ -260,7 +271,7 @@ def climber_check(
 
     def make_policy():
         # a fresh policy per call, exactly as a search builds it
-        return loaded.build_loop(params=params, log=lambda *_: None).policy
+        return loaded.build_loop(log=lambda *_: None).policy
 
     problem_key = None
     if problem:
@@ -293,8 +304,7 @@ def climber_check(
         if not problem:
             raise typer.BadParameter("--smoke needs --problem")
         smoke_config = common.load_config(agent="dummy")
-        smoke_config.apply_overrides(common._parse_set(set_ or []))
-        smoke_config.climber.ref = name
+        smoke_config.climber = config.climber  # the block just checked, --set edits included
         smoke_config.learning.enabled = False
         outcome = run_search(
             problem,

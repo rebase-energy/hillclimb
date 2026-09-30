@@ -11,11 +11,13 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from hillclimb.harness.candidate import utcnow
 from hillclimb.harness.direction import legacy_direction_key
 
-SCHEMA_VERSION = 3
-# what `_load_meta` still reads: v2 search records name a `policy`; they are
-# mapped onto `climber` on load (SearchMeta._from_v2), so runs made before
-# the climber vocabulary stay visible to every view
-READABLE_SCHEMA_VERSIONS = (2, 3)
+SCHEMA_VERSION = 4
+# what `_load_meta` still reads. v2 search records name a `policy`; v3 ones
+# a climber by reference, with its manifest and the user's overlay beside
+# it. Both are mapped onto v4's one block on load
+# (SearchMeta._from_older_schemas), so runs made before stay visible to
+# every view
+READABLE_SCHEMA_VERSIONS = (2, 3, 4)
 SEARCHES_DIRNAME = "searches"
 RUN_META_FILE = "run.yaml"
 SEARCH_META_FILE = "search.yaml"
@@ -68,12 +70,12 @@ class SearchMeta(BaseModel):
     # additive with defaults on purpose: a field without one would hide every
     # existing run dir from the scanners
     #
-    # The climber this search ran: the reference as written (a bundled name,
-    # a directory, one file), the hash of its files at search start (the
-    # identity of an edited exploration process, like seed_sha256), the
-    # manifest as loaded, and what the USER laid over its params. The files
-    # themselves are snapshotted into `<search_dir>/climber/`, which is what
-    # the engine — and a resume — loads.
+    # The climber this search ran: what views call it (its label), its
+    # identity at search start (the block, the bytes of its local files and
+    # its prompts — the identity of an edited exploration process, like
+    # seed_sha256) and the block itself as it was launched, file refs
+    # absolute. The block and its files are snapshotted into
+    # `<search_dir>/climber/`, which is what the engine — and a resume — loads.
     climber: str = "greedy"
     # The role the climber plays here, derived from the problem at
     # `create_search` and never declared by the climber: `solver` when the
@@ -81,12 +83,11 @@ class SearchMeta(BaseModel):
     # meta-problem). The same bundle may run in either role.
     role: Literal["solver", "improver"] = "solver"
     climber_sha256: str | None = None
-    climber_manifest: dict = Field(default_factory=dict)
-    climber_params: dict = Field(default_factory=dict)
+    climber_spec: dict = Field(default_factory=dict)
+    # how a search recorded before 0.6 named its climber (a bundled name, a
+    # directory, one file); None on every search since
+    climber_ref: str | None = None
     hillclimb_version: str | None = None
-    # the user's tuner override (None = the manifest's)
-    tuner: str | None = None
-    tuner_params: dict = Field(default_factory=dict)
     routing: dict = Field(default_factory=dict)  # RouteConfig dumps by operator
     metric: str
     higher_is_better: bool = True
@@ -140,21 +141,57 @@ class SearchMeta(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _from_v2(cls, data):
-        """A record written before the climber vocabulary (schema v2) named a
-        `policy`. Same thing, older word: map it, so every view keeps
-        showing runs made before the rename. In every store backend — this
-        runs wherever a SearchMeta is validated."""
-        if not isinstance(data, dict) or "policy" not in data:
+    def _from_older_schemas(cls, data):
+        """Records written before 0.6. Schema v2 named a `policy`; v3 named
+        a climber by reference and kept its manifest, the user's params
+        overlay and the user's tuner override in separate fields. Same
+        things, older shapes: fold them into the one block v4 holds, so every
+        view keeps showing those runs. In every store backend — this runs
+        wherever a SearchMeta is validated. (One validator on purpose: the
+        v2 renames must happen before the v3 folding.)"""
+        if not isinstance(data, dict) or "climber_spec" in data:
+            return data
+        legacy_keys = ("policy", "policy_params", "policy_sha256", "templates_sha256", "templates_overridden",
+                       "climber_manifest", "climber_params", "tuner", "tuner_params")
+        if not any(key in data for key in legacy_keys) and data.get("schema_version", SCHEMA_VERSION) >= SCHEMA_VERSION:
             return data
         data = dict(data)
-        data.setdefault("climber", data.pop("policy"))
-        data.setdefault("climber_params", data.pop("policy_params", None) or {})
-        data.setdefault("climber_sha256", data.pop("policy_sha256", None))
+        if "policy" in data:  # v2 -> v3
+            data.setdefault("climber", data.pop("policy"))
+            data.setdefault("climber_params", data.pop("policy_params", None) or {})
+            data.setdefault("climber_sha256", data.pop("policy_sha256", None))
         for gone in ("policy", "policy_params", "policy_sha256", "templates_sha256", "templates_overridden"):
             data.pop(gone, None)
+        # v3 -> v4: the manifest, with the user's overlay and tuner override on top
+        manifest = dict(data.pop("climber_manifest", None) or {})
+        overlay = data.pop("climber_params", None) or {}
+        tuner = data.pop("tuner", None)
+        tuner_params = data.pop("tuner_params", None) or {}
+        block = {
+            key: value for key, value in manifest.items()
+            if value is not None and key not in ("description", "similarity", "holdout_timing")
+        }
+        if not manifest and isinstance(data.get("climber"), str):
+            # v2 kept no manifest: the name is all there is (a preset, a file)
+            from hillclimb.modules.spec import expand_name
+
+            try:
+                block = expand_name(data["climber"])
+            except ValueError:
+                block = {}
+        params = {**(manifest.get("params") or {}), **overlay}
+        if params:
+            block["params"] = params
+        if tuner:
+            block["tuner"] = tuner
+        merged_tuner_params = {**(manifest.get("tuner_params") or {}), **tuner_params}
+        if merged_tuner_params:
+            block["tuner_params"] = merged_tuner_params
+        data["climber_spec"] = block
+        data.setdefault("climber_ref", data.get("climber"))
         data["schema_version"] = SCHEMA_VERSION
         return data
+
     budget_s: int = 0
     holdout_enabled: bool = False
     seed_from: str | None = None  # incumbent solution the search was seeded with

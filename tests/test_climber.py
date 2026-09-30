@@ -98,10 +98,7 @@ def test_the_bundled_climbers_load_and_name_their_modules():
     assert greedy.operator_set().get("draft").params == {}  # the operator's own defaults
     # a preset is a complete block because the classes declare what they need
     gepa = load_climber("gepa")
-    assert gepa.spec.block() == {
-        "loop": "gepa", "params": {}, "operator_params": {}, "tuner": "random", "tuner_params": {},
-        "memory": "files", "graph": "knowledge-graph",
-    }
+    assert gepa.spec.block() == {"loop": "gepa", "tuner": "random", "memory": "files", "graph": "knowledge-graph"}
     assert gepa.is_loop and gepa.holdout_timing == "after"
     assert gepa.operator_set().names() == ("gepa-reflect",)
 
@@ -313,39 +310,68 @@ def test_a_run_folder_written_before_climbers_still_loads(tmp_path):
         "templates_sha256": "cd" * 32, "templates_overridden": ["improve"],
     }))
     meta = load_search_meta(search_dir)
-    assert meta is not None and meta.schema_version == 3
-    assert meta.climber == "hillclimb/policies/drafts_only.py"
-    assert meta.climber_params == {"num_drafts": 1} and meta.climber_sha256 == "ab" * 32
-    assert (meta.tuner, meta.tuner_params) == ("optuna", {"seed": 3})
-    assert meta.climber_manifest == {} and meta.hillclimb_version is None  # unknown for an old run
+    assert meta is not None and meta.schema_version == 4
+    assert meta.climber == meta.climber_ref == "hillclimb/policies/drafts_only.py"
+    assert meta.climber_sha256 == "ab" * 32 and meta.hillclimb_version is None  # unknown for an old run
+    # the name, the params and the tuner it recorded, as the one block 0.6 keeps
+    assert meta.climber_spec == {
+        "policy": "hillclimb/policies/drafts_only.py", "params": {"num_drafts": 1},
+        "tuner": "optuna", "tuner_params": {"seed": 3},
+    }
     # and the same record as the sqlite store holds it
-    assert SearchMeta.model_validate_json(meta.model_dump_json()).climber == meta.climber
+    again = SearchMeta.model_validate_json(meta.model_dump_json())
+    assert (again.climber, again.climber_spec) == (meta.climber, meta.climber_spec)
     # a version this build has never heard of stays invisible rather than half-read
     (search_dir / "search.yaml").write_text(yaml.safe_dump({"schema_version": 9, "search_id": "x"}))
     assert load_search_meta(search_dir) is None
 
 
-def test_the_engine_uses_the_tuner_the_user_or_the_manifest_names(config, tmp_path):
-    """`search.tuner` reaches the harness (it silently did not for a while:
+def test_a_run_folder_written_by_0_5_still_loads(tmp_path):
+    """Schema v3 named the climber by reference and kept its manifest, the
+    user's params overlay and the user's tuner override in separate fields.
+    They fold into the one block: the manifest, with the user's on top."""
+    from hillclimb.harness.run import SearchMeta
+
+    manifest = yaml.safe_load((LEGACY_SNAPSHOTS / "greedy.yaml").read_text())
+    meta = SearchMeta.model_validate({
+        "schema_version": 3, "search_id": "s", "run_id": "r", "problem": "p", "problem_id": "p",
+        "agent": "claude-code", "model": "sonnet", "metric": "m",
+        "climber": "greedy", "climber_sha256": "ab" * 32, "climber_manifest": manifest,
+        "climber_params": {"num_drafts": 1}, "tuner": None, "tuner_params": {"seed": 3},
+    })
+    assert meta.schema_version == 4 and (meta.climber, meta.climber_ref) == ("greedy", "greedy")
+    block = meta.climber_spec
+    assert block["policy"] == "hillclimb.modules.policies.greedy:GreedyPolicy"
+    assert block["params"]["num_drafts"] == 1 and block["params"]["ensemble_top_k"] == 3  # the user's over the manifest's
+    assert block["tuner"] == "random" and block["tuner_params"] == {"seed": 3}
+    assert "description" not in block and "similarity" not in block
+    ClimberSpec.model_validate(block)  # it is a block
+    # a 0.6 record is left as it is
+    current = SearchMeta.model_validate({**meta.model_dump(), "climber_ref": None})
+    assert current.climber_spec == block and current.climber_ref is None
+
+
+def test_the_engine_uses_the_tuner_the_block_names(config, tmp_path):
+    """`climber.tuner` reaches the harness (it silently did not for a while:
     the rig-based tune tests never went through api's wiring)."""
     from hillclimb.harness.glue import build_tuner
     from hillclimb.modules.tuners.random_search import RandomTuner
 
-    assert isinstance(build_tuner(config), RandomTuner)  # greedy's manifest says random
-    root = tmp_path / "with-tuner"
-    root.mkdir()
-    (root / "climber.yaml").write_text(
-        "policy: hillclimb.modules.policies.greedy:GreedyPolicy\ntuner: random\ntuner_params: {seed: 7}\n"
+    assert isinstance(build_tuner(config), RandomTuner)  # the default
+    config.climber.tuner_params = {"seed": 7}
+    assert build_tuner(config).params == {"seed": 7}
+    (tmp_path / "fixed.py").write_text(
+        "class Fixed:\n"
+        "    def ask(self, space, history, *, higher_is_better, seed):\n        return {}\n"
     )
-    config.climber.ref = str(root)
-    assert build_tuner(config).params == {"seed": 7}  # the manifest's params
-    config.climber.tuner_params = {"seed": 9}
-    assert build_tuner(config).params == {"seed": 9}  # the user's lay over them
+    config.climber.tuner = str(tmp_path / "fixed.py")  # a tuner is named like any module: a file works
+    tuner = build_tuner(config)
+    assert (type(tuner).__name__, tuner.name, tuner.params) == ("Fixed", "fixed", {"seed": 7})
     pytest.importorskip("optuna")
     from hillclimb.config import Config
 
-    explicit = Config.model_validate({"search": {"policy": str(root), "tuner": "optuna"}})
-    assert type(build_tuner(explicit)).__name__ == "OptunaTuner"  # the user named one: it wins
+    explicit = Config.model_validate({"search": {"policy": "greedy", "tuner": "optuna"}})  # the 0.3 spelling
+    assert type(build_tuner(explicit)).__name__ == "OptunaTuner"
 
 
 def test_execute_search_hands_the_harness_the_climbers_tuner(task, config, tmp_path, monkeypatch):
@@ -523,10 +549,10 @@ def test_a_climber_brings_its_own_graph_module(task, config, tmp_path):
     assert [n.id for n in module.build(tmp_path).nodes] == ["note:a"]
     assert resolve_climber({"policy": "policy.py", "graph": "knowledge-graph"}, root).graph_module().name == "knowledge-graph"
 
-    config.climber.ref = str(root)
+    config.climber = ClimberSpec.model_validate({"policy": "policy.py", "graph": "graph.py"}).anchored(root)
     run_dir = api.create_run(config, RunMeta(run_id="r1", name="r1", kind="problem", target="t", problem_ids=[task.problem_id]))
     search_dir = api.create_search(config, task, run_dir, "r1", 600)
     assert (search_dir / "climber" / "files" / "graph.py").is_file()
-    snapshot = load_snapshot(search_dir, name="mine")
+    snapshot = load_snapshot(search_dir)
     assert snapshot.graph_module().name == "notes"
     assert snapshot.graph_module().key == module.key  # the copy is the same builder: no rebuild of graph.json

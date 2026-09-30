@@ -18,15 +18,17 @@
 │                                                                                  spelling)                           │
 │ --model                                                    TEXT                  Model the agent runs, e.g. sonnet / │
 │                                                                                  opus                                │
-│ --climber                                                  TEXT                  The climber (default: greedy): a    │
-│                                                                                  bundled name, a directory holding   │
-│                                                                                  climber.yaml, or one .py file;      │
-│                                                                                  params via config climber.params.   │
-│                                                                                  Repeat it (--climber greedy         │
-│                                                                                  --climber gepa) for a mixed fleet:  │
-│                                                                                  one search per climber on the       │
-│                                                                                  problem, under one run, each tagged │
-│                                                                                  as an experiment                    │
+│ --climber                                                  TEXT                  The climber, by name: a preset      │
+│                                                                                  (greedy | openevolve | gepa) or one │
+│                                                                                  .py file. It replaces the           │
+│                                                                                  `climber:` block of hillclimb.yaml  │
+│                                                                                  (or of the run spec); --set         │
+│                                                                                  climber.params.k=v edits it. Repeat │
+│                                                                                  it (--climber greedy --climber      │
+│                                                                                  gepa) for a mixed fleet: one search │
+│                                                                                  per climber on the problem, under   │
+│                                                                                  one run, each tagged as an          │
+│                                                                                  experiment                          │
 │ --holdout                                 --no-holdout                           Hidden selection holdout            │
 │                                                                                  [default: holdout]                  │
 │ --learning                                --no-learning                          Cross-search memory (cards/claims   │
@@ -53,7 +55,7 @@
 │ --seed-from                                                PATH                  Incumbent solution.py scored as the │
 │                                                                                  floor candidate                     │
 │ --set                                                      TEXT                  Any config setting, dotted: --set   │
-│                                                                                  climber.ref=openevolve --set        │
+│                                                                                  climber.params.num_drafts=5 --set   │
 │                                                                                  learning.enabled=false              │
 │ --experiment-set,--arm-set                                 TEXT                  A setting for one experiment of a   │
 │                                                                                  mixed fleet, EXPERIMENT:KEY=VALUE:  │

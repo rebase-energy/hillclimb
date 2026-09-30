@@ -203,7 +203,10 @@ class SuiteEntry(BaseModel):
     model: str | None = None
     agent: str | None = None
     budget: str | None = None  # "2h" / "30m" / seconds — parsed by the CLI
-    climber: str | None = None  # a bundled name, a climber dir, or a .py file
+    # the climber this search runs: the `climber:` block (`modules/spec.py`),
+    # or a preset's name / one .py file as shorthand. File refs in it are
+    # relative to the spec file. None = the spec's own `climber:`, else the folder's
+    climber: str | dict | None = None
     parallel_agents: int | None = None
     n_replicates: int | None = None
     seed_from: str | None = None  # incumbent solution.py, relative to the spec file
@@ -224,6 +227,7 @@ class SuiteSpec(BaseModel):
     suite_id: str
     suite_path: Path
     problems: list[SuiteEntry]
+    climber: str | dict | None = None  # the default for entries that name none
 
     @field_validator("problems", mode="before")
     @classmethod
@@ -529,27 +533,47 @@ def _parse_entry(raw, suite_yaml: Path) -> SuiteEntry:
     )
 
 
+def _climber_block(value, suite_yaml: Path, where: str) -> dict:
+    """A `climber:` value of a run spec as the full block, its file refs
+    resolved from the spec's own folder (like `seed_from`)."""
+    from hillclimb.modules.spec import ClimberSpec, block_error
+
+    try:
+        return ClimberSpec.model_validate(value).anchored(suite_yaml.parent).block()
+    except ValueError as exc:
+        raise ValueError(f"{suite_yaml}: {where}climber: {block_error(exc)}") from exc
+
+
 def load_suite(target: str | Path, config: Config) -> SuiteSpec:
     """Load a run spec: a `problems:` list (strings or per-entry parameter
     dicts), or the single-search form with a top-level `target:` plus the
-    same parameter keys."""
+    same parameter keys. A top-level `climber:` beside `problems:` is the
+    default for entries that name none; every entry's climber comes back as
+    the full block."""
     suite_yaml = resolve_suite_yaml(target, config)
     meta = _read_yaml(suite_yaml)
     if "problems" not in meta:  # single-target spec
         entry_keys = SuiteEntry.model_fields.keys()
-        entry = SuiteEntry.model_validate({k: v for k, v in meta.items() if k in entry_keys})
-        return SuiteSpec(
-            suite_id=meta.get("suite_id") or suite_yaml.stem,
-            suite_path=suite_yaml,
-            problems=[entry],
-        )
-    problems = meta.get("problems")
-    if not isinstance(problems, list) or not problems:
-        raise ValueError(f"{suite_yaml} must define a non-empty `problems` list")
+        entries = [SuiteEntry.model_validate({k: v for k, v in meta.items() if k in entry_keys})]
+        default = None
+    else:
+        problems = meta.get("problems")
+        if not isinstance(problems, list) or not problems:
+            raise ValueError(f"{suite_yaml} must define a non-empty `problems` list")
+        entries = [_parse_entry(raw, suite_yaml) for raw in problems]
+        default = meta.get("climber")
+    if default is not None:
+        default = _climber_block(default, suite_yaml, "")
+    for index, entry in enumerate(entries, 1):
+        if entry.climber is not None:
+            entry.climber = _climber_block(entry.climber, suite_yaml, f"problems[{index}].")
+        elif default is not None:
+            entry.climber = dict(default)
     return SuiteSpec(
         suite_id=meta.get("suite_id") or suite_yaml.stem,
         suite_path=suite_yaml,
-        problems=[_parse_entry(raw, suite_yaml) for raw in problems],
+        problems=entries,
+        climber=default,
     )
 
 

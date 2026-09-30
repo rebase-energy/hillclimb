@@ -2,8 +2,8 @@
 
 A study is a problem (or several) × named *experiments* × N repeats. An
 experiment is a set of config overrides — anything `Config.apply_overrides`
-accepts (`climber.ref`, `learning.enabled`, `model`, `climber.params.*`,
-…) — so "does memory help?", "greedy or openevolve?", "sonnet or opus?" are
+accepts (`climber`, `learning.enabled`, `model`, `climber.params.*`, …) —
+so "does memory help?", "greedy or openevolve?", "sonnet or opus?" are
 all the same study with different experiments. A spec is a YAML file
 (`hillclimb experiment run` takes it; `arms:` is the old name of
 `experiments:` and still loads):
@@ -17,9 +17,15 @@ all the same study with different experiments. A spec is a YAML file
     noise_floor: 0.02               # a number, or {problem-id: number}
     defaults: {model: sonnet}       # overrides every experiment starts from
     experiments:
-      greedy:        {climber.ref: greedy}
-      greedy-nomem:  {climber.ref: greedy, learning.enabled: false}
-      openevolve:    {climber.ref: openevolve, climber.params: {population_size: 50}}
+      greedy:        {climber: greedy}
+      greedy-nomem:  {climber: greedy, learning.enabled: false}
+      openevolve:    {climber: openevolve, climber.params: {population_size: 50}}
+      mine:                         # a whole `climber:` block, as a run spec takes it
+        climber: {policy: mine.py, tuner: optuna}
+
+An experiment's `climber` names or defines its climber — a preset, one .py
+file, or the block — and replaces the block whole; `climber.<field>` edits
+the block it ends up with, whichever key came first.
 
 `expand` turns it into jobs in a fair order — round-robin over experiments
 within each repeat, so shared state (the knowledge graph) is seen by every
@@ -113,20 +119,31 @@ class StudySpec(BaseModel):
         return self.noise_floor
 
     def experiment_overrides(self, experiment: str) -> dict:
-        """The overrides an experiment applies: `defaults`, then the experiment's own."""
-        return flatten_overrides({**self.defaults, **self.experiments[experiment]})
+        """The overrides an experiment applies: `defaults`, then the
+        experiment's own — with whatever names the climber first, since
+        naming one replaces the block the `climber.<field>` overrides edit."""
+        flat = flatten_overrides({**self.defaults, **self.experiments[experiment]})
+        return {
+            **{key: value for key, value in flat.items() if key in NAMES_THE_CLIMBER},
+            **{key: value for key, value in flat.items() if key not in NAMES_THE_CLIMBER},
+        }
+
+
+# override keys that name (and so replace) the whole climber; the last two
+# are the 0.5 and 0.3 spellings, which still load
+NAMES_THE_CLIMBER = ("climber", "climber.ref", "search.policy")
 
 
 def flatten_overrides(overrides: dict, prefix: str = "") -> dict:
-    """Nested mappings → dotted keys (`{search: {policy: x}}` ==
-    `{climber.ref: x}`), except that a mapping under a key that already
-    holds a dict value in Config (`policy_params`) is kept whole by the
-    caller's convention: we flatten one level at a time and only recurse
-    into mappings whose keys look like settings (no dots)."""
+    """Nested mappings → dotted keys (`{climber: {params: {k: 1}}}` would
+    be `{climber.params.k: 1}`), except the mappings that are ONE value: a
+    `climber:` block (it defines the climber; its fields are not overrides
+    to merge), `routing`, and the 0.3 `policy_params`."""
     flat: dict = {}
     for key, value in overrides.items():
         name = f"{prefix}{key}"
-        if isinstance(value, dict) and not name.endswith("policy_params") and not name.endswith("routing"):
+        whole = name == "climber" or name.endswith("policy_params") or name.endswith("routing")
+        if isinstance(value, dict) and not whole:
             flat.update(flatten_overrides(value, f"{name}."))
         else:
             flat[name] = value

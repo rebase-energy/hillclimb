@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from hillclimb.climbers.gepa.config import GEPAParams, validate_gepa_search_config
+from tests.factories import name_climber
 
 
 def test_defaults_are_the_documented_mvp():
@@ -59,14 +60,14 @@ def test_invalid_params_rejected(bad):
 
 
 def test_parallel_agents_rejected_before_spend(config):
-    config.climber.ref = "gepa"
+    name_climber(config, "gepa")
     config.concurrency.parallel_agents = 2
     with pytest.raises(ValueError, match="serial in the MVP"):
         validate_gepa_search_config(config)
 
 
 def test_valid_config_parses_policy_params(config):
-    config.climber.ref = "gepa"
+    name_climber(config, "gepa")
     config.climber.params = {"max_metric_calls": 7}
     assert validate_gepa_search_config(config).max_metric_calls == 7
 

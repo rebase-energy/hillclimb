@@ -296,7 +296,7 @@ def test_nested_config_keeps_the_users_agent_and_isolates_the_rest(tmp_path):
     spec = meta.MetaSpec.model_validate({"problems": ["a"], "budget": "60s"})
     data = meta.nested_config(outer, tmp_path / "solution.py", spec, tmp_path / "hillclimb")
     assert (data["agent"], data["model"]) == ("codex", "gpt-5")
-    assert data["climber"] == {"ref": str((tmp_path / "solution.py").resolve())}
+    assert data["climber"] == str((tmp_path / "solution.py").resolve())  # a one-file climber, by its file
     assert data["paths"]["problems_dir"] == str(tmp_path / "problems")
     assert data["paths"]["runs_dir"] == str(tmp_path / "hillclimb" / "runs")
     assert data["budget"]["total_s"] == 60 and data["budget"]["stop_margin_s"] == 12

@@ -16,7 +16,7 @@ from hillclimb.project import (
     user_env_path,
     HillclimbDirNotFound,
 )
-from hillclimb.modules.memory.base import MemoryKind
+from hillclimb.modules.spec import ClimberSpec
 
 
 class BudgetConfig(BaseModel):
@@ -90,8 +90,7 @@ LEGACY_SETTINGS = {
 # settings that have no new home, and what to do instead
 REMOVED_SETTINGS = {
     "paths.prompts_dir": (
-        "prompts belong to a climber now: `hillclimb climber new mine --from greedy`, "
-        "edit mine/prompts/, then run with `--climber mine`"
+        "prompts belong to the climber: name the directory in its block, `climber: {prompts: prompts/}`"
     ),
 }
 
@@ -122,38 +121,18 @@ def current_setting(key: str) -> str:
     """A dotted setting in today's spelling (longest legacy prefix wins)."""
     for old in sorted(LEGACY_SETTINGS, key=len, reverse=True):
         if key == old or key.startswith(old + "."):
-            return LEGACY_SETTINGS[old] + key[len(old):]
+            key = LEGACY_SETTINGS[old] + key[len(old):]
+            break
     for old, advice in REMOVED_SETTINGS.items():
         if key == old or key.startswith(old + "."):
             raise KeyError(f"{old} is gone: {advice}")
+    if key == "climber.ref":
+        return "climber"  # 0.5 named a climber by `ref`; naming one replaces the block
+    if key.startswith("climber.operators."):
+        # `operators` is the LIST of what may run; one operator's params are
+        # addressed by its name
+        return "climber.operator_params." + key[len("climber.operators."):]
     return key
-
-
-class ClimberConfig(BaseModel):
-    """Which climber drives the search, and what the USER lays over it (the
-    `climber:` block; `climber: greedy` is shorthand for `{ref: greedy}`).
-
-    `ref` is a bundled name (greedy | openevolve | gepa), a directory holding
-    climber.yaml, or one .py file — relative paths resolve from the folder
-    holding the hillclimb dir. The rest are the manifest keys that are always
-    the user's to change without copying the climber: its `params`, its
-    operators' params, its tuner, its memory, its graph module."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    ref: str = "greedy"
-    params: dict = Field(default_factory=dict)  # laid over the manifest's params
-    # per-operator params laid over the manifest's: {draft: {retrieval: false}}
-    operators: dict[str, dict] = Field(default_factory=dict)
-    tuner: str | None = None  # None = the manifest's (random | optuna)
-    tuner_params: dict = Field(default_factory=dict)
-    memory: MemoryKind | None = None  # None = the manifest's; `knowledge-graph` still loads
-    graph: str | None = None  # None = the manifest's (a registry name, a .py file, or module:Class)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _shorthand(cls, data):
-        return {"ref": data} if isinstance(data, str) else data
 
 
 class EvaluationConfig(BaseModel):
@@ -419,7 +398,9 @@ class Config(BaseModel):
     # scalars above (except distill's model, which defaults to haiku).
     routing: dict[str, RouteConfig] = Field(default_factory=dict)
     budget: BudgetConfig = BudgetConfig()
-    climber: ClimberConfig = ClimberConfig()
+    # the climber: the SAME block a run spec entry takes (`modules/spec.py`);
+    # here it is the folder's default
+    climber: ClimberSpec = Field(default_factory=ClimberSpec)
     evaluation: EvaluationConfig = EvaluationConfig()
     concurrency: ConcurrencyConfig = ConcurrencyConfig()
     holdout: HoldoutConfig = HoldoutConfig()
@@ -469,7 +450,10 @@ class Config(BaseModel):
         moved: dict[str, object] = {}
         for block in ("search", "ensemble", "operators"):
             for name, value in (data.pop(block, None) or {}).items():
-                moved[current_setting(f"{block}.{name}")] = value
+                key = current_setting(f"{block}.{name}")
+                # the climber's name goes in as the 0.5 `ref` key, which the
+                # block expands under whatever params were moved beside it
+                moved["climber.ref" if key == "climber" else key] = value
         if isinstance(data.get("paths"), dict) and "prompts_dir" in data["paths"]:
             current_setting("paths.prompts_dir")  # raises with the advice
         for key, value in moved.items():
@@ -569,8 +553,20 @@ class Config(BaseModel):
             if found is None and require_dir:
                 raise HillclimbDirNotFound(Path.cwd())
             data = _read_yaml(user_config_path())
+            if isinstance(data.get("climber"), (dict, str)):
+                # a block means what it says where it was written: its file
+                # refs resolve from the user config's own folder
+                data["climber"] = ClimberSpec.model_validate(data["climber"]).anchored(
+                    user_config_path().parent
+                ).block()
             if found is not None:
-                data = _deep_merge(data, _read_yaml(found / MARKER_FILE))
+                folder = _read_yaml(found / MARKER_FILE)
+                data = _deep_merge(data, folder)
+                if "climber" in folder:
+                    # a climber is ONE block: the folder's replaces the user
+                    # level's whole, never merges into it (its params belong
+                    # to its policy, not to whichever policy ends up chosen)
+                    data["climber"] = folder["climber"]
             config = cls.model_validate(data)
             config.hillclimb_dir = found
             if found is not None and (found / ".env").exists():
@@ -584,6 +580,8 @@ class Config(BaseModel):
             if value is None:
                 continue
             *parents, leaf = current_setting(key).split(".")
+            if not parents and leaf == "climber":
+                value = ClimberSpec.model_validate(value)  # a name, a file or a block
             target: object = config
             for part in parents:
                 target = target[part] if isinstance(target, dict) else getattr(target, part)
@@ -600,7 +598,7 @@ class Config(BaseModel):
         return config
 
     def apply_overrides(self, overrides: dict[str, object]) -> None:
-        """Set dotted config paths (`climber.ref`, `learning.enabled`,
+        """Set dotted config paths (`climber`, `learning.enabled`,
         `climber.params.population_size`, top-level `model`) with
         pydantic validation at each level — the one way a study experiment
         or `hillclimb run --set` changes a setting. Unknown paths raise
@@ -608,6 +606,14 @@ class Config(BaseModel):
         working = self.model_copy(deep=True)
         for key, value in overrides.items():
             key = current_setting(key)
+            if key == "climber":
+                # naming a climber (a preset, a file, a whole block) replaces
+                # the block; later `climber.<field>` overrides then edit it
+                working.climber = ClimberSpec.model_validate(value)
+                continue
+            if key in ("climber.policy", "climber.loop"):
+                # a climber has one or the other: naming one drops the other
+                working.climber.policy = working.climber.loop = None
             parts = key.split(".")
             target: object = working
             for part in parts[:-1]:
@@ -639,6 +645,12 @@ class Config(BaseModel):
         self.hillclimb_dir = hillclimb_dir
         self._resolve_paths()
 
+
+    def climber_block(self) -> dict:
+        """The climber block as it travels — into a run's spec, to a child
+        engine: every file ref absolute (relative ones resolve from the
+        hillclimb dir), so it means the same thing wherever it is read."""
+        return self.climber.anchored(self.hillclimb_dir).block()
 
     def _resolve_paths(self) -> None:
         """Anchor relative runs_dir/problems_dir at the hillclimb dir, so
