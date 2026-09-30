@@ -30,7 +30,7 @@ SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.-]*$")
 
 
 def _einsteinarena_provider() -> BenchmarkProvider:
-    return import_module("hillclimb.integrations.einsteinarena.provider").provider
+    return import_module("hillclimb.providers.einsteinarena.provider").provider
 
 
 _PROVIDERS: dict[str, ProviderLoader] = {

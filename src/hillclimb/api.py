@@ -991,7 +991,7 @@ def _official_verify(
     """One official emflow Verifier run on the selected model (scorecard +
     leaderboard row, with n_trials metadata for selection honesty). Best
     effort: a verify failure never fails a finished search."""
-    from hillclimb.integrations.emflow.executor import official_verify
+    from hillclimb.providers.emflow.executor import official_verify
 
     try:
         python = ensure_runtime_venv(config, kind="emflow", log=log)

@@ -55,6 +55,8 @@ affected: old journals and `search.yaml` files read as before.
 | `Preparation` | `Attempt` |
 | `Action.policy_meta`, `Candidate.policy_meta` | `climber_meta` (the journal key `policy_meta` is read as before) |
 | `OperatorRequest`, `OperatorResult` (agents) | `AgentRequest`, `AgentResult` |
+| `hillclimb.integrations.{emflow,mlebench,einsteinarena}` | `hillclimb.providers.…` |
+| `hillclimb.integrations.gepa` | `hillclimb.climbers.gepa` (refs recorded in run folders are mapped) |
 | `--policy`, `hillclimb policy check` (hidden since 0.4) | `--climber`, `hillclimb climber check` |
 | `modules.policies.get_policy`, `load_policy_file`, `policy_label`, `policy_base_dir` | `climber.load_climber`, `climber_label`, `climber_base_dir` |
 

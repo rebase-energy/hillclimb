@@ -11,8 +11,8 @@ import pytest
 gepa = pytest.importorskip("gepa")
 
 from hillclimb.agents.fake import FakeAgent  # noqa: E402
-from hillclimb.integrations.gepa.driver import CoreOptimizeDriver  # noqa: E402
-from hillclimb.integrations.gepa.operator import OPERATOR_NAME  # noqa: E402
+from hillclimb.climbers.gepa.driver import CoreOptimizeDriver  # noqa: E402
+from hillclimb.climbers.gepa.operator import OPERATOR_NAME  # noqa: E402
 from tests.conftest import ok_script  # noqa: E402
 from tests.gepa_fakes import make_gepa  # noqa: E402
 

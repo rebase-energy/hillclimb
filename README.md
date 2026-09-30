@@ -135,7 +135,7 @@ is spent on it.
 | `src/hillclimb/tui/` | Every terminal view (`watch`, `chart`, `tree`, `archive`, `surface`, `similarity`, `graph`) and the layout it draws. Reads the store, imported by nothing else. |
 | `src/hillclimb/cli/` | The `hillclimb` command, one module per command group. |
 | `src/hillclimb/agents/` | The agents that write code: Claude Code, Codex, pi, and the dummy and fake agents for tests. |
-| `src/hillclimb/integrations/` | Problem providers and libraries that bring their own loop: emflow, MLE-bench, Einstein Arena, GEPA. |
+| `src/hillclimb/providers/` | Problem providers: emflow, MLE-bench, Einstein Arena. |
 | `src/hillclimb/prompts/` | The operator prompt templates. A climber may shadow them by name. |
 | `src/hillclimb/runtime/` | The managed venv the verifier and the solution run in, and the shim that makes `hillclimb.spaces` importable there. |
 | `src/hillclimb/demo/` | The example problems as package data, so `hillclimb problem get` works from a bare install. |

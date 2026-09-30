@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from hillclimb.integrations.gepa.config import GEPAParams, validate_gepa_search_config
+from hillclimb.climbers.gepa.config import GEPAParams, validate_gepa_search_config
 
 
 def test_defaults_are_the_documented_mvp():
@@ -74,7 +74,7 @@ def test_valid_config_parses_policy_params(config):
 def test_missing_extra_message():
     import builtins
 
-    from hillclimb.integrations.gepa import driver as driver_mod
+    from hillclimb.climbers.gepa import driver as driver_mod
 
     real_import = builtins.__import__
 

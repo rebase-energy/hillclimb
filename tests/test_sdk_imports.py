@@ -17,10 +17,10 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "hillclimb"
 CLIMBER_MODULES = [
     # gepa: the loop, its operator, its scoring view (config.py / __init__.py
     # are the harness-side glue that reads Config until the manifest exists)
-    "integrations/gepa/loop.py",
-    "integrations/gepa/operator.py",
-    "integrations/gepa/evaluator.py",
-    "integrations/gepa/proposer.py",
+    "climbers/gepa/loop.py",
+    "climbers/gepa/operator.py",
+    "climbers/gepa/evaluator.py",
+    "climbers/gepa/proposer.py",
     "modules/operators/builtin.py",
     "modules/policies/greedy.py",
     "modules/policies/openevolve.py",
@@ -58,7 +58,7 @@ def hillclimb_imports(path: Path) -> set[str]:
 
 
 def own_package(module: str) -> str:
-    """`integrations/gepa/loop.py` -> `hillclimb.integrations.gepa`: a
+    """`climbers/gepa/loop.py` -> `hillclimb.climbers.gepa`: a
     climber's modules may import each other."""
     return "hillclimb." + ".".join(Path(module).parent.parts)
 
@@ -70,7 +70,7 @@ def test_climber_modules_import_only_the_sdk():
         for name in sorted(hillclimb_imports(SRC / module)):
             if name == "hillclimb.sdk" or (module, name) in ALLOWED:
                 continue
-            if module.startswith("integrations/") and name.startswith(siblings):
+            if module.startswith("climbers/") and name.startswith(siblings):
                 continue
             offenders.append(f"{module}: imports {name} — export it from hillclimb.sdk instead")
     assert not offenders, "\n".join(offenders)

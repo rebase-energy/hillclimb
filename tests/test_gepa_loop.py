@@ -11,9 +11,9 @@ import pytest
 from hillclimb.agents.fake import FakeAgent
 from hillclimb.harness.candidate import source_hash
 from hillclimb.harness.control import ControlCommand
-from hillclimb.integrations.gepa.loop import GepaLoop
-from hillclimb.integrations.gepa.operator import OPERATOR_NAME
-from hillclimb.integrations.gepa.proposer import COMPONENT, ProposerError
+from hillclimb.climbers.gepa.loop import GepaLoop
+from hillclimb.climbers.gepa.operator import OPERATOR_NAME
+from hillclimb.climbers.gepa.proposer import COMPONENT, ProposerError
 from hillclimb.harness.journal import Journal
 from hillclimb.harness.loop import PolicyLoop
 from hillclimb.harness.glue import ParkedSearch, StopRequested, build_loop, holdout_timing

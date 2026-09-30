@@ -302,7 +302,9 @@ def test_modernize_maps_only_what_moved():
 
     assert modernize("hillclimb.policies.greedy:GreedyPolicy") == "hillclimb.modules.policies.greedy:GreedyPolicy"
     assert modernize("hillclimb.similarity_scores.builtin:ApiCalls") == "hillclimb.modules.similarity.builtin:ApiCalls"
-    assert modernize("hillclimb.integrations.gepa.loop:GepaLoop") == "hillclimb.integrations.gepa.loop:GepaLoop"
+    # 0.6 moved the gepa library out of integrations/: a search recorded before resumes
+    assert modernize("hillclimb.integrations" + ".gepa.loop:GepaLoop") == "hillclimb.climbers.gepa.loop:GepaLoop"
+    assert modernize("hillclimb.climbers.gepa.loop:GepaLoop") == "hillclimb.climbers.gepa.loop:GepaLoop"
     assert modernize("mypkg.policies.x:Y") == "mypkg.policies.x:Y"
 
 

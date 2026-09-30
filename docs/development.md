@@ -23,7 +23,7 @@ src/hillclimb/
   sdk/       the one import a climber needs
   api.py config.py problem.py project.py benchmark_providers.py climber.py experiment.py connect.py
              the public surface; spaces.py stays here because the runtime shim byte-copies it
-  demo/ agents/ integrations/ prompts/ runtime/ climbers/
+  demo/ agents/ providers/ prompts/ runtime/ climbers/
 ```
 
 The import directions — harness and modules never import the tui or the cli, the tui

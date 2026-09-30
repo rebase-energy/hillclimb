@@ -24,10 +24,10 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Callable, Protocol
 
-from hillclimb.integrations.gepa.config import GEPAParams
-from hillclimb.integrations.gepa.evaluator import GepaScoring
-from hillclimb.integrations.gepa.operator import OPERATOR_NAME
-from hillclimb.integrations.gepa.proposer import COMPONENT, ProposerError, feedback_json
+from hillclimb.climbers.gepa.config import GEPAParams
+from hillclimb.climbers.gepa.evaluator import GepaScoring
+from hillclimb.climbers.gepa.operator import OPERATOR_NAME
+from hillclimb.climbers.gepa.proposer import COMPONENT, ProposerError, feedback_json
 from hillclimb.sdk import (
     INJECT_ACTION,
     Action,
@@ -117,7 +117,7 @@ class GepaLoop(Loop):
         run_dir.mkdir(parents=True, exist_ok=True)
         driver = self.driver
         if driver is None:
-            from hillclimb.integrations.gepa.driver import build_driver
+            from hillclimb.climbers.gepa.driver import build_driver
 
             driver = build_driver()
         try:

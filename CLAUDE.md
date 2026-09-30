@@ -74,7 +74,7 @@ command group with `common.py` for what commands share (reached as `common.x()` 
 one patch covers every command) and `__main__.py` for the engine children. The flat
 top level is the public surface only: `api`, `config`, `problem`, `project`,
 `benchmark_providers`, `climber`, `experiment`, `connect`, `spaces` (byte-copied into
-runtime venvs, so it stays), `sdk/`, `demo/`, `agents/`, `integrations/`, `prompts/`,
+runtime venvs, so it stays), `sdk/`, `demo/`, `agents/`, `providers/`, `prompts/`,
 `runtime/`, `climbers/`. `_moved.py` maps pre-move `module:Class` refs at the two
 places they are imported.
 
@@ -427,7 +427,7 @@ places they are imported.
   never add unknown ones); `templates_digest` hashes the effective set into
   `SearchMeta.templates_sha256` + `templates_overridden` at `create_search`.
   Tests that activate an override dir must restore the previous setting
-- GEPA (`integrations/gepa/`, extra `hillclimb[gepa]`): a climber that
+- GEPA (`climbers/gepa/`, extra `hillclimb[gepa]`): a climber that
   brings its own `Loop`. gepa drives proposal order, Pareto selection
   and its checkpoint; everything that costs or counts is `harness.run(...)`:
   a reflective mutation is one `gepa-reflect` attempt (`operator.py`, a real

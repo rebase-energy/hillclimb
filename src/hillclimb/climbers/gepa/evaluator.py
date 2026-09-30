@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from typing import Callable
 
-from hillclimb.integrations.gepa.config import GEPAParams
+from hillclimb.climbers.gepa.config import GEPAParams
 from hillclimb.sdk import Candidate, EvalResult
 
 ASI_TAIL_CAP = 2000

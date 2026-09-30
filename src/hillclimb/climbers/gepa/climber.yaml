@@ -4,11 +4,11 @@
 # Needs the optional extra: pip install 'hillclimb[gepa]'
 name: gepa
 description: Reflective Pareto search; brings its own Loop. Experimental.
-loop: hillclimb.integrations.gepa.loop:GepaLoop
+loop: hillclimb.climbers.gepa.loop:GepaLoop
 params:
   max_metric_calls: 50
 operators:
-  - hillclimb.integrations.gepa.operator:GepaReflectOperator
+  - hillclimb.climbers.gepa.operator:GepaReflectOperator
 memory: files
 tuner: random
 holdout_timing: after    # gepa's state never meets a holdout value, not even a failed hidden split

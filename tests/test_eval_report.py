@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 RUNNER_PATH = (
-    Path(__file__).parents[1] / "src" / "hillclimb" / "integrations" / "emflow" / "eval_runner.py"
+    Path(__file__).parents[1] / "src" / "hillclimb" / "providers" / "emflow" / "eval_runner.py"
 )
 spec = importlib.util.spec_from_file_location("eval_runner", RUNNER_PATH)
 eval_runner = importlib.util.module_from_spec(spec)

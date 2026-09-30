@@ -29,7 +29,7 @@ NOT_IMPLEMENTATIONS = {"__init__.py", "base.py", "check.py", "compute.py"}
 EXCHANGE_KINDS = ("policies", "operators", "tuners", "similarity")  # memory/ joins with its ABC
 
 # the only files that may import hillclimb.sdk at module top level
-SDK_EAGER_IMPORTERS = set(CLIMBER_MODULES) | {"integrations/gepa/evaluator.py"}
+SDK_EAGER_IMPORTERS = set(CLIMBER_MODULES) | {"climbers/gepa/evaluator.py"}
 
 
 def _py_files(root: Path) -> list[Path]:

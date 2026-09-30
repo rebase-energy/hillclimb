@@ -119,8 +119,8 @@ def test_instances_flow_from_verifier_to_eval_result(tmp_path, task, config):
 def _bridge(*, higher_is_better=True):
     """GEPA's scoring view on its own: no harness needed to exercise the
     instance-key rule and the fitness transforms."""
-    from hillclimb.integrations.gepa.config import GEPAParams
-    from hillclimb.integrations.gepa.evaluator import GepaScoring
+    from hillclimb.climbers.gepa.config import GEPAParams
+    from hillclimb.climbers.gepa.evaluator import GepaScoring
 
     return GepaScoring(
         params=GEPAParams(failure_fitness=-1e100),
@@ -140,7 +140,7 @@ def _result(instances, score=1.0, valid=True):
 def test_gepa_tolerates_missing_instances_but_not_new_ones():
     import pytest
 
-    from hillclimb.integrations.gepa.evaluator import InstanceKeyMismatch
+    from hillclimb.climbers.gepa.evaluator import InstanceKeyMismatch
 
     bridge = _bridge()
     bridge.check_instance_keys(_result({"t1/z1": 0.5, "t1/z2": 0.7}))

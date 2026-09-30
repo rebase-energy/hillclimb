@@ -20,9 +20,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from hillclimb.integrations.gepa.config import GEPAParams
-from hillclimb.integrations.gepa.evaluator import GepaScoring
-from hillclimb.integrations.gepa.proposer import COMPONENT
+from hillclimb.climbers.gepa.config import GEPAParams
+from hillclimb.climbers.gepa.evaluator import GepaScoring
+from hillclimb.climbers.gepa.proposer import COMPONENT
 
 MISSING_EXTRA = "the GEPA optimizer needs the `gepa` package: pip install 'hillclimb[gepa]'"
 

@@ -1,4 +1,5 @@
-"""Module paths that moved in the package-layout refactor (docs/package-layout-plan.md).
+"""Module paths that moved (the package-layout refactor, docs/package-layout-plan.md;
+the 0.6 split of integrations/).
 
 Run folders carry `module:Class` refs — a search's climber snapshot, the
 `climber_manifest` in search.yaml, a `similarity:` entry in config.yaml —
@@ -14,6 +15,8 @@ MOVED = {
     "hillclimb.operators.": "hillclimb.modules.operators.",
     "hillclimb.tuners.": "hillclimb.modules.tuners.",
     "hillclimb.similarity_scores.": "hillclimb.modules.similarity.",
+    # 0.6: integrations/ split into providers/ and the gepa climber library
+    "hillclimb.integrations.gepa.": "hillclimb.climbers.gepa.",
 }
 
 

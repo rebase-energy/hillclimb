@@ -75,7 +75,7 @@ def test_unknown_emflow_problem_raises(econfig):
 
 
 def test_baseline_discovery():
-    from hillclimb.integrations.emflow.provider import _find_baseline
+    from hillclimb.providers.emflow.provider import _find_baseline
 
     assert _find_baseline("gefcom2014:solar") == "emflow.benchmarks.gefcom2014.baseline"
     assert _find_baseline("swedish-temperatures:ar") is None

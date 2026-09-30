@@ -257,7 +257,7 @@ def _split_scheme(target: str | Path) -> tuple[str, str] | None:
 
 def _emflow_provider():
     try:
-        from hillclimb.integrations.emflow import provider
+        from hillclimb.providers.emflow import provider
     except ModuleNotFoundError as exc:
         raise ModuleNotFoundError(
             "emflow:// targets need the emflow extra: "
@@ -276,7 +276,7 @@ def _provider_calls(scheme: str):
     if scheme == "emflow":
         provider = _emflow_provider()
         return provider.load_emflow_problem, provider.resolve_emflow_target
-    from hillclimb.integrations.mlebench import provider
+    from hillclimb.providers.mlebench import provider
 
     return provider.load_mlebench_problem, provider.resolve_mlebench_target
 
