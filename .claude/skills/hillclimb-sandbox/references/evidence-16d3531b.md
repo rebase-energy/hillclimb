@@ -1,0 +1,5 @@
+1. `hillclimb sandbox check` runs a deliberately hostile script inside the sandbox and lists each attempt with its outcome. On macOS: 10 blocked (files, secrets, network, processes). On Linux (bubblewrap): 8 blocked (container had no hillclimb dir or ~/.claude to try). Exit code 1 if any got through; `--json` for scripts.
+2. Dual config knobs: `allow_internet_for_agents: false` (default true) blocks agents except to model provider (routed through local AllowlistProxy). `allow_internet_during_solution: true` in problem.yaml enables verifier network (default false).
+3. Sandbox on by default, disabled with `sandbox: off`. Uses sandbox-exec on macOS, bubblewrap on Linux. Preflight check at search start fails fast if unavailable.
+4. Documentation shows check output (terminal replay), not static description, so future platforms can verify locally.
+5. Tests: 1,541 passed; sandbox tests on both macOS and Linux confirmed.

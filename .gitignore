@@ -14,3 +14,10 @@ tasks/data/**/*.zip
 /knowledge/.consolidate/
 .env
 .env.*
+
+# editor and plugin state, never part of the repo
+.DS_Store
+.claude/autoharness/
+**/.claude/autoharness/
+.claude/skills/*/.ledger.jsonl
+.claude/skills/*/.sidecar.json
