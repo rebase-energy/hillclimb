@@ -2,7 +2,8 @@
 
 <img alt="hillclimb" src="docs/assets/hillclimb-logo.svg" width="520">
 
-**Let coding agents climb a score you define.**
+**Hillclimbing on verifiable rewards.**<br>
+Use Claude Code and Codex to autonomously search for python programs that optimize a score you define.
 
 [Website](https://hillclimb.sh) ·
 [Docs](https://docs.hillclimb.sh) ·
