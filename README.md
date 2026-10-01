@@ -1,23 +1,21 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hillclimb-logo-dark.svg">
-  <img alt="hillclimb" src="docs/assets/hillclimb-logo-light.svg" width="520">
-</picture>
+<img alt="hillclimb" src="docs/assets/hillclimb-logo.svg" width="520">
 
 **Let coding agents climb a score you define.**
 
 [Website](https://hillclimb.sh) ·
-[Quickstart](#quickstart) ·
-[Problems](docs/problems.md) ·
-[Climbers](docs/climbers.md) ·
-[Commands](docs/commands.md) ·
-[Changelog](CHANGELOG.md)
+[Docs](https://docs.hillclimb.sh) ·
+[Quickstart](https://docs.hillclimb.sh/quickstart) ·
+[CLI reference](https://docs.hillclimb.sh/cli) ·
+[Blog](https://docs.hillclimb.sh/blogposts) ·
+[Discord](https://discord.gg/DDKh9UtSH)
 
 [![PyPI](https://img.shields.io/pypi/v/hillclimb.svg)](https://pypi.org/project/hillclimb/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB.svg?logo=python&logoColor=white)](https://pypi.org/project/hillclimb/)
 [![Quickstart](https://github.com/rebase-energy/hillclimb/actions/workflows/quickstart.yml/badge.svg)](https://github.com/rebase-energy/hillclimb/actions/workflows/quickstart.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Discord](https://img.shields.io/badge/discord-join%20chat-5865F2.svg?logo=discord&logoColor=white)](https://discord.gg/DDKh9UtSH)
 
 </div>
 
@@ -40,7 +38,7 @@ hillclimb connect claude               # or codex, pi; add --agent dummy to any 
 
 hillclimb init                         # hillclimb.yaml, problems/, runs/ in this folder
 hillclimb problem get heilbronn-11     # the verifier is the problem; description.md is the brief
-hillclimb verify heilbronn-11 --repeat 3
+hillclimb verify heilbronn-11          # score the floor solution
 
 hillclimb run heilbronn-11 --budget 10m
 hillclimb watch                        # live agents and scores (also: chart, tree)
@@ -48,6 +46,7 @@ hillclimb stop --all
 ```
 
 The best solution lands in `runs/<run-id>/searches/heilbronn-11/best/`.
+The [walkthrough](https://docs.hillclimb.sh/walkthrough) goes through each step.
 
 ## Climbers
 
@@ -97,22 +96,53 @@ target line. `hillclimb problem list` shows the full catalog.
 | Golomb rulers | `golomb-20`, `golomb-27` | length ↓ |
 | TSP / knapsack | `tsp-200`, `mknap-100-5`, `mknap-250-10` | tour ↓ / value ↑ |
 
-Bring your own by copying one and editing `verify.py`. Kaggle (MLE-bench),
-energy forecasting (emflow) and Einstein Arena come in through
-[providers](docs/providers.md).
+[Define your own](https://docs.hillclimb.sh/problems/defining-problems) by
+copying one and editing `verify.py`. Kaggle (MLE-bench), energy forecasting
+(emflow) and Einstein Arena come in as
+[benchmark problems](https://docs.hillclimb.sh/benchmarks).
 
-## Docs
+## Learn more
 
-[Problems](docs/problems.md) ·
-[Climbers](docs/climbers.md) ·
-[Agents](docs/agents.md) ·
-[Sandbox](docs/sandbox.md) ·
-[Experiments](docs/experiments.md) ·
-[Providers](docs/providers.md) ·
-[Operators & memory](docs/operators-and-memory.md) ·
-[The hillclimb dir](docs/hillclimb-dir.md) ·
-[Commands](docs/commands.md) ·
-[Development](docs/development.md)
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### [Website →](https://hillclimb.sh)
+
+What hillclimb is for, the terminal views you watch a climb in, and the
+modules a climber is built from.
+
+</td>
+<td width="50%" valign="top">
+
+### [Problems →](https://docs.hillclimb.sh/examples)
+
+Every example problem with its verifier, its best known value and who found
+it, plus the [verifier contract](https://docs.hillclimb.sh/problems/verifier-contract).
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### [CLI reference →](https://docs.hillclimb.sh/cli)
+
+Every `hillclimb` command and its flags, from `run` and `watch` to
+`experiment` and `climber check`.
+
+</td>
+<td width="50%" valign="top">
+
+### [Blogposts →](https://docs.hillclimb.sh/blogposts)
+
+Starting with [Hillclimbing on verifiable rewards](https://docs.hillclimb.sh/blogposts/hillclimbing-on-verifiable-rewards):
+from Cauchy's gradient descent to LLMs searching over programs.
+
+</td>
+</tr>
+</table>
+
+Questions, results, ideas: [join the Discord](https://discord.gg/DDKh9UtSH).
 
 ## License
 
