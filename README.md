@@ -1,9 +1,14 @@
 <div align="center">
 
-<img alt="hillclimb: the logo above an ASCII mountain, a climber on the summit" src="docs/assets/hillclimb-terminal.png" width="640">
+<img alt="hillclimb" src="docs/assets/hillclimb-logo.svg" width="520">
 
 **Hillclimbing on verifiable rewards.**<br>
 Use Claude Code and Codex to autonomously search for python programs that optimize a score you define.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hillclimb-mountain-dark.png">
+  <img alt="An ASCII mountain: one climber on the summit under a gold star, another stuck on a lower peak" src="docs/assets/hillclimb-mountain-light.png" width="560">
+</picture>
 
 [Website](https://hillclimb.sh) ·
 [Docs](https://docs.hillclimb.sh) ·
