@@ -1,6 +1,9 @@
 <div align="center">
 
-<img alt="hillclimb" src="docs/assets/hillclimb-logo.svg" width="520">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hillclimb-logo.svg">
+  <img alt="hillclimb" src="docs/assets/hillclimb-logo-light.svg" width="520">
+</picture>
 
 **Hillclimbing on verifiable rewards.**<br>
 Use Claude Code and Codex to autonomously search for python programs that optimize a score you define.
