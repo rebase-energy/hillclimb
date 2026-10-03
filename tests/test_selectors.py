@@ -30,33 +30,33 @@ def scored_journal(tmp_path: Path) -> Journal:
     return journal
 
 
-def test_best_picks_the_best_candidate_nobody_is_expanding(config, tmp_path):
+def test_best_selects_the_best_candidate_nobody_is_expanding(config, tmp_path):
     journal = scored_journal(tmp_path)
     state = make_view(journal, config)
     best = get_selector("best")
     assert isinstance(best, Best) and best.name == "best"
-    assert best.pick(state) == Selection("c002")
-    assert best.pick(state, busy={"c002"}) == Selection("c001")  # spread over the top ones
-    assert best.pick(state, busy={"c001", "c002"}) == Selection("c002")  # all busy: the best gets another
-    assert best.pick(make_view(journal, config, higher_is_better=False)) == Selection("c001")
-    assert best.pick(make_view(Journal(tmp_path / "empty.jsonl"), config)) is None
-    # `select` is the schedule around the pick: a failing tip first, roots
-    # until num_drafts, then what pick says
-    assert best.select(state) == Selection("c003")
-    assert Best(debug=False).select(state) is None  # two scored roots of three: a root step
-    assert Best(debug=False, num_drafts=2).select(state) == Selection("c002")
+    assert best.select(state) == Selection("c002")
+    assert best.select(state, busy={"c002"}) == Selection("c001")  # spread over the top ones
+    assert best.select(state, busy={"c001", "c002"}) == Selection("c002")  # all busy: the best gets another
+    assert best.select(make_view(journal, config, higher_is_better=False)) == Selection("c001")
+    assert best.select(make_view(Journal(tmp_path / "empty.jsonl"), config)) is None
+    # `schedule` is the order around `select`: a failing tip first, roots
+    # until num_drafts, then what select says
+    assert best.schedule(state) == Selection("c003")
+    assert Best(debug=False).schedule(state) is None  # two scored roots of three: a root step
+    assert Best(debug=False, num_drafts=2).schedule(state) == Selection("c002")
     assert best.creation_meta(state) == {}
 
 
-def test_greedy_expands_what_its_selector_picks(config, tmp_path):
-    """The schedule is the selector base's; the pick — parent, inspirations,
+def test_greedy_expands_what_its_selector_selects(config, tmp_path):
+    """The schedule is the selector base's; the choice — parent, inspirations,
     prompt context, a note for the journal — is the subclass's; the policy
-    turns the pick into an operator."""
+    turns that choice into an operator."""
 
     class SecondBest(SelectorPolicy):
         name = "second-best"
 
-        def pick(self, state, *, busy=frozenset()):
+        def select(self, state, *, busy=frozenset()):
             ranked = sorted(state.journal.scored_candidates(), key=lambda c: -c.val_score)
             return Selection(ranked[1].candidate_id, inspiration_ids=(ranked[0].candidate_id,),
                              prompt_context="Beat the leader.", meta={"why": "runner-up"})
@@ -88,7 +88,7 @@ class Oldest(SelectorPolicy):
     """Expand the oldest scored candidate (a deliberately different exploration)."""
     DEFAULTS = {"skip": 0}
 
-    def pick(self, state, *, busy=frozenset()):
+    def select(self, state, *, busy=frozenset()):
         scored = state.journal.scored_candidates()
         if len(scored) <= self.param("skip"):
             return None
@@ -167,3 +167,15 @@ def test_what_memory_learned_is_fixed_when_a_search_first_runs(task, config, tmp
     assert load_search_meta(search_dir).memory_priors == {"complexity_start": 1}
     api.execute_search(config, task, search_dir, BudgetManager(600, stop_margin_s=1), log=lambda *_: None)  # a resume
     assert seen == [1, 1]  # the knowledge said 0 the second time; the record won
+
+
+def test_a_selector_written_with_pick_still_runs(config, tmp_path):
+    """`pick` was the hook's name for one day; such a selector still loads."""
+
+    class Old(SelectorPolicy):
+        def pick(self, state, *, busy=frozenset()):
+            return Selection("c002")
+
+    state = make_view(scored_journal(tmp_path), config)
+    assert Old().select(state) == Selection("c002")
+    assert Old(debug=False, num_drafts=2).schedule(state) == Selection("c002")  # the schedule calls it

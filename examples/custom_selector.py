@@ -6,8 +6,8 @@
 The selector (π_sel) is the first decision of every step: which node the
 next attempt starts from, or none. The base class carries the schedule every
 selector shares (a failing tip first, roots until `num_drafts`, the final
-ensemble window) and asks a subclass for one thing: `pick`, the scored node
-to build on. Swap the pick and the same policy grows a different tree:
+ensemble window) and asks a subclass for one thing: `select`, the scored node
+to build on. Swap it and the same policy grows a different tree:
 `Best` digs one lineage deep, `LeastExpanded` spreads over the top few.
 """
 
@@ -26,14 +26,14 @@ class LeastExpanded(SelectorPolicy):
     name = "least-expanded"
     DEFAULTS = {"top": 4}
 
-    def pick(self, state: SearchState, *, busy=frozenset()) -> Selection | None:
+    def select(self, state: SearchState, *, busy=frozenset()) -> Selection | None:
         journal = state.journal
         scored = [c for c in journal.ranked_candidates(state.higher_is_better, "val") if improvable(c)]
         if not scored:
             return None  # a root step: the policy drafts
         top = scored[: self.param("top")]
-        pick = min(top, key=lambda c: len(journal.children(c.candidate_id)))
-        return Selection(pick.candidate_id, prompt_context=f"The least explored of the top {len(top)}.")
+        chosen = min(top, key=lambda c: len(journal.children(c.candidate_id)))
+        return Selection(chosen.candidate_id, prompt_context=f"The least explored of the top {len(top)}.")
 
 
 def main(evaluations: int = 10, agent: str = "claude-code") -> dict[str, SearchOutcome]:

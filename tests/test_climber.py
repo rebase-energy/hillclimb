@@ -172,6 +172,71 @@ def test_a_one_file_climber_is_the_ten_line_story(task, config, tmp_path):
     assert load_climber("drafts_only.py", base_dir=tmp_path).sha256 == climber.sha256
 
 
+
+COMPOSED_PY = """\
+from hillclimb import Climber
+from hillclimb.memory import FilesMemory
+from hillclimb.operators import Debug, Draft, Ensemble, Improve
+from hillclimb.sdk import OperatorPolicy, Selection, SelectorPolicy
+from hillclimb.tuners import RandomSearch
+
+
+class MySelectorPolicy(SelectorPolicy):
+    def select(self, state, *, busy=frozenset()):
+        best = state.journal.best_candidate(state.higher_is_better)
+        return Selection(best.candidate_id) if best else None
+
+
+class MyOperatorPolicy(OperatorPolicy):
+    pass
+
+
+climber = Climber(
+    selector_policy=MySelectorPolicy(num_drafts=2),
+    operator_policy=MyOperatorPolicy(),
+    operators=[Draft(), Debug(), Improve(), Ensemble()],
+    tuner=RandomSearch(),
+    memory=FilesMemory(),
+)
+
+if __name__ == "__main__":
+    raise SystemExit("imported, never run: --climber must not start a search")
+"""
+
+
+def test_a_file_that_builds_a_climber_is_that_climber(tmp_path, monkeypatch):
+    """`--climber my_climber.py` on a file that puts a `Climber(...)` together
+    runs that whole climber — its own policies, the operators, tuner and
+    memory it lists — not just the file's one operator policy."""
+    path = tmp_path / "climbers" / "my_climber.py"
+    path.parent.mkdir()
+    path.write_text(COMPOSED_PY)
+    climber = load_climber(str(path))
+    spec = climber.spec
+    assert spec.operator_policy == f"{path.resolve()}:MyOperatorPolicy"
+    assert spec.selector_policy == f"{path.resolve()}:MySelectorPolicy"
+    assert (spec.tuner, spec.memory, spec.selector_params) == ("random", "files", {"num_drafts": 2})
+    assert climber.operator_set().names() == ("draft", "debug", "improve", "ensemble")
+    policy = climber.build_loop().policy
+    assert (type(policy).__name__, type(policy.selector).__name__) == ("MyOperatorPolicy", "MySelectorPolicy")
+    assert climber.portable  # the classes are written as `my_climber.py:Class`, so a fleet can rebuild it
+    # relative to the hillclimb dir, like any climber file
+    monkeypatch.chdir(tmp_path)
+    assert load_climber("climbers/my_climber.py").sha256 == climber.sha256
+    # a plain policy file is untouched: it is still `operator_policy: <file>`
+    plain = tmp_path / "plain.py"
+    plain.write_text(POLICY_PY)
+    assert load_climber(str(plain)).spec.operator_policy == str(plain)
+
+
+def test_a_file_that_builds_two_climbers_names_one(tmp_path):
+    path = tmp_path / "two.py"
+    path.write_text(COMPOSED_PY.split("if __name__")[0] + "other = Climber(selector_policy=MySelectorPolicy())\n")
+    with pytest.raises(ClimberLoadError, match="more than one Climber; name the one to run as two.py:<variable>"):
+        load_climber(str(path))
+    assert load_climber(f"{path}:climber").spec.tuner == "random"
+    assert load_climber(f"{path}:other").spec.selector_policy == f"{path.resolve()}:MySelectorPolicy"
+
 def test_a_one_file_loop_is_recognised(tmp_path):
     path = tmp_path / "two_shots.py"
     path.write_text(

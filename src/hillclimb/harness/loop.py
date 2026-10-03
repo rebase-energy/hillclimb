@@ -166,7 +166,7 @@ class PolicyLoop(Loop):
         if selector is None:
             return None
         busy = {ref.parent_id for ref in view.inflight if ref.parent_id and ref.operator != "tune"}
-        return selector.select(view, busy=busy)
+        return selector.schedule(view, busy=busy)
 
     def propose(self, view: SearchState) -> Action | None:
         """One decision: π_sel, then π_op on what it chose."""

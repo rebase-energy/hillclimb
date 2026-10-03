@@ -78,14 +78,14 @@ problem = Problem(
 # This is the first decision of every step. It reads the history and
 # answers with a node, or None for a root step. The base class carries the
 # schedule (a failing attempt is repaired first, nothing is built on until
-# `num_drafts` roots exist); `pick` is the one choice left: the best so far.
+# `num_drafts` roots exist); `select` is the one choice left: the best so far.
 # ---------------------------------------------------------------------------
 
 
 class BestSoFar(SelectorPolicy):
     name = "best-so-far"
 
-    def pick(self, state: SearchState, *, busy=frozenset()) -> Selection | None:
+    def select(self, state: SearchState, *, busy=frozenset()) -> Selection | None:
         scored = state.journal.scored_candidates()
         if not scored:
             return None

@@ -537,6 +537,8 @@ def render_report(summaries: list[StudySummary]) -> str:
                 verdict = f"{sign}{cmp.gap:.4g} vs {cmp.control}"
                 if cmp.within_noise:
                     verdict += f" — within noise ({summary.noise_floor:g}), not a result"
+                elif cmp.gap == 0:
+                    verdict += " — tie"  # the same score is not "worse" (the --json verdict says so too)
                 elif cmp.within_noise is False:
                     verdict += " — " + ("better" if improves else "worse") + f" beyond noise ({summary.noise_floor:g})"
                 else:

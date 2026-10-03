@@ -303,7 +303,10 @@ ref is imported.
   is a preset (`spec.PRESETS`: `greedy = {operator_policy: greedy}`, `gepa = {loop:
   gepa}`, `openevolve = {operator_policy: greedy, selector_policy: map-elites, params:
   {ensemble: false, tune_budget: 0}}`) or one `.py` file (its one policy or
-  Loop, plus the Operator subclasses in it). Defaults live on the CLASSES
+  Loop, plus the Operator subclasses in it; a file that BUILDS a
+  `Climber(...)` is that whole climber instead, `spec.composed_block`: its
+  classes written `file.py:Class`, imported only when the source calls
+  `Climber(`). Defaults live on the CLASSES
   (`OperatorPolicy.DEFAULTS`, a loop's `operators` / `holdout_timing`), so a preset
   is a one-line block. 0.5 shapes still load: `climber: {ref: X, ...}`,
   `operators` as a mapping, `graph:`, `--set climber.ref=X`, and
@@ -465,14 +468,15 @@ ref is imported.
   are named by `sdk.inspiration_filename(i)`, never a literal
 - Policies and selectors (`modules/policies/`, `modules/selectors/`): ONE
   STEP IS TWO DECISIONS IN A FIXED ORDER (the RSI framework's π_sel then
-  π_op; `PolicyLoop.propose(view)` = `selector.select(view, busy)` then
+  π_op; `PolicyLoop.propose(view)` = `selector.schedule(view, busy)` then
   `policy.propose(view, selection)`; `api.Search.select()/propose()` the
-  same for stepping). The `SelectorPolicy` base OWNS THE SCHEDULE: `select` =
+  same for stepping). The `SelectorPolicy` base OWNS THE SCHEDULE: `schedule` =
   failing tip (`debuggable_tip`) → combine window (`should_combine`,
   `combine_candidates` = `top_distinct(..., skip_kind="combine")`,
   `Selection(combine=True)`) → None while `prospective_branches <
-  num_drafts` (a root step) → `pick(state, busy)`, the ONE method a subclass
-  writes (`Best.pick`, `MapElites.pick`); its knobs (`num_drafts`, `debug`,
+  num_drafts` (a root step) → `select(state, busy)`, the ONE method a subclass
+  writes (`Best.select`, `MapElites.select`; `pick`, its name for one day, is
+  aliased by `__init_subclass__`); its knobs (`num_drafts`, `debug`,
   `max_debug_depth`, `ensemble*`) are `selector_params`, `DEFAULTS` merged over
   the MRO, params held live like a policy's. `spec.SCHEDULE_KNOBS` +
   `schedule_to_selector` move them out of `params` wherever a block is read
@@ -488,7 +492,7 @@ ref is imported.
   (`tune_now(state, candidate)`: budget, gate vs best, headroom, parallel,
   burst) ahead of improve; `greedy.py` must stay byte-identical to
   `problems/meta-heilbronn/greedy.py`. A `SelectorPolicy` (`sync(state)`,
-  `pick(state, busy=) -> Selection(target_id, inspiration_ids,
+  `select(state, busy=) -> Selection(target_id, inspiration_ids,
   prompt_context, meta, combine)`, `creation_meta`) picks the parent: `best`
   (greedy's ranking + busy-target rule) and `map-elites` (OpenEvolve's
   database; its state is a function of the JOURNAL — scored candidates in

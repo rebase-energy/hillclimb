@@ -9,8 +9,8 @@ answers "which operator on it?". The selector never names an operator; the
 policy never picks a node.
 
 The base class carries the schedule every selector shares, and asks a
-subclass only for the one choice that differs between them, `pick`: which
-scored candidate to build on when it is time to build. `best` picks the
+subclass only for the one choice that differs between them, `select`: which
+scored candidate to build on when it is time to build. `best` selects the
 best; `map-elites` samples a quality-diversity archive. Swapping the
 selector swaps the search's exploration without touching that schedule.
 
@@ -19,7 +19,8 @@ Contract:
 - Everything a selector sees is the holdout-blind `SearchState`.
 - Its state is a function of the journal: `sync(state)` brings it up to date
   and is idempotent, so a resumed search rebuilds what a live one had.
-- `select` is a pure function of the state: asked twice, it answers twice.
+- `schedule` and `select` are pure functions of the state: asked twice,
+  they answer twice.
 - A selector never writes: not the journal, not a candidate dir.
 
 This module imports only the standard library, so a selector can take the
@@ -56,10 +57,10 @@ class Selection:
 
 
 class SelectorPolicy:
-    """π_sel, the selector policy. Subclass, set `name`, implement `pick`
+    """π_sel, the selector policy. Subclass, set `name`, implement `select`
     (the scored candidate to build on); override `sync` when it keeps state,
-    `creation_meta` when it tags new drafts, and `select` itself only to
-    change the schedule.
+    `creation_meta` when it tags new drafts, and `schedule` only to change
+    the order around `select`.
 
     Knobs (`selector_params`), with their defaults:
       num_drafts (3)                     root candidates before anything is built on
@@ -110,11 +111,18 @@ class SelectorPolicy:
 
     # --- the contract ---
 
-    def select(self, state: SearchState, *, busy: frozenset[str] | set[str] = frozenset()) -> Selection | None:
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        # `pick` was the hook's name for one day (2026-10-03); a selector
+        # written against it still runs
+        if "pick" in vars(cls) and "select" not in vars(cls):
+            cls.select = vars(cls)["pick"]
+
+    def schedule(self, state: SearchState, *, busy: frozenset[str] | set[str] = frozenset()) -> Selection | None:
         """Which node(s) the next attempt starts from. In order: a failing
         tip (repair comes first), the top candidates once the final window
         is open (`combine=True`), None while fewer than `num_drafts` roots
-        exist (a root step), else whatever `pick` chooses. `busy` holds the
+        exist (a root step), else whatever `select` chooses. `busy` holds the
         candidates an in-flight attempt is already building on."""
         self.sync(state)
         tip = self.debuggable_tip(state)
@@ -127,12 +135,12 @@ class SelectorPolicy:
             )
         if self.prospective_branches(state) < int(self.param("num_drafts")):
             return None
-        return self.pick(state, busy=busy)
+        return self.select(state, busy=busy)
 
-    def pick(self, state: SearchState, *, busy: frozenset[str] | set[str] = frozenset()) -> Selection | None:
+    def select(self, state: SearchState, *, busy: frozenset[str] | set[str] = frozenset()) -> Selection | None:
         """The scored candidate to build on now, or None when there is none
         (the step is then a root step)."""
-        raise NotImplementedError(f"{type(self).__name__} must implement pick(state, busy=...)")
+        raise NotImplementedError(f"{type(self).__name__} must implement select(state, busy=...)")
 
     def creation_meta(self, state: SearchState) -> dict:
         """What to journal on a draft made now (an island, a niche); {} for none."""

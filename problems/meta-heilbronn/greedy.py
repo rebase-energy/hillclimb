@@ -72,9 +72,9 @@ class Greedy(OperatorPolicy):
             )
         if operator == "improve" and target_id is None and selector is not None:
             selector.sync(state)
-            pick = selector.pick(state)
-            if pick is not None:
-                return self.expand_action(state, pick)
+            chosen = selector.select(state)
+            if chosen is not None:
+                return self.expand_action(state, chosen)
         return Action(operator=operator, target_id=target_id)
 
     # --- tune ---

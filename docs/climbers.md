@@ -76,16 +76,23 @@ A bare name instead of a block is a **preset**, or one `.py` file:
 `hillclimb climber show openevolve` prints a preset as the block it stands
 for, ready to paste and edit.
 
+A `.py` file that builds a whole `Climber(...)` (your own policies next to
+built-in operators, tuner and memory) stands for THAT climber:
+`--climber climbers/my_climber.py`, a run spec or an experiment's setup run
+it, the classes it defines are written as `my_climber.py:Class`, and a file
+that builds two names one as `my_climber.py:climber`. A file that builds
+none is one operator policy, as before (`spec.composed_block`).
+
 ## The slots
 
 One step of a search is two decisions, always in this order: the selector
 (π_sel) reads the history and picks the node(s) the next attempt starts
-from, or none; then the policy (π_op) reads the same history and that pick
+from, or none; then the policy (π_op) reads the same history and that choice
 and names the operator. The slots, in the order a step runs them:
 
 | slot | decides | base class | built in |
 |---|---|---|---|
-| `selector_policy` | which node, or none: a failing tip first, roots until `num_drafts`, the top-k to combine in the final window, else the subclass's `pick` | `SelectorPolicy` | `best`, `map-elites` |
+| `selector_policy` | which node, or none: a failing tip first, roots until `num_drafts`, the top-k to combine in the final window, else the subclass's `select` | `SelectorPolicy` | `best`, `map-elites` |
 | `operator_policy` | which operator on what the selector policy chose (draft, debug, ensemble, improve; greedy adds tune) | `OperatorPolicy` | `greedy` |
 | `loop` | the control flow itself (instead of a selector and a policy) | `Loop` | `gepa` |
 | `operators` | how one attempt is made: the prompt the coding agent gets | `Operator` | `draft`, `debug`, `improve`, `ensemble` |
@@ -161,7 +168,7 @@ from hillclimb.sdk import Selection, SelectorPolicy
 class Oldest(SelectorPolicy):
     """Build on the oldest scored candidate."""
 
-    def pick(self, state, *, busy=frozenset()):
+    def select(self, state, *, busy=frozenset()):
         scored = state.journal.scored_candidates()
         return Selection(scored[0].candidate_id, prompt_context="Oldest first.") if scored else None
 ```
@@ -170,10 +177,10 @@ class Oldest(SelectorPolicy):
 climber: {operator_policy: greedy, selector_policy: oldest.py}
 ```
 
-A selector implements `pick`: the scored node to build on, with whatever
+A selector implements `select`: the scored node to build on, with whatever
 rides along — inspirations (copied in beside the parent), a paragraph for the
 prompt, a note journaled on the new candidate; `None` means a root step (the
-policy drafts). The base class's `select` wraps it with the schedule every
+policy drafts). The base class's `schedule` wraps it with the order every
 selector shares and its knobs are `selector_params`: `num_drafts` (3), `debug`
 (True), `max_debug_depth` (3), `ensemble` (True), `ensemble_reserve_fraction`
 (0.2), `ensemble_top_k` (3), `ensemble_max_attempts` (2). A block that still

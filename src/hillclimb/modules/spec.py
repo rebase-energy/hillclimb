@@ -145,9 +145,14 @@ def presets() -> list[str]:
 
 
 def expand_name(ref: str) -> dict[str, Any]:
-    """The block a bare string stands for: a preset, or one file / one class."""
+    """The block a bare string stands for: a preset, a file that puts a whole
+    `Climber(...)` together, or one file / one class (an operator policy)."""
     if ref in PRESETS:
         return json.loads(json.dumps(PRESETS[ref]))  # a copy nobody can edit the preset through
+    if refs.is_file_ref(ref):
+        composed = composed_block(ref)
+        if composed is not None:
+            return composed
     if refs.is_file_ref(ref) or refs.is_module_ref(ref):
         return {"operator_policy": ref}  # a file that defines a Loop is recognised when it is resolved
     raise ValueError(
@@ -155,6 +160,45 @@ def expand_name(ref: str) -> dict[str, Any]:
         "`climber:` block). A directory holding climber.yaml is the pre-0.6 form: "
         f"`hillclimb climber show {ref}` prints it as a block."
     )
+
+
+def composed_block(ref: str, base_dir: Path | None = None) -> dict[str, Any] | None:
+    """The block of the `Climber(...)` a climber file builds, or None when the
+    file builds none (it is then a one-file operator policy, as before).
+
+        climber = Climber(selector_policy=MySelectorPolicy(), operators=[Draft()], ...)
+
+    `--climber that_file.py` runs that climber; `that_file.py:climber` names
+    the instance when the file builds more than one. The classes the file
+    defines are written as `that_file.py:Class`, so the block is portable and
+    a search snapshots the file like any other. A file is only imported when
+    its source calls `Climber(`, so a plain policy file is untouched."""
+    path_str, attr = refs.split_file_ref(ref)
+    path = Path(path_str).expanduser()
+    if not path.is_absolute():
+        path = (Path(base_dir) if base_dir is not None else Path.cwd()) / path
+    try:
+        if not path.is_file() or "Climber(" not in path.read_text(encoding="utf-8", errors="replace"):
+            return None
+    except OSError:
+        return None
+    from hillclimb.climber import Climber  # lazy: this module stays light for config.py
+
+    module = refs.FileScope([path]).import_file(path, "climber")
+    if attr:
+        found = getattr(module, attr, None)
+        if not isinstance(found, Climber):
+            return None  # `file.py:Class` names a module, not a whole climber
+    else:
+        built = [value for value in vars(module).values() if isinstance(value, Climber)]
+        if not built:
+            return None
+        if len({id(c) for c in built}) > 1:
+            raise ValueError(
+                f"{path} builds more than one Climber; name the one to run as {path.name}:<variable>"
+            )
+        found = built[0]
+    return found.to_spec().block()
 
 
 class ClimberSpec(BaseModel):

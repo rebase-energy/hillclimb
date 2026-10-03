@@ -2,7 +2,17 @@
 
 ## Unreleased
 
+### Added
+- **A climber put together in Python runs from the CLI.** A `.py` file that builds a
+  `Climber(selector_policy=…, operator_policy=…, operators=[…], tuner=…, memory=…)` is
+  that whole climber wherever a climber file is accepted: `hillclimb run <problem>
+  --climber climbers/my_climber.py`, a run spec, an experiment's setup, `climber show`.
+  Its own classes are recorded as `my_climber.py:Class`; a file that builds two names one
+  as `my_climber.py:climber`. A file that builds none is still one operator policy.
+
 ### Changed
+- `hillclimb experiment report` called a gap of exactly 0 "worse" when no noise floor
+  was known; it is a tie, as `--json` already said.
 - **The two decisions are named after the RSI framework: `selector_policy` (π_sel)
   and `operator_policy` (π_op).** In a block they were `select:` and `policy:`,
   the selector's knobs `select_params:`; they are `selector_policy:`,
@@ -21,13 +31,13 @@
 - **One step is two decisions, in a fixed order: the selector picks the node, the
   policy picks the operator.** This is the structure of the RSI framework
   (π_sel, then π_op) and the loop now enforces it: `PolicyLoop` asks
-  `selector.select(state, busy)` first and hands what it chose to
+  `selector.schedule(state, busy)` first and hands what it chose to
   `policy.propose(state, selection)`. The selector's answer is the node(s) the next
   attempt starts from: a failing tip (repair comes first), None (a root step), one
   scored candidate, or the top candidates with `combine=True`. The schedule — `num_drafts`,
   `debug`, `max_debug_depth`, `ensemble`, `ensemble_reserve_fraction`, `ensemble_top_k`,
   `ensemble_max_attempts` — therefore moved from the policy to the `Selector` base class
-  (its `select` wraps a subclass's `pick`: `Best.pick`, `MapElites.pick`), and its knobs
+  (its `schedule` wraps a subclass's `select`: `Best.select`, `MapElites.select`), and its knobs
   are `select_params`. A block that still writes them under `params`, a `--set
   climber.params.num_drafts=…`, a v2/v3 record and a pre-0.6 snapshot all load: the
   knobs land in `select_params`. In Python it is `Best(num_drafts=3)`;
@@ -36,7 +46,8 @@
   debug, ensemble, improve) and `Greedy` adds tune, for the CHOSEN candidate only
   (`tune_now`; the old scan for any tunable candidate in the gate is gone). `Policy`
   keeps `draft_action`, `expand_action(state, selection, operator=)`, `draft_complexity`;
-  a selector of your own overrides `pick`, not `select`. The `openevolve` preset is
+  a selector of your own implements `select` (the hook was briefly called `pick`; that
+  spelling still loads) and leaves `schedule` alone. The `openevolve` preset is
   `select_params: {ensemble: false}` + `params: {tune_budget: 0}`.
 - **`Climber`'s keywords are in the order a step runs them**: `select`, `policy`,
   `operators`, `tuner`, `memory` (then `loop`, `params`, `select_params`, `prompts`,

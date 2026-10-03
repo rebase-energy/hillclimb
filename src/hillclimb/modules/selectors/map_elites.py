@@ -129,7 +129,7 @@ class MapElites(SelectorPolicy):
             self._add(state, candidate, position)
             self._synced.append((candidate.candidate_id, float(candidate.val_score)))
 
-    def pick(self, state: SearchState, *, busy=frozenset()) -> Selection | None:
+    def select(self, state: SearchState, *, busy=frozenset()) -> Selection | None:
         pool = self._parent_pool(state)
         if not pool:
             return None

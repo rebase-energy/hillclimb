@@ -5,7 +5,7 @@
 
 Every step of a search is two decisions, in order. The selector (π_sel)
 reads the history and picks the node the next attempt starts from, or none.
-Then the policy (π_op) reads the same history and that pick, and names the
+Then the policy (π_op) reads the same history and that choice, and names the
 operator. A policy of your own is the second decision. Three policies over
 the same selector and budget show how much it matters on a terrain with one
 narrow peak among broad decoys.

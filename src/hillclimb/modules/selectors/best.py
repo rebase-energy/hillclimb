@@ -15,7 +15,7 @@ class Best(SelectorPolicy):
 
     name = "best"
 
-    def pick(self, state: SearchState, *, busy=frozenset()) -> Selection | None:
+    def select(self, state: SearchState, *, busy=frozenset()) -> Selection | None:
         direction = -1 if state.higher_is_better else 1
         ranked = sorted(
             (c for c in state.journal.scored_candidates() if improvable(c)),
