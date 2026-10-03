@@ -258,8 +258,9 @@ model: sonnet
 # climber: greedy          # HOW to climb, this folder's default. A preset: greedy | openevolve | gepa,
 #                          # or one .py file. A run spec's own `climber:` replaces it
 # climber:                 # ...or the whole block (`hillclimb climber show greedy` prints one to edit)
-#   policy: greedy         # a name, a file (mine.py or mine.py:Class) or package.module:Class
-#   params: {num_drafts: 3}
+#   selector_policy: best  # which candidate to build on next: best | map-elites, or a file / package.module:Class
+#   selector_params: {num_drafts: 3}
+#   operator_policy: greedy  # which operator to use on it: a name, a file (mine.py or mine.py:Class) or package.module:Class
 #   operators: [draft, debug, improve, ensemble]
 #   tuner: random          # random | optuna (parameter tuning of candidates that declare params.json)
 #   memory: files          # files | none

@@ -70,7 +70,7 @@ class ClimberLoadError(ValueError):
 class Kind:
     """One module slot: how a file's pick is recognised and what may be named."""
 
-    name: str  # the key it is written under: `policy`, `tuner`, `graph`
+    name: str  # the key it is written under: `operator_policy`, `tuner`, `graph`
     noun: str  # how messages call it
     attr: str | None = None  # module attribute that names a file's pick explicitly
     base: str | None = None  # `module:Class` every pick must subclass (None = duck-typed)
@@ -106,10 +106,11 @@ class Kind:
 KINDS: dict[str, Kind] = {
     kind.name: kind
     for kind in (
-        Kind("policy", "policy", attr="POLICY", duck=("propose", "observe"), home="hillclimb.modules.policies"),
+        Kind("operator_policy", "operator policy", attr="POLICY", duck=("propose", "observe"),
+             home="hillclimb.modules.policies"),
         Kind("loop", "loop", attr="LOOP", base="hillclimb.harness.loop:Loop", home="hillclimb.climbers"),
-        Kind("select", "selector", attr="SELECTOR", base="hillclimb.modules.selectors.base:Selector",
-             home="hillclimb.modules.selectors"),
+        Kind("selector_policy", "selector policy", attr="SELECTOR",
+             base="hillclimb.modules.selectors.base:SelectorPolicy", home="hillclimb.modules.selectors"),
         Kind("operator", "operator", base="hillclimb.modules.operators.base:Operator",
              home="hillclimb.modules.operators"),
         Kind("tuner", "tuner", attr="TUNER", duck=("ask",), home="hillclimb.modules.tuners"),
@@ -123,11 +124,16 @@ KINDS: dict[str, Kind] = {
 }
 
 
+# the two decisions were the kinds `policy` and `select` until 0.7; a
+# `refs.register("policy", ...)` in a user's file still lands
+KIND_ALIASES = {"policy": "operator_policy", "select": "selector_policy"}
+
+
 def kind_of(kind: str | Kind) -> Kind:
     if isinstance(kind, Kind):
         return kind
     try:
-        return KINDS[kind]
+        return KINDS[KIND_ALIASES.get(kind, kind)]
     except KeyError:
         raise ClimberLoadError(f"unknown module kind {kind!r} (known: {', '.join(sorted(KINDS))})") from None
 

@@ -34,7 +34,7 @@ from hillclimb.harness.candidate import Candidate  # noqa: E402
 from hillclimb.harness.loop import PolicyLoop  # noqa: E402
 from hillclimb.modules.policies.greedy import Greedy  # noqa: E402
 from hillclimb.modules.selectors.best import Best  # noqa: E402
-from hillclimb.modules.policies.base import TUNE_ACTION, Action, Policy  # noqa: E402
+from hillclimb.modules.policies.base import TUNE_ACTION, Action, OperatorPolicy  # noqa: E402
 
 
 class LiveParams(dict):
@@ -70,7 +70,7 @@ class SearchRig(Harness):
     `run()` with no action runs the whole search; with one it is
     `Harness.run(action)`."""
 
-    def __init__(self, *args, complexity_start: int = 0, policy: Policy | None = None, **kwargs):
+    def __init__(self, *args, complexity_start: int = 0, policy: OperatorPolicy | None = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.complexity_start = complexity_start
         self.policy = policy or Greedy(

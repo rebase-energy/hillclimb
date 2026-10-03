@@ -30,8 +30,8 @@ def main(evaluations: int = 10, agent: str = "claude-code") -> SearchOutcome:
     # A climber is a set of modules. Each slot takes an instance, a class or a
     # name, and anything you leave out keeps its default.
     climber = Climber(
-        select=Best(num_drafts=3, ensemble=False),     # which node to build on, or none (π_sel)
-        policy=Greedy(),                               # which operator to apply to it (π_op)
+        selector_policy=Best(num_drafts=3, ensemble=False),     # which node to build on, or none (π_sel)
+        operator_policy=Greedy(),                               # which operator to apply to it (π_op)
         operators=[Draft(), Debug(), Improve()],       # how that attempt is made
         tuner=RandomSearch(),                          # how a tune trial picks its parameter values
     )

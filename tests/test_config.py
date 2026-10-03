@@ -9,7 +9,7 @@ from hillclimb.config import Config
 def test_defaults_load():
     config = Config.load()
     assert config.agent == "claude-code"
-    assert config.climber.policy == "greedy" and config.climber.params == {}  # the policy's class holds the defaults
+    assert config.climber.operator_policy == "greedy" and config.climber.params == {}  # the policy's class holds the defaults
 
 
 def test_overrides():
@@ -26,12 +26,12 @@ def test_none_overrides_ignored():
 
 def test_missing_file_uses_defaults(tmp_path: Path):
     config = Config.load(path=tmp_path / "nope.yaml")
-    assert config.climber.policy == "greedy" and config.concurrency.parallel_agents == 1
+    assert config.climber.operator_policy == "greedy" and config.concurrency.parallel_agents == 1
 
 
 def test_policy_and_routing_defaults():
     config = Config()
-    assert config.climber.policy == "greedy"
+    assert config.climber.operator_policy == "greedy"
     assert config.climber.params == {}
     assert config.routing == {}
 
@@ -53,13 +53,13 @@ search:
     assert config.routing["draft"].model == "opus-4.8"
     assert config.routing["improve"].agent is None  # inherits global agent
     assert config.routing["improve"].model == "haiku"
-    assert config.climber.policy == "greedy"
+    assert config.climber.operator_policy == "greedy"
     assert config.climber.params == {"beam": 3}
 
 
 def test_policy_dotted_override():
     config = Config.load(**{"search.policy": "openevolve"})
-    assert config.climber.label == "openevolve" and config.climber.select == "map-elites"
+    assert config.climber.label == "openevolve" and config.climber.selector_policy == "map-elites"
 
 
 def test_subscription_env_strips_api_key(monkeypatch):
@@ -216,22 +216,22 @@ def test_the_climber_block_is_the_climber():
     it DEFINES the folder's climber. A bare name is a preset."""
     from hillclimb.config import parse_set_overrides
 
-    assert Config.model_validate({"climber": "openevolve"}).climber.select == "map-elites"
+    assert Config.model_validate({"climber": "openevolve"}).climber.selector_policy == "map-elites"
     assert Config.model_validate({"climber": "gepa"}).climber.block()["loop"] == "gepa"
     config = Config.model_validate(
-        {"climber": {"policy": "greedy", "params": {"num_drafts": 5}, "tuner": "optuna", "memory": "none",
+        {"climber": {"operator_policy": "greedy", "params": {"num_drafts": 5}, "tuner": "optuna", "memory": "none",
                      "operators": ["draft", "improve"], "operator_params": {"draft": {"retrieval": False}}}}
     )
     # a schedule knob under `params` is the selector's (the only way to write it before 0.7)
     assert (config.climber.params, config.climber.tuner, config.climber.memory) == ({}, "optuna", "none")
-    assert config.climber.select_params == {"num_drafts": 5}
+    assert config.climber.selector_params == {"num_drafts": 5}
     assert config.climber.operators == ["draft", "improve"]
     # `--set` edits the block's fields; one operator's params are addressed by its name
     config.apply_overrides(parse_set_overrides(
         ["climber.params.num_drafts=1", "climber.operators.improve.ablation=false", "climber.tuner_params.seed=3"]
     ))
     # a schedule knob set as `climber.params.X` (the old spelling) lands where the selector reads it
-    assert config.climber.select_params == {"num_drafts": 1} and config.climber.tuner_params == {"seed": 3}
+    assert config.climber.selector_params == {"num_drafts": 1} and config.climber.tuner_params == {"seed": 3}
     assert config.climber.operator_params == {"draft": {"retrieval": False}, "improve": {"ablation": False}}
     assert config.climber.operators == ["draft", "improve"]  # which operators run is untouched
     # naming a climber replaces the block — whole, so one policy's params never reach another
@@ -240,13 +240,13 @@ def test_the_climber_block_is_the_climber():
         {"climber": {"loop": "gepa", "params": {"max_metric_calls": 9}}}
     ).climber.block()
     # a block, inline, as a child engine receives it
-    config.apply_overrides(parse_set_overrides(['climber={"policy": "mine.py", "params": {"k": 2}}']))
-    assert (config.climber.policy, config.climber.loop, config.climber.params) == ("mine.py", None, {"k": 2})
+    config.apply_overrides(parse_set_overrides(['climber={"operator_policy": "mine.py", "params": {"k": 2}}']))
+    assert (config.climber.operator_policy, config.climber.loop, config.climber.params) == ("mine.py", None, {"k": 2})
     # a climber has a policy or a loop: naming one drops the other
     config.apply_overrides(parse_set_overrides(["climber.loop=gepa"]))
-    assert (config.climber.policy, config.climber.loop) == (None, "gepa")
+    assert (config.climber.operator_policy, config.climber.loop) == (None, "gepa")
     with pytest.raises(ValueError):
-        Config.model_validate({"climber": {"policy": "greedy", "polcy": "x"}})  # a typo is not silently ignored
+        Config.model_validate({"climber": {"operator_policy": "greedy", "polcy": "x"}})  # a typo is not silently ignored
     with pytest.raises(ValueError, match="Unknown climber: nope"):
         Config().apply_overrides({"climber": "nope"})
     # the memory kind: `files` (the YAML under hillclimb/knowledge/), its pre-0.4
@@ -274,8 +274,8 @@ def test_the_0_5_climber_block_still_loads():
     )
     # ...and 0.5's openevolve kept MAP-Elites' settings among its params: they are the selector's
     assert config.climber.block() == Config.model_validate({"climber": {
-        "name": "openevolve", "policy": "greedy", "select": "map-elites",
-        "params": {"ensemble": False, "tune_budget": 0}, "select_params": {"num_islands": 3},
+        "name": "openevolve", "operator_policy": "greedy", "selector_policy": "map-elites",
+        "params": {"ensemble": False, "tune_budget": 0}, "selector_params": {"num_islands": 3},
         "tuner_params": {"seed": 2}, "operator_params": {"draft": {"retrieval": False}},
     }}).climber.block()
     config.apply_overrides(parse_set_overrides(["climber.ref=gepa"]))  # the 0.5 way to name one
@@ -304,7 +304,7 @@ def test_the_folders_block_replaces_the_user_levels_whole(tmp_path, monkeypatch)
     config = Config.load()
     assert config.model == "sonnet" and config.climber.tuner == "optuna"
     # the user-level block's file refs resolve from ITS folder, wherever it is used from
-    assert config.climber.policy == str(user.parent / "mine.py")
+    assert config.climber.operator_policy == str(user.parent / "mine.py")
 
 
 def test_a_config_file_written_for_0_3_still_loads():
@@ -316,10 +316,10 @@ def test_a_config_file_written_for_0_3_still_loads():
         "operators": {"draft_retrieval": False, "knowledge_tool": False},
     }
     config = Config.model_validate(old)
-    assert (config.climber.label, config.climber.select, config.climber.tuner) == ("openevolve", "map-elites", "optuna")
+    assert (config.climber.label, config.climber.selector_policy, config.climber.tuner) == ("openevolve", "map-elites", "optuna")
     assert config.climber.params == {"tune_budget": 0}
     # MAP-Elites' setting and the schedule's knobs: the selector's
-    assert config.climber.select_params == {"population_size": 50, "num_drafts": 2, "ensemble": False, "ensemble_top_k": 4}
+    assert config.climber.selector_params == {"population_size": 50, "num_drafts": 2, "ensemble": False, "ensemble_top_k": 4}
     assert config.climber.operator_params == {"draft": {"retrieval": False}}
     assert config.learning.tool is False
     assert (config.concurrency.parallel_agents, config.evaluation.n_replicates, config.evaluation.noise_k) == (3, 4, 2.0)
@@ -336,7 +336,7 @@ def test_legacy_set_overrides_keep_working_and_removed_keys_say_what_to_do():
     ))
     assert config.climber.label == "openevolve"
     assert config.climber.params == {"tune_budget": 0, "population_size": 9}
-    assert config.climber.select_params == {"ensemble": False, "ensemble_top_k": 5}
+    assert config.climber.selector_params == {"ensemble": False, "ensemble_top_k": 5}
     assert config.concurrency.parallel_agents == 2
     assert config.climber.operator_params == {"improve": {"ablation": False}}
     assert current_setting("budget.total_s") == "budget.total_s"  # today's keys pass through
@@ -376,7 +376,7 @@ def test_the_blocks_graph_module_is_used_and_reading_memory_survives_a_broken_cl
     assert build_graph_module(config).key == "hillclimb.modules.memory.graph:KnowledgeGraphBuilder"
     # outside a search, a climber that will not load falls back to the built-in:
     # `hillclimb knowledge …` must keep working whatever the block says
-    for broken in ({"graph": "nope"}, {"policy": str(tmp_path / "missing.py")}):
+    for broken in ({"graph": "nope"}, {"operator_policy": str(tmp_path / "missing.py")}):
         config = Config.model_validate({"climber": broken})
         notes = []
         assert build_graph_module(config, log=notes.append).name == "knowledge-graph"

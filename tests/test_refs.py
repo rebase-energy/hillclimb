@@ -44,7 +44,7 @@ def test_the_three_forms(tmp_path):
 
 def test_a_file_names_its_pick_by_attribute_or_by_being_the_only_one(tmp_path):
     two = write(tmp_path / "two.py", POLICY + POLICY.replace("Mine", "Other"))
-    with pytest.raises(ClimberLoadError, match="must define exactly one policy class .*Mine.*Other.* or set POLICY"):
+    with pytest.raises(ClimberLoadError, match="must define exactly one operator policy class .*Mine.*Other.* or set POLICY"):
         resolve_ref(str(two), "policy")
     assert resolve_ref(f"{two}:Other", "policy").target.__name__ == "Other"
     write(tmp_path / "picked.py", POLICY + POLICY.replace("Mine", "Other") + "POLICY = Other\n")

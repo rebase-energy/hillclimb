@@ -1311,7 +1311,7 @@ def run(
 
         import hillclimb as hc
 
-        outcome = hc.run("heilbronn-11", climber=hc.Climber(policy=hc.policies.Greedy(num_drafts=5)),
+        outcome = hc.run("heilbronn-11", climber=hc.Climber(operator_policy=hc.policies.Greedy(num_drafts=5)),
                          budget="10m")
         outcome.selected.val_score
 
@@ -1368,7 +1368,7 @@ def start(
     search: `hillclimb watch` shows it, and one closed with budget left can
     be resumed with `hillclimb resume`. One at a time per process.
 
-        search = hc.Climber(policy="greedy").start("fitness-landscape", agent="toy")
+        search = hc.Climber(operator_policy="greedy").start("fitness-landscape", agent="toy")
     """
     global _STEPPING
     _not_while_importing("start")

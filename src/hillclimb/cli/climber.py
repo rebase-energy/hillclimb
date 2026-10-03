@@ -19,7 +19,7 @@ from hillclimb.problem import load_problem
 climber_app = typer.Typer(
     cls=HillclimbGroup,
     help=(
-        "Climbers — the shareable bundle that decides HOW to hillclimb (policy, operators, "
+        "Climbers — the shareable bundle that decides HOW to hillclimb (policies, operators, "
         "prompts, tuner): list them, start your own, check one before spending budget on it"
     ),
     short_help="Climbers, the swappable search methods: list, copy, check.",
@@ -72,7 +72,7 @@ def climber_list(as_json: bool = typer.Option(False, "--json", help="Machine-rea
     for ref, origin in refs:
         try:
             climber = load_climber(ref, base_dir)
-            kind, description = ("loop" if climber.is_loop else "policy"), climber.description
+            kind, description = ("loop" if climber.is_loop else "operator policy"), climber.description
         except (ClimberLoadError, ValueError) as exc:
             rows.append({"ref": ref, "origin": origin, "kind": "?", "description": f"BROKEN: {exc}",
                          "sha256": None, "default": climber_label(ref) == default})
@@ -99,10 +99,10 @@ def climber_list(as_json: bool = typer.Option(False, "--json", help="Machine-rea
 
     say("\n[head]Building blocks[/] [note](a `climber:` block names one per slot; a .py file or package.module:Class works too)[/]")
     for slot, kind in (
-        ("policy", "policy"), ("select", "select"), ("loop", "loop"), ("operators", "operator"),
-        ("tuner", "tuner"), ("memory", "memory"),
+        ("selector_policy", "selector_policy"), ("operator_policy", "operator_policy"), ("loop", "loop"),
+        ("operators", "operator"), ("tuner", "tuner"), ("memory", "memory"),
     ):
-        say(f"  {slot:<10} [path]{_m(', '.join(module_refs.registered_names(kind)))}[/]")
+        say(f"  {slot:<16} [path]{_m(', '.join(module_refs.registered_names(kind)))}[/]")
     say("\n[note]* = this folder's default.[/]  Run one:        [cmd]hillclimb run <problem> --climber <name>[/]")
     say("                              See its block:  [cmd]hillclimb climber show <name>[/]")
     say("                              Start your own: [cmd]hillclimb climber new <name> --from greedy[/]")
@@ -168,7 +168,7 @@ def climber_new(
 ):
     """Start your own climber from a copy of an existing one.
 
-    Copies the source of the policy (or loop) into climbers/<name>.py — a
+    Copies the source of the operator policy (or loop) into climbers/<name>.py — a
     one-file climber you can edit — and prints the block that runs it.
     """
     import inspect
@@ -197,7 +197,7 @@ def climber_new(
     local.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_file, target)
     ref = _climber_ref(target, base_dir)
-    brain = "loop" if source.is_loop else "policy"
+    brain = "loop" if source.is_loop else "operator_policy"
     class_name = getattr(source.brain.target, "__name__", "")
     block = {**_portable_block(source, base_dir), "name": name, brain: f"{ref}:{class_name}" if class_name else ref}
     try:
@@ -234,10 +234,10 @@ def climber_check(
     """Conformance check for a climber — the cheap pre-verifier.
 
     Resolves every module the block names, then replays every recorded
-    journal (plus an empty one) through the climber's policy with no coding agent or
+    journal (plus an empty one) through the climber's policies with no coding agent or
     verifier: two fresh instances must propose the same action at every
     budget point and a resumed one must agree with a live one (the resume
-    contract), every referenced candidate must exist, the policy must never
+    contract), every referenced candidate must exist, the policies must never
     write, and the climber's prompts must lint clean. Exit 1 on any breach.
     `--smoke` follows up with a short `--agent dummy` search so the whole
     loop — prompts included — runs once before a coding agent hour is spent on it.
@@ -326,7 +326,7 @@ def _check_climber(config: Config, *, problem, limit, smoke, smoke_budget, as_js
     if loaded.is_loop:
         fail(
             f"{_m(loaded.name)} brings its own Loop; "
-            "the conformance check covers climbers built on a Policy"
+            "the conformance check covers climbers built on an OperatorPolicy"
         )
         return 2, None
 

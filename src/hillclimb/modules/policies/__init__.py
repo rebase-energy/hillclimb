@@ -1,6 +1,6 @@
 """Search policies: WHAT to try next.
 
-`base.py` is the contract (`Policy`, `Action`, `SearchState`), `greedy.py`
+`base.py` is the contract (`OperatorPolicy`, `Action`, `SearchState`), `greedy.py`
 the bundled schedule, `check.py` the conformance check behind `hillclimb
 climber check`, `compat.py` what pre-0.6 snapshots still name. A policy is
 loaded as part of a climber (`hillclimb.climber`), by registry name
@@ -10,9 +10,9 @@ loaded as part of a climber (`hillclimb.climber`), by registry name
 from __future__ import annotations
 
 from hillclimb.modules import refs
-from hillclimb.modules.policies.base import Policy
+from hillclimb.modules.policies.base import OperatorPolicy
 from hillclimb.modules.policies.greedy import Greedy
 
-refs.register("policy", "greedy", Greedy)
+refs.register("operator_policy", "greedy", Greedy)
 
 __all__ = ["Greedy", "Policy"]

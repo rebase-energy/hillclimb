@@ -144,7 +144,7 @@ def test_run_suite_hands_each_child_the_climber_its_entry_defines(config, tmp_pa
     )
     suite = root / "suite.yaml"
     suite.write_text(yaml.safe_dump({"problems": [
-        {"target": "a", "climber": {"policy": "mine.py", "params": {"k": 1}}, "set": ["climber.params.k=2"]},
+        {"target": "a", "climber": {"operator_policy": "mine.py", "params": {"k": 1}}, "set": ["climber.params.k=2"]},
         "b",
     ]}))
     config.paths.problems_dir = root
@@ -162,12 +162,12 @@ def test_run_suite_hands_each_child_the_climber_its_entry_defines(config, tmp_pa
 
     first, second = calls
     sets = [first[i + 1] for i, word in enumerate(first) if word == "--set"]
-    assert json.loads(sets[0].removeprefix("climber="))["policy"] == str(root / "mine.py")  # relative to the spec
+    assert json.loads(sets[0].removeprefix("climber="))["operator_policy"] == str(root / "mine.py")  # relative to the spec
     assert sets[1:] == ["climber.params.k=2"] and "--climber" not in first
     assert "--set" not in second and "--climber" not in second  # no climber named: the child reads the folder's
     written = yaml.safe_load((iter_run_dirs(config.paths.runs_dir)[0] / "spec.yaml").read_text())["problems"]
-    assert written[0]["climber"]["policy"] == str(root / "mine.py") and written[0]["climber"]["params"] == {"k": 1}
-    assert written[1]["climber"]["select"] == "map-elites"  # the full block, though the entry named none
+    assert written[0]["climber"]["operator_policy"] == str(root / "mine.py") and written[0]["climber"]["params"] == {"k": 1}
+    assert written[1]["climber"]["selector_policy"] == "map-elites"  # the full block, though the entry named none
 
     calls.clear()
     _run_suite(str(suite), config, budget="10m", agent="dummy", model=None, holdout=True, name="Demo2", climber="gepa")
@@ -272,7 +272,7 @@ def test_create_search_persists_policy_and_routing(task, config, tmp_path):
     search_dir = create_search(config, task, tmp_path / "runs" / "r1", "r1", total_s=600)
     meta = load_search_meta(search_dir)
     assert meta.climber == "greedy" and meta.schema_version == SCHEMA_VERSION
-    assert meta.climber_spec["policy"] == "greedy" and meta.climber_spec["select_params"] == {"num_drafts": 2}
+    assert meta.climber_spec["operator_policy"] == "greedy" and meta.climber_spec["selector_params"] == {"num_drafts": 2}
     assert meta.climber_ref is None  # only a pre-0.6 record names its climber by reference
     assert meta.routing == {"draft": {"model": "opus-4.8"}}
 
@@ -313,9 +313,9 @@ def test_resume_restores_policy_and_routing(config, tmp_path, monkeypatch):
     resume("run-1/a")
 
     restored = captured["config"]
-    assert (restored.climber.label, restored.climber.select) == ("openevolve", "map-elites")
+    assert (restored.climber.label, restored.climber.selector_policy) == ("openevolve", "map-elites")
     assert restored.climber.params == {"tune_budget": 0}
-    assert restored.climber.select_params == {"ensemble": False, "num_drafts": 2}
+    assert restored.climber.selector_params == {"ensemble": False, "num_drafts": 2}
     assert restored.routing["draft"].model == "opus-4.8"
     assert restored.routing["draft"].agent is None
 
@@ -1113,7 +1113,7 @@ def test_run_with_several_policies_launches_a_mixed_fleet(config, monkeypatch, t
         FleetEngine(experiment="gepa", climber="gepa", overrides=("concurrency.parallel_agents=1",)),
     ]
     assert call["study"] == "three-way" and call["overrides"] == ["learning.enabled=false"]
-    assert config.climber.policy == "greedy"  # the parent's config is not bent to any one experiment
+    assert config.climber.operator_policy == "greedy"  # the parent's config is not bent to any one experiment
     assert "3 searches (greedy, openevolve, gepa)" in result.output
     assert "hillclimb experiment report three-way" in result.output
 
@@ -1167,7 +1167,7 @@ def test_resume_runs_the_snapshot_and_says_when_the_live_climber_changed(task, c
     policy_file = tmp_path / "drafts_only.py"
     policy_file.write_text(FILE_POLICY)
     config.apply_overrides({"climber": {
-        "policy": str(policy_file), "params": {"num_drafts": 2}, "operators": ["draft", "debug"],
+        "operator_policy": str(policy_file), "params": {"num_drafts": 2}, "operators": ["draft", "debug"],
         "operator_params": {"draft": {"retrieval": False}}, "tuner_params": {"seed": 5}, "memory": "none",
     }})
     run_dir = create_run(config, RunMeta(run_id="run-1", name="run-1", kind="problem", target="x", problem_ids=[task.problem_id]))
@@ -1178,19 +1178,19 @@ def test_resume_runs_the_snapshot_and_says_when_the_live_climber_changed(task, c
 
     resume(f"run-1/{search_dir.name}")
     restored = captured["config"].climber
-    assert restored.policy == str(search_dir / "climber" / "files" / "drafts_only.py") and restored.loop is None
-    assert (restored.select_params, restored.operators, restored.memory) == ({"num_drafts": 2}, ["draft", "debug"], "none")
+    assert restored.operator_policy == str(search_dir / "climber" / "files" / "drafts_only.py") and restored.loop is None
+    assert (restored.selector_params, restored.operators, restored.memory) == ({"num_drafts": 2}, ["draft", "debug"], "none")
     assert restored.operator_params == {"draft": {"retrieval": False}} and restored.tuner_params == {"seed": 5}
     assert "changed since" not in capsys.readouterr().err
 
     policy_file.write_text(FILE_POLICY + "# edited\n")
     resume(f"run-1/{search_dir.name}")
     assert "changed since the search started" in capsys.readouterr().err
-    assert captured["config"].climber.policy == restored.policy  # still the version it started with
+    assert captured["config"].climber.operator_policy == restored.operator_policy  # still the version it started with
 
     policy_file.unlink()
     resume(f"run-1/{search_dir.name}")  # gone: the snapshot is what runs
-    assert captured["config"].climber.policy == restored.policy
+    assert captured["config"].climber.operator_policy == restored.operator_policy
 
 
 def test_resume_of_a_search_without_a_snapshot_needs_the_live_climber(config, tmp_path, monkeypatch, capsys):
@@ -1217,7 +1217,7 @@ def test_resume_of_a_search_without_a_snapshot_needs_the_live_climber(config, tm
     captured = _resumable(config, tmp_path, monkeypatch)
 
     resume("run-1/a")
-    assert captured["config"].climber.policy == str(policy_file)
+    assert captured["config"].climber.operator_policy == str(policy_file)
     assert "predates climber snapshots" in capsys.readouterr().err
 
     policy_file.unlink()

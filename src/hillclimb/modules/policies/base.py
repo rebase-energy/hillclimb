@@ -10,7 +10,7 @@ that pick and names the operator: a root step gets a `create` operator
 (ensemble). The loop (`harness/loop.py`) makes the two calls in that order;
 a policy never picks a node, a selector never names an operator.
 
-A `Policy` proposes `Action`s over a read-only `SearchState`; the harness
+An `OperatorPolicy` proposes `Action`s over a read-only `SearchState`; the harness
 (`hillclimb.harness.Harness`) materializes each action into a candidate dir,
 prompt and coding agent call, executes it, and journals the outcome.
 
@@ -147,17 +147,17 @@ class SearchState:
 _MISSING = object()
 
 
-class Policy:
-    """π_op: which operator to apply to what the selector chose — nothing
-    else.
+class OperatorPolicy:
+    """π_op, the operator policy: which operator to apply to what the
+    selector policy chose — nothing else.
 
     Subclass it, list your knobs in `DEFAULTS`, override `propose`. The base
     `propose` is the plain mapping — no node: draft; a failing node: debug;
-    several nodes: ensemble; a scored node: improve — so a policy of your own
-    only has to say where it differs (which `refine` operator, when to tune,
-    …). The base also carries `param`, `resolved_params`, the selector the
-    loop asks first (`self.selector`, `default_selector` unless the climber's
-    block names another) and `draft_complexity`.
+    several nodes: ensemble; a scored node: improve — so an operator policy
+    of your own only has to say where it differs (which `refine` operator,
+    when to tune, …). The base also carries `param`, `resolved_params`, the
+    selector policy the loop asks first (`self.selector`, `default_selector`
+    unless the climber's block names another) and `draft_complexity`.
 
     A class with `propose(state, selection)` and `observe(state, candidate)`
     and no base still runs — the contract is the two methods.
@@ -169,7 +169,7 @@ class Policy:
     DEFAULTS: Mapping[str, Any] = {
         "complexity_start": 0,  # offset of the draft-complexity cue (memory may have learned one)
     }
-    # the selector a policy of this class uses when the block names none
+    # the selector policy an operator policy of this class uses when the block names none
     default_selector: str | None = "best"
     # a param the block sets must be one of `DEFAULTS` (a typo fails before
     # any spend). False for a class that takes free-form params
@@ -182,13 +182,13 @@ class Policy:
 
         known = self.defaults() if self.strict_params else None
         if known is not None:
-            from hillclimb.modules.selectors.base import Selector
+            from hillclimb.modules.selectors.base import SelectorPolicy
 
-            moved = sorted(set(knobs) & set(Selector.defaults()) - set(known))
+            moved = sorted(set(knobs) & set(SelectorPolicy.defaults()) - set(known))
             if moved:
                 raise TypeError(
                     f"{type(self).__name__} has no param {', '.join(map(repr, moved))}: the schedule is the "
-                    f"selector's (π_sel), e.g. Best({moved[0]}=...) or `select_params:` in the block"
+                    f"selector policy's (π_sel), e.g. Best({moved[0]}=...) or `selector_params:` in the block"
                 )
         self.params = with_knobs(params, knobs, known, type(self).__name__)
         self._selector = selector
@@ -290,3 +290,7 @@ class Policy:
         """The complexity cue for the next draft: it escalates per draft."""
         index = len(state.journal.drafts()) + int(self.param("complexity_start"))
         return "minimal" if index == 0 else "moderate" if index == 1 else "advanced"
+
+
+# the pre-0.7 name; one release of grace
+Policy = OperatorPolicy

@@ -3,6 +3,21 @@
 ## Unreleased
 
 ### Changed
+- **The two decisions are named after the RSI framework: `selector_policy` (π_sel)
+  and `operator_policy` (π_op).** In a block they were `select:` and `policy:`,
+  the selector's knobs `select_params:`; they are `selector_policy:`,
+  `operator_policy:` and `selector_params:` now, and the old spellings still
+  load — in a block, as `--set climber.select=…`/`climber.policy=…`/
+  `climber.select_params.*`, in a snapshot and in a search's record — the new
+  spelling winning where both are given. What is written out (`climber show`,
+  a snapshot, `climber.write()`, `to_spec().block()`) uses the new keys. A
+  climber's identity is unchanged by the rename, so a search started before
+  it resumes without a "climber changed" note. The classes are
+  `SelectorPolicy` and `OperatorPolicy` (`hillclimb.sdk`, `hillclimb.selectors`,
+  `hillclimb.policies`); `Selector` and `Policy` remain as aliases for one
+  release. In Python: `Climber(selector_policy=…, operator_policy=…)`;
+  `select=`, `policy=` and `select_params=` still work. The file-ref markers
+  `SELECTOR = …` / `POLICY = …` and `refs.register("policy", …)` are unchanged.
 - **One step is two decisions, in a fixed order: the selector picks the node, the
   policy picks the operator.** This is the structure of the RSI framework
   (π_sel, then π_op) and the loop now enforces it: `PolicyLoop` asks

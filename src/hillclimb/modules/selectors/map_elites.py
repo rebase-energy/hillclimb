@@ -15,7 +15,7 @@ saved/restored global-RNG window — OpenEvolve samples through the `random`
 module — so `resume` and a fresh process make the same picks from the same
 journal.
 
-Params (`select_params`, all optional):
+Params (`selector_params`, all optional):
   num_islands, population_size, archive_size, feature_dimensions,
   feature_bins, exploration_ratio, exploitation_ratio, elite_selection_ratio,
   migration_interval, migration_rate, random_seed
@@ -37,7 +37,7 @@ from dataclasses import fields as dataclass_fields
 from datetime import datetime
 from pathlib import Path
 
-from hillclimb.sdk import Candidate, SearchState, Selection, Selector, improvable
+from hillclimb.sdk import Candidate, SearchState, Selection, SelectorPolicy, improvable
 
 BUILTIN_FEATURES = ("complexity", "diversity", "score")
 DEFAULT_SEED = 42
@@ -68,10 +68,10 @@ def known_params() -> tuple[str, ...]:
     """Every setting the selector takes: the schedule every selector has,
     its own, and the database's."""
     DatabaseConfig, _, _ = _require_openevolve()
-    return (*Selector.defaults(), *OWN_PARAMS, *sorted(f.name for f in dataclass_fields(DatabaseConfig)))
+    return (*SelectorPolicy.defaults(), *OWN_PARAMS, *sorted(f.name for f in dataclass_fields(DatabaseConfig)))
 
 
-class MapElites(Selector):
+class MapElites(SelectorPolicy):
     """A population kept diverse over feature dimensions, on islands."""
 
     name = "map-elites"
@@ -81,11 +81,11 @@ class MapElites(Selector):
         super().__init__(params, **knobs)
         DatabaseConfig, self._Program, self._ProgramDatabase = _require_openevolve()
         db_fields = {f.name for f in dataclass_fields(DatabaseConfig)}
-        unknown = sorted(set(self.params) - db_fields - set(OWN_PARAMS) - set(Selector.defaults()))
+        unknown = sorted(set(self.params) - db_fields - set(OWN_PARAMS) - set(SelectorPolicy.defaults()))
         if unknown:
             raise ValueError(
                 f"map-elites has no setting {unknown} (it takes the schedule's "
-                f"{', '.join(sorted(Selector.defaults()))}, num_inspirations, and openevolve's "
+                f"{', '.join(sorted(SelectorPolicy.defaults()))}, num_inspirations, and openevolve's "
                 f"DatabaseConfig fields: {', '.join(sorted(db_fields))})"
             )
         self.num_inspirations = int(self.param("num_inspirations"))
@@ -184,7 +184,7 @@ class MapElites(Selector):
             raise ValueError(
                 f"map-elites: feature_dimensions {missing} are not in the "
                 f"verifier's result metrics {sorted(metrics)} — write them next to "
-                f"`score` in $HILLCLIMB_RESULT or drop them from select_params"
+                f"`score` in $HILLCLIMB_RESULT or drop them from selector_params"
             )
         parent = (
             self.db.programs.get(candidate.parent_id) if candidate.parent_id else None

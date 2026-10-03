@@ -273,19 +273,19 @@ class TestRunSpecs:
         )
         spec = specs / "run.yaml"
         spec.write_text(yaml.safe_dump({
-            "climber": {"policy": "openevolve", "params": {"num_islands": 2}},
+            "climber": {"operator_policy": "openevolve", "params": {"num_islands": 2}},
             "problems": [
                 "emflow://gefcom2014:wind",
                 {"target": "emflow://gefcom2014:solar", "climber": "gepa"},
                 {"target": "emflow://gefcom2014:solar",
-                 "climber": {"policy": "mine.py", "tuner": "optuna", "operators": ["draft"]}},
+                 "climber": {"operator_policy": "mine.py", "tuner": "optuna", "operators": ["draft"]}},
             ],
         }))
         suite = load_suite(spec, config)
         default, preset, inline = (entry.climber for entry in suite.problems)
-        assert (default["policy"], default["params"]) == ("openevolve", {"num_islands": 2})
+        assert (default["operator_policy"], default["params"]) == ("openevolve", {"num_islands": 2})
         assert preset["loop"] == "gepa" and "policy" not in preset
-        assert inline["policy"] == str(specs / "mine.py") and inline["tuner"] == "optuna"
+        assert inline["operator_policy"] == str(specs / "mine.py") and inline["tuner"] == "optuna"
         assert resolve_climber(inline).build_loop().policy.name == "mine"
         single = specs / "single.yaml"
         single.write_text(yaml.safe_dump({"target": "emflow://gefcom2014:solar", "climber": {"loop": "gepa"}}))
@@ -320,7 +320,7 @@ class TestRunSpecs:
         assert (second.name, second.budget, second.set) == ("gepa", "10m", [])
         # a run's spec carries each climber as its FULL block, however it was named
         written = yaml.safe_load(text)["problems"]
-        assert written[0]["climber"] == first.climber and first.climber["policy"] == "greedy"
+        assert written[0]["climber"] == first.climber and first.climber["operator_policy"] == "greedy"
         assert written[1]["climber"]["loop"] == "gepa" and second.climber["tuner"] == "random"
 
 

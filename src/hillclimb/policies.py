@@ -1,10 +1,10 @@
-"""Policies: WHAT to try next — the schedule of a search.
+"""Operator policies (π_op): which operator to apply to what the selector policy chose.
 
-`Greedy(num_drafts=5)` is the bundled schedule; subclass `Policy` for your own.
+`Greedy(num_drafts=5)` is the bundled operator policy; subclass `OperatorPolicy` for your own.
 
 The building blocks, by name — `import hillclimb as hc; hc.policies.Greedy` —
 for composing a climber in Python (`hillclimb.Climber`). The classes live
-under `hillclimb.modules` (and are what a block's `policy:` names); this
+under `hillclimb.modules` (and are what a block's `operator_policy:` names); this
 module is a lazy window onto them, so importing it costs nothing until a
 class is used. A climber's own files import the contracts from
 `hillclimb.sdk`.
@@ -13,7 +13,8 @@ class is used. A climber's own files import the contracts from
 from __future__ import annotations
 
 _LAZY = {
-    "Policy": ("hillclimb.modules.policies.base", "Policy"),
+    "OperatorPolicy": ("hillclimb.modules.policies.base", "OperatorPolicy"),
+    "Policy": ("hillclimb.modules.policies.base", "Policy"),  # the pre-0.7 name
     "Greedy": ("hillclimb.modules.policies.greedy", "Greedy"),
 }
 

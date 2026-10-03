@@ -3,7 +3,7 @@
                                                                                                                         
  Start your own climber from a copy of an existing one.                                                                 
                                                                                                                         
- Copies the source of the policy (or loop) into climbers/<name>.py — a                                                  
+ Copies the source of the operator policy (or loop) into climbers/<name>.py — a                                         
  one-file climber you can edit — and prints the block that runs it.                                                     
                                                                                                                         
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮

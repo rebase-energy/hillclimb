@@ -60,7 +60,7 @@ class Cross(Operator):
 
 
 BLOCK = {
-    "policy": "policy.py",
+    "operator_policy": "policy.py",
     "params": {"drafts": 2},
     "operators": ["draft", {"operators.py:Cross": {"style": "bold"}}],
     "memory": "none",
@@ -106,17 +106,17 @@ def test_the_bundled_climbers_load_and_name_their_modules():
 
 def test_a_block_is_a_climber(tmp_path):
     """The `climber:` block: a bare string is a preset or one file, a mapping
-    names each module; with neither `policy:` nor `loop:` it is greedy."""
+    names each module; with neither `operator_policy:` nor `loop:` it is greedy."""
     assert ClimberSpec.model_validate("openevolve").block() == {
-        "name": "openevolve", "policy": "greedy", "params": {"tune_budget": 0},
-        "select": "map-elites", "select_params": {"ensemble": False}, "tuner": "random", "memory": "files",
+        "name": "openevolve", "operator_policy": "greedy", "params": {"tune_budget": 0},
+        "selector_policy": "map-elites", "selector_params": {"ensemble": False}, "tuner": "random", "memory": "files",
     }  # a preset is a composition: greedy over the MAP-Elites selector, without ensemble or tune
-    assert ClimberSpec.model_validate({"params": {"num_drafts": 5}}).policy == "greedy"
-    spec = ClimberSpec.model_validate({"policy": "mine.py:Mine", "operators": ["draft", {"ops.py:Cross": None}]})
+    assert ClimberSpec.model_validate({"params": {"num_drafts": 5}}).operator_policy == "greedy"
+    spec = ClimberSpec.model_validate({"operator_policy": "mine.py:Mine", "operators": ["draft", {"ops.py:Cross": None}]})
     assert spec.label == "mine" and spec.operator_items() == [("draft", {}), ("ops.py:Cross", {})]
-    assert ClimberSpec.model_validate({"name": "x", "policy": "pkg.mod:Cls"}).label == "x"
+    assert ClimberSpec.model_validate({"name": "x", "operator_policy": "pkg.mod:Cls"}).label == "x"
     anchored = spec.anchored(tmp_path)
-    assert anchored.policy == f"{tmp_path / 'mine.py'}:Mine"
+    assert anchored.operator_policy == f"{tmp_path / 'mine.py'}:Mine"
     assert anchored.operators == ["draft", {f"{tmp_path / 'ops.py'}:Cross": None}]
     assert [p.name for p in anchored.file_paths()] == ["mine.py", "ops.py"]
     with pytest.raises(ValueError, match="Unknown climber: climbers/mine .*hillclimb climber show climbers/mine"):
@@ -164,7 +164,7 @@ def test_a_one_file_climber_is_the_ten_line_story(task, config, tmp_path):
     path.write_text(OPERATORS_PY + "\n" + POLICY_PY.replace("DraftsThenCross", "DraftsOnly"))
     climber = load_climber(str(path))
     assert (climber.name, climber.is_loop) == ("drafts_only", False)
-    assert climber.spec.policy == str(path)  # a bare file is `policy: <file>`
+    assert climber.spec.operator_policy == str(path)  # a bare file is `policy: <file>`
     # the default four, plus the Operator the file itself defines
     assert climber.operator_set().names() == ("draft", "debug", "improve", "ensemble", "cross")
     assert climber.build_loop(params={"drafts": 5}).policy.params == {"drafts": 5}
@@ -223,7 +223,7 @@ def test_a_snapshot_is_the_climber_it_was_taken_of(tmp_path):
         "prompts/cross.md", "prompts/draft.md",
     ]
     block = yaml.safe_load((snapshot / "climber.yaml").read_text())
-    assert block["snapshot"] == 2 and block["policy"] == "files/policy.py" and block["prompts"] == "prompts"
+    assert block["snapshot"] == 2 and block["operator_policy"] == "files/policy.py" and block["prompts"] == "prompts"
     assert block["operators"] == ["draft", {"files/operators.py:Cross": {"style": "bold"}}]
     shutil.rmtree(root)  # editing — or losing — the live files never changes a started search
     loaded = load_snapshot(tmp_path / "search")
@@ -236,7 +236,7 @@ def test_a_snapshot_is_the_climber_it_was_taken_of(tmp_path):
 @pytest.mark.parametrize(
     ("block", "message"),
     [
-        ("policy: policy.py\nloop: policy.py\n", "`policy:` .* or `loop:` .*, not both"),
+        ("policy: policy.py\nloop: policy.py\n", "`operator_policy:` .* or `loop:` .*, not both"),
         ("policy: policy.py\nrouting: {draft: {model: opus}}\n", "`routing` is reserved"),
         ("policy: policy.py\nmemory: sqlite\n", "memory"),
         ("policy: policy.py\nnum_drafts: 3\n", "num_drafts"),  # a typo'd top-level key, not silently ignored
@@ -244,12 +244,12 @@ def test_a_snapshot_is_the_climber_it_was_taken_of(tmp_path):
         ("policy: policy.py\nsimilarity: [api-calls]\n", "`similarity`: .*viewer's setting"),
         ("policy: policy.py\nholdout_timing: after\n", "`holdout_timing`: a loop declares it on its class"),
         ("policy: nope.py\n", "climber file not found: .*nope.py"),
-        ("policy: nonsense\n", r"unknown policy 'nonsense' \(available: greedy"),
-        ("policy: policy.py\nselect: nonsense\n", r"unknown selector 'nonsense' \(available: best, map-elites"),
+        ("policy: nonsense\n", r"unknown operator policy 'nonsense' \(available: greedy"),
+        ("policy: policy.py\nselect: nonsense\n", r"unknown selector policy 'nonsense' \(available: best, map-elites"),
         ("policy: greedy\nparams: {num_draft: 2}\n", "greedy has no param 'num_draft'"),
         ("loop: gepa\nselect: best\n", "a `loop:` does its own selection"),
         ("loop: nonsense\n", r"unknown loop 'nonsense' \(available: gepa"),
-        ("policy: operators.py\n", "exactly one policy class"),
+        ("policy: operators.py\n", "exactly one operator policy class"),
         ("policy: policy.py\noperators: [operators.py:Nope]\n", "defines no Nope"),
         ("policy: policy.py\noperators: [nope]\n", r"unknown operator 'nope' \(available: debug, draft, ensemble, improve"),
         ("policy: policy.py\noperator_params: {cross: {style: bold}}\n", "has no operator 'cross'"),
@@ -322,7 +322,7 @@ def test_a_run_folder_written_before_climbers_still_loads(tmp_path):
     assert meta.climber_sha256 == "ab" * 32 and meta.hillclimb_version is None  # unknown for an old run
     # the name, the params and the tuner it recorded, as the one block 0.6 keeps
     assert meta.climber_spec == {
-        "policy": "hillclimb/policies/drafts_only.py", "select_params": {"num_drafts": 1},
+        "operator_policy": "hillclimb/policies/drafts_only.py", "selector_params": {"num_drafts": 1},
         "tuner": "optuna", "tuner_params": {"seed": 3},
     }  # the schedule knob it recorded under `params` is the selector's now
     # and the same record as the sqlite store holds it
@@ -348,7 +348,7 @@ def test_a_run_folder_written_by_0_5_still_loads(tmp_path):
     })
     assert meta.schema_version == 4 and (meta.climber, meta.climber_ref) == ("greedy", "greedy")
     block = meta.climber_spec
-    assert block["policy"] == "hillclimb.modules.policies.greedy:GreedyPolicy"  # as recorded; mapped when it is imported
+    assert block["policy"] == "hillclimb.modules.policies.greedy:GreedyPolicy"  # as recorded (a 0.5 manifest); mapped when it is loaded
     assert block["params"]["num_drafts"] == 1 and block["params"]["ensemble_top_k"] == 3  # the user's over the manifest's
     assert block["tuner"] == "random" and block["tuner_params"] == {"seed": 3}
     assert "description" not in block and "similarity" not in block
@@ -360,8 +360,8 @@ def test_a_run_folder_written_by_0_5_still_loads(tmp_path):
         "agent": "claude-code", "model": "sonnet", "metric": "m",
         "policy": "openevolve", "policy_params": {"random_seed": 42, "num_drafts": 2},
     })
-    assert old.climber_spec["select"] == "map-elites"
-    assert old.climber_spec["select_params"] == {"random_seed": 42, "ensemble": False, "num_drafts": 2}
+    assert old.climber_spec["selector_policy"] == "map-elites"
+    assert old.climber_spec["selector_params"] == {"random_seed": 42, "ensemble": False, "num_drafts": 2}
     assert old.climber_spec["params"] == {"tune_budget": 0}
     # a 0.6 record is left as it is
     current = SearchMeta.model_validate({**meta.model_dump(), "climber_ref": None})
@@ -387,7 +387,7 @@ def test_the_engine_uses_the_tuner_the_block_names(config, tmp_path):
     pytest.importorskip("optuna")
     from hillclimb.config import Config
 
-    explicit = Config.model_validate({"search": {"policy": "greedy", "tuner": "optuna"}})  # the 0.3 spelling
+    explicit = Config.model_validate({"search": {"operator_policy": "greedy", "tuner": "optuna"}})  # the 0.3 spelling
     assert type(build_tuner(explicit)).__name__ == "Optuna"
 
 
@@ -564,14 +564,14 @@ def test_a_climber_brings_its_own_graph_module(task, config, tmp_path):
     assert load_climber("greedy").graph_module().name == "knowledge-graph"  # the default
     root = write_climber(tmp_path / "mine", manifest="policy: policy.py\ngraph: graph.py\n")
     (root / "graph.py").write_text(GRAPH_PY)
-    block = {"policy": "policy.py", "memory_params": {"graph": "graph.py"}}  # the graph module is a setting of the memory
+    block = {"operator_policy": "policy.py", "memory_params": {"graph": "graph.py"}}  # the graph module is a setting of the memory
     module = resolve_climber(block, root).graph_module()
     assert module.name == "notes" and module.key.startswith("graph.py#")
     assert [n.id for n in module.build(tmp_path).nodes] == ["note:a"]
-    assert resolve_climber({"policy": "policy.py", "memory_params": {"graph": "knowledge-graph"}}, root).graph_module().name == "knowledge-graph"
-    assert resolve_climber({"policy": "policy.py", "memory": "none"}, root).graph_module().name == "knowledge-graph"
+    assert resolve_climber({"operator_policy": "policy.py", "memory_params": {"graph": "knowledge-graph"}}, root).graph_module().name == "knowledge-graph"
+    assert resolve_climber({"operator_policy": "policy.py", "memory": "none"}, root).graph_module().name == "knowledge-graph"
     # 0.5 wrote `graph:` beside `memory:`; it reads as the memory's setting
-    assert ClimberSpec.model_validate({"policy": "policy.py", "graph": "graph.py"}).memory_params == {"graph": "graph.py"}
+    assert ClimberSpec.model_validate({"operator_policy": "policy.py", "graph": "graph.py"}).memory_params == {"graph": "graph.py"}
 
     config.climber = ClimberSpec.model_validate(block).anchored(root)
     run_dir = api.create_run(config, RunMeta(run_id="r1", name="r1", kind="problem", target="t", problem_ids=[task.problem_id]))
@@ -580,3 +580,41 @@ def test_a_climber_brings_its_own_graph_module(task, config, tmp_path):
     snapshot = load_snapshot(search_dir)
     assert snapshot.graph_module().name == "notes"
     assert snapshot.graph_module().key == module.key  # the copy is the same builder: no rebuild of graph.json
+
+
+def test_pre_07_spellings_of_the_two_decisions_still_load():
+    """`policy:`, `select:` and `select_params:` were the keys until 0.7; a
+    block, a `--set` path, a record and the Python keywords in that spelling
+    mean the same climber, written out with the current keys, with the same
+    identity."""
+    from hillclimb.config import current_setting
+    from hillclimb.modules.spec import ClimberSpec
+
+    old = ClimberSpec.model_validate(
+        {"policy": "greedy", "select": "map-elites", "select_params": {"num_islands": 2}}
+    )
+    new = ClimberSpec.model_validate(
+        {"operator_policy": "greedy", "selector_policy": "map-elites", "selector_params": {"num_islands": 2}}
+    )
+    assert old == new and "policy" not in old.block() and old.block()["selector_params"] == {"num_islands": 2}
+    # the new spelling wins on a clash; dict-valued knobs merge
+    both = ClimberSpec.model_validate({"policy": "greedy", "select": "best", "selector_policy": "map-elites",
+                                       "select_params": {"a": 1}, "selector_params": {"b": 2}})
+    assert both.selector_policy == "map-elites" and both.selector_params == {"a": 1, "b": 2}
+    assert current_setting("climber.select") == "climber.selector_policy"
+    assert current_setting("climber.policy") == "climber.operator_policy"
+    assert current_setting("climber.select_params.num_islands") == "climber.selector_params.num_islands"
+    assert current_setting("climber.params.num_drafts") == "climber.selector_params.num_drafts"
+    from hillclimb.climber import Climber
+    from hillclimb.policies import Greedy
+    from hillclimb.selectors import Best
+
+    spelled_old = Climber(select=Best(num_drafts=3), policy=Greedy(), select_params={"debug": False})
+    spelled_new = Climber(selector_policy=Best(num_drafts=3), operator_policy=Greedy(), selector_params={"debug": False})
+    assert spelled_old.to_spec() == spelled_new.to_spec() and spelled_old.sha256 == spelled_new.sha256
+    with pytest.raises(TypeError, match="old spelling"):
+        Climber(select=Best(), selector_policy=Best())
+    # the classes keep their old names for one release
+    from hillclimb import sdk
+
+    assert sdk.Policy is sdk.OperatorPolicy and sdk.Selector is sdk.SelectorPolicy

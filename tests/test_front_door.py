@@ -33,7 +33,9 @@ def test_the_namespaces_are_lazy_windows_onto_the_modules():
         for name in module.__all__:
             if name in {"MapElites", "Optuna"}:
                 continue  # their classes load everywhere; only constructing them needs the extra
-            assert getattr(module, name).__name__ == name
+            # `Policy` and `Selector` are the pre-0.7 names, kept as aliases for one release
+            expected = {"Policy": "OperatorPolicy", "Selector": "SelectorPolicy"}.get(name, name)
+            assert getattr(module, name).__name__ == expected
     assert hc.policies.Greedy is resolve_climber("greedy").brain.target
     assert set(hc.__all__) >= {"Climber", "run", "run_spec", *FACADES}
 
@@ -49,8 +51,8 @@ def test_a_composed_climber_is_the_block_a_run_config_takes():
     )
     block = climber.to_spec().block()
     assert block == {
-        "name": "mine", "policy": "greedy", "params": {"tune_budget": 4},
-        "select": "best", "select_params": {"num_drafts": 3, "ensemble": False},
+        "name": "mine", "operator_policy": "greedy", "params": {"tune_budget": 4},
+        "selector_policy": "best", "selector_params": {"num_drafts": 3, "ensemble": False},
         "operators": [{"draft": {"retrieval": False}}, "debug", "improve"],
         "tuner": "random", "tuner_params": {"seed": 7}, "memory": "files", "memory_params": {"max_cards": 1},
     }
@@ -60,9 +62,9 @@ def test_a_composed_climber_is_the_block_a_run_config_takes():
     loop = climber.build_loop()
     assert loop.policy.selector.param("num_drafts") == 3 and loop.policy is not climber.build_loop().policy  # built fresh
     # names work too, a loop instead of a policy, and a policy that brings its selector
-    assert hc.Climber(loop="gepa").is_loop and hc.Climber("openevolve").spec.select == "map-elites"
+    assert hc.Climber(loop="gepa").is_loop and hc.Climber("openevolve").spec.selector_policy == "map-elites"
     best_first = hc.Climber(policy=hc.policies.Greedy(selector=hc.selectors.Best()))
-    assert best_first.to_spec().select == "best"
+    assert best_first.to_spec().selector_policy == "best"
     # a knob the class does not have fails where it is written
     with pytest.raises(TypeError, match="Greedy has no param 'num_draft'"):
         hc.policies.Greedy(num_draft=3)
@@ -128,7 +130,7 @@ def test_classes_from_a_file_are_written_down_as_that_file(runnable, config, tmp
         select=hc.selectors.Best(num_drafts=1, ensemble=False), policy=mine.DraftOnce,
         operators=["draft", mine.Shake(how=" Gently.")],
     )
-    assert climber.to_spec().block()["policy"] == f"{path.resolve()}:DraftOnce"
+    assert climber.to_spec().block()["operator_policy"] == f"{path.resolve()}:DraftOnce"
     assert climber.to_spec().operators == ["draft", {f"{path.resolve()}:Shake": {"how": " Gently."}}]
 
     for score in (0.5, 0.7):
@@ -160,7 +162,7 @@ def test_a_class_that_exists_only_here_still_runs_but_is_not_portable(runnable, 
         namespace,
     )
     climber = hc.Climber(policy=namespace["DraftsOnly"](tune_budget=0))
-    assert not climber.portable and climber.spec.policy == "live:DraftsOnly"
+    assert not climber.portable and climber.spec.operator_policy == "live:DraftsOnly"
     with pytest.raises(NotPortableError, match="live:DraftsOnly exists only in this process"):
         climber.to_spec()
     with pytest.raises(NotPortableError):
@@ -191,7 +193,7 @@ def test_a_class_that_exists_only_here_still_runs_but_is_not_portable(runnable, 
 def test_run_spec_runs_every_entry_here_under_one_run(runnable, config, tmp_path):
     spec = tmp_path / "run.yaml"
     spec.write_text(yaml.safe_dump({
-        "climber": {"policy": "greedy", "params": {"num_drafts": 1, "ensemble": False, "tune_budget": 0}},
+        "climber": {"operator_policy": "greedy", "params": {"num_drafts": 1, "ensemble": False, "tune_budget": 0}},
         "problems": [
             {"target": "a", "budget": "5m", "set": ["budget.max_evaluations=1"]},
             {"target": "b", "climber": {"params": {"num_drafts": 2, "ensemble": False}}, "set": ["budget.max_evaluations=2"]},
@@ -204,10 +206,10 @@ def test_run_spec_runs_every_entry_here_under_one_run(runnable, config, tmp_path
     assert (first.state, second.state) == ("done", "done")
     metas = [load_search_meta(outcome.search_dir) for outcome in (first, second)]
     assert [m.budget_s for m in metas] == [300, 3600]  # the entry's budget, else the problem's
-    assert [m.climber_spec["select_params"]["num_drafts"] for m in metas] == [1, 2]  # the spec's default, the entry's own
+    assert [m.climber_spec["selector_params"]["num_drafts"] for m in metas] == [1, 2]  # the spec's default, the entry's own
     assert len(runnable.requests) == 3
     rerun = yaml.safe_load((first.run_dir / "spec.yaml").read_text())["problems"]
-    assert [entry["climber"]["select_params"]["num_drafts"] for entry in rerun] == [1, 2]
+    assert [entry["climber"]["selector_params"]["num_drafts"] for entry in rerun] == [1, 2]
 
 
 def test_a_script_that_runs_at_import_is_told_to_guard_it(tmp_path):
@@ -227,6 +229,6 @@ def test_a_script_that_runs_at_import_is_told_to_guard_it(tmp_path):
 def test_a_written_climber_is_a_block_file(tmp_path):
     path = hc.Climber(policy="greedy", params={"num_drafts": 2}, tuner="random").write(tmp_path / "climber.yaml")
     text = yaml.safe_load(path.read_text())
-    # a schedule knob written under `params` is the selector's: it lands as `select_params`
-    assert text == {"climber": {"policy": "greedy", "select_params": {"num_drafts": 2}, "tuner": "random", "memory": "files"}}
+    # a schedule knob written under `params` is the selector policy's: it lands as `selector_params`
+    assert text == {"climber": {"operator_policy": "greedy", "selector_params": {"num_drafts": 2}, "tuner": "random", "memory": "files"}}
     assert resolve_climber(text["climber"]).build_loop().policy.selector.param("num_drafts") == 2

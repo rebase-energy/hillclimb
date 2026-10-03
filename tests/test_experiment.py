@@ -95,19 +95,19 @@ class TestSpec:
             "defaults: {climber.params.num_drafts: 2, model: sonnet}\n"
             "experiments:\n"
             "  a: {climber.params.tune_budget: 0, climber: openevolve}\n"
-            "  b: {climber: {policy: greedy, tuner: optuna, params: {ensemble: false}}}\n",
+            "  b: {climber: {operator_policy: greedy, tuner: optuna, params: {ensemble: false}}}\n",
         ))
         a, b = spec.experiment_overrides("a"), spec.experiment_overrides("b")
         assert list(a) == ["climber", "climber.params.num_drafts", "model", "climber.params.tune_budget"]
-        assert b["climber"] == {"policy": "greedy", "tuner": "optuna", "params": {"ensemble": False}}
+        assert b["climber"] == {"operator_policy": "greedy", "tuner": "optuna", "params": {"ensemble": False}}
         config = Config()
         config.apply_overrides(a)
-        assert config.climber.select == "map-elites"
+        assert config.climber.selector_policy == "map-elites"
         assert config.climber.params == {"tune_budget": 0}
-        assert config.climber.select_params == {"ensemble": False, "num_drafts": 2}
+        assert config.climber.selector_params == {"ensemble": False, "num_drafts": 2}
         config = Config()
         config.apply_overrides(b)
-        assert (config.climber.tuner, config.climber.select_params) == ("optuna", {"ensemble": False, "num_drafts": 2})
+        assert (config.climber.tuner, config.climber.selector_params) == ("optuna", {"ensemble": False, "num_drafts": 2})
         # and as a child engine receives it: every value a `--set KEY=<json>` pair
         from hillclimb.cli.experiment import _set_value
 
@@ -427,7 +427,7 @@ class TestCli:
             experiment_overrides=parse_set_overrides(["learning.enabled=false", "search.policy_params={num_drafts: 1}"]),
         )
         assert seen["config"].learning.enabled is False
-        assert seen["config"].climber.select_params == {"num_drafts": 1}
+        assert seen["config"].climber.selector_params == {"num_drafts": 1}
         meta = load_search_meta(seen["search_dir"])
         assert (meta.study, meta.experiment, meta.repeat, meta.learning_enabled) == ("ab", "b", 1, False)
         assert meta.experiment_overrides == {"learning.enabled": False, "search.policy_params": {"num_drafts": 1}}
@@ -673,7 +673,7 @@ def test_every_experiment_spec_in_the_repo_builds_its_climbers():
         for name in study.experiments:
             config = Config()
             config.apply_overrides(study.experiment_overrides(name))
-            if config.climber.select == "map-elites":
+            if config.climber.selector_policy == "map-elites":
                 pytest.importorskip("openevolve")
             climber = resolve_climber(config.climber, path.parent)
             climber.operator_set()

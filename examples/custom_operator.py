@@ -16,7 +16,7 @@ import sys
 from hillclimb import Budget, Climber, Problem, SearchOutcome
 from hillclimb.operators import Draft
 from hillclimb.selectors import Best
-from hillclimb.sdk import Action, Attempt, Operator, OperatorContext, Policy, SearchState, Selection
+from hillclimb.sdk import Action, Attempt, Operator, OperatorContext, OperatorPolicy, SearchState, Selection
 
 
 class Stride(Operator):
@@ -38,7 +38,7 @@ class Stride(Operator):
         return Attempt(prompt=prompt, copy_parent=True, inherit_params=True)
 
 
-class UseStride(Policy):
+class UseStride(OperatorPolicy):
     """The plain mapping, with `stride` as the operator for a chosen node."""
 
     def expand_action(self, state: SearchState, selection: Selection, operator: str = "improve") -> Action:
@@ -50,7 +50,7 @@ def main(evaluations: int = 10, agent: str = "claude-code") -> dict[float, Searc
     budget = Budget(evaluations=evaluations)   # the same for every climber
     outcomes = {}
     for step in (0.02, 0.4, 3.0):
-        climber = Climber(select=Best(num_drafts=3, ensemble=False), policy=UseStride, operators=[Draft(), Stride(step=step)])
+        climber = Climber(selector_policy=Best(num_drafts=3, ensemble=False), operator_policy=UseStride, operators=[Draft(), Stride(step=step)])
         climber.search(problem, budget=budget, agent=agent, learning=False, log=lambda *_: None)
         outcomes[step] = climber.result
 

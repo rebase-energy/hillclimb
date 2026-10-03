@@ -167,7 +167,7 @@ def test_a_bundled_name_resolves_greedy_and_an_unknown_one_is_refused():
     assert policy.selector.param("num_drafts") == 5
     assert make_policy("greedy", {"complexity_start": 0}, priors={"complexity_start": 2}).param("complexity_start") == 0
     # a param the policy does not have is refused before anything runs
-    with pytest.raises(ClimberLoadError, match="greedy has no param 'note' .it has: .*tune_budget.*select_params"):
+    with pytest.raises(ClimberLoadError, match="greedy has no param 'note' .it has: .*tune_budget.*selector_params"):
         make_policy("greedy", {"note": "x"})
     with pytest.raises(ClimberLoadError, match="bundled: gepa, greedy, openevolve"):
         make_policy("map-elites")
@@ -394,11 +394,11 @@ def test_file_policy_errors_name_the_file(tmp_path):
         "from hillclimb.modules.policies.greedy import Greedy\n"
         "class A(Greedy): pass\nclass B(Greedy): pass\n"
     )
-    with pytest.raises(ValueError, match="exactly one policy class"):
+    with pytest.raises(ValueError, match="exactly one operator policy class"):
         make_policy(str(two))
     none = tmp_path / "none.py"
     none.write_text("x = 1\n")
-    with pytest.raises(ValueError, match="exactly one policy class"):
+    with pytest.raises(ValueError, match="exactly one operator policy class"):
         make_policy(str(none))
     not_policy = tmp_path / "notpolicy.py"
     not_policy.write_text("class Thing:\n    pass\nPOLICY = Thing\n")
@@ -435,7 +435,7 @@ def test_file_policy_drives_a_search_and_is_recorded(task, config, tmp_path):
     config.paths.problems_dir = root
     run_dir = create_run(config, RunMeta(run_id="r1", name="r1", kind="problem", target="p", problem_ids=["p"]))
     meta = load_search_meta(create_search(config, load_problem("p", config), run_dir, "r1", 60))
-    assert meta.climber == "drafts_only" and meta.climber_spec["policy"] == str(path)
+    assert meta.climber == "drafts_only" and meta.climber_spec["operator_policy"] == str(path)
     from hillclimb.harness.glue import search_climber
     assert meta.climber_sha256 == search_climber(config).sha256  # the block (its params too) + the file's bytes
     name_climber(config, "greedy")

@@ -1,7 +1,7 @@
 """hillclimb.sdk — the one import a climber needs.
 
-A climber is the block of exchangeable modules (a `Policy` with its
-`Selector`, or a `Loop`; operators, memory, a tuner) that decides
+A climber is the block of exchangeable modules (an `OperatorPolicy` with its
+`SelectorPolicy`, or a `Loop`; operators, memory, a tuner) that decides
 HOW to hillclimb. Everything else — running coding agents, scoring, holdout, the
 journal, budgets — is the harness, and a climber only ever meets it through
 the names exported here. `tests/test_sdk_imports.py` enforces the other half
@@ -23,10 +23,11 @@ _LAZY = {
     "InflightRef": ("hillclimb.modules.policies.base", "InflightRef"),
     "BudgetView": ("hillclimb.modules.policies.base", "BudgetView"),
     "SearchState": ("hillclimb.modules.policies.base", "SearchState"),
-    "Policy": ("hillclimb.modules.policies.base", "Policy"),
+    "OperatorPolicy": ("hillclimb.modules.policies.base", "OperatorPolicy"),
+    "Policy": ("hillclimb.modules.policies.base", "Policy"),  # the pre-0.7 name
     "TUNE_ACTION": ("hillclimb.modules.policies.base", "TUNE_ACTION"),
     "INJECT_ACTION": ("hillclimb.modules.policies.base", "INJECT_ACTION"),
-    # control flow over the harness (most climbers only need a Policy)
+    # control flow over the harness (most climbers only need an OperatorPolicy)
     "Loop": ("hillclimb.harness.loop", "Loop"),
     "PolicyLoop": ("hillclimb.harness.loop", "PolicyLoop"),
     "Harness": ("hillclimb.harness.loop", "Harness"),
@@ -49,7 +50,8 @@ _LAZY = {
     "improves": ("hillclimb.harness.evaluation", "improves"),
     "accept_band": ("hillclimb.harness.evaluation", "accept_band"),
     # which candidate to expand
-    "Selector": ("hillclimb.modules.selectors.base", "Selector"),
+    "SelectorPolicy": ("hillclimb.modules.selectors.base", "SelectorPolicy"),
+    "Selector": ("hillclimb.modules.selectors.base", "Selector"),  # the pre-0.7 name
     "Selection": ("hillclimb.modules.selectors.base", "Selection"),
     "improvable": ("hillclimb.modules.selectors.base", "improvable"),
     # how one attempt is made
@@ -85,7 +87,7 @@ __all__ = sorted(_LAZY)
 
 # renamed, with the version that did it; there are no aliases, the old name says where it went
 _RENAMED = {
-    "SearchPolicy": ("Policy", "0.6"),
+    "SearchPolicy": ("OperatorPolicy", "0.6"),
     "SearchLoop": ("Loop", "0.6"),
     "PolicyInput": ("SearchState", "0.6"),
     "PolicyJournal": ("JournalView", "0.6"),
@@ -144,10 +146,11 @@ if TYPE_CHECKING:  # eager for type checkers and editors only
         InflightRef,
         SearchState,
         Route,
+        OperatorPolicy,
         Policy,
     )
     from hillclimb.modules.similarity.base import SimilarityScore, SimilarityUnavailable, Solution
-    from hillclimb.modules.selectors.base import Selection, Selector, improvable
+    from hillclimb.modules.selectors.base import Selection, Selector, SelectorPolicy, improvable
     from hillclimb.modules.memory.base import (
         GraphEdge,
         GraphModule,

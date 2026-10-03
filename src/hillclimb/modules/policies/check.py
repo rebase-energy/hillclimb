@@ -1,7 +1,7 @@
 """Policy conformance check: the cheap pre-verifier for an edited
 exploration process.
 
-A `Policy` that violates its contract (base.py) does not fail
+An `OperatorPolicy` that violates its contract (base.py) does not fail
 loudly — it stalls a search, proposes a target that does not exist, or
 makes `resume` diverge from the run it resumes. Each of those burns a
 real budget hour before anyone notices. This module replays recorded
@@ -44,7 +44,7 @@ from hillclimb.modules.operators import get_operator, operator_names
 from hillclimb.config import Config
 from hillclimb.harness.journal import Journal
 from hillclimb.harness.loop import PolicyLoop
-from hillclimb.modules.policies.base import INJECT_ACTION, TUNE_ACTION, Action, BudgetView, SearchState, Policy
+from hillclimb.modules.policies.base import INJECT_ACTION, TUNE_ACTION, Action, BudgetView, SearchState, OperatorPolicy
 
 # Fractions of the budget still remaining at which every journal is
 # probed: fresh, mid-search, and inside the ensemble window.
@@ -244,7 +244,7 @@ def _reference_problems(action: Action, journal: Journal, operators=None) -> lis
 
 
 def check_policy(
-    make_policy: Callable[[], Policy],
+    make_policy: Callable[[], OperatorPolicy],
     cases: Sequence[JournalCase],
     config: Config,
     *,

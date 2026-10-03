@@ -13,10 +13,10 @@ problems:
   - target: heilbronn-11
     budget: 30m
     climber:
-      policy: greedy                # WHAT to try next (or `loop:` — the whole control flow)
+      operator_policy: greedy       # π_op: which operator on what the selector policy chose (or `loop:` — the whole control flow)
       params: {num_drafts: 5}
-      select: map-elites            # WHICH candidate the policy expands
-      select_params: {num_islands: 3}
+      selector_policy: map-elites   # π_sel: WHICH candidate the next attempt starts from
+      selector_params: {num_islands: 3}
       operators: [draft, debug, improve, crossover.py:Crossover]   # HOW an attempt is made
       operator_params: {draft: {retrieval: false}}
       tuner: optuna                 # WHICH parameter values a tunable candidate tries
@@ -26,7 +26,7 @@ problems:
       prompts: prompts/             # templates that shadow the built-in ones by name
 ```
 
-Every key is optional. With neither `policy:` nor `loop:` the policy is
+Every key is optional. With neither `operator_policy:` nor `loop:` the policy is
 `greedy`; everything else defaults to what its class says.
 
 ## Where the block goes
@@ -69,8 +69,8 @@ A bare name instead of a block is a **preset**, or one `.py` file:
 
 | preset | its block |
 |---|---|
-| `greedy` | `{policy: greedy}` — debug the newest failing tip > ensemble in the final budget window > draft until `num_drafts` branches are scored > tune > improve the best |
-| `openevolve` | `{policy: greedy, select: map-elites, params: {ensemble: false, tune_budget: 0}}` — the same schedule over [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve)'s MAP-Elites archive: a population kept diverse over feature dimensions, on islands with migration. `pip install 'hillclimb[openevolve]'` |
+| `greedy` | `{operator_policy: greedy}` — debug the newest failing tip > ensemble in the final budget window > draft until `num_drafts` branches are scored > tune > improve the best |
+| `openevolve` | `{operator_policy: greedy, selector_policy: map-elites, params: {ensemble: false, tune_budget: 0}}` — the same schedule over [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve)'s MAP-Elites archive: a population kept diverse over feature dimensions, on islands with migration. `pip install 'hillclimb[openevolve]'` |
 | `gepa` | `{loop: gepa}` — [GEPA](https://github.com/gepa-ai/gepa) owns the whole loop (see below). `pip install 'hillclimb[gepa]'` |
 
 `hillclimb climber show openevolve` prints a preset as the block it stands
@@ -85,8 +85,8 @@ and names the operator. The slots, in the order a step runs them:
 
 | slot | decides | base class | built in |
 |---|---|---|---|
-| `select` | which node, or none: a failing tip first, roots until `num_drafts`, the top-k to combine in the final window, else the subclass's `pick` | `Selector` | `best`, `map-elites` |
-| `policy` | which operator on what the selector chose (draft, debug, ensemble, improve; greedy adds tune) | `Policy` | `greedy` |
+| `selector_policy` | which node, or none: a failing tip first, roots until `num_drafts`, the top-k to combine in the final window, else the subclass's `pick` | `SelectorPolicy` | `best`, `map-elites` |
+| `operator_policy` | which operator on what the selector policy chose (draft, debug, ensemble, improve; greedy adds tune) | `OperatorPolicy` | `greedy` |
 | `loop` | the control flow itself (instead of a selector and a policy) | `Loop` | `gepa` |
 | `operators` | how one attempt is made: the prompt the coding agent gets | `Operator` | `draft`, `debug`, `improve`, `ensemble` |
 | `tuner` | which parameter values a tunable candidate tries | `Tuner` | `random`, `optuna` |
@@ -103,10 +103,10 @@ siblings — nothing deeper.
 
 ```python
 # climbers/drafts_only.py
-from hillclimb.sdk import Action, Policy
+from hillclimb.sdk import Action, OperatorPolicy
 
 
-class DraftsOnly(Policy):
+class DraftsOnly(OperatorPolicy):
     """Never improves: whatever the selector chose, draft (repair a failing tip first)."""
 
     DEFAULTS = {}                         # its knobs; `params` in the block set them
@@ -155,10 +155,10 @@ Subclass it to change one move: `from hillclimb.policies import Greedy`.
 
 ```python
 # oldest.py
-from hillclimb.sdk import Selection, Selector
+from hillclimb.sdk import Selection, SelectorPolicy
 
 
-class Oldest(Selector):
+class Oldest(SelectorPolicy):
     """Build on the oldest scored candidate."""
 
     def pick(self, state, *, busy=frozenset()):
@@ -167,21 +167,21 @@ class Oldest(Selector):
 ```
 
 ```yaml
-climber: {policy: greedy, select: oldest.py}
+climber: {operator_policy: greedy, selector_policy: oldest.py}
 ```
 
 A selector implements `pick`: the scored node to build on, with whatever
 rides along — inspirations (copied in beside the parent), a paragraph for the
 prompt, a note journaled on the new candidate; `None` means a root step (the
 policy drafts). The base class's `select` wraps it with the schedule every
-selector shares and its knobs are `select_params`: `num_drafts` (3), `debug`
+selector shares and its knobs are `selector_params`: `num_drafts` (3), `debug`
 (True), `max_debug_depth` (3), `ensemble` (True), `ensemble_reserve_fraction`
 (0.2), `ensemble_top_k` (3), `ensemble_max_attempts` (2). A block that still
 writes those under `params` (every block before 0.7) loads; they land in
-`select_params`. A selector with state keeps it a function of the journal
+`selector_params`. A selector with state keeps it a function of the journal
 (`sync(state)`), like a policy.
 
-`map-elites` takes OpenEvolve's `DatabaseConfig` fields as `select_params`
+`map-elites` takes OpenEvolve's `DatabaseConfig` fields as `selector_params`
 (`num_islands`, `feature_dimensions`, `population_size`, `random_seed`, …)
 plus `num_inspirations`. The built-in feature dimensions are `complexity`,
 `diversity` and `score`; any other must be a numeric key the verifier writes
@@ -219,7 +219,7 @@ shadowed — a search refuses to start on such a file.
 
 Some optimizers cannot be reduced to "what next?" — they own proposal,
 reflection and selection themselves. Those bring a `Loop`: the block says
-`loop:` instead of `policy:`, and the loop drives the harness
+`loop:` instead of `operator_policy:`, and the loop drives the harness
 (`submit` / `wait` / `run`) instead of answering `propose`. A loop class
 declares what it needs of its search (`operators = (...)`, `holdout_timing =
 "after"`), so `{loop: gepa}` is complete.
@@ -334,8 +334,8 @@ from hillclimb.policies import Greedy
 from hillclimb.selectors import MapElites
 
 climber = Climber(
-    select=MapElites(num_islands=2, num_drafts=3),   # π_sel: which node, or none
-    policy=Greedy(),                                 # π_op: which operator for it
+    selector_policy=MapElites(num_islands=2, num_drafts=3),   # π_sel: which node, or none
+    operator_policy=Greedy(),                                 # π_op: which operator for it
     operators=[Draft(retrieval=False), Debug(), MyCrossover],
     tuner="optuna",
     memory=FilesMemory(max_cards=1),
@@ -433,5 +433,5 @@ selector and scripted agent.
 - `climber: {ref: NAME, ...}`, `climber.ref` in `--set` and experiment specs,
   the `operators: {name: {...}}` overlay and the `learning.*` behaviour
   settings still load; they read as the block they meant.
-- MAP-Elites' settings are `select_params`, not the policy's `params`.
+- MAP-Elites' settings are `selector_params`, not the policy's `params`.
 - The renamed SDK names are listed in the [changelog](../CHANGELOG.md).

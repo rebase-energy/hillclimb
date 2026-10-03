@@ -4,7 +4,7 @@ The Python front door (lazy — `import hillclimb` stays dependency-light):
 
     import hillclimb as hc
 
-    climber = hc.Climber(select=hc.selectors.Best(num_drafts=5), policy=hc.policies.Greedy(), tuner="optuna")
+    climber = hc.Climber(selector_policy=hc.selectors.Best(num_drafts=5), operator_policy=hc.policies.Greedy(), tuner="optuna")
     budget = hc.Budget(wall_clock="10m", evaluations=40)
     climber.search(hc.Problem("heilbronn-11"), budget=budget)
     climber.best, climber.history, climber.to_frame()

@@ -1,20 +1,20 @@
 """Climbers: HOW to hillclimb, as one block of config.
 
-A climber is the exchangeable half of a search — a `Policy` (or, for
-climbers that own their control flow, a `Loop`), the operators it may use
-with their prompts, a tuner, a memory. Everything else is the harness, the
-same for every climber.
+A climber is the exchangeable half of a search — a selector policy and an
+operator policy (or, for climbers that own their control flow, a `Loop`),
+the operators it may use with their prompts, a tuner, a memory. Everything
+else is the harness, the same for every climber.
 
 A climber is DEFINED where the run is defined: the `climber:` block of a run
 spec entry, or of `hillclimb.yaml` as the folder's default. `ClimberSpec` is
 that block:
 
     climber:
-      policy: greedy                 # xor `loop:`
-      params: {num_drafts: 5}
-      select: map-elites             # which candidate the policy expands
-      select_params: {num_islands: 3}
-      operators: [draft, debug, improve, crossover.py:Crossover]
+      selector_policy: map-elites    # π_sel: which candidate to build on next
+      selector_params: {num_islands: 3, num_drafts: 5}
+      operator_policy: greedy        # π_op: which operator to use on it; xor `loop:`
+      params: {tune_budget: 4}
+      operators: [draft, debug, improve]
       operator_params: {draft: {retrieval: false}}
       tuner: optuna
       tuner_params: {seed: 7}
@@ -25,9 +25,9 @@ that block:
 Every module is named the same three ways (`modules/refs.py`): a registry
 name, a `.py` file (`mine.py` or `mine.py:Class`), or `package.module:Class`.
 A bare string is shorthand: a preset's name (`greedy | openevolve | gepa`) or
-one `.py` file — the single policy or loop it defines, plus any `Operator`
-subclasses in it. Defaults live on the classes, so `{policy: greedy}` and
-`{loop: gepa}` are complete climbers.
+one `.py` file — the single operator policy or loop it defines, plus any
+`Operator` subclasses in it. Defaults live on the classes, so
+`{operator_policy: greedy}` and `{loop: gepa}` are complete climbers.
 
 `resolve_climber(spec)` gives the `Climber`: the spec with its local files
 imported as one package (`refs.FileScope`) and its identity, `sha256` — the
@@ -142,9 +142,9 @@ class Climber:
         import hillclimb as hc
 
         climber = hc.Climber(
-            select=hc.selectors.MapElites(num_islands=2, num_drafts=3),   # π_sel: which node, or none
-            policy=hc.policies.Greedy(),                                  # π_op: which operator for it
-            operators=[hc.operators.Draft(retrieval=False), hc.operators.Debug(), MyCrossover],
+            selector_policy=hc.selectors.MapElites(num_islands=2, num_drafts=3),  # π_sel: which node, or none
+            operator_policy=hc.policies.Greedy(),                                 # π_op: which operator for it
+            operators=[hc.operators.Draft(retrieval=False), hc.operators.Debug(), hc.operators.Improve()],
             tuner="optuna",
             memory=hc.memory.FilesMemory(max_cards=1),
         )
@@ -153,7 +153,7 @@ class Climber:
 
     A preset's name stands for its block: `hc.Climber("openevolve",
     params={"tune_budget": 4})`. An instance stands for its class and params (`Best(num_drafts=3)` is
-    `select: best` + `select_params: {num_drafts: 3}`): a search always builds its
+    `selector_policy: best` + `selector_params: {num_drafts: 3}`): a search always builds its
     own. A class is written down the most portable way it can be — a
     registry name, `module:Class`, else `its_file.py:Class` — and a class
     that exists only in this process (a notebook cell) still runs here, but
@@ -164,34 +164,48 @@ class Climber:
     starting from a block.
     """
 
-    def __init__(self, preset=None, *, select=None, policy=None, operators=None, tuner=None,
-                 memory=None, loop=None, params: Mapping | None = None, select_params: Mapping | None = None,
-                 prompts=None, name: str | None = None, base_dir: Path | None = None):
+    def __init__(self, preset=None, *, selector_policy=None, operator_policy=None, operators=None, tuner=None,
+                 memory=None, loop=None, params: Mapping | None = None, selector_params: Mapping | None = None,
+                 prompts=None, name: str | None = None, base_dir: Path | None = None,
+                 select=None, policy=None, select_params: Mapping | None = None):
         # the keywords are in the order one step runs them: π_sel, π_op, the
-        # operator, a tune trial of the result, the memory the operator reads
+        # operator, a tune trial of the result, the memory the operator reads.
+        # `select=`, `policy=` and `select_params=` are the pre-0.7 spellings.
+        if select is not None:
+            if selector_policy is not None:
+                raise TypeError("Climber(): `select=` is the old spelling of `selector_policy=`; give one")
+            selector_policy = select
+        if policy is not None:
+            if operator_policy is not None:
+                raise TypeError("Climber(): `policy=` is the old spelling of `operator_policy=`; give one")
+            operator_policy = policy
+        if select_params:
+            selector_params = {**dict(select_params), **dict(selector_params or {})}
         block: dict[str, Any] = {}
         if isinstance(preset, str) and preset in PRESETS and loop is None:
             # `Climber("openevolve", params=...)`: a preset's name stands for
             # its whole block, and the other arguments lie over it
             block, preset = expand_name(preset), None
         if preset is not None:
-            if policy is not None:
-                raise TypeError("Climber(): the policy is given twice (positionally and as `policy=`)")
-            policy = preset  # `Climber(Greedy())`: a policy, positionally
+            if operator_policy is not None:
+                raise TypeError(
+                    "Climber(): the operator policy is given twice (positionally and as `operator_policy=`)"
+                )
+            operator_policy = preset  # `Climber(Greedy())`: an operator policy, positionally
         preset_block, block = block, {}
         block, live = _compose(
-            policy=policy, loop=loop, select=select, operators=operators, tuner=tuner,
-            memory=memory, params=params, prompts=prompts, name=name,
+            operator_policy=operator_policy, loop=loop, selector_policy=selector_policy, operators=operators,
+            tuner=tuner, memory=memory, params=params, prompts=prompts, name=name,
         )
-        if select_params:
-            block["select_params"] = {**block.get("select_params", {}), **dict(select_params)}
+        if selector_params:
+            block["selector_params"] = {**block.get("selector_params", {}), **dict(selector_params)}
         if preset_block:
             block = {
                 **preset_block, **block,
                 "params": {**preset_block.get("params", {}), **block.get("params", {})},
-                "select_params": {**preset_block.get("select_params", {}), **block.get("select_params", {})},
+                "selector_params": {**preset_block.get("selector_params", {}), **block.get("selector_params", {})},
             }
-            for key in ("params", "select_params"):
+            for key in ("params", "selector_params"):
                 if not block[key]:
                     del block[key]
         self._setup(as_spec(block).anchored(base_dir if base_dir is not None else Path.cwd()), live=live)
@@ -272,7 +286,7 @@ class Climber:
 
             problem = Problem("fitness-landscape")
             budget = Budget(evaluations=30)
-            climber = Climber(select=Best(num_drafts=3), policy=Greedy())
+            climber = Climber(selector_policy=Best(num_drafts=3), operator_policy=Greedy())
             climber.search(problem, budget=budget)
             climber.best           # the best candidate
             climber.solution       # the source that ships
@@ -323,8 +337,9 @@ class Climber:
         return self.session.select()
 
     def propose(self):
-        """What the climber would do next in the open search: the selector's
-        node(s), the policy's operator on them, as an Action; nothing runs."""
+        """What the climber would do next in the open search: the selector
+        policy's node(s), the operator policy's operator on them, as an
+        Action; nothing runs."""
         return self.session.propose()
 
     def run(self, action):
@@ -337,7 +352,7 @@ class Climber:
 
     @property
     def state(self):
-        """The `SearchState` the policy sees in the open search."""
+        """The `SearchState` the operator policy sees in the open search."""
         return self.session.state
 
     def finish(self):
@@ -408,21 +423,21 @@ class Climber:
         path = refs.ref_path(self.spec.brain)
         return str(path) if path is not None else self.name
 
-    # --- the policy or loop ---
+    # --- the operator policy or loop ---
 
     @property
     def brain(self) -> Resolved:
         if self._brain is None:
             ref = self.spec.brain
-            kind = "loop" if self.spec.loop is not None else "policy"
-            if kind == "policy" and refs.is_file_ref(ref) and not refs.split_file_ref(ref)[1]:
+            kind = "loop" if self.spec.loop is not None else "operator_policy"
+            if kind == "operator_policy" and refs.is_file_ref(ref) and not refs.split_file_ref(ref)[1]:
                 # a bare file: it is a loop climber when a Loop is what it defines
                 module = self.scope.import_file(refs.ref_path(ref), "climber")
-                explicit = getattr(module, refs.KINDS["policy"].attr, None)
+                explicit = getattr(module, refs.KINDS["operator_policy"].attr, None)
                 if explicit is None and _classes(module, Loop):
                     kind = "loop"
             resolved = self._resolve(ref, kind)
-            if kind == "policy" and inspect.isclass(resolved.target) and issubclass(resolved.target, Loop):
+            if kind == "operator_policy" and inspect.isclass(resolved.target) and issubclass(resolved.target, Loop):
                 kind = "loop"
             self._brain, self._brain_kind = resolved, kind
         return self._brain
@@ -433,13 +448,13 @@ class Climber:
 
     @property
     def description(self) -> str:
-        """One line on what it does: what the policy or loop says about
-        itself — and, for a policy over a selector the block names, what
-        that selector picks."""
+        """One line on what it does: what the operator policy or loop says
+        about itself — and, for an operator policy over a selector policy the
+        block names, what that selector policy picks."""
         text = _doc_line(self.brain.target)
-        if self.spec.select and not self.is_loop:
-            picks = _doc_line(self._resolve(self.spec.select, "select").target)
-            return f"{climber_label(self.spec.brain)} over {climber_label(self.spec.select)}: {picks}"
+        if self.spec.selector_policy and not self.is_loop:
+            picks = _doc_line(self._resolve(self.spec.selector_policy, "selector_policy").target)
+            return f"{climber_label(self.spec.brain)} over {climber_label(self.spec.selector_policy)}: {picks}"
         return text
 
     @property
@@ -462,25 +477,28 @@ class Climber:
         return {**self.spec.params, **dict(overlay or {})}
 
     def _known_params(self) -> dict | None:
-        """The knobs the policy/loop declares (`Policy.defaults()`), or None
+        """The knobs the operator policy/loop declares (`OperatorPolicy.defaults()`), or None
         when it takes free-form params."""
         declared = getattr(self.brain.target, "defaults", None)
         return dict(declared()) if callable(declared) else None
 
     def selector(self, extra: Mapping | None = None):
-        """The selector (π_sel) the loop asks first: the block's `select:`,
-        else the policy class's own default. None for a loop, and for a
-        policy that names none. `extra` lays more settings over the block's
-        `select_params` (the schedule knobs a caller handed `build_loop`)."""
+        """The selector policy (π_sel) the loop asks first: the block's
+        `selector_policy:`, else the operator policy class's own default.
+        None for a loop, and for an operator policy that names none. `extra`
+        lays more settings over the block's `selector_params` (the schedule
+        knobs a caller handed `build_loop`)."""
         from hillclimb.modules.selectors import get_selector
 
         if self.is_loop:
             return None
-        ref = self.spec.select or getattr(self.brain.target, "default_selector", None)
-        params = {**self.spec.select_params, **dict(extra or {})}
+        ref = self.spec.selector_policy or getattr(self.brain.target, "default_selector", None)
+        params = {**self.spec.selector_params, **dict(extra or {})}
         if ref is None:
             if params:
-                raise ClimberLoadError(f"{self.source}: `select_params` without a selector to give them to")
+                raise ClimberLoadError(
+                    f"{self.source}: `selector_params` without a selector policy to give them to"
+                )
             return None
         if ref in self._live:
             return self._live[ref](params)
@@ -489,17 +507,17 @@ class Climber:
     def build_loop(self, *, params: Mapping | None = None, priors: Mapping | None = None,
                    parallelism: int = 1, log=print) -> Loop:
         """The loop this climber runs: its `loop:`, or a `PolicyLoop` over
-        its `policy:` (with its selector). `priors` are param values memory
-        learned (a draft-complexity offset): they sit UNDER the block's
-        params and reach only a policy that declares the knob. `params` is
-        an overlay for callers that hold a resolved climber."""
+        its `operator_policy:` (with its selector policy). `priors` are param
+        values memory learned (a draft-complexity offset): they sit UNDER the
+        block's params and reach only an operator policy that declares the
+        knob. `params` is an overlay for callers that hold a resolved climber."""
         from hillclimb.modules.spec import SCHEDULE_KNOBS
 
         target = self.brain.target
         known = self._known_params()
         merged = self.resolved_params(params)
-        # the schedule is the selector's: knobs handed to the policy (every
-        # block before 0.7, a caller's overlay) reach it there
+        # the schedule is the selector policy's: knobs handed to the operator
+        # policy (every block before 0.7, a caller's overlay) reach it there
         schedule = {k: merged.pop(k) for k in SCHEDULE_KNOBS if k in merged and not (known and k in known)}
         if known is not None:
             if getattr(target, "strict_params", False):
@@ -507,7 +525,7 @@ class Climber:
                 if unknown:
                     raise ClimberLoadError(
                         f"climber.params: {climber_label(self.spec.brain)} has no param {', '.join(map(repr, unknown))} "
-                        f"(it has: {', '.join(sorted(known))}). A selector's settings go in `select_params`."
+                        f"(it has: {', '.join(sorted(known))}). A selector policy's settings go in `selector_params`."
                     )
             merged = {**{k: v for k, v in (priors or {}).items() if k in known}, **merged}
         offered = {"params": merged, "parallelism": parallelism, "log": log}
@@ -518,16 +536,18 @@ class Climber:
             return loop
         selector = self.selector(schedule)
         if selector is not None:
-            if self.spec.select is not None and not _accepts(target, "selector"):
+            if self.spec.selector_policy is not None and not _accepts(target, "selector"):
                 raise ClimberLoadError(
-                    f"{self.source}: `select: {self.spec.select}` — this policy takes no selector "
-                    "(its constructor has no `selector` argument)"
+                    f"{self.source}: `selector_policy: {self.spec.selector_policy}` — this operator policy "
+                    "takes no selector policy (its constructor has no `selector` argument)"
                 )
             offered["selector"] = selector
         policy = refs.construct(target, offered, self.source)
         for method in ("propose", "observe"):
             if not callable(getattr(policy, method, None)):
-                raise ClimberLoadError(f"{self.source}: the policy has no {method}() — not a Policy")
+                raise ClimberLoadError(
+                    f"{self.source}: the operator policy has no {method}() — not an OperatorPolicy"
+                )
         if not getattr(policy, "name", None):
             policy.name = self.name
         if getattr(policy, "params", None) is None:
@@ -536,7 +556,7 @@ class Climber:
 
     def operator_set(self) -> OperatorSet:
         """The operators this climber's search may use. The block's list;
-        else what the policy/loop declares (`operators = (...)` on the class);
+        else what the operator policy/loop declares (`operators = (...)` on the class);
         else the built-in four. A one-file climber's own Operator subclasses
         are always in. `operator_params` lie over each by name."""
         items = self.spec.operator_items()
@@ -648,9 +668,19 @@ def identity(spec: ClimberSpec, scope: FileScope, live: Mapping[str, type] | Non
         return f"{relative}:{attr}" if attr else relative
 
     prompts = Path(spec.prompts) if spec.prompts else None
+    # the hashed block keeps the key spellings identity was first taken with
+    # (0.7 renamed `policy`/`select`/`select_params`), so a search's recorded
+    # identity survives the rename and a resume does not call it a change
+    from hillclimb.modules.spec import RENAMED_BLOCK_KEYS
+
+    spelled_as_hashed = {new: old for old, new in RENAMED_BLOCK_KEYS.items()}
+    block = {
+        spelled_as_hashed.get(key, key): value
+        for key, value in spec.canonical().map_refs(portable).model_dump(exclude={"name", "prompts"}).items()
+    }
     blob = json.dumps(
         {
-            "climber": spec.canonical().map_refs(portable).model_dump(exclude={"name", "prompts"}),
+            "climber": block,
             "files": scope.digest if scope.files else None,
             "prompts": tree_sha256(prompts) if prompts is not None and prompts.is_dir() else None,
             **({"live": {ref: _live_source(cls) for ref, cls in sorted(live.items())}} if live else {}),
@@ -694,7 +724,9 @@ def spec_from_legacy_manifest(data: Mapping[str, Any], name: str) -> tuple[Climb
     if timing not in (None, "after"):
         raise ValueError(f"holdout_timing: {timing!r} (only `after` was ever accepted)")
     if (data.get("policy") is None) == (data.get("loop") is None):
-        raise ValueError("name exactly one of `policy:` (what to try next) or `loop:` (the whole control flow)")
+        raise ValueError(
+            "name exactly one of `policy:` (the operator policy) or `loop:` (the whole control flow)"
+        )
     return ClimberSpec.model_validate(data), timing
 
 
@@ -861,11 +893,14 @@ def _importable(cls: type) -> bool:
     return getattr(sys.modules.get(cls.__module__), cls.__name__, None) is cls
 
 
-def _compose(*, policy, loop, select, operators, tuner, memory, params, prompts, name) -> tuple[dict, dict[str, type]]:
+def _compose(*, operator_policy, loop, selector_policy, operators, tuner, memory, params, prompts,
+             name) -> tuple[dict, dict[str, type]]:
     """The block — and the classes that exist only in this process — for
     building blocks given as names, classes or instances."""
-    if policy is not None and loop is not None:
-        raise ClimberLoadError("name one of `policy` (what to try next) or `loop` (the whole control flow), not both")
+    if operator_policy is not None and loop is not None:
+        raise ClimberLoadError(
+            "name one of `operator_policy` (which operator to apply next) or `loop` (the whole control flow), not both"
+        )
     block: dict[str, Any] = {}
     live: dict[str, type] = {}
     if name:
@@ -885,11 +920,11 @@ def _compose(*, policy, loop, select, operators, tuner, memory, params, prompts,
         if its_params:
             block[params_key] = its_params
 
-    place("loop" if loop is not None else "policy", loop if loop is not None else policy,
-          "loop" if loop is not None else "policy", "params")
-    if select is None and policy is not None and not isinstance(policy, (str, type)):
-        select = getattr(policy, "_selector", None)  # `Greedy(selector=MapElites())` brings its own
-    place("select", select, "select", "select_params")
+    place("loop" if loop is not None else "operator_policy", loop if loop is not None else operator_policy,
+          "loop" if loop is not None else "operator_policy", "params")
+    if selector_policy is None and operator_policy is not None and not isinstance(operator_policy, (str, type)):
+        selector_policy = getattr(operator_policy, "_selector", None)  # `Greedy(selector=MapElites())` brings its own
+    place("selector_policy", selector_policy, "selector_policy", "selector_params")
     place("tuner", tuner, "tuner", "tuner_params")
     place("memory", memory, "memory", "memory_params")
     if operators is not None:

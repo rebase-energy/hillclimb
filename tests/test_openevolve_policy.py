@@ -33,9 +33,9 @@ def block(params: dict = PARAMS) -> dict:
     """The `openevolve` preset with `params` sorted into the two places they
     belong: the policy's schedule knobs, the selector's settings."""
     return {
-        "name": "openevolve", "policy": "greedy", "select": "map-elites",
+        "name": "openevolve", "operator_policy": "greedy", "selector_policy": "map-elites",
         "params": {"ensemble": False, "tune_budget": 0, **{k: v for k, v in params.items() if k in SCHEDULE_KNOBS}},
-        "select_params": {k: v for k, v in params.items() if k not in SCHEDULE_KNOBS},
+        "selector_params": {k: v for k, v in params.items() if k not in SCHEDULE_KNOBS},
     }
 
 
@@ -69,7 +69,7 @@ def replayed(journal: Journal, config, params=PARAMS) -> tuple[Greedy, object]:
 def test_the_preset_is_greedy_over_map_elites(config):
     """`openevolve` is a composition, not a policy of its own: greedy's
     schedule (without ensemble and tune) over the MAP-Elites selector, whose
-    settings are `select_params`."""
+    settings are `selector_params`."""
     from hillclimb.climber import ClimberLoadError, load_climber
 
     preset = load_climber("openevolve")
@@ -81,13 +81,13 @@ def test_the_preset_is_greedy_over_map_elites(config):
     assert policy.selector.db_config.num_islands == 2
     assert policy.selector.feature_dimensions == ["complexity", "score"]
     # MAP-Elites' settings are the selector's: among the policy's params they are a mistake, said out loud
-    with pytest.raises(ClimberLoadError, match="greedy has no param 'num_islands'.*select_params"):
+    with pytest.raises(ClimberLoadError, match="greedy has no param 'num_islands'.*selector_params"):
         make_policy("openevolve", {"num_islands": 2})
     with pytest.raises(ClimberLoadError, match="map-elites has no setting .'num_island'."):
-        make_policy({**block(), "select_params": {"num_island": 2}})
+        make_policy({**block(), "selector_params": {"num_island": 2}})
     # any policy's schedule can run over it — and greedy over another selector
-    assert isinstance(make_policy({"policy": "greedy", "select": "map-elites"}).selector, MapElites)
-    assert type(make_policy({"policy": "greedy"}).selector).__name__ == "Best"
+    assert isinstance(make_policy({"operator_policy": "greedy", "selector_policy": "map-elites"}).selector, MapElites)
+    assert type(make_policy({"operator_policy": "greedy"}).selector).__name__ == "Best"
 
 
 def test_drafts_until_population_seeded_then_evolves(config, tmp_path):

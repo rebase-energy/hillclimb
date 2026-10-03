@@ -60,7 +60,7 @@ def main(evaluations: int = 8, agent: str = "claude-code") -> SearchOutcome:
     register_agent("bisector", Bisector, replace=True)
     budget = Budget(evaluations=evaluations)
     climber = Climber(
-        select=Best(num_drafts=2, ensemble=False), policy=Greedy(tune_budget=0), operators=[Draft(), Improve()],
+        selector_policy=Best(num_drafts=2, ensemble=False), operator_policy=Greedy(tune_budget=0), operators=[Draft(), Improve()],
     )
 
     climber.search(problem, budget=budget, agent=agent, learning=False, log=lambda *_: None)

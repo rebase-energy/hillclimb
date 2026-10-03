@@ -623,14 +623,12 @@ def resolve_target(target: str | Path, config: Config) -> ResolvedTarget:
 # because the scoring function lives in the user's own code.
 _DEFINED_VERIFIER_SH = """\
 #!/usr/bin/env bash
-# hillclimb verifier, written by hillclimb.Problem: run the candidate, then score what it produced.
+# hillclimb verifier, written by hillclimb.Problem: run the candidate (within
+# its time limit, if one is set), then score what it produced. Both steps are
+# problem/verify.py's, run with the engine's interpreter, because the scoring
+# function lives in the user's own code.
 set -euo pipefail
 
-"$HILLCLIMB_PYTHON" "$HILLCLIMB_SOLUTION"
-
-# trust boundary: only the scorer may report a score, so anything the
-# solution left behind is discarded before the scorer runs
-rm -f "$HILLCLIMB_RESULT"
 "$HILLCLIMB_ENGINE_PYTHON" problem/verify.py
 """
 
@@ -640,31 +638,40 @@ _DEFINED_VERIFIER_PY = '''\
 import os
 import subprocess
 import sys
-from pathlib import Path
 
-code = subprocess.call([os.environ["HILLCLIMB_PYTHON"], os.environ["HILLCLIMB_SOLUTION"]])
-if code != 0:
-    sys.exit(code)
-Path(os.environ["HILLCLIMB_RESULT"]).unlink(missing_ok=True)
 sys.exit(subprocess.call([os.environ["HILLCLIMB_ENGINE_PYTHON"], "problem/verify.py"]))
 '''
 
 _DEFINED_VERIFY_PY = '''\
-"""Scorer written by hillclimb.Problem: calls `{name}` from {source}
-on the directory the solution ran in, and writes what it returns to
-$HILLCLIMB_RESULT. A number is the score; a mapping must hold "score" and
-may add other numbers (journaled as the candidate's metrics)."""
+"""Verifier written by hillclimb.Problem: runs the solution (within TIME_LIMIT_S
+when set), then calls `{name}` from {source}
+on the directory it ran in, and writes what it returns to $HILLCLIMB_RESULT.
+A number is the score; a mapping must hold "score" and may add other numbers
+(journaled as the candidate's metrics). A solution that fails, or runs past
+its limit, is a buggy candidate."""
 
 import importlib.util
 import json
 import math
 import os
+import subprocess
 import sys
 import traceback
 from pathlib import Path
 
 SOURCE = {source!r}
 NAME = {name!r}
+TIME_LIMIT_S = {time_limit_s!r}
+
+
+def run_solution() -> int:
+    """The candidate, as its own process (it never touches this one)."""
+    argv = [os.environ["HILLCLIMB_PYTHON"], os.environ["HILLCLIMB_SOLUTION"]]
+    try:
+        return subprocess.call(argv, timeout=TIME_LIMIT_S)
+    except subprocess.TimeoutExpired:
+        print(f"solution.py did not finish within the time limit of {{TIME_LIMIT_S}}s", file=sys.stderr)
+        return 124
 
 
 def load_score():
@@ -684,6 +691,12 @@ def load_score():
 
 
 def main() -> int:
+    code = run_solution()
+    if code != 0:
+        return code
+    # trust boundary: only the scorer may report a score, so anything the
+    # solution left behind is discarded before the scorer runs
+    Path(os.environ["HILLCLIMB_RESULT"]).unlink(missing_ok=True)
     try:
         value = load_score()(Path.cwd())
     except Exception:  # noqa: BLE001 - the scorer's own failure is a buggy candidate, with the trace
@@ -727,8 +740,10 @@ class Problem:
             output="answer.txt",
         )
 
-    `score` may also return a mapping with a `score` and other numbers, which
-    the search journals as the candidate's metrics. It must be a function at
+    `time_limit_s` makes the verifier stop a solution that runs longer (a
+    failed attempt, which the climber repairs like any other). `score` may
+    also return a mapping with a `score` and other numbers, which the search
+    journals as the candidate's metrics. It must be a function at
     the top level of a .py file: the verifier imports that file again (keep
     the code that starts a search under `if __name__ == "__main__":`). The
     problem's folder is written under the hillclimb dir's `problems/` the
@@ -749,7 +764,8 @@ class Problem:
         output: str = "submission.csv",
         files: Mapping[str, str | Path] | None = None,
         requirements: Sequence[str] | None = None,
-        time_budget_s: int = 600,
+        time_limit_s: float | None = None,
+        time_budget_s: int = 3600,
         allow_internet_during_solution: bool = False,
         chart_baselines: Mapping[str, float] | None = None,
     ):
@@ -762,6 +778,7 @@ class Problem:
         self.output = output
         self.files = dict(files or {})
         self.requirements = list(requirements) if requirements is not None else None
+        self.time_limit_s = float(time_limit_s) if time_limit_s is not None else None
         self.time_budget_s = int(time_budget_s)
         self.allow_internet_during_solution = bool(allow_internet_during_solution)
         self.chart_baselines = dict(chart_baselines or {})
@@ -770,6 +787,8 @@ class Problem:
                 raise ValueError(f"a problem defined in Python needs a plain name, not {self.name!r}")
             if not description:
                 raise ValueError(f"Problem({self.name!r}): give the coding agent a description of what to write")
+            if self.time_limit_s is not None and not self.time_limit_s > 0:
+                raise ValueError(f"Problem({self.name!r}): time_limit_s must be positive, not {time_limit_s!r}")
             _score_source(score)  # fails now, with the fix, not at the first verifier run
 
     @property
@@ -816,6 +835,8 @@ class Problem:
             "written_by": "hillclimb.Problem",
             "score_function": f"{source}:{function}",
         }
+        if self.time_limit_s is not None:
+            meta["time_limit_s"] = self.time_limit_s
         if self.baseline is not None:
             meta["baseline"] = self.baseline
         if self.chart_baselines:
@@ -832,7 +853,9 @@ class Problem:
                 (folder / dest).write_bytes(Path(content).read_bytes())
             else:
                 (folder / dest).write_text(str(content))
-        (folder / "verify.py").write_text(_DEFINED_VERIFY_PY.format(source=str(source), name=function))
+        (folder / "verify.py").write_text(
+            _DEFINED_VERIFY_PY.format(source=str(source), name=function, time_limit_s=self.time_limit_s)
+        )
         verifier = folder / "verifier.sh"
         verifier.write_text(_DEFINED_VERIFIER_SH)
         verifier.chmod(0o755)
@@ -840,9 +863,13 @@ class Problem:
         return folder
 
     def _submission_note(self) -> str:
+        limit = (
+            f" It must finish within {self.time_limit_s:g} seconds; a run that does not is a failed attempt."
+            if self.time_limit_s is not None else ""
+        )
         return (
             "\n## Submission format\n\n"
-            f"Your `solution.py` runs in the working directory and must write `{self.output}` there. "
+            f"Your `solution.py` runs in the working directory and must write `{self.output}` there.{limit} "
             "`problem/verify.py` reads what it wrote and reports the score "
             f"(`{self.metric}`, {'higher' if self.higher_is_better else 'lower'} is better).\n"
         )

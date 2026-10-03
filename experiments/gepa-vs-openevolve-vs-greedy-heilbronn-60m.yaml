@@ -41,7 +41,7 @@ experiments:
 
   openevolve:
     climber: openevolve
-    climber.select_params:
+    climber.selector_params:
       random_seed: 42
 
   gepa:

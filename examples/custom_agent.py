@@ -45,7 +45,7 @@ def main(evaluations: int = 36, agent: str = "grid") -> SearchOutcome:
     register_agent("grid", GridWalker, replace=True)
     problem = Problem("fitness-landscape")
     budget = Budget(evaluations=evaluations)
-    climber = Climber(select=Best(ensemble=False), policy=Greedy(), operators=[Draft(), Improve()])
+    climber = Climber(selector_policy=Best(ensemble=False), operator_policy=Greedy(), operators=[Draft(), Improve()])
 
     climber.search(problem, budget=budget, agent="grid", learning=False, log=lambda *_: None)
     frame = climber.to_frame()

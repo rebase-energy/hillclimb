@@ -134,18 +134,26 @@ def current_setting(key: str) -> str:
             raise KeyError(f"{old} is gone: {advice}")
     if key == "climber.ref":
         return "climber"  # 0.5 named a climber by `ref`; naming one replaces the block
+    # the two decisions were `climber.policy` and `climber.select` (its knobs
+    # `climber.select_params`) until 0.7
+    from hillclimb.modules.spec import RENAMED_BLOCK_KEYS
+
+    for old, new in RENAMED_BLOCK_KEYS.items():
+        if key == f"climber.{old}" or key.startswith(f"climber.{old}."):
+            key = f"climber.{new}" + key[len(f"climber.{old}"):]
+            break
     if key.startswith("climber.operators."):
         # `operators` is the LIST of what may run; one operator's params are
         # addressed by its name
         return "climber.operator_params." + key[len("climber.operators."):]
     if key.startswith("climber.params."):
-        # the schedule is the selector's: `climber.params.num_drafts` (every
-        # spelling before 0.7) is `climber.select_params.num_drafts`
+        # the schedule is the selector policy's: `climber.params.num_drafts`
+        # (every spelling before 0.7) is `climber.selector_params.num_drafts`
         from hillclimb.modules.spec import SCHEDULE_KNOBS
 
         knob = key[len("climber.params."):].split(".", 1)[0]
         if knob in SCHEDULE_KNOBS:
-            return "climber.select_params." + key[len("climber.params."):]
+            return "climber.selector_params." + key[len("climber.params."):]
     return key
 
 
@@ -623,9 +631,9 @@ class Config(BaseModel):
                 # the block; later `climber.<field>` overrides then edit it
                 working.climber = ClimberSpec.model_validate(value)
                 continue
-            if key in ("climber.policy", "climber.loop"):
+            if key in ("climber.operator_policy", "climber.loop"):
                 # a climber has one or the other: naming one drops the other
-                working.climber.policy = working.climber.loop = None
+                working.climber.operator_policy = working.climber.loop = None
             parts = key.split(".")
             target: object = working
             for part in parts[:-1]:

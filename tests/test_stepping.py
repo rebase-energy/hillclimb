@@ -233,7 +233,7 @@ def test_starting_a_search_leaves_the_climber_the_definition_it_was(agent, confi
 
 
 def test_a_class_of_this_process_steps_too(agent, config):
-    class DraftsOnly(hc.policies.Policy):
+    class DraftsOnly(hc.policies.OperatorPolicy):
         def propose(self, state, selection):
             return Action("draft")
 

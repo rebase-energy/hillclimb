@@ -205,7 +205,7 @@ def test_a_climber_block_crosses_to_a_child_engine_as_the_first_set_pair(tmp_pat
     from hillclimb.config import Config, parse_set_overrides
 
     assert climber_argv(None) == [] and climber_argv("gepa") == ["--climber", "gepa"]
-    block = {"policy": str(tmp_path / "mine.py"), "params": {"num_drafts": 2, "note": "a: b, c"},
+    block = {"operator_policy": str(tmp_path / "mine.py"), "params": {"num_drafts": 2, "note": "a: b, c"},
              "operators": ["draft", {"improve": {"ablation": False}}], "tuner": "optuna", "memory": "none"}
     run_dir = tmp_path / "runs" / "r1"
     argv = fleet_argv("cp", run_dir, "cp", climber=block, overrides=["climber.params.num_drafts=5", "model=opus"])

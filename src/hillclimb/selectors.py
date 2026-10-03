@@ -1,10 +1,10 @@
-"""Selectors: WHICH candidate a policy expands next.
+"""Selector policies (π_sel): WHICH candidate the next attempt starts from.
 
 `Best()` is best-first; `MapElites(num_islands=3)` a quality-diversity archive (extra: openevolve).
 
 The building blocks, by name — `import hillclimb as hc; hc.selectors.Best` —
 for composing a climber in Python (`hillclimb.Climber`). The classes live
-under `hillclimb.modules` (and are what a block's `select:` names); this
+under `hillclimb.modules` (and are what a block's `selector_policy:` names); this
 module is a lazy window onto them, so importing it costs nothing until a
 class is used. A climber's own files import the contracts from
 `hillclimb.sdk`.
@@ -13,7 +13,8 @@ class is used. A climber's own files import the contracts from
 from __future__ import annotations
 
 _LAZY = {
-    "Selector": ("hillclimb.modules.selectors.base", "Selector"),
+    "SelectorPolicy": ("hillclimb.modules.selectors.base", "SelectorPolicy"),
+    "Selector": ("hillclimb.modules.selectors.base", "Selector"),  # the pre-0.7 name
     "Selection": ("hillclimb.modules.selectors.base", "Selection"),
     "Best": ("hillclimb.modules.selectors.best", "Best"),
     "MapElites": ("hillclimb.modules.selectors.map_elites", "MapElites"),

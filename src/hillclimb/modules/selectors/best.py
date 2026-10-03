@@ -7,10 +7,10 @@ when every scored candidate is busy, the best gets another.
 
 from __future__ import annotations
 
-from hillclimb.sdk import SearchState, Selection, Selector, improvable
+from hillclimb.sdk import SearchState, Selection, SelectorPolicy, improvable
 
 
-class Best(Selector):
+class Best(SelectorPolicy):
     """The best scored candidate that is not already being expanded."""
 
     name = "best"

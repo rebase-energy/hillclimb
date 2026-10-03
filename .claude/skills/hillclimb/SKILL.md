@@ -145,7 +145,7 @@ uv run hillclimb climber new mine --from greedy   # copy greedy's source into cl
 uv run hillclimb climber check [SPEC.yaml] [--climber NAME] [--set climber.params.k=v] [--problem P --smoke]  # resolve every module, then replay recorded journals through the policy (no agent): resume-determinism, dangling ids, writes, prompt lint; a spec checks every entry's climber; exit 1 on a breach
 uv run hillclimb run <problem> --climber climbers/mine.py  # a preset's name or one .py file (a Policy class, or POLICY=...); replaces the folder's `climber:` block. search.yaml records climber_sha256 and the block, and snapshots it
 uv run hillclimb run run.yaml                     # a run spec: each entry's `climber:` block DEFINES that search's climber (policy/loop, select, operators, tuner, memory, params); a top-level `climber:` is the entries' default
-uv run hillclimb run <problem> --set climber=openevolve --set climber.select_params.num_islands=3 --study S --experiment E  # one experiment by hand (counts in the report); `climber=` names the block, `climber.<field>` edits it
+uv run hillclimb run <problem> --set climber=openevolve --set climber.selector_params.num_islands=3 --study S --experiment E  # one experiment by hand (counts in the report); `climber=` names the block, `climber.<field>` edits it
 uv run hillclimb run <problem> --climber greedy --climber openevolve --climber gepa --experiment-set gepa:concurrency.parallel_agents=1  # mixed fleet: one search per climber under one run; `experiment report <run-id>` compares
 ```
 

@@ -95,7 +95,7 @@ def test_a_climber_brings_its_own_memory(task, config, tmp_path, monkeypatch):
     notes = tmp_path / "notes.txt"
     notes.write_text("Last time the best was 0.4.\n")
     config.apply_overrides({"climber": {
-        "policy": "greedy", "params": {"num_drafts": 1, "tune_budget": 0, "ensemble": False},
+        "operator_policy": "greedy", "params": {"num_drafts": 1, "tune_budget": 0, "ensemble": False},
         "memory": str(tmp_path / "notebook.py"), "memory_params": {"where": str(notes), "shout": True},
     }})
     agent = FakeAgent()

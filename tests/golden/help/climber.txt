@@ -1,7 +1,7 @@
                                                                                                                         
  Usage: root climber [OPTIONS] COMMAND [ARGS]...                                                                        
                                                                                                                         
- Climbers — the shareable bundle that decides HOW to hillclimb (policy, operators, prompts, tuner): list them, start    
+ Climbers — the shareable bundle that decides HOW to hillclimb (policies, operators, prompts, tuner): list them, start  
  your own, check one before spending budget on it                                                                       
                                                                                                                         
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮

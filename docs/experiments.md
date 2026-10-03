@@ -18,7 +18,7 @@ noise_floor: 0.02           # from `hillclimb verify circle-packing --repeat 5`
 experiments:
   greedy:       {climber: greedy}                 # first experiment = the control
   greedy-nomem: {climber: greedy, learning.enabled: false}
-  openevolve:   {climber: openevolve, climber.select_params: {population_size: 50}}
+  openevolve:   {climber: openevolve, climber.selector_params: {population_size: 50}}
 ```
 
 `hillclimb experiment run <name>` launches the matrix: sequentially by

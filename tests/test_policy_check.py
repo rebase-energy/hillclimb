@@ -371,7 +371,7 @@ def test_climber_check_takes_a_run_spec_and_checks_every_entrys_climber(tmp_path
     spec = tmp_path / "run.yaml"
     spec.write_text(yaml.safe_dump({"problems": [
         {"target": "p", "climber": "greedy", "set": ["climber.params.num_drafts=1"]},
-        {"target": "p", "name": "again", "climber": {"policy": "greedy", "params": {"num_drafts": 1}}},
+        {"target": "p", "name": "again", "climber": {"operator_policy": "greedy", "params": {"num_drafts": 1}}},
     ]}))
     with pytest.raises(SystemExit) as exc:
         cli_main(["climber", "check", "run.yaml", "--json"])
@@ -386,10 +386,10 @@ def test_climber_check_takes_a_run_spec_and_checks_every_entrys_climber(tmp_path
     out = capsys.readouterr().out
     assert "policy greedy" in out and "policy stalls" in out and "never start" in out
 
-    spec.write_text(yaml.safe_dump({"problems": [{"target": "p", "climber": {"policy": "nope"}}]}))
+    spec.write_text(yaml.safe_dump({"problems": [{"target": "p", "climber": {"operator_policy": "nope"}}]}))
     with pytest.raises(SystemExit) as exc:
         cli_main(["climber", "check", "run.yaml"])
-    assert exc.value.code == 2 and "unknown policy 'nope'" in capsys.readouterr().err
+    assert exc.value.code == 2 and "unknown operator policy 'nope'" in capsys.readouterr().err
 
 
 def test_the_config_init_writes_shows_a_block_that_loads():
@@ -410,6 +410,6 @@ def test_the_config_init_writes_shows_a_block_that_loads():
             break
         block.append(re.sub(r"^# ?", "", line))
     config = Config.model_validate(yaml.safe_load("\n".join(block)))
-    assert config.climber.policy == "greedy" and config.climber.operators == ["draft", "debug", "improve", "ensemble"]
+    assert config.climber.operator_policy == "greedy" and config.climber.operators == ["draft", "debug", "improve", "ensemble"]
     shorthand = next(line for line in lines if line.startswith("# climber: greedy"))
-    assert Config.model_validate(yaml.safe_load(shorthand[2:])).climber.policy == "greedy"
+    assert Config.model_validate(yaml.safe_load(shorthand[2:])).climber.operator_policy == "greedy"

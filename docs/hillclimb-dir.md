@@ -75,12 +75,12 @@ entry without one in a spec without one uses the folder's, from
 `hillclimb.yaml`. File refs in a block are relative to the spec file.
 
 ```yaml
-climber: {policy: greedy, params: {num_drafts: 5}}      # for every entry below that names none
+climber: {operator_policy: greedy, params: {num_drafts: 5}}      # for every entry below that names none
 problems:
   - heilbronn-11
   - target: heilbronn-14
     budget: 1h
-    climber: {policy: greedy, select: map-elites, tuner: optuna}
+    climber: {operator_policy: greedy, selector_policy: map-elites, tuner: optuna}
 ```
 
 ### What git tracks

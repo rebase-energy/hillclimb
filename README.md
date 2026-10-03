@@ -64,8 +64,8 @@ A climber is one block of config, in a run spec or as the folder's default in
 
 ```yaml
 climber:
-  policy: greedy                  # what to try next
-  select: map-elites              # which candidate to expand
+  selector_policy: map-elites     # which candidate to build on next
+  operator_policy: greedy         # which operator to use on it
   operators: [draft, debug, improve, crossover.py:Crossover]
   tuner: optuna
   params: {num_drafts: 5}
@@ -82,7 +82,7 @@ from hillclimb.selectors import MapElites
 
 problem = Problem("heilbronn-11")
 budget = Budget(wall_clock="10m", evaluations=40)
-climber = Climber(select=MapElites(num_drafts=5), policy=Greedy())
+climber = Climber(selector_policy=MapElites(num_drafts=5), operator_policy=Greedy())
 
 climber.search(problem, budget=budget)
 climber.best, climber.history, climber.to_frame()

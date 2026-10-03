@@ -235,8 +235,8 @@ def test_gepa_is_a_loop_every_other_climber_a_policy(config):
     assert holdout_timing(config) == "after"
     with pytest.raises(ValueError, match="Unknown climber: nope .presets: gepa, greedy, openevolve"):
         name_climber(config, "nope")
-    config.climber.policy = "nope"
-    with pytest.raises(ValueError, match="unknown policy 'nope' .available: greedy"):
+    config.climber.operator_policy = "nope"
+    with pytest.raises(ValueError, match="unknown operator policy 'nope' .available: greedy"):
         build_loop(config)
 
 

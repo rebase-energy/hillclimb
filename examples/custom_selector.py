@@ -16,11 +16,11 @@ import sys
 from hillclimb import Budget, Climber, Problem, SearchOutcome
 from hillclimb.operators import Debug, Draft, Improve
 from hillclimb.policies import Greedy
-from hillclimb.sdk import SearchState, Selection, Selector, improvable
+from hillclimb.sdk import SearchState, Selection, SelectorPolicy, improvable
 from hillclimb.selectors import Best
 
 
-class LeastExpanded(Selector):
+class LeastExpanded(SelectorPolicy):
     """Among the top few scored candidates, the one with the fewest children."""
 
     name = "least-expanded"
@@ -42,8 +42,8 @@ def main(evaluations: int = 10, agent: str = "claude-code") -> dict[str, SearchO
     outcomes = {}
     for name, selector in [("best", Best(ensemble=False)), ("least-expanded", LeastExpanded(top=4, ensemble=False))]:
         climber = Climber(
-            select=selector,                            # π_sel: which node, or none
-            policy=Greedy(tune_budget=0),               # π_op: which operator on it
+            selector_policy=selector,                            # π_sel: which node, or none
+            operator_policy=Greedy(tune_budget=0),               # π_op: which operator on it
             operators=[Draft(), Debug(), Improve()],
         )
         climber.search(problem, budget=budget, agent=agent, learning=False, log=lambda *_: None)

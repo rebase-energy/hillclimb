@@ -570,7 +570,7 @@ def resume(
         # a search from before snapshots: all there is is what the record says
         try:
             block = dict(meta.climber_spec)
-            if "policy" not in block and "loop" not in block:
+            if not any(key in block for key in ("operator_policy", "policy", "loop")):
                 # the record names it without saying what it is: a preset, a file
                 block = {**as_spec(meta.climber_ref or meta.climber).block(), **block}
             config.climber = as_spec(block)

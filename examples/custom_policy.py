@@ -1,4 +1,4 @@
-"""Write your own policy: the schedule of a search.
+"""Write your own operator_policy: the schedule of a search.
 
     uv run python examples/custom_policy.py          # with Claude Code writing the solutions
     uv run python examples/custom_policy.py toy      # with the free scripted agent, in seconds
@@ -17,17 +17,17 @@ from hillclimb import Budget, Climber, Problem, SearchOutcome
 from hillclimb.operators import Draft, Improve
 from hillclimb.policies import Greedy
 from hillclimb.selectors import Best
-from hillclimb.sdk import Action, Policy, SearchState, Selection, improves
+from hillclimb.sdk import Action, OperatorPolicy, SearchState, Selection, improves
 
 
-class DraftsOnly(Policy):
+class DraftsOnly(OperatorPolicy):
     """Random search: whatever the selector chose, draft again."""
 
     def propose(self, state: SearchState, selection: Selection | None) -> Action | None:
         return Action("draft")
 
 
-class GiveUpQuickly(Policy):
+class GiveUpQuickly(OperatorPolicy):
     """Build on the chosen node, unless its last few children failed to beat
     it. Then it is stuck: draft somewhere new instead."""
 
@@ -61,8 +61,8 @@ def main(evaluations: int = 10, agent: str = "claude-code") -> dict[str, SearchO
         ("bundled greedy", Greedy()),
     ]:
         climber = Climber(
-            select=Best(num_drafts=4, ensemble=False),  # π_sel, the same for all three
-            policy=policy,                              # π_op, what differs
+            selector_policy=Best(num_drafts=4, ensemble=False),  # π_sel, the same for all three
+            operator_policy=policy,                              # π_op, what differs
             operators=[Draft(), Improve()],
             name=name,
         )

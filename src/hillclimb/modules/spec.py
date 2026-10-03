@@ -21,15 +21,41 @@ DEFAULT_POLICY = "greedy"
 
 # a bare name stands for one of these blocks
 PRESETS: dict[str, dict[str, Any]] = {
-    "greedy": {"policy": "greedy"},
+    "greedy": {"operator_policy": "greedy"},
     # quality-diversity search: greedy's schedule over the MAP-Elites
-    # selector, without the moves OpenEvolve has no counterpart for
+    # selector policy, without the moves OpenEvolve has no counterpart for
     "openevolve": {
-        "name": "openevolve", "policy": "greedy", "select": "map-elites",
-        "select_params": {"ensemble": False}, "params": {"tune_budget": 0},
+        "name": "openevolve", "operator_policy": "greedy", "selector_policy": "map-elites",
+        "selector_params": {"ensemble": False}, "params": {"tune_budget": 0},
     },
     "gepa": {"loop": "gepa"},
 }
+
+# The two decisions were `policy:` and `select:` (its knobs `select_params:`)
+# until 0.7; they are named after the RSI framework now — the selector policy
+# (π_sel) picks the node, the operator policy (π_op) picks the operator — and a
+# block, a `--set climber.…`, a snapshot or a record in either spelling loads
+# (the new spelling wins on a clash).
+RENAMED_BLOCK_KEYS = {
+    "policy": "operator_policy",
+    "select": "selector_policy",
+    "select_params": "selector_params",
+}
+
+
+def renamed_block_keys(data: dict) -> dict:
+    """The block with the pre-0.7 key spellings moved to the current ones."""
+    if not any(old in data for old in RENAMED_BLOCK_KEYS):
+        return data
+    data = dict(data)
+    for old, new in RENAMED_BLOCK_KEYS.items():
+        if old in data:
+            value = data.pop(old)
+            if new not in data:
+                data[new] = value
+            elif isinstance(value, dict) and isinstance(data[new], dict):
+                data[new] = {**value, **data[new]}
+    return data
 
 # keys a pre-0.6 manifest carried that a block does not
 _GONE = {
@@ -39,8 +65,8 @@ _GONE = {
 }
 
 
-# the schedule — which node, or none — is the SELECTOR's (π_sel) since 0.7;
-# a block from before wrote these knobs under the policy's `params`
+# the schedule — which node, or none — is the SELECTOR POLICY's (π_sel) since
+# 0.7; a block from before wrote these knobs under the operator policy's `params`
 SCHEDULE_KNOBS = (
     "num_drafts", "max_debug_depth", "debug",
     "ensemble", "ensemble_reserve_fraction", "ensemble_top_k", "ensemble_max_attempts",
@@ -54,8 +80,8 @@ _OPENEVOLVE_SCHEDULE_KNOBS = (
 
 def schedule_to_selector(data: dict) -> dict:
     """A block that sets the schedule under `params` (how every block did
-    before 0.7) means the same schedule under `select_params`, where the
-    selector reads it. `select_params` wins where both say something."""
+    before 0.7) means the same schedule under `selector_params`, where the
+    selector policy reads it. `selector_params` wins where both say something."""
     params = data.get("params")
     if not isinstance(params, dict) or not any(key in params for key in SCHEDULE_KNOBS):
         return data
@@ -66,7 +92,7 @@ def schedule_to_selector(data: dict) -> dict:
         data["params"] = kept
     else:
         del data["params"]
-    data["select_params"] = {**moved, **(data.get("select_params") or {})}
+    data["selector_params"] = {**moved, **(data.get("selector_params") or {})}
     return data
 
 
@@ -94,10 +120,10 @@ def block_from_05(data: dict) -> dict:
         merged[key] = {**base.get(key, {}), **value} if key == "params" and isinstance(value, dict) else value
     if ref == "openevolve" and isinstance(data.get("params"), dict):
         # 0.5's openevolve policy kept MAP-Elites' settings among its own
-        # params; they are the selector's now
+        # params; they are the selector policy's now
         theirs = {k: v for k, v in data["params"].items() if k not in _OPENEVOLVE_SCHEDULE_KNOBS}
         merged["params"] = {k: v for k, v in merged["params"].items() if k not in theirs}
-        merged["select_params"] = {**theirs, **(merged.get("select_params") or {})}
+        merged["selector_params"] = {**theirs, **(merged.get("selector_params") or {})}
     if isinstance(overlay, dict):
         if overlay:
             merged["operator_params"] = {**overlay, **(merged.get("operator_params") or {})}
@@ -123,7 +149,7 @@ def expand_name(ref: str) -> dict[str, Any]:
     if ref in PRESETS:
         return json.loads(json.dumps(PRESETS[ref]))  # a copy nobody can edit the preset through
     if refs.is_file_ref(ref) or refs.is_module_ref(ref):
-        return {"policy": ref}  # a file that defines a Loop is recognised when it is resolved
+        return {"operator_policy": ref}  # a file that defines a Loop is recognised when it is resolved
     raise ValueError(
         f"Unknown climber: {ref} (presets: {', '.join(presets())}; or one .py file; or a full "
         "`climber:` block). A directory holding climber.yaml is the pre-0.6 form: "
@@ -137,14 +163,16 @@ class ClimberSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = None  # a label (experiment names, the watch column); not part of identity
-    # exactly one of the two: WHAT to try next, or the whole control flow
-    policy: str | None = None
+    # exactly one of the two: the operator policy (π_op: which operator to
+    # apply to what the selector policy chose), or the whole control flow
+    operator_policy: str | None = None
     loop: str | None = None
-    params: dict[str, Any] = Field(default_factory=dict)
-    # which candidate a policy expands next (`best` unless the policy says
-    # otherwise; `map-elites` for a quality-diversity archive). Only with `policy:`
-    select: str | None = None
-    select_params: dict[str, Any] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)  # the operator policy's knobs
+    # the selector policy (π_sel): which candidate the next attempt starts
+    # from, or none (`best` unless the operator policy says otherwise;
+    # `map-elites` for a quality-diversity archive). Only with `operator_policy:`
+    selector_policy: str | None = None
+    selector_params: dict[str, Any] = Field(default_factory=dict)
     # which operators: names or refs, each optionally with params
     # (`- draft: {retrieval: true}`). None = what the policy/loop declares,
     # else the built-in four — plus any Operator its own file defines
@@ -177,31 +205,36 @@ class ClimberSpec(BaseModel):
         for key, advice in _GONE.items():
             if key in data:
                 raise ValueError(f"`{key}`: {advice}")
-        return schedule_to_selector(block_from_05(data))
+        return schedule_to_selector(renamed_block_keys(block_from_05(data)))
 
     @model_validator(mode="after")
     def _one_brain(self) -> ClimberSpec:
-        if self.policy is not None and self.loop is not None:
-            raise ValueError("name one of `policy:` (what to try next) or `loop:` (the whole control flow), not both")
-        if self.policy is None and self.loop is None:
-            self.policy = DEFAULT_POLICY
-        if self.loop is not None and (self.select is not None or self.select_params):
-            raise ValueError("`select:` picks what a policy expands; a `loop:` does its own selection")
+        if self.operator_policy is not None and self.loop is not None:
+            raise ValueError(
+                "name one of `operator_policy:` (which operator to apply next) or `loop:` "
+                "(the whole control flow), not both"
+            )
+        if self.operator_policy is None and self.loop is None:
+            self.operator_policy = DEFAULT_POLICY
+        if self.loop is not None and (self.selector_policy is not None or self.selector_params):
+            raise ValueError(
+                "`selector_policy:` picks what an operator policy expands; a `loop:` does its own selection"
+            )
         return self
 
     # --- reading it ---
 
     @property
     def brain(self) -> str:
-        return self.loop if self.loop is not None else self.policy
+        return self.loop if self.loop is not None else self.operator_policy
 
     @property
     def label(self) -> str:
-        """What views call it: its `name`, else the policy's or loop's."""
+        """What views call it: its `name`, else the operator policy's or loop's."""
         return self.name or climber_label(self.brain)
 
     def operator_items(self) -> list[tuple[str, dict[str, Any]]] | None:
-        """`operators:` as (ref, params) pairs; None when the block leaves them to the policy/loop."""
+        """`operators:` as (ref, params) pairs; None when the block leaves them to the operator policy/loop."""
         if self.operators is None:
             return None
         items = []
@@ -218,7 +251,7 @@ class ClimberSpec(BaseModel):
     def module_refs(self) -> list[str]:
         """Every module this block names."""
         return [
-            self.brain, *([self.select] if self.select else []), self.tuner, self.memory,
+            self.brain, *([self.selector_policy] if self.selector_policy else []), self.tuner, self.memory,
             *([self.graph] if self.graph else []),
             *(ref for ref, _ in self.operator_items() or []),
         ]
@@ -232,14 +265,14 @@ class ClimberSpec(BaseModel):
     def map_refs(self, change: Callable[[str], str]) -> ClimberSpec:
         """A copy with every module ref passed through `change`."""
         update: dict[str, Any] = {
-            "loop" if self.loop is not None else "policy": change(self.brain),
+            "loop" if self.loop is not None else "operator_policy": change(self.brain),
             "tuner": change(self.tuner),
             "memory": change(self.memory),
         }
         if self.graph is not None:
             update["memory_params"] = {**self.memory_params, "graph": change(self.graph)}
-        if self.select is not None:
-            update["select"] = change(self.select)
+        if self.selector_policy is not None:
+            update["selector_policy"] = change(self.selector_policy)
         if self.operators is not None:
             update["operators"] = [
                 change(entry) if isinstance(entry, str) else {change(ref): params for ref, params in entry.items()}
@@ -267,7 +300,7 @@ class ClimberSpec(BaseModel):
         """The block as it is written down: every module it names (defaults
         included, so it reads whole), without the keys that say nothing — a
         None, an empty mapping of params — and with the schedule's knobs where
-        the selector reads them, however they were set."""
+        the selector policy reads them, however they were set."""
         data = schedule_to_selector(self.model_dump(exclude_none=True))
         return {key: value for key, value in data.items() if value != {}}
 

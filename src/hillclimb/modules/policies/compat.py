@@ -2,7 +2,7 @@
 
 A search's snapshot names its policy by `module:Class`; `_moved.py` maps the
 class paths those snapshots hold onto the ones here. Nothing new should name
-these: a block composes `policy: greedy` with a `select:`.
+these: a block composes `operator_policy: greedy` with a `selector_policy:`.
 """
 
 from __future__ import annotations

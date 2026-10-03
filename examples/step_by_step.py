@@ -31,7 +31,7 @@ def main(evaluations: int = 10, agent: str = "claude-code") -> SearchOutcome:
     problem = Problem("fitness-landscape")
     budget = Budget(evaluations=evaluations)
     climber = Climber(
-        select=Best(num_drafts=3, ensemble=False), policy=Greedy(), operators=[Draft(), Debug(), Improve()],
+        selector_policy=Best(num_drafts=3, ensemble=False), operator_policy=Greedy(), operators=[Draft(), Debug(), Improve()],
     )
 
     climber.start(

@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 from hillclimb import Budget, Climber, Problem
-from hillclimb.sdk import Action, Attempt, Operator, OperatorContext, Policy, SearchState, Selection, Selector
+from hillclimb.sdk import Action, Attempt, Operator, OperatorContext, OperatorPolicy, SearchState, Selection, SelectorPolicy
 
 # ---------------------------------------------------------------------------
 # 1. The problem: what the agent is asked to do, and how an answer is scored.
@@ -65,7 +65,7 @@ problem = Problem(
 # ---------------------------------------------------------------------------
 
 
-class BestSoFar(Selector):
+class BestSoFar(SelectorPolicy):
     name = "best-so-far"
 
     def pick(self, state: SearchState, *, busy=frozenset()) -> Selection | None:
@@ -76,14 +76,14 @@ class BestSoFar(Selector):
         return Selection(best.candidate_id)
 
 # ---------------------------------------------------------------------------
-# 3. The policy: π_op. Which operator is applied to what the selector chose?
+# 3. The operator_policy: π_op. Which operator is applied to what the selector chose?
 #
 # The second decision. No node means write a fresh attempt; a node means
 # revise it. That is the whole of hill climbing.
 # ---------------------------------------------------------------------------
 
 
-class Climb(Policy):
+class Climb(OperatorPolicy):
     name = "climb"
 
     def propose(self, state: SearchState, selection: Selection | None) -> Action | None:
@@ -133,8 +133,8 @@ class Revise(Operator):
 def main(evaluations: int = 8, agent: str = "claude-code"):
     budget = Budget(evaluations=evaluations)
     climber = Climber(
-        select=BestSoFar(num_drafts=2),   # π_sel: two fresh attempts, then build on the best
-        policy=Climb(),                   # π_op: write, or revise
+        selector_policy=BestSoFar(num_drafts=2),   # π_sel: two fresh attempts, then build on the best
+        operator_policy=Climb(),                   # π_op: write, or revise
         operators=[Write(), Revise()],    # the prompts above
     )
 

@@ -82,4 +82,4 @@ def name_climber(config, ref: str) -> None:
 
     block = expand_name(ref)
     config.climber.name = block.get("name")
-    config.climber.policy, config.climber.loop = block.get("policy"), block.get("loop")
+    config.climber.operator_policy, config.climber.loop = block.get("operator_policy"), block.get("loop")

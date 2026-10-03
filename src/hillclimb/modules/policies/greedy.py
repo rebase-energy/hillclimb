@@ -9,7 +9,7 @@ parameter values, no coding agent) before improving it, while it declared
 `params.json` and has tune budget left.
 
 The whole exploration process is ONE dict per module: the climber's
-`params` (this policy's knobs) and `select_params` (the selector's schedule:
+`params` (this policy's knobs) and `selector_params` (the selector policy's schedule:
 `num_drafts`, `debug`, `max_debug_depth`, `ensemble`, …). Every knob is read
 from it, else from `DEFAULTS` — a policy never sees the harness's config, and
 a coding agent editing the process is handed a single dict
@@ -30,10 +30,10 @@ Params (default in brackets):
 
 from __future__ import annotations
 
-from hillclimb.sdk import TUNE_ACTION, Action, Candidate, Policy, SearchState, Selection, improves
+from hillclimb.sdk import TUNE_ACTION, Action, Candidate, OperatorPolicy, SearchState, Selection, improves
 
 
-class Greedy(Policy):
+class Greedy(OperatorPolicy):
     """Draft a root, debug a failing tip, ensemble the chosen set, and tune the chosen candidate before improving it."""
 
     name = "greedy"

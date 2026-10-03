@@ -55,12 +55,13 @@ class Selection:
         return (self.target_id, *self.inspiration_ids)
 
 
-class Selector:
-    """π_sel. Subclass, set `name`, implement `pick` (the scored candidate to
-    build on); override `sync` when the selector keeps state, `creation_meta`
-    when it tags new drafts, and `select` itself only to change the schedule.
+class SelectorPolicy:
+    """π_sel, the selector policy. Subclass, set `name`, implement `pick`
+    (the scored candidate to build on); override `sync` when it keeps state,
+    `creation_meta` when it tags new drafts, and `select` itself only to
+    change the schedule.
 
-    Knobs (`select_params`), with their defaults:
+    Knobs (`selector_params`), with their defaults:
       num_drafts (3)                     root candidates before anything is built on
       debug (True)                       repair failing tips at all
       max_debug_depth (3)                failed fixes per failing chain
@@ -203,6 +204,10 @@ class Selector:
         themselves, deduped by script content so near-identical improves
         don't fill the slots."""
         return top_distinct(state, int(self.param("ensemble_top_k")), skip_kind="combine")
+
+
+# the pre-0.7 name; one release of grace
+Selector = SelectorPolicy
 
 
 def top_distinct(state: SearchState, k: int, skip_kind: str | None = None) -> list[Candidate]:

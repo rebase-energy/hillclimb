@@ -6,7 +6,7 @@ effect — candidate dirs, coding agents, verifier runs, the journal, `best/`, b
 the control queue, holdout — happens inside the harness, so a loop is small
 enough to edit and cannot reach what judges it.
 
-Most climbers never write a loop: a `Policy` (the pure "given the
+Most climbers never write a loop: an `OperatorPolicy` (the pure "given the
 state, what next?") runs on the built-in `PolicyLoop`. Write a `Loop`
 when the idea IS control flow — synchronized generations, islands, an
 external optimizer that drives its own iteration.
@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from hillclimb.harness.candidate import Candidate
     from hillclimb.harness.evaluation import EvalResult
-    from hillclimb.modules.policies.base import Action, InflightRef, SearchState, Policy
+    from hillclimb.modules.policies.base import Action, InflightRef, SearchState, OperatorPolicy
 
 
 class HarnessClosed(Exception):
@@ -151,7 +151,7 @@ class PolicyLoop(Loop):
 
     name = "policy"
 
-    def __init__(self, policy: Policy):
+    def __init__(self, policy: OperatorPolicy):
         self.policy = policy
         self._caught_up: set[str] = set()
 

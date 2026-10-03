@@ -161,13 +161,13 @@ def test_search_record_pins_the_climber_and_snapshots_it(config, tmp_path):
     climber_dir = tmp_path / "mine"
     (climber_dir / "prompts").mkdir(parents=True)
     (climber_dir / "prompts" / "improve.md").write_text("tighter improve prompt: {{best_score}}\n\n{{contract}}\n")
-    block = {"name": "mine", "policy": "greedy", "params": {"num_drafts": 1}, "prompts": str(climber_dir / "prompts")}
+    block = {"name": "mine", "operator_policy": "greedy", "params": {"num_drafts": 1}, "prompts": str(climber_dir / "prompts")}
     config.apply_overrides({"climber": block})
     search_dir = create_search(config, load_problem("p", config), run_dir, "r1", 60)
     meta = load_search_meta(search_dir)
     before = resolve_climber(block).sha256
     assert (meta.climber, meta.climber_sha256) == ("mine", before)
-    assert meta.climber_spec["select_params"] == {"num_drafts": 1} and meta.hillclimb_version
+    assert meta.climber_spec["selector_params"] == {"num_drafts": 1} and meta.hillclimb_version
 
     # the author keeps iterating on the live prompts; the search keeps what it started with
     (climber_dir / "prompts" / "improve.md").write_text("a different prompt: {{best_score}}\n\n{{contract}}\n")
@@ -192,7 +192,7 @@ def test_a_search_refuses_to_start_on_a_climber_whose_prompts_do_not_lint(config
     climber = tmp_path / "mine"
     (climber / "prompts").mkdir(parents=True)
     (climber / "prompts" / "draft.md").write_text("{{typo_token}}\n")
-    config.apply_overrides({"climber": {"policy": "greedy", "prompts": str(climber / "prompts")}})
+    config.apply_overrides({"climber": {"operator_policy": "greedy", "prompts": str(climber / "prompts")}})
     with pytest.raises(ValueError, match="typo_token"):
         create_search(config, load_problem("p", config), run_dir, "r1", 60)
     assert not list((run_dir / "searches").glob("*"))  # nothing was allocated

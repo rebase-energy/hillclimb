@@ -21,7 +21,7 @@ all the same study with different experiments. A spec is a YAML file
       greedy-nomem:  {climber: greedy, learning.enabled: false}
       openevolve:    {climber: openevolve, climber.params: {population_size: 50}}
       mine:                         # a whole `climber:` block, as a run spec takes it
-        climber: {policy: mine.py, tuner: optuna}
+        climber: {operator_policy: mine.py, tuner: optuna}
 
 An experiment's `climber` names or defines its climber — a preset, one .py
 file, or the block — and replaces the block whole; `climber.<field>` edits
