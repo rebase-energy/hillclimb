@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import tempfile
 import threading
@@ -40,27 +39,26 @@ OPENROUTER_PROVIDER = (
 )
 
 
+# written once `hillclimb connect codex` has logged codex in to its operator
+# home itself. A home without it holds a copy of the user's own login (what
+# hillclimb did before): codex spends a refresh token once, so a copy and its
+# original cannot both stay valid, and such a home must log in again
+OWN_LOGIN_MARKER = ".hillclimb-own-login"
+
+
 def codex_home(auth: str) -> Path:
-    """A CODEX_HOME per auth mode, so a search never inherits personal codex
-    settings — they change results and cost tokens. The subscription login is
-    copied in because it is the credential; OpenRouter needs no file."""
+    """Codex's home for operators (CODEX_HOME), per auth mode: settings,
+    sessions and a login of hillclimb's own, never the user's ~/.codex. The
+    process also gets its own HOME (`home/` inside), or codex would still pick
+    up the user's ~/.agents skills and plugins."""
     home = Path.home() / ".cache" / "hillclimb" / "codex-home" / auth
-    home.mkdir(parents=True, exist_ok=True)
-    if auth == "openrouter":
-        return home
-    source = Path.home() / ".codex" / "auth.json"
-    target = home / "auth.json"
-    if source.exists() and (
-        not target.exists() or source.stat().st_mtime > target.stat().st_mtime
-    ):
-        # atomic: concurrent coding agents share this directory — threads of one
-        # search process as much as separate processes, so the staging file
-        # must be unique per call, not per pid
-        fd, staging = tempfile.mkstemp(prefix=".auth.", suffix=".json", dir=home)
-        os.close(fd)
-        shutil.copy2(source, staging)
-        os.replace(staging, target)
+    (home / "home").mkdir(parents=True, exist_ok=True)
     return home
+
+
+def has_own_login(auth: str) -> bool:
+    """Did `hillclimb connect codex` log this home in itself (not a copy)?"""
+    return auth != "subscription" or (codex_home(auth) / OWN_LOGIN_MARKER).exists()
 
 
 def codex_env(auth: str = "subscription") -> dict[str, str]:
@@ -80,7 +78,9 @@ def codex_env(auth: str = "subscription") -> dict[str, str]:
     elif auth != "api-key":
         # An inherited key can take precedence over the interactive login.
         env.pop("OPENAI_API_KEY", None)
-    env["CODEX_HOME"] = str(codex_home(auth))
+    home = codex_home(auth)
+    env["CODEX_HOME"] = str(home)
+    env["HOME"] = str(home / "home")
     return single_threaded(env)
 
 

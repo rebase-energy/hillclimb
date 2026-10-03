@@ -1706,7 +1706,7 @@ async def test_header_clock_names_its_zone_and_choice_persists(tmp_path: Path, m
 
     app = WatchApp(config)
     async with app.run_test(size=(100, 30)) as pilot:
-        assert app.title == "hillclimb"
+        assert app.title == "hillclimb watch"  # the header names the command
         clock = app.screen.query_one(HillclimbClock)
         assert re.fullmatch(r"\d\d:\d\d:\d\d \S+", str(clock.render()))
         # flush with the right edge: no padding past the text

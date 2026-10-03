@@ -194,7 +194,9 @@ def climber_new(
     target = (local / name).with_suffix(".py")
     if target.exists() or (local / name).exists():
         raise typer.BadParameter(f"{_climber_ref(target, base_dir)} already exists")
-    local.mkdir(parents=True, exist_ok=True)
+    from hillclimb.project import ensure_owned_dir
+
+    ensure_owned_dir(local)  # marked: `reset` may delete it (an existing one stays the user's)
     shutil.copy2(source_file, target)
     ref = _climber_ref(target, base_dir)
     brain = "loop" if source.is_loop else "operator_policy"

@@ -1,0 +1,13 @@
+                                                                                                                        
+ Usage: root skills delete [OPTIONS] NAME                                                                               
+                                                                                                                        
+ Delete a skill from this folder's layer (or, with --global, from the global one).                                      
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ *    name      TEXT  The skill's name (its folder) [required]                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --global            Delete it from the global layer instead of this folder's                                         │
+│ --help    -h        Show this message and exit.                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

@@ -115,8 +115,8 @@ target line. `hillclimb problem list` shows the full catalog.
 | Golomb rulers | `golomb-20`, `golomb-27` | length ↓ |
 | TSP / knapsack | `tsp-200`, `mknap-100-5`, `mknap-250-10` | tour ↓ / value ↑ |
 
-[Define your own](https://docs.hillclimb.sh/problems/defining-problems) by
-copying one and editing `verify.py`. Kaggle (MLE-bench) and Einstein Arena
+[Define your own](https://docs.hillclimb.sh/problems): `hillclimb problem new
+my-problem` writes a small problem that already runs, for you to edit into yours. Kaggle (MLE-bench) and Einstein Arena
 come in as [benchmark problems](https://docs.hillclimb.sh/benchmarks).
 
 ## Learn more

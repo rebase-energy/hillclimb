@@ -1,0 +1,19 @@
+                                                                                                                        
+ Usage: root top [OPTIONS]                                                                                              
+                                                                                                                        
+ The control pane for every hillclimb process on this machine.                                                          
+                                                                                                                        
+ `hillclimb ps`, live and with controls: the machine at a glance                                                        
+ (engines, coding agents against the machine's slot cap, cpu, memory)                                                   
+ above one table where each engine heads its own process tree — coding                                                  
+ agents, their tool shells and MCP servers, verifiers and the solution                                                  
+ they score. Works from any folder. Keys act on the highlighted row:                                                    
+ s=stop its engine (resumable), g=stop gracefully, k=kill that process                                                  
+ and what it started (on an engine row: the whole engine), o=change the                                                 
+ order of the engines, r=reverse it, q=quit. Search progress is                                                         
+ `hillclimb watch`.                                                                                                     
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --help  -h        Show this message and exit.                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

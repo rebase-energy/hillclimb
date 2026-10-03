@@ -1,7 +1,7 @@
 """The only module that imports the gepa library: the core gepa.optimize
 loop wired to hillclimb's evaluator bridge and agentic proposer.
 
-Verified against gepa 0.1.4 (see docs/optimizer-host-plan.md phase C0):
+Verified against gepa 0.1.4:
 - custom_candidate_proposer(candidate, reflective_dataset,
   components_to_update) -> dict[str, str]; reflection_lm=None is accepted
   alongside it (no provider call happens).

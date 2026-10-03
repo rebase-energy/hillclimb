@@ -67,6 +67,67 @@ def test_hang_killed(executor, tmp_path):
     assert result.duration_s < 30
 
 
+def test_a_stop_kills_a_running_verifier_at_once(executor, tmp_path):
+    """The engine's abort reaches the verifier: a stop does not wait for a
+    slow verifier to finish (it used to wait the whole run out)."""
+    import threading
+    import time
+
+    executor.abort = threading.Event()
+    threading.Timer(0.5, executor.abort.set).start()
+    started = time.monotonic()
+    result = run_script(executor, tmp_path, "import time\ntime.sleep(30)\n", timeout=60)
+    assert result.timed_out and time.monotonic() - started < 10
+
+
+def two_step_executor(tmp_path: Path, scorer_code: str, **options):
+    """A two-step problem's executor: the solution, then this scorer."""
+    from hillclimb.harness.executor import CommandExecutor
+
+    scorer = tmp_path / "scorer.py"
+    scorer.write_text(scorer_code)
+    return CommandExecutor(
+        Path(sys.executable), ["{python}", "{solution}"], score_argv=["{python}", str(scorer)], **options
+    )
+
+
+SCORE_THE_ANSWER = (
+    "import json, os, pathlib\n"
+    "answer = float(pathlib.Path('answer.txt').read_text())\n"
+    "pathlib.Path(os.environ['HILLCLIMB_RESULT']).write_text(json.dumps({'score': answer}))\n"
+)
+
+
+def test_two_steps_score_what_the_solution_wrote_and_nothing_it_claims(tmp_path):
+    """The solution runs first; a result file it writes is deleted before
+    the scorer runs, so only the scorer reports a score."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    executor = two_step_executor(tmp_path, SCORE_THE_ANSWER)
+    claim = (
+        "import os, pathlib\n"
+        "pathlib.Path('answer.txt').write_text('3')\n"
+        "pathlib.Path(os.environ['HILLCLIMB_RESULT']).write_text('1e9')\n"
+    )
+    result = run_script(executor, run_dir, claim)
+    assert result.ok and result.val_score == 3.0
+
+
+def test_two_steps_stop_a_solution_at_its_time_limit(tmp_path):
+    """Past the problem's own limit it is a failed attempt (exit 124), not a
+    run the engine's clock cut off."""
+    import time
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    executor = two_step_executor(tmp_path, SCORE_THE_ANSWER, time_limit_s=1)
+    started = time.monotonic()
+    result = run_script(executor, run_dir, "import time\ntime.sleep(30)\n", timeout=60)
+    assert result.returncode == 124 and not result.timed_out and not result.ok
+    assert time.monotonic() - started < 15
+    assert "time limit of 1s" in Path(result.stderr_path).read_text()
+
+
 def test_no_score(executor, tmp_path):
     result = run_script(executor, tmp_path, 'open("submission.csv", "w").write("id\\n")')
     assert not result.ok

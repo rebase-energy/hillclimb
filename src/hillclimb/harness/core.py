@@ -44,6 +44,57 @@ from hillclimb.problem import ProblemSpec
 from hillclimb.harness.dirs import create_candidate_dir
 
 
+def landed_line(candidate: Candidate) -> str:
+    """The one log line a finished candidate gets: its status, its score (or
+    why it has none) and how long it took, nested under the line that
+    started it. `  new selection:` follows when it is the new best."""
+    took = ""
+    try:
+        from datetime import datetime
+
+        start = datetime.fromisoformat(candidate.created_at)
+        end = datetime.fromisoformat(candidate.finished_at) if candidate.finished_at else None
+        if end is not None:
+            seconds = max(0, int((end - start).total_seconds()))
+            took = f"{seconds // 60}m{seconds % 60:02d}s" if seconds >= 60 else f"{seconds}s"
+    except (TypeError, ValueError):
+        pass
+    line = f"  {candidate.candidate_id} {candidate.status}"
+    if candidate.status == "passing" and candidate.val_score is not None:
+        line += f" val={candidate.val_score:.5g}"
+    if took:
+        line += f" ({took})"
+    reason = _failure_reason(candidate)
+    if reason:
+        line += f" — {reason}"
+    return line
+
+
+def _failure_reason(candidate: Candidate) -> str | None:
+    """Why a candidate has no score, in a few words. A buggy or failing one
+    says what its verifier run did (the summary is the agent's own account
+    of its code); an abandoned or parked one carries the engine's reason in
+    its summary."""
+    if candidate.status == "passing":
+        return None
+    if candidate.status in ("buggy", "failing"):
+        trial = candidate.last_trial
+        if trial is not None and trial.unit_tests is not None and not trial.unit_tests.passed:
+            return "unit tests failed"
+        replicate = trial.replicates[-1] if trial is not None and trial.replicates else None
+        if replicate is not None:
+            if replicate.timed_out:
+                return f"timed out after {replicate.duration_s:.0f}s"
+            if replicate.returncode == 124:
+                return "ran past its time limit"  # a two-step problem's own limit (and timeout(1)'s code)
+            if replicate.returncode:
+                return f"verifier exited {replicate.returncode}"
+            if not replicate.submission_ok:
+                return "no valid output"
+    first = candidate.summary.splitlines()[0][:160] if candidate.summary else ""
+    return first or None
+
+
 @dataclass
 class Job:
     """One operator submission: everything a worker needs, nothing it must
@@ -174,6 +225,12 @@ class Harness:
         self.status = status
         self.slots = slots  # machine-wide coding-agent-concurrency cap (optional)
         self.abort = abort or threading.Event()
+        # a stop or a hard deadline must reach the verifier and the unit
+        # tests too, not only the coding agent: whatever runs them and takes
+        # the signal gets it (custom executors without `abort` are left alone)
+        for runner in (self.evaluator.executor, getattr(self.evaluator, "unit_test_runner", None)):
+            if runner is not None and hasattr(runner, "abort"):
+                runner.abort = self.abort
         self.seed_solution = seed_solution  # incumbent model: scored as a floor candidate
         # cross-search memory (`modules/memory`): what it handed this search
         # before it started — the prior-experience prompt section, and a
@@ -819,10 +876,7 @@ class Harness:
         self._inflight[job.key] = job
         with self._watch_control():
             msg = self._execute_job(job)
-        committed = self._commit(msg)
-        score = f"val={committed.val_score}" if committed.status == "passing" else committed.status
-        self.log(f"  seed scored: {score}")
-        return committed
+        return self._commit(msg)  # its landed line reports the score
 
     def _prepare_inject(self, action: Action, *, operator: str = INJECT_ACTION, summary: str = "") -> Job:
         """An coding-agent-free candidate from a source text the loop (or the user's
@@ -946,6 +1000,12 @@ class Harness:
         candidate.agent = AgentInfo(
             name=route.agent, model=route.model, sampling=route.sampling
         )
+        # the skills and standing instructions of the global and local
+        # layers, where this coding agent reads a project's own; what it was
+        # given is journaled with the candidate (a skill's track record)
+        from hillclimb.harness.agent_context import render as render_context
+
+        candidate.agent_context = render_context(self.config, route.agent, candidate_dir)
         self.journal.candidate_created(candidate)
 
         request = AgentRequest(
@@ -959,7 +1019,11 @@ class Harness:
             sampling=route.sampling,
             kind=op.kind,
             allow_internet=self.config.allow_internet_for_agents,
-            sandbox=agent_policy(self.config, self.search_dir, route.agent),
+            sandbox=agent_policy(self.config, self.search_dir, route.agent, self.problem),
+            plugins=[
+                (Path(self.config.hillclimb_dir or ".") / plugin).resolve()
+                for plugin in self.config.agent_context.claude_plugins
+            ],
             resume_session_id=(
                 target.agent.session_id
                 if prep.fork_session
@@ -1086,6 +1150,7 @@ class Harness:
         finally:
             if slot is not None:
                 slot.release()
+            self._harvest_skills(candidate)
         candidate.agent = AgentInfo(
             name=agent.name,
             model=job.request.model,
@@ -1241,6 +1306,16 @@ class Harness:
                                 f"({previous_best.val_score:.5g}) by less than the accept band "
                                 f"({self.accept_band():.3g}): within noise, not promoted"
                             )
+                elif self.abort.is_set() and any(
+                    r.timed_out for t in candidate.trials for r in t.replicates
+                ):
+                    # a stop (or the hard deadline) killed the verifier: the
+                    # candidate was never shown to be wrong, so it is no
+                    # debug target — abandoned, like an agent call it stopped
+                    candidate.status = "abandoned"
+                    candidate.summary = "stopped mid-operator (abort): verifier killed" + (
+                        f" — {candidate.summary}" if candidate.summary else ""
+                    )
                 elif msg.budget_clamped and any(
                     r.timed_out for t in candidate.trials for r in t.replicates
                 ):
@@ -1254,7 +1329,6 @@ class Harness:
                         f"cut off at the budget wall: verifier killed after {cut.duration_s:.0f}s"
                         + (f" — {candidate.summary}" if candidate.summary else "")
                     )
-                    self.log(f"  {candidate.candidate_id} cut off at the budget wall (not buggy)")
                 else:
                     verdict = candidate.last_trial.verdict if candidate.last_trial else None
                     candidate.status = verdict if verdict in ("failing", "buggy") else "buggy"
@@ -1394,6 +1468,11 @@ class Harness:
                 if msg.kind != "tuned" or live is None:
                     self._discard_tune(job, msg.kind)
                     return live
+                if self.abort.is_set() and any(r.timed_out for r in job.candidate.trials[-1].replicates):
+                    # a stop killed this trial's verifier: it says nothing
+                    # about the parameters, so it is not a failed trial
+                    self._discard_tune(job, "stopped mid-tune (abort)")
+                    return live
                 self._inflight.pop(job.key, None)
                 # the trial arrives with whatever the evaluator stamped on it;
                 # a parameter set whose hidden split failed still climbs on
@@ -1442,6 +1521,8 @@ class Harness:
         half of the observe contract; construction replays history)."""
         self.journal.candidate_result(candidate)
         self._observe_route(candidate)
+        if candidate.operator != "baseline":  # the baseline says so itself
+            self.log(landed_line(candidate))
 
     def _observe_route(self, candidate: Candidate) -> None:
         """Credit the model that authored this candidate in the routing
@@ -1717,9 +1798,43 @@ class Harness:
             )
         return section
 
+    def _harvest_skills(self, candidate: Candidate) -> None:
+        """Add a skill the call created (the agent, or a plugin it ran) to
+        the hillclimb dir's local layer. Best effort: a skill that cannot be
+        copied never costs the candidate."""
+        from hillclimb.harness.agent_context import harvest
+
+        homes = []
+        try:
+            if candidate.agent is not None and candidate.agent.name == "claude-code":
+                from hillclimb.agents.claude_code import claude_home
+
+                homes.append(claude_home(self.config.agent_auth))
+            created_by = {
+                "run": self.search_dir.parents[1].name,
+                "search": self.search_dir.name,
+                "candidate": candidate.candidate_id,
+                "agent": candidate.agent.name if candidate.agent else None,
+                "model": candidate.agent.model if candidate.agent else None,
+            }
+            added = harvest(
+                self.config, Path(candidate.candidate_dir), homes=tuple(homes), created_by=created_by, log=self.log
+            )
+            if added:  # journaled with the candidate's result
+                candidate.agent_context = {**candidate.agent_context, "skills_added": added}
+        except OSError as exc:
+            self.log(f"  skills not harvested from {candidate.candidate_id}: {exc}")
+
     def _data_listing(self, limit: int = 50) -> str:
         entries = []
+        # what only the scorer may read is not the agent's to know about
+        private = [
+            Path(p).resolve()
+            for p in [*(getattr(self.problem, "private_paths", None) or ()), *(getattr(self.problem, "holdout_inputs", None) or ())]
+        ]
         for path in sorted(self.problem.problem_dir.rglob("*")):
+            if private and any(path.resolve() == p or p in path.resolve().parents for p in private):
+                continue
             if path.is_file():
                 relative = path.relative_to(self.problem.problem_dir)
                 entries.append(f"- {relative} ({_human_size(path.stat().st_size)})")

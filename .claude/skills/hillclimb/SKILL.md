@@ -20,10 +20,28 @@ artifacts), each evaluated as one or more **Trials** (parameter sets) of seeded
 the search's tuner (`cNNN(tune/exec/tK)` in `watch`; `hillclimb show` lists
 them with their params).
 
-All commands: `uv run hillclimb <command>` from anywhere inside a hillclimb
-dir (found by upward search for `hillclimb.yaml`). Search-addressing
+All commands: `uv run hillclimb <command>` from the root of a hillclimb dir
+(the folder holding `hillclimb.yaml`, or a `hillclimb/` subfolder that does —
+there is no upward search). Search-addressing
 commands accept `<run-id>/<search-id>`, a bare `<run-id>` (when the run has one
 search), or `latest` (the default).
+
+## A problem of the user's own
+
+```bash
+uv run hillclimb problem new <id>          # problems/<id>/: a two-step problem that already runs
+uv run hillclimb verify <id> --repeat 3    # after EVERY edit: scores baseline.py, prints the noise
+```
+
+The scaffold is a working example (number partitioning) to edit into the
+user's problem: `problem.yaml` (`metric`, `higher_is_better` are the only
+required keys), `description.md` and `contract.md` (what the coding agents
+read), `instances.py` (inputs), `run.py` (imports the solution, calls its
+function, writes `output.json`), `score.py` (validates that, writes
+`{"score": …}` to `$HILLCLIMB_RESULT`, exits non-zero on an invalid answer),
+`baseline.py`. Replace one piece at a time and verify in between; never start
+a search on a problem that does not verify. The full reference is
+docs.hillclimb.sh/problems.
 
 ## Lifecycle
 

@@ -100,13 +100,14 @@ def test_a_defined_problem_is_written_as_a_folder_a_search_can_use(scoring, tmp_
     folder = problem.save(tmp_path / "problems")
     assert folder == tmp_path / "problems" / "largest-number"
     names = {p.name for p in folder.iterdir()}
-    assert names == {"problem.yaml", "description.md", "verify.py", "verifier.sh", "verifier.py", "hint.txt", "requirements.txt"}
+    # two steps: the engine runs the solution, then verify.py scores it (no verifier.sh)
+    assert names == {"problem.yaml", "description.md", "verify.py", "hint.txt", "requirements.txt"}
     meta = yaml.safe_load((folder / "problem.yaml").read_text())
     assert meta["metric"] == "score" and meta["higher_is_better"] and meta["baseline"] == 0.0
     assert meta["output_artifacts"] == ["answer.txt"] and meta["requirements"] == "requirements.txt"
     assert meta["score_function"] == f"{tmp_path / 'scoring.py'}:largest"
     assert "answer.txt" in (folder / "description.md").read_text()
-    assert (folder / "verifier.sh").stat().st_mode & 0o111
+    assert meta["score"] == ["{engine_python}", "verify.py"]
     assert f"SOURCE = {str(tmp_path / 'scoring.py')!r}" in (folder / "verify.py").read_text()
     # written again when the definition changes; refused on a folder that is not ours
     largest_number(scoring, baseline=1.0).save(tmp_path / "problems")
@@ -116,6 +117,44 @@ def test_a_defined_problem_is_written_as_a_folder_a_search_can_use(scoring, tmp_
     (foreign / "problem.yaml").write_text("metric: x\n")
     with pytest.raises(FileExistsError, match="not one hillclimb.Problem wrote"):
         Problem("theirs", score=scoring.largest, description="d").save(tmp_path / "problems")
+
+
+def test_a_problem_yaml_with_a_scorer_runs_in_two_steps_and_keeps_private_data(tmp_path, config):
+    """`score:` makes the engine run the solution, then the scorer; `private:`
+    paths are the scorer's alone, and need a scorer of their own."""
+    from hillclimb.problem import load_problem
+
+    folder = tmp_path / "labels"
+    (folder / "hidden").mkdir(parents=True)
+    (folder / "hidden" / "holdout.txt").write_text("7")
+    (folder / "verify.py").write_text("print('scorer')\n")
+    (folder / "description.md").write_text("Guess.\n")
+    (folder / "problem.yaml").write_text(
+        "problem_id: labels\nmetric: error\nhigher_is_better: false\n"
+        "score: verify.py\nprivate: [hidden]\nholdout: true\ntime_limit_s: 5\n"
+    )
+    spec = load_problem(folder, config)
+    assert spec.verifier_cmd == ["{python}", "{solution}"] and spec.holdout_cmd == spec.verifier_cmd
+    assert spec.score_cmd == ["{python}", str((folder / "verify.py").resolve())]
+    assert spec.private_paths == [(folder / "hidden").resolve()]
+    assert spec.solution_time_limit_s == 5.0
+
+    (folder / "problem.yaml").write_text(
+        "problem_id: labels\nmetric: error\nhigher_is_better: false\nprivate: [hidden]\n"
+    )
+    (folder / "verifier.sh").write_text("#!/usr/bin/env bash\n")
+    (folder / "verifier.sh").chmod(0o755)
+    with pytest.raises(ValueError, match="private data needs a scorer of its own"):
+        load_problem(folder, config)
+
+
+def test_a_defined_problem_names_its_private_paths(scoring, tmp_path):
+    secret = tmp_path / "secret"
+    secret.mkdir()
+    folder = largest_number(scoring, private=[secret]).save(tmp_path / "problems")
+    assert yaml.safe_load((folder / "problem.yaml").read_text())["private"] == [str(secret.resolve())]
+    with pytest.raises(FileNotFoundError, match="private path not found"):
+        largest_number(scoring, private=[tmp_path / "absent"])
 
 
 def test_a_definition_that_cannot_work_fails_at_once(scoring):

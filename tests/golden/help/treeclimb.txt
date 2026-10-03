@@ -1,0 +1,21 @@
+                                                                                                                        
+ Usage: root treeclimb [OPTIONS] [SEARCH]                                                                               
+                                                                                                                        
+ The tree and the climb chart of one search, side by side, live — the Darwin Gödel Machine's two-panel figure.          
+                                                                                                                        
+ Left, the `tree` tree; right, every scored candidate as a dot at                                                       
+ (candidate number, score) with the best-so-far staircase, a brighter dot                                               
+ where a candidate set a new best, and the lineage of the final best as                                                 
+ a thick line — the same parent chain drawn bold in the tree, one                                                       
+ circle and one dot per candidate number on both. j/k scrub both panels through                                         
+ time together (a cursor marks the candidate on the chart); click a node                                                
+ to ring its dot on the chart and see its detail, enter opens it, n/p                                                   
+ switch search, `?` keys.                                                                                               
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│   [search]      TEXT  latest (default), <run-id>, or <run-id>/<search-id>                                            │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --help  -h        Show this message and exit.                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

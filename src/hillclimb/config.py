@@ -293,6 +293,22 @@ class LearningConfig(BaseModel):
     claims_timeout_s: int = 300
 
 
+class AgentContextConfig(BaseModel):
+    """What operators know beyond the prompt (`harness/agent_context.py`):
+    the skills and AGENTS.md of the global layer (~/.config/hillclimb/agent/)
+    and the hillclimb dir's own (agent/), rendered for whichever coding agent
+    runs. Skills an operator creates are added to the local layer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # use the global layer too (false keeps this folder to its own)
+    include_global: bool = True
+    skip: list[str] = Field(default_factory=list)  # skills left out, by name
+    # Claude Code plugins operators run with (`--plugin-dir`), relative to
+    # the hillclimb dir; none by default: the user's own plugins never apply
+    claude_plugins: list[Path] = Field(default_factory=list)
+
+
 # the `learning:` settings that described how memory BEHAVES moved into the
 # climber's block in 0.6: they are its memory's params
 MEMORY_PARAMS_FROM_LEARNING = (
@@ -421,6 +437,7 @@ class Config(BaseModel):
     pi: PiConfig = PiConfig()
     similarity: SimilarityConfig = SimilarityConfig()
     learning: LearningConfig = LearningConfig()
+    agent_context: AgentContextConfig = AgentContextConfig()
     report: ReportConfig = ReportConfig()
     # Resolved at load time; None for embedders that construct Config()
     # directly and set absolute paths themselves (e.g. the hosted container).
@@ -551,6 +568,7 @@ class Config(BaseModel):
         path: Path | None = None,
         *,
         require_dir: bool = True,
+        start: Path | None = None,
         **overrides,
     ) -> Config:
         """Resolve configuration. Precedence (highest wins): keyword
@@ -559,8 +577,10 @@ class Config(BaseModel):
 
         An explicit `path` reads only that file (no discovery, no user
         config) — the escape hatch for tests and embedders. Otherwise the
-        hillclimb dir is found by upward search; with `require_dir` (the
-        default) a missing one raises HillclimbDirNotFound."""
+        hillclimb dir is `start` (default CWD) or its `hillclimb/` subfolder —
+        no upward search;
+        with `require_dir` (the default) a missing one raises
+        HillclimbDirNotFound."""
         if path is not None:
             config = cls.model_validate(_read_yaml(path))
             config.hillclimb_dir = None
@@ -569,10 +589,13 @@ class Config(BaseModel):
             if config.pi.models_file is not None:
                 config.pi.models_file = path.parent / config.pi.models_file.expanduser()
         else:
-            found = find_hillclimb_dir()
+            found = find_hillclimb_dir(start)
             if found is None and require_dir:
-                raise HillclimbDirNotFound(Path.cwd())
-            data = _read_yaml(user_config_path())
+                raise HillclimbDirNotFound((start or Path.cwd()).resolve())
+            # old spellings are renamed per level BEFORE the levels merge: a
+            # folder's `backend: dummy` must beat the user level's `agent:`,
+            # not lose to it as "the new spelling wins" would after merging
+            data = renamed_keys(_read_yaml(user_config_path()))
             if isinstance(data.get("climber"), (dict, str)):
                 # a block means what it says where it was written: its file
                 # refs resolve from the user config's own folder
@@ -580,7 +603,7 @@ class Config(BaseModel):
                     user_config_path().parent
                 ).block()
             if found is not None:
-                folder = _read_yaml(found / MARKER_FILE)
+                folder = renamed_keys(_read_yaml(found / MARKER_FILE))
                 data = _deep_merge(data, folder)
                 if "climber" in folder:
                     # a climber is ONE block: the folder's replaces the user

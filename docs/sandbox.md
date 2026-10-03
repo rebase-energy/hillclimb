@@ -25,14 +25,17 @@ one got through; `--json` for scripts.
 
 | | allowed | blocked |
 |---|---|---|
-| write | its candidate's folder, the temp dirs, the caches of `huggingface`, `torch` and `matplotlib` | everything else: your home folder, the repository, the search's journal and `best/`, the runtime venvs |
-| read | most of the disk | `~/.ssh`, `~/.aws`, `~/.gnupg`, cloud and GitHub logins, browser profiles, shell history, `.env` files, the other coding agents' logins, the search's journal and its holdout runs, container runtime sockets |
+| write | its candidate's folder, the temp dirs, the caches of `huggingface`, `torch` and `matplotlib` | everything else: your home folder, the repository, the search's journal and `best/`, the runtime venvs, and always the problem's folder and data (even inside a temp dir) |
+| read | most of the disk | `~/.ssh`, `~/.aws`, `~/.gnupg`, cloud and GitHub logins, browser profiles, shell history, `.env` files, the other coding agents' logins, the search's journal and its holdout runs, container runtime sockets, and the problem's `private:` paths (only its scorer reads those, see `docs/problems.md`) |
 | network, coding agents | everything, or with `allow_internet_for_agents: false` only their model provider | the rest |
 | network, verifier | nothing, or with the problem's `allow_internet_during_solution: true` everything | the rest, name lookups included |
 | processes | its own children | signalling anything outside |
 
-A coding agent additionally writes to its own state: `~/.claude` and
-`~/.claude.json` for Claude Code, pi's isolated home and session folder for pi.
+A coding agent additionally writes to its own operator home under
+`~/.cache/hillclimb/` (Claude Code's `claude-home`, pi's isolated home and
+session folder). Your own `~/.claude`, `~/.claude.json`, `~/.codex` and
+`~/.agents` are unreadable to every process a search starts (see
+`docs/agents.md`, Operator homes).
 
 ## Per coding agent
 

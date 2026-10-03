@@ -33,11 +33,25 @@ def isolated_env(tmp_path, monkeypatch):
 
 
 class TestDiscovery:
-    def test_finds_marker_from_nested_dir(self, tmp_path):
+    def test_no_upward_search_from_a_nested_dir(self, tmp_path):
+        """Commands run from the hillclimb dir's root; a folder below it is
+        not the dir (nor is anything above a folder)."""
         root = make_hillclimb_dir(tmp_path / "ws")
         nested = root / "a" / "b"
         nested.mkdir(parents=True)
-        assert find_hillclimb_dir(nested) == root
+        assert find_hillclimb_dir(nested) is None
+
+    def test_a_sibling_named_hillclimb_is_not_this_folders(self, tmp_path):
+        """A hillclimb checkout beside your project (`Github/hillclimb/`
+        holds a hillclimb.yaml) must not be taken for your project's dir."""
+        make_hillclimb_dir(tmp_path / "hillclimb")
+        mine = tmp_path / "my-project"
+        mine.mkdir()
+        assert find_hillclimb_dir(mine) is None
+
+    def test_a_projects_hillclimb_subfolder_is_found_from_the_project_root(self, tmp_path):
+        sub = make_hillclimb_dir(tmp_path / "proj" / "hillclimb")
+        assert find_hillclimb_dir(tmp_path / "proj") == sub
 
     def test_finds_it_from_inside_itself(self, tmp_path):
         root = make_hillclimb_dir(tmp_path / "ws")
@@ -45,8 +59,8 @@ class TestDiscovery:
 
     def test_any_folder_name_works(self, tmp_path):
         """The marker is the file, not the folder's name."""
-        root = make_hillclimb_dir(tmp_path / "hillclimb")
-        assert find_hillclimb_dir(root / "problems") == root
+        root = make_hillclimb_dir(tmp_path / "anything")
+        assert find_hillclimb_dir(root) == root
 
     def test_a_plain_config_yaml_is_not_a_marker(self, tmp_path):
         """Plenty of repos have a config.yaml; only hillclimb.yaml counts."""
@@ -73,9 +87,7 @@ class TestDiscovery:
 class TestConfigPrecedence:
     def test_paths_resolve_against_the_hillclimb_dir(self, tmp_path, monkeypatch):
         root = make_hillclimb_dir(tmp_path / "ws")
-        nested = root / "deep"
-        nested.mkdir()
-        monkeypatch.chdir(nested)
+        monkeypatch.chdir(root)
         config = Config.load()
         assert config.hillclimb_dir == root
         assert config.paths.runs_dir == root / "runs"
@@ -157,21 +169,39 @@ class TestInit:
         assert (folder / ".gitignore").exists()
         assert not (tmp_path / "hillclimb.yaml").exists()
         assert not (tmp_path / ".gitignore").exists()
-        assert find_hillclimb_dir(folder / "runs") == folder
+        # found from the project's root, and from inside the subfolder
+        assert find_hillclimb_dir(tmp_path) == folder
+        assert find_hillclimb_dir(folder) == folder
         assert "cd hillclimb" in result.output
 
-    def test_refuses_a_folder_that_already_has_problems_or_runs(self, tmp_path, monkeypatch):
-        """A code repo's own runs/ must never be mixed with hillclimb's."""
+    def test_a_folder_with_folders_of_its_own_gets_a_hillclimb_subfolder(self, tmp_path, monkeypatch):
+        """A code repo's own runs/ or knowledge/ must never be mixed with
+        hillclimb's: hillclimb keeps to ./hillclimb/ instead, and finds it from
+        the project root."""
+        from hillclimb.project import OWNED_MARKER, find_hillclimb_dir
+
         (tmp_path / "runs").mkdir()
         (tmp_path / "runs" / "mine.txt").write_text("x")
+        (tmp_path / "knowledge").mkdir()
         monkeypatch.chdir(tmp_path)
         result = self.run_init()
-        assert result.exit_code == 1
-        assert "hillclimb init hillclimb" in result.output
+        assert result.exit_code == 0, result.output
+        assert "hillclimb keeps to" in result.output
         assert not (tmp_path / "hillclimb.yaml").exists()
-        assert not (tmp_path / "problems").exists()
-        # the subfolder is the way out
-        assert self.run_init("hillclimb").exit_code == 0
+        assert (tmp_path / "hillclimb" / "hillclimb.yaml").is_file()
+        assert (tmp_path / "hillclimb" / "runs" / OWNED_MARKER).is_file()
+        assert sorted(p.name for p in (tmp_path / "runs").iterdir()) == ["mine.txt"]  # untouched
+        assert find_hillclimb_dir(tmp_path) == tmp_path / "hillclimb"
+        # made by hillclimb, so `reset` takes the whole subfolder and nothing of the project's
+        from hillclimb.cli import main as cli_main
+
+        monkeypatch.setattr("hillclimb.harness.orphans.live_engines", lambda: [])
+        with pytest.raises(SystemExit) as exc:
+            cli_main(["reset", "--yes"])
+        assert exc.value.code == 0
+        assert not (tmp_path / "hillclimb").exists()
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["knowledge", "runs"]
+        assert sorted(p.name for p in (tmp_path / "runs").iterdir()) == ["mine.txt"]
 
     def test_gitignore_rules_keep_the_record_and_drop_the_bulk(self, tmp_path, monkeypatch):
         """git itself decides: with the init rules, a run's record files are
@@ -214,13 +244,20 @@ class TestInit:
             assert f"{prefix}store.sqlite" not in out
             assert f"{prefix}hillclimb.yaml" in out
 
-    def test_refuses_nested_without_force(self, tmp_path, monkeypatch):
+    def test_refuses_a_folder_that_already_is_one(self, tmp_path, monkeypatch):
+        make_hillclimb_dir(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        assert self.run_init().exit_code == 1
+
+    def test_a_folder_inside_another_dir_is_a_folder_of_its_own(self, tmp_path, monkeypatch):
+        """No upward search: a subfolder of a hillclimb dir can become one
+        without --force (the outer one is not this folder's)."""
         make_hillclimb_dir(tmp_path)
         inner = tmp_path / "inner"
         inner.mkdir()
         monkeypatch.chdir(inner)
-        assert self.run_init().exit_code == 1
-        assert self.run_init("--force").exit_code == 0
+        assert self.run_init().exit_code == 0
+        assert (inner / "hillclimb.yaml").is_file()
 
 
 class TestRunSpecs:
@@ -337,3 +374,20 @@ class TestVenvHashing:
         emflow_b = default_venv_python(config, "emflow")
         assert emflow_a != emflow_b  # source participates in the key
         assert base.parts[-3] != emflow_a.parts[-3]
+
+
+def test_a_folders_old_spelling_beats_the_user_levels_new_one(tmp_path, monkeypatch):
+    """K1: `connect` writes `agent:` at the user level; a folder that still
+    says `backend: dummy` must run dummy, not the user's paid agent. Old
+    spellings are renamed per level before the levels merge."""
+    from hillclimb.config import Config
+
+    user = tmp_path / "user" / "config.yaml"
+    user.parent.mkdir()
+    user.write_text("agent: claude-code\nagent_auth: subscription\n")
+    monkeypatch.setattr("hillclimb.config.user_config_path", lambda: user)
+    folder = tmp_path / "proj"
+    folder.mkdir()
+    (folder / "hillclimb.yaml").write_text("backend: dummy\n")
+    monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
+    assert Config.load(start=folder).agent == "dummy"

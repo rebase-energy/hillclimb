@@ -41,12 +41,21 @@ def _body(path: Path) -> list[str]:
     return [line for line in lines if line and not line.startswith("#")]
 
 
+def _two_step(problem_id: str) -> bool:
+    """A problem with a scorer of its own (`score:`): hillclimb runs the
+    solution and the scorer itself, so there is no verifier to port."""
+    return "score" in (yaml.safe_load((DEMO / problem_id / "problem.yaml").read_text()) or {})
+
+
+WITH_VERIFIER = [p for p in BUNDLED_PROBLEM_IDS if not _two_step(p)]
+
+
 def _windows_verifier(problem_id: str) -> Path:
     own = DEMO / problem_id / "verifier.py"
     return own if own.exists() else SHARED
 
 
-@pytest.mark.parametrize("problem_id", BUNDLED_PROBLEM_IDS)
+@pytest.mark.parametrize("problem_id", WITH_VERIFIER)
 def test_every_bundled_problem_has_a_windows_verifier(problem_id):
     """A problem whose verifier.sh leaves the standard shape must ship its
     own verifier.py — the shared one would silently score it differently."""
@@ -56,7 +65,7 @@ def test_every_bundled_problem_has_a_windows_verifier(problem_id):
         )
 
 
-@pytest.mark.parametrize("path", sorted({_windows_verifier(p) for p in BUNDLED_PROBLEM_IDS}), ids=lambda p: p.parent.name)
+@pytest.mark.parametrize("path", sorted({_windows_verifier(p) for p in WITH_VERIFIER}), ids=lambda p: p.parent.name)
 def test_windows_verifiers_never_import_the_solution(path):
     tree = ast.parse(path.read_text())
     imported = set()
@@ -75,7 +84,10 @@ def test_windows_verifiers_never_import_the_solution(path):
 def test_problem_get_writes_the_verifier_for_this_os(tmp_path, problem_id, windows):
     problem_dir, created = install_demo_problem(tmp_path, problem_id, windows=windows)
     assert created
-    if windows:
+    if _two_step(problem_id):  # no verifier on any OS: nothing needs bash
+        assert not (problem_dir / "verifier.sh").exists() and not (problem_dir / "verifier.py").exists()
+        assert not (problem_dir / "__pycache__").exists()
+    elif windows:
         assert not (problem_dir / "verifier.sh").exists()
         assert (problem_dir / "verifier.py").read_bytes() == _windows_verifier(problem_id).read_bytes()
     else:
@@ -124,7 +136,7 @@ def _score(problem_id: str, argv: list[str], tmp_path: Path, tag: str) -> float:
 
 
 @pytest.mark.skipif(sys.platform == "win32" or shutil.which("bash") is None, reason="needs bash to run the original")
-@pytest.mark.parametrize("problem_id", BUNDLED_PROBLEM_IDS)
+@pytest.mark.parametrize("problem_id", WITH_VERIFIER)
 def test_both_editions_score_the_baseline_the_same(tmp_path, problem_id):
     sh = _score(problem_id, ["bash", str(DEMO / problem_id / "verifier.sh")], tmp_path, "sh")
     py = _score(problem_id, [sys.executable, str(_windows_verifier(problem_id))], tmp_path, "py")

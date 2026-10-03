@@ -275,8 +275,12 @@ def test_codex_home_is_isolated_per_auth(tmp_path: Path, monkeypatch):
     assert not (home / "auth.json").exists()
 
 
-def test_subscription_codex_home_gets_the_login(tmp_path: Path, monkeypatch):
-    from hillclimb.agents.codex_cli import codex_env
+def test_the_codex_home_never_takes_the_users_login_or_settings(tmp_path: Path, monkeypatch):
+    """Operators get a home of hillclimb's own: the user's ~/.codex login is
+    not copied in (codex spends a refresh token once, so a copy and its
+    original cannot both stay valid), nor its settings, and the process gets
+    its own HOME so the user's ~/.agents skills and plugins stay out."""
+    from hillclimb.agents.codex_cli import codex_env, has_own_login
 
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     real_codex = tmp_path / ".codex"
@@ -284,67 +288,13 @@ def test_subscription_codex_home_gets_the_login(tmp_path: Path, monkeypatch):
     (real_codex / "auth.json").write_text('{"token": "login"}')
     (real_codex / "config.toml").write_text('model = "gpt-5.6"\n')
 
-    home = Path(codex_env("subscription")["CODEX_HOME"])
-
-    assert (home / "auth.json").read_text() == '{"token": "login"}'
-    assert not (home / "config.toml").exists()
-
-
-def test_subscription_codex_home_refreshes_a_stale_login(tmp_path: Path, monkeypatch):
-    from hillclimb.agents.codex_cli import codex_env
-
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-    real_codex = tmp_path / ".codex"
-    real_codex.mkdir()
-    source = real_codex / "auth.json"
-    source.write_text('{"token": "old"}')
-    home = Path(codex_env("subscription")["CODEX_HOME"])
-
-    source.write_text('{"token": "new"}')
-    os.utime(source, (time.time() + 10, time.time() + 10))
-    codex_env("subscription")
-
-    assert (home / "auth.json").read_text() == '{"token": "new"}'
-
-
-def test_concurrent_operators_copy_the_login_without_colliding(tmp_path: Path, monkeypatch):
-    """Operators are threads of one process: a staging file named per pid
-    made the second thread's rename fail with FileNotFoundError."""
-    import shutil
-
-    from hillclimb.agents.codex_cli import codex_env
-
-    real_codex = tmp_path / ".codex"
-    real_codex.mkdir()
-    (real_codex / "auth.json").write_text('{"token": "login"}')
-
-    # hold both threads after their copy, before either renames
-    barrier = threading.Barrier(2, timeout=5)
-    real_copy2 = shutil.copy2
-
-    def copy_then_wait(src, dst, **kwargs):
-        real_copy2(src, dst, **kwargs)
-        barrier.wait()
-
-    monkeypatch.setattr(shutil, "copy2", copy_then_wait)
-    errors: list[BaseException] = []
-
-    def worker():
-        try:
-            codex_env("subscription")
-        except BaseException as exc:  # noqa: BLE001 — collected for the assert
-            errors.append(exc)
-
-    threads = [threading.Thread(target=worker) for _ in range(2)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(timeout=10)
-
-    assert errors == []
-    home = tmp_path / ".cache" / "hillclimb" / "codex-home" / "subscription"
-    assert (home / "auth.json").read_text() == '{"token": "login"}'
-    assert [p.name for p in home.iterdir()] == ["auth.json"]  # no staging leftovers
+    env = codex_env("subscription")
+    home = Path(env["CODEX_HOME"])
+    assert home == tmp_path / ".cache" / "hillclimb" / "codex-home" / "subscription"
+    assert env["HOME"] == str(home / "home") and (home / "home").is_dir()
+    assert not (home / "auth.json").exists() and not (home / "config.toml").exists()
+    assert not has_own_login("subscription")  # until `hillclimb connect codex` logs it in
+    assert has_own_login("openrouter")  # a key, not a login
 
 
 def test_usage_mapping_un_nests_cache_kinds():

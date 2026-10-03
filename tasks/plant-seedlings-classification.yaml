@@ -1,3 +1,0 @@
-comp_id: plant-seedlings-classification
-metric: micro-f1
-higher_is_better: true

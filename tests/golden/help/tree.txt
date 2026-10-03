@@ -1,13 +1,17 @@
                                                                                                                         
  Usage: root tree [OPTIONS] [SEARCH]                                                                                    
                                                                                                                         
- Live exploration tree of one search: what was expanded, what was left.                                                 
+ Live tree of one search, drawn like the Darwin Gödel Machine's archive.                                                
                                                                                                                         
- Roots across the top, one row per operator step; colour is the operator,                                               
- silhouette is the fate (filled = expanded, ring = discontinued, diamond =                                              
- best, dot = failed). Scroll zooms, drag pans, click a node for details,                                                
- enter opens it in the candidate screen, j/k scrub through time, n/p switch                                             
- search, `?` keys.                                                                                                      
+ Roots across the top, one row per operator step; each circle carries its                                               
+ candidate number (`c017` → 17) inside, is filled with its score on a cyan                                              
+ ramp (bright = best; hollow = no working solution), and ringed by what the search did                                  
+ with it: white = expanded (the spine the policy walked), no ring =                                                     
+ scored and never built on, red = failed. The final best is a white-ringed                                              
+ star, and its parent chain is drawn in cyan. Circles never overlap: they                                               
+ are sized to the zoom, and the numbers appear as they grow. Scroll                                                     
+ zooms, drag pans, click a node for details, enter opens it, j/k scrub                                                  
+ through time, n/p switch search, `?` keys.                                                                             
                                                                                                                         
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │   [search]      TEXT  latest (default), <run-id>, or <run-id>/<search-id>                                            │

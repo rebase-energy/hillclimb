@@ -1,3 +1,0 @@
-comp_id: leaf-classification
-metric: multi-class-log-loss
-higher_is_better: false

@@ -346,6 +346,65 @@ def test_resume_all_spawns_only_resumable_searches(config, tmp_path, monkeypatch
     assert sorted(spawned) == ["run-1/a", "run-1/b"]
 
 
+def test_resume_refuses_a_search_whose_engine_is_alive_or_that_finished(config, tmp_path, monkeypatch):
+    """A second engine on a live search duplicates its candidates and
+    abandons what the first has in flight; resuming a done search does
+    nothing. Both are refused, foreground and detached, before anything runs."""
+    import os
+
+    from hillclimb.cli.run import resume
+    from hillclimb.harness.status import SearchStatus, write_status
+
+    config.paths.runs_dir = tmp_path / "runs"
+    for search_id, state in {"live": "running", "over": "done"}.items():
+        search_dir = make_search(config.paths.runs_dir, "run-1", search_id, run_kind="suite")
+        write_status(search_dir, SearchStatus(search_id=search_id, run_id="run-1", state=state, pid=os.getpid()))
+    monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config.model_copy(deep=True))
+    started = []
+    monkeypatch.setattr("hillclimb.cli.run._execute", lambda *a, **k: started.append("foreground"))
+    monkeypatch.setattr(
+        "hillclimb.cli.run._spawn_resume", lambda cfg, record: started.append("detached") or (1, tmp_path / "log")
+    )
+
+    for ref in ("run-1/live", "run-1/over"):
+        for detach in (False, True):
+            with pytest.raises(typer.Exit):
+                resume(ref, detach=detach)
+    assert started == []
+
+
+def test_resume_restores_the_settings_the_search_was_launched_with(config, tmp_path, monkeypatch):
+    """`--set` (spend caps among them), agents per search, replicates and a
+    study experiment's overrides come back from the run's spec.yaml and the
+    search record; the folder's hillclimb.yaml alone would run it uncapped."""
+    import yaml
+
+    from hillclimb.cli.run import resume
+
+    config.paths.runs_dir = tmp_path / "runs"
+    search_dir = make_search(config.paths.runs_dir, "run-1", "a")
+    run_dir = search_dir.parents[1]
+    (run_dir / "spec.yaml").write_text(yaml.safe_dump({"problems": [{
+        "target": "a", "budget": "10m", "agent": "dummy", "parallel_agents": 2, "n_replicates": 3,
+        "set": ["budget.max_evaluations=60", "budget.max_cost_usd=1.5"],
+    }]}))
+    meta = load_search_meta(search_dir)
+    meta.experiment_overrides = {"evaluation.noise_k": 2}
+    write_search_meta(search_dir, meta)
+    (search_dir / "journal.jsonl").write_text("")
+    monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config.model_copy(deep=True))
+    monkeypatch.setattr("hillclimb.cli.run.load_problem", lambda *a, **k: object())
+    captured = {}
+    monkeypatch.setattr("hillclimb.cli.run._execute", lambda cfg, *a, **k: captured.setdefault("config", cfg))
+
+    resume("run-1/a")
+
+    restored = captured["config"]
+    assert restored.budget.max_evaluations == 60 and restored.budget.max_cost_usd == 1.5
+    assert restored.concurrency.parallel_agents == 2 and restored.evaluation.n_replicates == 3
+    assert restored.evaluation.noise_k == 2
+
+
 def test_resolve_search_dir_exact_and_bare_run(config, tmp_path):
     config.paths.runs_dir = tmp_path / "runs"
     s1 = make_search(config.paths.runs_dir, "run-1", "a")
@@ -544,7 +603,7 @@ def test_bare_invocation_prints_banner_and_command_list(capsys):
     listed = {line.split()[1] for line in out.splitlines() if line.startswith("│ ") and len(line.split()) > 1}
     for command in ("init", "run", "watch", "experiment"):
         assert command in listed
-    for command in ("status", "knowledge", "tree2"):  # still runs, just not on the first screen
+    for command in ("status", "knowledge", "treeclimb"):  # still runs, just not on the first screen
         assert command not in listed
     assert "more commands: hillclimb --help --all" in out
 
@@ -554,7 +613,7 @@ def test_help_all_lists_every_command(capsys):
         cli_main(["--help", "--all"])
     out = capsys.readouterr().out
     listed = {line.split()[1] for line in out.splitlines() if line.startswith("│ ") and len(line.split()) > 1}
-    assert {"status", "knowledge", "tree2", "run"} <= listed
+    assert {"status", "knowledge", "tree", "run"} <= listed
     assert "--help --all" not in out
 
 
@@ -723,14 +782,19 @@ def test_reset_kills_this_dirs_engines_and_deletes_what_hillclimb_made(tmp_path,
     hillclimb.yaml and hillclimb's folders beside it, and nothing else."""
     from hillclimb.harness.orphans import Engine
 
+    from hillclimb.project import ensure_owned_dir
+
     root = tmp_path / "proj"
     root.mkdir()
     (root / "hillclimb.yaml").write_text("")
-    for owned in ("runs/r1", "problems/p", "knowledge", "climbers", "experiments"):
-        (root / owned).mkdir(parents=True)
+    for owned in ("runs", "problems", "knowledge", "climbers"):  # created by hillclimb: marked
+        ensure_owned_dir(root / owned)
+    (root / "runs" / "r1").mkdir()
+    (root / "problems" / "p").mkdir()
     (root / "store.sqlite").write_text("x")
     (root / "store.sqlite-wal").write_text("x")
-    mine = ("main.py", ".env", ".gitignore", "src/lib.py", "config.yaml")
+    # experiments/ holds the user's own study specs: never hillclimb's to delete
+    mine = ("main.py", ".env", ".gitignore", "src/lib.py", "config.yaml", "experiments/study.yaml")
     for name in mine:
         (root / name).parent.mkdir(parents=True, exist_ok=True)
         (root / name).write_text("keep")
@@ -761,10 +825,35 @@ def test_reset_kills_this_dirs_engines_and_deletes_what_hillclimb_made(tmp_path,
     assert root.exists()
     assert sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()) == sorted(mine)
     assert "pid 33" in out and "left alone" in out
+    assert "Will keep" in out and "experiments/" in out
 
 
-def test_ps_lists_engines_with_their_process_trees(tmp_path, monkeypatch, capsys):
+def test_reset_keeps_a_folder_of_hillclimbs_name_that_hillclimb_did_not_create(tmp_path, monkeypatch, capsys):
+    """The data loss of C0: a project's own knowledge/ or climbers/ (no
+    .hillclimb marker) survives `reset --yes`; only marked folders go."""
+    from hillclimb.project import ensure_owned_dir
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "hillclimb.yaml").write_text("")
+    ensure_owned_dir(root / "runs")
+    for name, file in (("knowledge", "notes.md"), ("climbers", "log.txt"), ("experiments", "results.csv")):
+        (root / name).mkdir()
+        (root / name / file).write_text("mine")
+    monkeypatch.chdir(root)
+    monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
+    monkeypatch.setattr("hillclimb.harness.orphans.live_engines", lambda: [])
+    with pytest.raises(SystemExit) as exc:
+        cli_main(["reset", "--yes"])
+    assert exc.value.code == 0
+    assert not (root / "runs").exists() and not (root / "hillclimb.yaml").exists()
+    for name, file in (("knowledge", "notes.md"), ("climbers", "log.txt"), ("experiments", "results.csv")):
+        assert (root / name / file).read_text() == "mine"
+
+
+def test_ps_draws_the_machine_and_process_boxes(tmp_path, monkeypatch, capsys):
     from hillclimb.harness import orphans
+    from hillclimb.tui import machine
 
     listing = (
         "100 1 100 0.5 40000 05:00 /venv/bin/python3 -m hillclimb.cli run circle-packing --budget 5m\n"
@@ -774,20 +863,57 @@ def test_ps_lists_engines_with_their_process_trees(tmp_path, monkeypatch, capsys
         "200 1 200 0.0 3000 1-02:00:00 /usr/bin/python3 -m hillclimb.cli watch\n"
     )
     monkeypatch.setattr(orphans, "_ps", lambda args: listing)
-    monkeypatch.setattr(orphans, "_environ_dir", lambda pid: tmp_path / "gone" / "hillclimb")
+    monkeypatch.setattr(machine, "_environ_dir", lambda pid: tmp_path / "gone" / "hillclimb")
+    monkeypatch.setattr(common, "_CONSOLE", common._make_console(stderr=False, width=120))
     with pytest.raises(SystemExit) as exc:
         cli_main(["ps"])
     assert exc.value.code == 0
     out = capsys.readouterr().out
-    assert "engine pid 100" in out and "[orphan: dir deleted]" in out
-    assert "agent    pid 101" in out and "verifier pid 102" in out and "child    pid 103" in out
-    assert "1 engine(s), 4 processes" in out
-    assert "watch" not in out
+    lines = out.rstrip("\n").splitlines()
+    assert lines[0].startswith("╭─ hillclimb ps") and sum(line.startswith("╭") for line in lines) == 1
+    assert all(len(line) <= 120 for line in lines)  # boxed: nothing runs past the terminal
+    assert "engines 1" in out and "orphan" in out
+    assert "claude · sonnet" in out  # the coding agent and its model, not its argv
+    assert "verifier" in out and "solution" in out
+    assert "watch" not in out  # `hillclimb watch` is not an engine
 
     monkeypatch.setattr(orphans, "_ps", lambda args: "")
     with pytest.raises(SystemExit):
         cli_main(["ps"])
-    assert "No hillclimb engines running." in capsys.readouterr().out
+    assert "no hillclimb engines running" in capsys.readouterr().out
+
+
+def test_ps_watch_redraws_until_ctrl_c(tmp_path, monkeypatch, capsys):
+    import time
+
+    from hillclimb.harness import orphans
+
+    listing = (
+        "100 1 100 0.5 40000 05:00 /venv/bin/python3 -m hillclimb.cli run circle-packing\n"
+        "102 100 102 95.0 60000 00:10 /bin/bash verifier.sh\n"
+    )
+    from hillclimb.tui import machine
+
+    monkeypatch.setattr(orphans, "_ps", lambda args: listing)
+    monkeypatch.setattr(machine, "_environ_dir", lambda pid: tmp_path)
+    ticks = []
+
+    def sleep(seconds):
+        ticks.append(seconds)
+        if len(ticks) == 3:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(time, "sleep", sleep)
+    with pytest.raises(SystemExit) as exc:
+        cli_main(["ps", "--watch", "-n", "0.25"])
+    assert exc.value.code == 0  # ctrl+c ends it quietly
+    assert ticks == [0.25, 0.25, 0.25]
+    out = capsys.readouterr().out
+    assert "ctrl+c to quit" in out and "╭─ hillclimb ps" in out and "verifier" in out
+
+    with pytest.raises(SystemExit) as exc:
+        cli_main(["ps", "--watch", "-n", "0"])
+    assert exc.value.code == 1
 
 
 def test_is_engine_matches_the_launcher_argv_only():
@@ -873,6 +999,22 @@ def test_summit_copies_the_best_search_across_runs(config, tmp_path):
     assert (dest / "submission.csv").read_text() == "id\nr1/p\n"
 
 
+def test_summit_copies_the_tuned_params_a_solution_reads(config, tmp_path):
+    """A tunable solution reads `spaces.params()` from ./params.json; a copy
+    without it cannot run."""
+    from hillclimb.cli.problem import _summit
+
+    search_dir = _summit_search(config.paths.runs_dir, "r1", "p", "p", [0.3])
+    (search_dir / "best" / "params.json").write_text('{"seconds": {"type": "int", "low": 1, "high": 9, "value": 5}}')
+    dest = tmp_path / "root"
+    dest.mkdir()
+
+    _record, _candidate, copied = _summit(config, None, dest)
+
+    assert copied == ["solution.py", "params.json", "submission.csv"]
+    assert '"value": 5' in (dest / "params.json").read_text()
+
+
 def test_summit_respects_lower_is_better(config, tmp_path):
     from hillclimb.cli.problem import _summit
 
@@ -927,6 +1069,25 @@ def test_summit_command_accepts_a_new_destination(config, tmp_path, monkeypatch)
     assert result.exit_code == 0
     assert (dest / "solution.py").is_file()
     assert (dest / "submission.json").is_file()
+
+
+def test_summit_plot_draws_what_it_copied(config, tmp_path, monkeypatch):
+    from hillclimb import cli
+
+    _summit_search(config.paths.runs_dir, "r1", "p", "p", [0.5])
+    dest = tmp_path / "out"
+    monkeypatch.setattr(common, "load_config", lambda: config)
+    monkeypatch.setattr("hillclimb.cli.problem.load_problem", lambda problem, config: problem)
+    shown = []
+    monkeypatch.setattr(
+        common, "show_solution_plot",
+        lambda config, spec, where_dir, where, out, **kw: shown.append((spec, where_dir, where, out)),
+    )
+
+    result = CliRunner().invoke(cli.app, ["summit", "--to", str(dest), "--plot"])
+
+    assert result.exit_code == 0, result.output
+    assert shown == [("p", dest.resolve(), "summit · c000 from r1/p", dest.resolve() / "solution.png")]
 
 
 def test_summit_requires_a_problem_when_several_exist(config, tmp_path):
@@ -1016,6 +1177,42 @@ def test_verify_without_interface_stays_silent(config, tmp_path, monkeypatch, ca
     _lintable_problem(tmp_path, VERIFY_BASELINE_OK, with_interface=False)
     _run_verify(config, tmp_path, monkeypatch)
     assert "interface:" not in capsys.readouterr().out
+
+
+def test_verify_brings_the_params_json_beside_the_solution(config, tmp_path, monkeypatch, capsys):
+    """A summited solution reads its tuned values from the params.json next
+    to it; verify must score it with them, not crash it without them."""
+    from hillclimb.cli.problem import verify
+
+    _lintable_problem(tmp_path, VERIFY_BASELINE_OK, with_interface=False)
+    config.paths.problems_dir = tmp_path / "problems"
+    monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config.model_copy(deep=True))
+    mine = tmp_path / "mine"
+    mine.mkdir()
+    (mine / "solution.py").write_text(
+        "from hillclimb import spaces\n"
+        "P = spaces.params()\n"
+        "assert P['rows'] == 2, P\n"
+        'open("submission.csv", "w").write("x\\n0.1\\n0.9\\n")\n'
+    )
+    (mine / "params.json").write_text('{"rows": {"type": "int", "low": 1, "high": 9, "value": 2}}')
+    verify("fmt", solution=mine / "solution.py", repeat=1, holdout=False)
+    assert "score = 1" in capsys.readouterr().out
+
+
+def test_verify_shows_why_a_run_failed(config, tmp_path, monkeypatch, capsys):
+    """The run's folder is a temp dir gone by the time the user reads the
+    message, so the traceback is shown inline instead of a dead path."""
+    problem = _lintable_problem(tmp_path, "raise KeyError('seconds')\n", with_interface=False)
+    # like the bundled verifiers: a crashing solution fails the run
+    (problem / "verifier.sh").write_text(
+        '#!/bin/sh\nset -e\n"$HILLCLIMB_PYTHON" "$HILLCLIMB_SOLUTION"\n'
+        'echo \'{"score": 1.0}\' > "$HILLCLIMB_RESULT"\n'
+    )
+    with pytest.raises(typer.Exit):
+        _run_verify(config, tmp_path, monkeypatch)
+    err = capsys.readouterr().err
+    assert "FAILED" in err and "KeyError: 'seconds'" in err and "logs:" not in err
 
 
 def test_verify_runs_declared_unit_tests(config, tmp_path, monkeypatch, capsys):

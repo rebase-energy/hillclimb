@@ -619,7 +619,7 @@ from textual.widgets import (  # noqa: E402
 )
 from textual.widgets.option_list import Option  # noqa: E402
 
-from hillclimb.tui.header import HillclimbHeader, TimezoneMixin  # noqa: E402
+from hillclimb.tui.header import APP_TITLE, HillclimbHeader, TimezoneMixin  # noqa: E402
 from hillclimb.tui.keys import KEYS_BINDING, QUIT_BINDINGS, KeysMixin, KeysPanel, back_binding  # noqa: E402
 from hillclimb.tui.watch import REFRESH_S, _mouse_event_x, _mouse_event_y  # noqa: E402
 
@@ -1344,6 +1344,7 @@ class GraphScreen(KeysMixin, Screen):
 class GraphApp(TimezoneMixin, App):
     """Standalone shell for `hillclimb knowledge graph` — same screen the
     watch TUI reaches via `g`."""
+    TITLE = f"{APP_TITLE} graph"  # the header names the command that opened it
 
     BINDINGS = [
         Binding("t", "choose_timezone", "time zone", show=False),

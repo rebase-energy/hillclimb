@@ -33,6 +33,7 @@ from hillclimb.cli import (  # noqa: F401 — importing a module registers its c
     problem,
     run,
     sandbox,
+    skills,
     store,
     views,
 )

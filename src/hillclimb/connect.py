@@ -74,7 +74,7 @@ class Status:
     `state` is the machine-readable verdict; `detail` is what was found and
     `fix` the command that would change it. Three states matter for an
     agent: `logged-out` (its own login is missing), `logged-in` (the login
-    works but hillclimb has not connected it — `hillclimb connect <target>`
+    works but hillclimb has not connected it — `hillclimb connect <agent>`
     has not completed on this machine, or its cache was wiped) and `ready`
     (logged in AND connected: the ping passed and what a search reads is
     staged). The OpenRouter route says `no-key` / `key-set` / `ready` the
@@ -99,7 +99,7 @@ class Status:
 
     def as_dict(self) -> dict:
         return {
-            "target": self.target,
+            "agent": self.target,
             "auth": self.auth,
             "state": self.state,
             "ok": self.ok,
@@ -218,7 +218,7 @@ def _check_claude(auth: str) -> Status:
         return Status("claude", auth, "error", str(exc)[:120])
     ok, detail = parse_claude_status(proc.returncode, proc.stdout or proc.stderr)
     if not ok:
-        return Status("claude", auth, "logged-out", detail, "claude auth login")
+        return Status("claude", auth, "logged-out", detail, "hillclimb connect claude")
     # The status says who is logged in and nothing about the plan's window:
     # quota is the search's concern (journaled per candidate by
     # `harness.quota`), not the connection's.
@@ -256,7 +256,16 @@ def _check_codex(auth: str) -> Status:
         return Status("codex", auth, "error", str(exc)[:120])
     ok, detail = parse_codex_status(proc.returncode, f"{proc.stdout}\n{proc.stderr}")
     if not ok:
-        return Status("codex", auth, "logged-out", detail, "codex login")
+        return Status("codex", auth, "logged-out", detail, "hillclimb connect codex")
+    from hillclimb.agents.codex_cli import has_own_login
+
+    if not has_own_login(auth):
+        # a copy of the user's own login: one of the two copies goes stale
+        return Status(
+            "codex", auth, "logged-out",
+            "operators need a codex login of their own (not a copy of yours)",
+            "hillclimb connect codex",
+        )
     return Status("codex", auth, "ready", detail)
 
 
@@ -345,7 +354,7 @@ def _with_connection(status: Status) -> Status:
 
 
 def record_dir(target: str, auth: str) -> Path:
-    """Where `connect <target>` leaves its mark for this auth mode: the
+    """Where `connect <agent>` leaves its mark for this auth mode: the
     ping's scratch dir under the machine cache, named like the staged
     homes (`claude-code-subscription`, `openrouter-openrouter`), so
     `staged_homes` — and with it `disconnect` — already covers it."""
@@ -362,7 +371,7 @@ def mark_connected(target: str, auth: str, model: str | None) -> Path:
     path = record_dir(target, auth) / "connected.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({
-        "target": target, "auth": auth, "model": model,
+        "agent": target, "auth": auth, "model": model,
         "connected_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }, indent=2) + "\n")
     return path
@@ -432,25 +441,177 @@ def login_command(target: str) -> list[str] | None:
     return {"claude": ["claude", "auth", "login"], "codex": ["codex", "login"]}.get(target)
 
 
-def run_login(target: str) -> int:
+def operator_env(target: str, auth: str = "subscription") -> dict[str, str]:
+    """The environment a coding agent runs in for hillclimb: its operator home,
+    never the user's own setup. Logins and logouts run in it too, so they
+    touch hillclimb's login and never the user's."""
+    if target == "claude":
+        from hillclimb.agents.claude_code import subscription_env
+
+        return subscription_env(auth)
+    if target == "codex":
+        from hillclimb.agents.codex_cli import codex_env
+
+        return codex_env(auth)
+    return dict(os.environ)
+
+
+# who each login belongs to, for the line hillclimb prints before handing over
+LOGIN_LABELS = {"claude": ("Claude Code", "Anthropic"), "codex": ("Codex", "OpenAI")}
+# a URL ends before trailing punctuation ("…on http://localhost:1455.")
+_URL = re.compile(r"https?://[^\s\x07\x1b]*[^\s\x07\x1b.,;:!?)\]'\"]")
+
+
+def login_header(target: str) -> str:
+    """One line, the same shape for every coding agent, before its login."""
+    agent, company = LOGIN_LABELS.get(target, (target, ""))
+    owner = f" ({company})" if company else ""
+    return f"[head]{agent}{owner}[/]: signing in hillclimb's operator home — separate from your own login"
+
+
+def linkify(text: str) -> str:
+    """Plain URLs as terminal hyperlinks (OSC 8), so a sign-in link stays
+    clickable even when the terminal wraps it over several lines. Text that
+    already carries hyperlinks (Claude Code marks its own) is left alone."""
+    if "\x1b]8;" in text:
+        return text
+    return _URL.sub(lambda m: f"\x1b]8;;{m.group(0)}\x1b\\{m.group(0)}\x1b]8;;\x1b\\", text)
+
+
+def _interactive(argv: list[str], env: dict[str, str]) -> int:
+    """Run a login in a pseudo-terminal of its own, so it behaves exactly as
+    it would in this terminal (prompts, a browser it opens, keys typed back),
+    with its URLs made clickable on the way out. Without a terminal, or on
+    Windows, it simply inherits this one."""
+    import sys
+
+    if os.name == "nt" or not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return subprocess.call(argv, env=env)
+    import pty
+    import select
+    import termios
+    import tty
+
+    pid, master = pty.fork()
+    if pid == 0:  # the child: the login itself
+        try:
+            os.execvpe(argv[0], argv, env)
+        finally:
+            os._exit(127)
+    saved = termios.tcgetattr(sys.stdin.fileno())
+    tty.setraw(sys.stdin.fileno())
+    pending = ""
+
+    def emit(text: str) -> None:
+        os.write(sys.stdout.fileno(), linkify(text).encode())
+
+    try:
+        while True:
+            ready, _, _ = select.select([master, sys.stdin.fileno()], [], [], 0.2)
+            if not ready and pending:
+                emit(pending)  # a prompt without a newline: show it now
+                pending = ""
+            if sys.stdin.fileno() in ready:
+                os.write(master, os.read(sys.stdin.fileno(), 1024))
+            if master in ready:
+                try:
+                    data = os.read(master, 4096)
+                except OSError:  # the child closed its side
+                    data = b""
+                if not data:
+                    break
+                pending += data.decode(errors="replace")
+                # hold back only a line that may still be growing a URL
+                cut = max(pending.rfind("\n"), pending.rfind("\r"))
+                if cut >= 0:
+                    emit(pending[: cut + 1])
+                    pending = pending[cut + 1 :]
+                if "http" not in pending:
+                    emit(pending)
+                    pending = ""
+        if pending:
+            emit(pending)
+    finally:
+        termios.tcsetattr(sys.stdin.fileno(), termios.TCSAFLUSH, saved)
+        os.close(master)
+    _, status = os.waitpid(pid, 0)
+    return os.waitstatus_to_exitcode(status)
+
+
+def run_login(target: str, auth: str = "subscription") -> int:
     """Hand the terminal to the coding agent's login (browser flow, prompts, all of
-    it) and return its exit code. hillclimb never sees the credential."""
+    it), in its operator home, and return its exit code. hillclimb never sees
+    the credential, and the user's own login is left as it is."""
     cmd = login_command(target)
     if cmd is None:
         raise ValueError(f"{target} has no login command")
     binary = shutil.which(cmd[0])
     if binary is None:
         raise RuntimeError(f"{cmd[0]} is not on PATH")
-    return subprocess.call([binary, *cmd[1:]])
+    env = operator_env(target, auth)
+    if target == "codex":
+        from hillclimb.agents.codex_cli import OWN_LOGIN_MARKER, codex_home, has_own_login
+
+        home = codex_home(auth)
+        if not has_own_login(auth):
+            # a copy of the user's login, from before: never refresh it
+            (home / "auth.json").unlink(missing_ok=True)
+    code = _interactive([binary, *cmd[1:]], env)
+    if code == 0 and target == "codex":
+        (home / OWN_LOGIN_MARKER).write_text("logged in by hillclimb connect codex\n")
+    return code
+
+
+# what a coding agent says when the login on disk can no longer be used: the
+# token was revoked, expired, or (codex) its single-use refresh token was
+# already spent by another copy of the same credential
+LOGIN_EXPIRED_MARKERS = (
+    "refresh token",
+    "log out and sign in again",
+    "sign in again",
+    "token has expired",
+    "token is expired",
+    "invalid_grant",
+    "401 unauthorized",
+)
+
+
+def login_expired(message: str | None) -> bool:
+    """Does a failed ping say the login itself is dead, rather than the model
+    or the route? `login status` cannot tell: it only sees that a credential
+    file exists, so a dead login reads as logged in until a call is made."""
+    text = (message or "").lower()
+    return any(marker in text for marker in LOGIN_EXPIRED_MARKERS)
+
+
+def logout_command(target: str) -> list[str] | None:
+    """The coding agent's own logout, for a target whose dead login has to be
+    cleared before a fresh one, or None."""
+    return {"codex": ["codex", "logout"]}.get(target)
+
+
+def run_relogin(target: str) -> int:
+    """Replace a login that no longer works: the coding agent's own logout
+    (where it has one), then its login flow. Only ever called on a login a
+    real call has just proven dead, so nothing working is ended. Returns the
+    login's exit code."""
+    cmd = logout_command(target)
+    if cmd is not None:
+        binary = shutil.which(cmd[0])
+        if binary is None:
+            raise RuntimeError(f"{cmd[0]} is not on PATH")
+        subprocess.call([binary, *cmd[1:]], env=operator_env(target))  # a logout that finds nothing is fine
+    return run_login(target)
 
 
 def staged_homes(target: str) -> list[Path]:
-    """Everything `connect <target>` materialized under the machine cache
+    """Everything `connect <agent>` materialized under the machine cache
     for searches to read — the isolated per-auth homes (every auth mode of
     the target) and the ping's scratch dirs. What `disconnect` removes. The
-    coding agent's own login (`~/.claude`, `~/.codex`, `~/.pi`) is never among
-    them: hillclimb may start a login it needs, never end one — the account
-    belongs to the person, not to hillclimb."""
+    user's own login (`~/.claude`, `~/.codex`, `~/.pi`) is never among
+    them: `disconnect` never ends a login — the account belongs to the
+    person, not to hillclimb. (`connect` replaces one only after a real call
+    has shown it dead: `run_relogin`.)"""
     from hillclimb.project import machine_cache_dir
 
     cache = Path.home() / ".cache" / "hillclimb"  # where codex_home/pi_home write
@@ -463,6 +624,7 @@ def staged_homes(target: str) -> list[Path]:
         found += sorted((cache / "pi-home").glob("*"))
         found += sorted(pings.glob("pi-*"))
     elif target == "claude":
+        found += sorted((cache / "claude-home").glob("*"))
         found += sorted(pings.glob("claude-code-*"))
     elif target == "openrouter":
         found += [p for p in (cache / "codex-home" / "openrouter", cache / "pi-home" / "openrouter") if p.exists()]
@@ -482,7 +644,11 @@ def remove_staged(target: str) -> list[Path]:
 def import_credentials(target: str, auth: str, models_file: Path | None = None) -> Path | None:
     """Materialize the isolated per-auth home a search will read, now rather
     than inside the first operator call. Returns the directory, or None for a
-    target that has none (claude-code uses the ambient login)."""
+    target that has none."""
+    if target == "claude":
+        from hillclimb.agents.claude_code import claude_home
+
+        return claude_home(auth)
     if target == "codex":
         from hillclimb.agents.codex_cli import codex_home
 

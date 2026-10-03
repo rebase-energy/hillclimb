@@ -15,6 +15,18 @@ from hillclimb.harness import sandbox
 from hillclimb.agents.base import AgentRequest, AgentResult
 
 
+def claude_home(auth: str = "subscription") -> Path:
+    """Claude Code's home for operators (CLAUDE_CONFIG_DIR): a login, sessions
+    and state of hillclimb's own. The user's ~/.claude — their settings,
+    plugins and the hooks they bring, skills, MCP servers and history — is
+    never read and never written: it would change results, cost tokens, and
+    collect whatever a search leaves behind. `hillclimb connect claude` logs
+    this home in once."""
+    home = Path.home() / ".cache" / "hillclimb" / "claude-home" / auth
+    home.mkdir(parents=True, exist_ok=True)
+    return home
+
+
 def subscription_env(auth: str = "subscription") -> dict[str, str]:
     """Child env for `claude`. auth="subscription" (default) drops
     ANTHROPIC_API_KEY so calls bill the Max subscription (claude.ai login /
@@ -27,6 +39,8 @@ def subscription_env(auth: str = "subscription") -> dict[str, str]:
     env = os.environ.copy()
     if auth != "api-key":
         env.pop("ANTHROPIC_API_KEY", None)
+    env["CLAUDE_CONFIG_DIR"] = str(claude_home(auth))
+    env["ENABLE_CLAUDEAI_MCP_SERVERS"] = "false"  # the account's connectors stay out too
     return single_threaded(env)
 
 RATE_LIMIT_MARKERS = (
@@ -85,6 +99,7 @@ class _StreamReader(threading.Thread):
         # partial then final, under one id) — the token count of record when
         # the call dies without a `result` message (timeout/abort/error)
         self.usage_by_turn: dict[str, dict] = {}
+        self.model_by_turn: dict[str, str] = {}  # what each turn ran on, to price it
 
     def run(self) -> None:
         with self.stream_path.open("w") as sink:
@@ -119,6 +134,8 @@ class _StreamReader(threading.Thread):
                         self.model_id = model_id
                     if body.get("usage") and body.get("id"):
                         self.usage_by_turn[body["id"]] = body["usage"]
+                        if is_concrete_model_id(model_id):
+                            self.model_by_turn[body["id"]] = model_id
                 elif message.get("type") == "result":
                     self.result_payload = message
                     if message.get("is_error") and _has_rate_limit_marker(
@@ -178,6 +195,21 @@ def estimate_cost_usd(usage: dict, model_id: str | None) -> float | None:
     )
 
 
+def _estimated_cost_usd(reader: "_StreamReader | None") -> float | None:
+    """What a call that died before its `result` message cost: each streamed
+    turn at list price for the model it ran on (the estimate the watch TUI
+    shows while a call runs). A timed-out or stopped call burned real tokens,
+    and the cost ceiling must count them. None when no turn could be priced."""
+    if reader is None:
+        return None
+    priced = [
+        estimate_cost_usd(usage, reader.model_by_turn.get(turn) or reader.model_id)
+        for turn, usage in reader.usage_by_turn.items()
+    ]
+    known = [cost for cost in priced if cost is not None]
+    return sum(known) if known else None
+
+
 def _observed_usage(reader: "_StreamReader | None", payload: dict) -> dict[str, int]:
     """Per-kind tokens the call burned, on every outcome: the final `result`
     usage when the call finished, else the per-turn sum the reader streamed
@@ -222,19 +254,15 @@ class ClaudeCodeAgent:
         reaching only Anthropic."""
         cmd = list(cmd)
         if not request.allow_internet:
-            # WebSearch runs on Anthropic's side, where no sandbox reaches; an
-            # MCP server is a process of its own choosing
-            cmd += ["--disallowedTools", WEB_TOOLS, "--strict-mcp-config"]
+            # WebSearch runs on Anthropic's side, where no sandbox reaches
+            cmd += ["--disallowedTools", WEB_TOOLS]
         policy = request.sandbox
         if policy is None:
             if not request.allow_internet:
                 raise sandbox.SandboxUnavailable(sandbox.NEEDS_SANDBOX)
             return sandbox.Launch(cmd, {})
-        home = Path.home()
         policy = policy.writable(
-            request.candidate_dir,
-            os.environ.get("CLAUDE_CONFIG_DIR") or home / ".claude",
-            prefix=(str(home / ".claude.json"),),
+            request.candidate_dir, claude_home(self.auth),
         ).for_agent(request.allow_internet, hosts=MODEL_HOSTS)
         return sandbox.launch(cmd, policy)
 
@@ -252,6 +280,12 @@ class ClaudeCodeAgent:
         ]
         if request.resume_session_id:
             cmd += ["--resume", request.resume_session_id]
+        # no MCP servers: none of the user's, and none of the claude.ai
+        # account's connectors (mail, drives, calendars) — they come with the
+        # login, not the config dir, and an operator has no business there
+        cmd += ["--strict-mcp-config"]
+        for plugin in request.plugins:
+            cmd += ["--plugin-dir", str(plugin)]
         try:
             started = self._sandboxed(cmd, request)
         except sandbox.SandboxUnavailable as exc:
@@ -335,9 +369,14 @@ class ClaudeCodeAgent:
             "model_id": reader.model_id if reader else None,
             "cpu_s": reaper.cpu_s if reaper is not None else None,
         }
+        # Claude Code's own total when its result message arrived, else the
+        # streamed turns at list price
+        reported = payload.get("total_cost_usd") if payload else None
+        cost = reported if reported is not None else _estimated_cost_usd(reader)
         if aborted:
             return AgentResult(
                 ok=False,
+                cost_usd=cost,
                 **burn,
                 duration_s=duration,
                 raw_output_path=str(raw_path),
@@ -347,6 +386,7 @@ class ClaudeCodeAgent:
         if timed_out:
             return AgentResult(
                 ok=False,
+                cost_usd=cost,
                 **burn,
                 duration_s=duration,
                 raw_output_path=str(raw_path),
@@ -357,7 +397,7 @@ class ClaudeCodeAgent:
             return AgentResult(
                 ok=False,
                 session_id=payload.get("session_id"),
-                cost_usd=payload.get("total_cost_usd"),
+                cost_usd=cost,
                 num_turns=payload.get("num_turns"),
                 **burn,
                 duration_s=duration,
@@ -369,7 +409,7 @@ class ClaudeCodeAgent:
             return AgentResult(
                 ok=False,
                 session_id=payload.get("session_id"),
-                cost_usd=payload.get("total_cost_usd"),
+                cost_usd=cost,
                 num_turns=payload.get("num_turns"),
                 **burn,
                 duration_s=duration,
@@ -380,6 +420,7 @@ class ClaudeCodeAgent:
         if not payload:
             return AgentResult(
                 ok=False,
+                cost_usd=cost,
                 **burn,
                 duration_s=duration,
                 raw_output_path=str(raw_path),

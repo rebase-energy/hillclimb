@@ -1,7 +1,7 @@
                                                                                                                         
- Usage: root disconnect [OPTIONS] TARGET                                                                                
+ Usage: root disconnect [OPTIONS] AGENT                                                                                 
                                                                                                                         
- Undo `hillclimb connect <target>` on hillclimb's side: unpin it as the default and forget the staged credentials, so   
+ Undo `hillclimb connect <agent>` on hillclimb's side: unpin it as the default and forget the staged credentials, so    
  the next `connect` sets it up from scratch again.                                                                      
                                                                                                                         
  Unpinning edits the same config.yaml `connect` wrote (`~/.config/hillclimb/`,                                          
@@ -11,7 +11,7 @@
  never logs you out of claude, codex or pi.                                                                             
                                                                                                                         
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ *    target      TEXT  claude | codex | pi | openrouter [required]                                                   │
+│ *    AGENT      TEXT  claude | codex | pi | openrouter [required]                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --local      --user      Where the defaults (and an OpenRouter key) go: --user (the default) is                      │

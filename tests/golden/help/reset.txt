@@ -5,10 +5,12 @@
                                                                                                                         
  The hillclimb dir is the one found from the current directory (or                                                      
  `HILLCLIMB_DIR`). Only engines pinned to that exact dir are signalled —                                                
- their coding agents and verifiers go with them — then hillclimb.yaml and the                                           
- folders beside it that hillclimb owns (problems/, runs/, knowledge/,                                                   
- climbers/, experiments/, the sqlite store) are removed. Anything else in                                               
- the folder — your code, .env, .gitignore — stays. Searches of other                                                    
+ their coding agents and verifiers go with them — then hillclimb.yaml, the                                              
+ sqlite store and the folders hillclimb created beside it (each carries a                                               
+ hidden `.hillclimb` file: problems/, runs/, knowledge/, climbers/) are                                                 
+ removed. A folder of the same name without the marker is yours and stays,                                              
+ and so does everything else in the folder — your code, .env, .gitignore.                                               
+ Without --yes it lists what goes and what stays first. Searches of other                                               
  folders on the machine are untouched. `runs_dir` or `problems_dir`                                                     
  configured outside the hillclimb dir are left in place and reported.                                                   
                                                                                                                         

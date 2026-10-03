@@ -4,6 +4,10 @@ higher_is_better: false
 description: description.md
 contract: contract.md
 holdout: true
+# two steps, two sandboxes: run.py calls the solution, evaluate.py scores what it wrote
+run: run.py
+score: evaluate.py
+holdout_inputs: [holdout]   # the holdout instances' seed: only holdout runs read it
 baseline: baseline.py
 time_budget_s: 900
 allow_internet_during_solution: false

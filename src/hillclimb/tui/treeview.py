@@ -223,25 +223,34 @@ def statusline(
 ) -> str:
     """The line above the canvas: where we are and how the exploration went.
     `position` is `(index, total)` among the store's searches, so the n/p
-    cycling has a readout."""
+    cycling has a readout. On one line; the screens flow
+    `statusline_items` to their width instead."""
+    return " · ".join(statusline_items(ref, state, tree, metric, higher_is_better, position))
+
+
+def statusline_items(
+    ref: str, state: str, tree: SearchTree, metric: str, higher_is_better: bool,
+    position: tuple[int, int] | None = None,
+) -> list[str]:
+    """`statusline` as its items, for `lines.flow_items` to wrap between."""
     from hillclimb.tui.watch import STATE_STYLE
 
     parts = [f"[bold]{ref}[/] [{STATE_STYLE.get(state, '')}]{state}[/]"]
     if position is not None and position[1] > 1:
         parts[0] += f" [dim]({position[0] + 1}/{position[1]}, n/p to switch)[/]"
-    parts.append(f"{len(tree.nodes)} candidates · depth {tree.depth}")
+    parts += [f"{len(tree.nodes)} candidates", f"depth {tree.depth}"]
     best = tree.node(tree.best_id) if tree.best_id else None
     direction = "higher" if higher_is_better else "lower"
     if best is not None and best.score is not None:
         parts.append(f"best [bold]{best.id} ★[/] {metric}={best.score:.5g} ({direction} is better)")
-    return "  ·  ".join(parts)
+    return parts
 
 
 # --- Textual widgets ---
 
 from plotui import Plot  # noqa: E402
 from plotui.textual import PlotWidget  # noqa: E402
-from textual.app import App, ComposeResult  # noqa: E402
+from textual.app import ComposeResult  # noqa: E402
 from textual.binding import Binding  # noqa: E402
 
 from hillclimb.tui.keys import back_binding  # noqa: E402
@@ -251,10 +260,10 @@ from textual.message import Message  # noqa: E402
 from textual.widgets import Footer, Label, RichLog  # noqa: E402
 
 from hillclimb.tui.graphview import GraphKeys, TimeScrubber, place_labels_by_node  # noqa: E402
-from hillclimb.tui.header import HillclimbHeader, TimezoneMixin  # noqa: E402
+from hillclimb.tui.header import HillclimbHeader  # noqa: E402
 from hillclimb.harness.journal import Journal  # noqa: E402
 from hillclimb.harness.store import DataStore, SearchRecord, open_store, resolve_search  # noqa: E402
-from hillclimb.tui.theme import HILLCLIMB_CSS, apply_theme, themed_plot  # noqa: E402
+from hillclimb.tui.theme import themed_plot  # noqa: E402
 from hillclimb.tui.tree import build_tree, candidates_until, tree_events  # noqa: E402
 from hillclimb.tui.watch import (  # noqa: E402
     LiveScreen, candidate_detail_renderables, _mouse_event_x, _mouse_event_y,
@@ -344,7 +353,7 @@ class TreePlotWidget(PlotWidget):
         self.invalidate()
 
     # -- the encoding hooks: what a subclass swaps to draw the same tree
-    # another way (tree2view.py) while keeping picking, scrubbing, the
+    # another way (treedrawview.py) while keeping picking, scrubbing, the
     # legend hit-test and the detail dock --
 
     def _filter(self, tree: SearchTree) -> SearchTree:
@@ -520,8 +529,8 @@ def node_detail_width(screen_width: int) -> int:
 
 
 class TreeScreen(LiveScreen):
-    """Canvas + time scrubber + candidate detail for one search. Reached via
-    `hillclimb tree [search]`."""
+    """Canvas + time scrubber + candidate detail for one search: the base
+    `hillclimb tree` (treedrawview.py) and `treeclimb` build on."""
 
     BINDING_GROUP_TITLE = "tree"
     BINDINGS = [
@@ -546,7 +555,7 @@ class TreeScreen(LiveScreen):
     ]
 
     DEFAULT_CSS = """
-    TreeScreen #treeline { height: 1; padding: 0 1; background: $surface; }
+    TreeScreen #treeline { height: auto; padding: 0 1; background: $surface; }
     TreeScreen #node-detail { dock: right; width: 80; display: none; padding: 0 1; }
     TreeScreen #tree-stage { width: 1fr; height: 1fr; }
     TreeScreen #time-scrubber { height: 2; background: $surface; padding: 0 1; }
@@ -653,15 +662,26 @@ class TreeScreen(LiveScreen):
         candidates = candidates_until(list(self._journal.candidates.values()), until)
         higher = bool(self._record.meta.higher_is_better)
         self._tree = build_tree(candidates, higher, layout=self._live_tree)
-        self.query_one("#treeline", Label).update(
-            statusline(
-                self._record.ref, self._record.state, self._tree, self._record.meta.metric, higher,
-                position=self._position,
-            )
+        self._treeline = statusline_items(
+            self._record.ref, self._record.state, self._tree, self._record.meta.metric, higher,
+            position=self._position,
         )
+        self._flow_treeline()
         self._canvas().set_tree(self._tree, frame=self._live_tree)
         if self._canvas().selected is not None:
             self._show_detail(self._canvas().selected)
+
+    def _flow_treeline(self) -> None:
+        """The line over the tree, wrapped between its items rather than cut
+        off at the terminal's edge (`lines.flow_items`)."""
+        from hillclimb.tui.lines import flow_items
+
+        items = getattr(self, "_treeline", None)
+        if items:
+            self.query_one("#treeline", Label).update(flow_items(items, [], max(20, self.size.width - 2)))
+
+    def on_resize(self, event: events.Resize) -> None:
+        self._flow_treeline()
 
     def _show_detail(self, node_id: str | None) -> None:
         detail = self.query_one("#node-detail", RichLog)
@@ -766,20 +786,3 @@ class TreeScreen(LiveScreen):
             self.app.pop_screen()
         else:
             self.app.exit()
-
-
-class TreeApp(TimezoneMixin, App):
-    """Standalone shell for `hillclimb tree`."""
-
-    BINDINGS = [Binding("t", "choose_timezone", "time zone", show=False)]
-    CSS = HILLCLIMB_CSS
-
-    def __init__(self, config: Config | None = None, search: str | None = None):
-        super().__init__()
-        self.config = config or Config.load()
-        self.search = search
-
-    def on_mount(self) -> None:
-        apply_theme(self)
-        self._init_timezone()
-        self.push_screen(TreeScreen(self.config, self.search))

@@ -194,6 +194,9 @@ class UnitTestRunner:
         self.python = python.absolute()
         self.spec = spec
         self.pythonpath = pythonpath
+        # the engine's stop signal, wired in by the Harness: a stop kills a
+        # running test command at once
+        self.abort = None
 
     def run(self, solution: Path, candidate_dir: Path, timeout_s: float) -> UnitTestResult:
         try:
@@ -253,6 +256,7 @@ class UnitTestRunner:
             with stdout_path.open("w") as out, stderr_path.open("w") as err:
                 run = run_logged(
                     argv, work_dir, max(0.001, timeout_s), out, err, env,
+                    abort=self.abort,
                     sandbox=confined(self.sandbox, work_dir),
                 )
         except OSError as exc:

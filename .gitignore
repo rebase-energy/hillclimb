@@ -21,3 +21,16 @@ tasks/data/**/*.zip
 **/.claude/autoharness/
 .claude/skills/*/.ledger.jsonl
 .claude/skills/*/.sidecar.json
+
+# internal working material: kept on disk, never in the public repo
+/BUGS.md
+/hillclimb-architecture-comparison.pdf
+/tasks/
+/knowledge/
+/.claude/skills/hillclimb-sandbox/
+/.claude/skills/hillclimb-terminology-refactor/
+/docs/*-plan.md
+/docs/*-results.md
+
+# a local output of examples/nano_climb.py run from the repo root
+/problems/largest-prime/

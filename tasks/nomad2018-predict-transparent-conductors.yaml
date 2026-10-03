@@ -1,3 +1,0 @@
-comp_id: nomad2018-predict-transparent-conductors
-metric: mean-column-wise-rmsle
-higher_is_better: false

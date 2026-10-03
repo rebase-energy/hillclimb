@@ -1,4 +1,4 @@
-"""The live views: `status`, `show`, `watch`, `chart`, `tree`, `tree2`, `archive`,
+"""The live views: `status`, `show`, `watch`, `chart`, `tree`, `tree`, `treeclimb`,
 `surface`, `similarity …` and `graph`."""
 
 from __future__ import annotations
@@ -313,20 +313,25 @@ def chart(
 ):
     """Live hillclimb chart: best score so far vs tested candidates.
 
-    With no argument and several charts to show (more than one problem, or
-    the same problem in more than one run), first a table of them — one row
-    per problem worked in a run, newest activity first; enter opens that
-    chart, esc comes back to the table. `hillclimb watch` reaches the same
-    chart with `c` from its runs, searches and candidates tables.
+    One chart per problem. With no argument and more than one problem (or
+    study) in the folder, first a table of them, newest activity first;
+    enter opens that chart, esc comes back. `hillclimb watch` reaches the
+    same chart with `c`.
 
-    One staircase across every search of the problem, every scored candidate
-    a dot (bright where it set a new best, dim where it missed), plus optional
-    problem-config baselines; a study gets one line per experiment instead.
-    Refreshes as candidates land.
-    Keys: r=refresh, t=toggle improvement text, d=detail
-    (every scored candidate as a mark, parent edges, accepted lineage bold),
-    h=toggle holdout/validation, c=cost overlay, p=switch problem,
-    esc=back to the table, q=quit.
+    The climb: one staircase across every run of the problem, every scored
+    candidate a dot (bright where it set a new best, dim where it missed).
+    With several runs, `v` cycles three views: the plain climb (the
+    default), the same climb with each run's dots in its own colour, named in
+    the legend (`#2 15:08`: number and start time, or the name you gave the
+    run), and a comparison — one line per run from its own first candidate,
+    ending in a dot at its best. `]` / `[` focus one run (the others fade to
+    grey) and step back to all; in the plain climb they open the run colours. A study gets one line per experiment. Problem-config
+    baselines are dashed lines. Refreshes as candidates land.
+    Keys: v=climb/runs/compare, ]/[=focus next/previous run, r=refresh,
+    t=toggle improvement text, d=detail (the focused run's search: every
+    scored candidate as a mark, parent edges, accepted lineage bold),
+    h=toggle holdout/validation, c=cost overlay, p=switch problem, esc=back
+    to the table, q=quit.
     """
     try:
         from hillclimb.tui.chart import ChartApp
@@ -343,58 +348,37 @@ def chart(
 def tree(
     search: str = typer.Argument(None, help="latest (default), <run-id>, or <run-id>/<search-id>"),
 ):
-    """Live exploration tree of one search: what was expanded, what was left.
+    """Live tree of one search, drawn like the Darwin Gödel Machine's archive.
 
-    Roots across the top, one row per operator step; colour is the operator,
-    silhouette is the fate (filled = expanded, ring = discontinued, diamond =
-    best, dot = failed). Scroll zooms, drag pans, click a node for details,
-    enter opens it in the candidate screen, j/k scrub through time, n/p switch
-    search, `?` keys.
-    """
-    try:
-        from hillclimb.tui.treeview import TreeApp
-    except ModuleNotFoundError as exc:
-        raise typer.BadParameter(
-            "`hillclimb tree` needs the TUI extra: pip install 'hillclimb[tui]'"
-        ) from exc
-
-    TreeApp(common.load_config(), search).run()
-
-
-@app.command()
-def tree2(
-    search: str = typer.Argument(None, help="latest (default), <run-id>, or <run-id>/<search-id>"),
-):
-    """Live archive tree of one search, drawn like the Darwin Gödel Machine's.
-
-    Same layout as `tree`; each circle carries its candidate number (`c017` → 17) inside, is filled with its score on a viridis ramp (bright =
-    best; hollow = no working solution), and ringed by what the search did
+    Roots across the top, one row per operator step; each circle carries its
+    candidate number (`c017` → 17) inside, is filled with its score on a cyan
+    ramp (bright = best; hollow = no working solution), and ringed by what the search did
     with it: white = expanded (the spine the policy walked), no ring =
-    scored and never built on, red = failed. The final best is a white
-    star, and its parent chain is drawn bold in the same white. Circles never overlap: they
+    scored and never built on, red = failed. The final best is a white-ringed
+    star, and its parent chain is drawn in cyan. Circles never overlap: they
     are sized to the zoom, and the numbers appear as they grow. Scroll
     zooms, drag pans, click a node for details, enter opens it, j/k scrub
     through time, n/p switch search, `?` keys.
     """
     try:
-        from hillclimb.tui.tree2view import Tree2App
+        from hillclimb.tui.treedrawview import TreeDrawApp
     except ModuleNotFoundError as exc:
         raise typer.BadParameter(
-            "`hillclimb tree2` needs the TUI extra: pip install 'hillclimb[tui]'"
+            "`hillclimb tree` needs the TUI extra: pip install 'hillclimb[tui]'"
         ) from exc
 
-    Tree2App(common.load_config(), search).run()
+    TreeDrawApp(common.load_config(), search).run()
 
 
-@app.command(short_help="Archive tree beside the progress chart, live, for one search.")
-def archive(
+@app.command("treeclimb", short_help="The tree and the climb chart of one search, side by side, live.")
+def treeclimb(
     search: str = typer.Argument(None, help="latest (default), <run-id>, or <run-id>/<search-id>"),
 ):
-    """Archive tree beside the progress chart, live — the Darwin Gödel
-    Machine's two-panel figure for one search.
+    """The tree and the climb chart of one search, side by side, live — the
+    Darwin Gödel Machine's two-panel figure.
 
-    Left, the `tree2` archive tree; right, every scored candidate as a dot
-    at (candidate number, score) with the best-so-far staircase, a brighter dot
+    Left, the `tree` tree; right, every scored candidate as a dot at
+    (candidate number, score) with the best-so-far staircase, a brighter dot
     where a candidate set a new best, and the lineage of the final best as
     a thick line — the same parent chain drawn bold in the tree, one
     circle and one dot per candidate number on both. j/k scrub both panels through
@@ -403,13 +387,13 @@ def archive(
     switch search, `?` keys.
     """
     try:
-        from hillclimb.tui.archiveview import ArchiveApp
+        from hillclimb.tui.treeclimbview import TreeclimbApp
     except ModuleNotFoundError as exc:
         raise typer.BadParameter(
-            "`hillclimb archive` needs the TUI extra: pip install 'hillclimb[tui]'"
+            "`hillclimb treeclimb` needs the TUI extra: pip install 'hillclimb[tui]'"
         ) from exc
 
-    ArchiveApp(common.load_config(), search).run()
+    TreeclimbApp(common.load_config(), search).run()
 
 
 @app.command()
@@ -443,6 +427,58 @@ def surface(
         say(f"[warn]{_m(surface_unavailable(problem))}[/]")
         return
     SurfaceApp(config, search).run()
+
+
+@app.command()
+def plot(
+    target: str = typer.Argument(
+        None,
+        help="what to draw: nothing = the solution in this folder (what `summit` wrote), "
+        "a folder holding a solution's files, or a search (latest, <run-id> or <run-id>/<search-id>)",
+    ),
+    candidate: str = typer.Argument(None, help="a candidate of that search (e.g. c003); default: its best"),
+    problem: str = typer.Option(None, "--problem", "-p", help="the problem, when the folder has several"),
+    out: Path = typer.Option(None, "--out", "-o", help="where to save the PNG"),
+    no_open: bool = typer.Option(False, "--no-open", help="save the PNG without opening it"),
+):
+    """Draw a solution the way its problem says: the problem's plot.py (matplotlib).
+
+    With no argument, the solution in this folder — what `hillclimb summit`
+    copied here — saved beside it as solution.png; a directory, the solution
+    files in it; a search, its best (or the CANDIDATE named), saved under the
+    machine cache. The PNG opens in your image viewer. plot.py runs in the
+    problem's runtime venv, like its verifier (matplotlib is added there
+    once), and reads the solution's output files (submission.csv, …) — it
+    never reruns solution.py. A problem without plot.py says so; `hillclimb
+    summit --plot` copies the best and draws it in one go.
+    """
+    from hillclimb.project import machine_cache_dir
+
+    config = common.load_config()
+    path = Path(target) if target else None
+    if target is None or (path is not None and path.is_dir()):
+        spec = common.folder_problem(config, problem)
+        solution_dir = (path or config.hillclimb_dir).resolve()
+        where = "this folder" if path is None else str(path)
+        default_out = solution_dir / "solution.png"
+    else:
+        store, record = common.open_search(config, target)
+        spec = load_problem(problem or record.meta.problem, config)
+        if candidate:
+            from hillclimb.tui.watch import resolve_candidate_dir
+
+            found = Journal(store.journal(record.key)).candidates.get(candidate)
+            if found is None:
+                raise typer.BadParameter(f"{record.ref} has no candidate {candidate!r}")
+            solution_dir = resolve_candidate_dir(record.search_dir, candidate, found.candidate_dir)
+            where = f"{record.ref} {candidate}"
+        else:
+            solution_dir = record.search_dir / "best"
+            where = f"{record.ref} best"
+        # never into the run: the engine is the single writer of its search dir
+        name = f"{record.run_id}__{record.search_id}__{candidate or 'best'}.png"
+        default_out = machine_cache_dir() / "plots" / name
+    common.show_solution_plot(config, spec, solution_dir, where, (out or default_out).resolve(), open_it=not no_open)
 
 
 class DefaultCommandGroup(HillclimbGroup):

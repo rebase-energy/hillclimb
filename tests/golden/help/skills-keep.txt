@@ -1,0 +1,14 @@
+                                                                                                                        
+ Usage: root skills keep [OPTIONS] NAME                                                                                 
+                                                                                                                        
+ Mark a generated skill as reviewed and kept: it is `manual` from now on.                                               
+                                                                                                                        
+ Its skill.yaml keeps the record of what generated it, and when it was kept.                                            
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ *    name      TEXT  The skill's name (its folder) [required]                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --help  -h        Show this message and exit.                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

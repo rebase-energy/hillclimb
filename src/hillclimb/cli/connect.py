@@ -159,10 +159,18 @@ def _print_status(status) -> None:
         common.say(f"  fix: [note]{common._m(status.fix)}[/]")
 
 
-def _run_probe(agent: str, auth: str, model: str, config: Config) -> str | None:
+class _LoginExpired(Exception):
+    """The ping failed because the login on disk is dead, not the model."""
+
+
+def _run_probe(
+    agent: str, auth: str, model: str, config: Config, *, raise_expired: bool = False
+) -> str | None:
     """One real call through the connected route. Returns the model that
     answered, or None when the ping failed — a failure here is the whole
-    reason the command exists, so it is loud."""
+    reason the command exists, so it is loud. With `raise_expired`, a ping
+    that failed on a dead login raises `_LoginExpired` instead, so the caller
+    can log in again and retry."""
     from hillclimb import connect as connect_mod
 
     label = f"model [path]{common._m(model)}[/]"
@@ -181,17 +189,19 @@ def _run_probe(agent: str, auth: str, model: str, config: Config) -> str | None:
     result = connect_mod.ping(agent, auth, model, models_file=config.pi.models_file)
     if not result.ok:
         detail = result.error_message or result.error_kind or "unknown error"
+        if raise_expired and connect_mod.login_expired(detail):
+            # not an error yet: the caller logs in again and retries
+            raise _LoginExpired(detail.strip())
         common.fail(
             f"error: the ping failed ({common._m(result.error_kind or 'error')}): "
             f"{common._m(detail.strip()[:400])}"
         )
+        if connect_mod.login_expired(detail):
+            return None  # the login is the culprit, not the model: no --model hint
         # the model is the usual culprit: aliases like `sonnet` mean nothing
         # to codex, and pi resolves a bare one against whichever provider
         # matches first
-        common.say(
-            f"  pinged model [path]{common._m(repr(model))}[/] — [cmd]--model <id>[/] tries another",
-            err=True,
-        )
+        common.say(f"  pinged {label} — [cmd]--model <id>[/] tries another", err=True)
         return None
     tokens = result.total_tokens or 0
     model_id = result.model_id or answered
@@ -211,7 +221,8 @@ def _connect_agent(
     default: bool | None,
     local: bool,
 ) -> None:
-    """Shared flow for claude / codex / pi: check, log in, import, ping, pin."""
+    """Shared flow for claude / codex / pi: check, log in, import, ping, pin.
+    A ping that fails on a dead login logs in again and pings once more."""
     from hillclimb import connect as connect_mod
 
     config = _connect_config()
@@ -228,8 +239,9 @@ def _connect_agent(
         _print_status(status)
         raise typer.Exit(1)
     if not status.ok and login and connect_mod.login_command(target):
+        common.say(connect_mod.login_header(target))
         common.say(
-            f"{common._m(status.detail)} — starting "
+            f"  [note]{common._m(status.detail)}[/] — starting "
             f"[cmd]{common._m(' '.join(connect_mod.login_command(target)))}[/]"
         )
         connect_mod.run_login(target)
@@ -240,7 +252,7 @@ def _connect_agent(
 
     home = connect_mod.import_credentials(target, auth, config.pi.models_file)
     if home is not None:
-        common.say(f"credentials staged for searches in [path]{common._m(home)}[/]")
+        common.say(f"operator home: [path]{common._m(home)}[/]")
 
     model = model or config.model
     pinged: str | None = None
@@ -251,7 +263,28 @@ def _connect_agent(
                 "re-run with [cmd]--model <provider>/<model>[/] to check the route"
             )
         else:
-            pinged = _run_probe(agent, auth, model, config)
+            # `login status` only sees a credential file: a login that is
+            # dead (codex spends its refresh token once) shows up here, in the
+            # first real call. Replace it and try once more.
+            relogin = login and auth == "subscription" and bool(connect_mod.login_command(target))
+            try:
+                pinged = _run_probe(agent, auth, model, config, raise_expired=relogin)
+            except _LoginExpired as expired:
+                steps = [connect_mod.logout_command(target), connect_mod.login_command(target)]
+                shown = ", then ".join(" ".join(step) for step in steps if step)
+                common.warn(
+                    f"the {common._m(target)} login no longer works "
+                    f"({common._m(str(expired)[:400])})"
+                )
+                common.say(connect_mod.login_header(target))
+                common.say(f"  logging in again: [cmd]{common._m(shown)}[/]")
+                connect_mod.run_relogin(target)
+                status = connect_mod.check(target, auth)
+                if not status.ok:
+                    _print_status(status)
+                    raise typer.Exit(1) from None
+                connect_mod.import_credentials(target, auth, config.pi.models_file)
+                pinged = _run_probe(agent, auth, model, config)
             if pinged is None:
                 raise typer.Exit(1)
 
@@ -273,13 +306,13 @@ def connect(
 ):
     """Which coding agents this machine can run operators with, and who pays.
 
-    A bare `hillclimb connect` checks every target — the credential is read
+    A bare `hillclimb connect` checks every agent — the credential is read
     through the same environment an operator gets, so an inherited
     `ANTHROPIC_API_KEY` shadowing your subscription shows up here instead of
     on a bill. `●` marks the coding agent this config runs by default.
 
     `hillclimb connect <claude|codex|pi|openrouter>` sets one up: it runs the
-    coding agent's own login, stages the credentials searches will read, pings the
+    coding agent's login inside the operator home searches use, pings the
     route with one tool-free call, and pins the defaults in
     `~/.config/hillclimb/config.yaml` — every folder on this machine, so it
     works before `hillclimb init`; a folder's own hillclimb.yaml overrides them
@@ -306,7 +339,7 @@ def connect(
     # palette of this command's making
     common.say()
     common.table(
-        [("", None), ("target", "cmd"), ("billing", None), ("state", None), ("", None)],
+        [("", None), ("agent", "cmd"), ("billing", None), ("state", None), ("", None)],
         [
             (
                 "[path]●[/]" if is_default else " ",
@@ -343,10 +376,14 @@ def connect_claude(
 ):
     """Claude Code as the coding agent, billed to your Claude subscription.
 
-    The login is Claude Code's own (`claude auth login`); hillclimb only
-    checks it the way an operator will — with `ANTHROPIC_API_KEY` stripped,
-    so a key left in the environment cannot masquerade as the subscription.
-    `--auth api-key` keeps the key instead, for headless machines.
+    Operators run in a Claude Code home of hillclimb's own
+    (`~/.cache/hillclimb/claude-home`), never your `~/.claude`: your
+    settings, plugins, skills, MCP servers and history neither change a
+    search nor collect what it leaves behind. That home logs in once, here
+    (`claude auth login`, run inside it); your own login is left as it is.
+    The check strips `ANTHROPIC_API_KEY`, so a key left in the environment
+    cannot masquerade as the subscription. `--auth api-key` keeps the key
+    instead, for headless machines.
     """
     _connect_agent(
         "claude", auth=auth, model=model, probe=probe, login=login, default=default, local=local
@@ -358,16 +395,22 @@ def connect_codex(
     auth: str = _CONNECT_AUTH,
     model: str = _CONNECT_MODEL,
     probe: bool = _CONNECT_PROBE,
-    login: bool = typer.Option(True, "--login/--no-login", help="Run `codex login` when logged out"),
+    login: bool = typer.Option(
+        True, "--login/--no-login", help="Run `codex login` when logged out or when the login no longer works"
+    ),
     default: bool = _CONNECT_DEFAULT,
     local: bool = _CONNECT_LOCAL,
 ):
     """The Codex CLI as the coding agent.
 
-    Runs `codex login`, then copies the credential into the isolated
-    `CODEX_HOME` searches use, so your personal `~/.codex` settings change
-    neither a search's results nor its token bill. `--auth openrouter` bills
-    OpenRouter credits instead (`hillclimb connect openrouter` first).
+    Operators run in a codex home of hillclimb's own
+    (`~/.cache/hillclimb/codex-home`, with a HOME of its own too), never your
+    `~/.codex` or `~/.agents`, so your settings, plugins and skills change
+    neither a search's results nor its token bill. That home logs in once,
+    here (`codex login`, run inside it) — a login of its own, not a copy of
+    yours, which codex would invalidate the first time either refreshed.
+    `--auth openrouter` bills OpenRouter credits instead (`hillclimb connect
+    openrouter` first).
     """
     _connect_agent(
         "codex", auth=auth, model=model, probe=probe, login=login, default=default, local=local
@@ -458,12 +501,12 @@ def connect_openrouter(
     )
 
 
-@app.command("disconnect", short_help="Undo `hillclimb connect <target>`: unpin it and forget its credentials.")
+@app.command("disconnect", short_help="Undo `hillclimb connect <agent>`: unpin it and forget its credentials.")
 def disconnect(
-    target: str = typer.Argument(..., help="claude | codex | pi | openrouter"),
+    target: str = typer.Argument(..., metavar="AGENT", help="claude | codex | pi | openrouter"),
     local: bool = _CONNECT_LOCAL,
 ):
-    """Undo `hillclimb connect <target>` on hillclimb's side: unpin it as the
+    """Undo `hillclimb connect <agent>` on hillclimb's side: unpin it as the
     default and forget the staged credentials, so the next `connect` sets it
     up from scratch again.
 
@@ -477,7 +520,7 @@ def disconnect(
     from hillclimb.project import MARKER_FILE, user_config_path
 
     if target not in connect_mod.TARGETS:
-        raise typer.BadParameter(f"{target} is not one of {', '.join(connect_mod.TARGETS)}", param_hint="target")
+        raise typer.BadParameter(f"{target} is not one of {', '.join(connect_mod.TARGETS)}", param_hint="agent")
     config = _connect_config()
 
     # 1. the default it pinned
@@ -510,6 +553,6 @@ def disconnect(
 
     common.say(
         f"[head]{common._m(target)} is disconnected from hillclimb.[/] "
-        + ("" if target == "openrouter" else "[note]Its own login on this machine is untouched.[/]")
+        + ("" if target == "openrouter" else "[note]Your own login on this machine is untouched.[/]")
     )
     common.next_steps([(f"hillclimb connect {target}", "set it up again")])

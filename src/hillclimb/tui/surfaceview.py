@@ -25,7 +25,7 @@ from textual.binding import Binding
 from textual.widgets import Footer, Label
 
 from hillclimb.config import Config
-from hillclimb.tui.header import HillclimbHeader, TimezoneMixin
+from hillclimb.tui.header import APP_TITLE, HillclimbHeader, TimezoneMixin
 from hillclimb.harness.journal import Journal
 from hillclimb.problem import ProblemSpec, load_problem
 from hillclimb.harness.store import DataStore, SearchRecord, open_store, resolve_search
@@ -263,6 +263,7 @@ def surface_unavailable(problem: ProblemSpec) -> str:
 
 class SurfaceApp(TimezoneMixin, App):
     """Standalone shell for `hillclimb surface`."""
+    TITLE = f"{APP_TITLE} surface"  # the header names the command that opened it
 
     BINDINGS = [Binding("t", "choose_timezone", "time zone", show=False)]
     CSS = HILLCLIMB_CSS

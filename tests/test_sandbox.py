@@ -182,10 +182,35 @@ def test_the_search_records_and_secrets_are_unreadable(sandbox_on, tmp_path):
 
 
 def test_an_agent_reads_its_own_home_and_no_other(sandbox_on, tmp_path):
+    """Operators read their operator home and nothing of the user's own
+    agent setups: not ~/.claude (claude-code included), ~/.codex or ~/.agents."""
+    from hillclimb.project import machine_cache_dir
+
     policy = sandbox.agent_policy(Config(), tmp_path, "claude-code")
-    assert sandbox.real(Path.home() / ".claude") not in policy.deny_read
-    assert sandbox.real(Path.home() / ".codex") in policy.deny_read
+    for personal in (".claude", ".claude.json", ".codex", ".agents"):
+        assert sandbox.real(Path.home() / personal) in policy.deny_read
+    assert sandbox.real(machine_cache_dir() / "claude-home") not in policy.deny_read
+    assert sandbox.real(machine_cache_dir() / "codex-home") in policy.deny_read
+    verifier = sandbox.verifier_policy(Config(), problem(), tmp_path)
+    assert sandbox.real(Path.home() / ".claude") in verifier.deny_read
     assert policy.network == "open"
+
+
+def test_the_problem_is_read_only_and_its_private_paths_are_the_scorers(sandbox_on, tmp_path):
+    """Nothing run on a problem's behalf may rewrite it (a solution that
+    edited the scorer would choose its own score); agents cannot read its
+    private paths, and the verifier policy leaves them to the executor, which
+    hides them from the solution step only."""
+    hidden = tmp_path / "p" / "hidden"
+    hidden.mkdir(parents=True)
+    spec = problem(problem_dir=tmp_path / "p", data_dir=tmp_path / "data", private_paths=[hidden])
+    agent = sandbox.agent_policy(Config(), None, "claude-code", spec)
+    verifier = sandbox.verifier_policy(Config(), spec, None)
+    for policy in (agent, verifier):
+        assert {sandbox.real(tmp_path / "p"), sandbox.real(tmp_path / "data")} <= set(policy.read_only)
+    assert sandbox.real(hidden) in agent.deny_read
+    assert sandbox.real(hidden) not in verifier.deny_read
+    assert sandbox.private_paths(spec) == (sandbox.real(hidden),)
 
 
 def test_config_adds_paths_relative_to_the_hillclimb_dir(sandbox_on, tmp_path):
@@ -229,6 +254,17 @@ def test_seatbelt_profile(tmp_path):
     assert "(allow network-outbound" not in sandbox.seatbelt_profile(SandboxPolicy().offline())
 
 
+@posix_only
+def test_read_only_paths_are_denied_after_the_writable_ones(tmp_path):
+    policy = SandboxPolicy().writable(tmp_path / "work").protected(tmp_path / "work" / "problem")
+    profile = sandbox.seatbelt_profile(policy)
+    problem_dir = sandbox.real(tmp_path / "work" / "problem")
+    assert profile.index("(allow file-write*") < profile.index(f'(deny file-write* (subpath "{problem_dir}"))')
+    args = " ".join(sandbox.bwrap_args(policy))
+    work = sandbox.real(tmp_path / "work")
+    assert args.index(f"--bind-try {work} {work}") < args.index(f"--ro-bind-try {problem_dir} {problem_dir}")
+
+
 def test_bwrap_args(tmp_path):
     (tmp_path / "secret").mkdir()
     (tmp_path / "token").write_text("x")
@@ -267,8 +303,12 @@ def test_claude_runs_inside_the_sandbox(tmp_path, launches):
     assert agent.invoke(request).ok
     [policy] = launches
     assert sandbox.real(request.candidate_dir) in policy.write
-    assert sandbox.real(Path.home() / ".claude") in policy.write
-    assert policy.write_prefix == (sandbox.real(Path.home() / ".claude.json"),)
+    # its own operator home, never the user's ~/.claude
+    from hillclimb.agents.claude_code import claude_home
+
+    assert sandbox.real(claude_home()) in policy.write
+    assert sandbox.real(Path.home() / ".claude") not in policy.write
+    assert policy.write_prefix == ()
     assert policy.network == "open"
     seen = recorded(tmp_path)
     assert seen["mark"] == "1"  # the sandbox's environment reaches the agent
@@ -294,8 +334,9 @@ def test_claude_unsandboxed_is_started_as_before(tmp_path, launches):
     assert agent.invoke(test_claude_agent.make_request(tmp_path)).ok
     assert launches == []
     assert recorded(tmp_path) == {
+        # no MCP servers or account connectors, sandbox or not
         "argv": ["-p", "--output-format", "stream-json", "--verbose",
-                 "--permission-mode", "bypassPermissions", "--model", "sonnet"],
+                 "--permission-mode", "bypassPermissions", "--model", "sonnet", "--strict-mcp-config"],
         "mark": None,
     }
 
@@ -529,6 +570,63 @@ def test_denied_paths_are_unreadable(real_sandbox, tmp_path, outside):
     assert run_inside(tmp_path, policy, code, str(outside / "key"))[1].strip() == "secret"
     hidden = run_inside(tmp_path, policy.unreadable(outside), code, str(outside / "key"))[1].strip()
     assert hidden in {"PermissionError", "FileNotFoundError"}
+
+
+def test_a_read_only_path_stays_read_only_inside_a_writable_one(real_sandbox, tmp_path):
+    """The problem folder is linked into the candidate's (writable) dir and
+    may sit under a temp dir; it is still never writable."""
+    problem_dir = tmp_path / "work" / "problem"
+    problem_dir.mkdir(parents=True)
+    code = (
+        "import sys\n"
+        "for path in sys.argv[1:]:\n"
+        "    try:\n"
+        "        open(path, 'w').write('x'); print('wrote')\n"
+        "    except OSError as exc:\n"
+        "        print(type(exc).__name__)\n"
+    )
+    policy = SandboxPolicy().writable(tmp_path / "work").protected(problem_dir)
+    code_, out, err = run_inside(tmp_path, policy, code, str(tmp_path / "work" / "ok.txt"), str(problem_dir / "verify.py"))
+    assert code_ == 0, err
+    assert out.split()[0] == "wrote" and out.split()[1] in {"PermissionError", "OSError"}
+    assert not (problem_dir / "verify.py").exists()
+
+
+def test_a_two_step_run_keeps_private_and_holdout_paths_from_the_solution(real_sandbox, tmp_path, outside):
+    """On a validation run the solution reads neither the scorer's private
+    data nor the holdout inputs; the scorer reads the private data but not
+    the holdout inputs (its report reaches the agents)."""
+    from hillclimb.harness.executor import CommandExecutor
+
+    outside.mkdir()
+    (outside / "labels.txt").write_text("7")
+    (outside / "holdout.txt").write_text("9")
+    reader = (
+        "import json, os, pathlib, sys\n"
+        "seen = {}\n"
+        "for name in ('labels.txt', 'holdout.txt'):\n"
+        "    try:\n"
+        "        seen[name] = pathlib.Path(sys.argv[1], name).read_text()\n"
+        "    except OSError:\n"
+        "        seen[name] = None\n"
+    )
+    solution = tmp_path / "work" / "solution.py"
+    solution.parent.mkdir()
+    solution.write_text(reader + "pathlib.Path('solution_saw.json').write_text(json.dumps(seen))\n")
+    scorer = tmp_path / "scorer.py"
+    scorer.write_text(
+        reader + "pathlib.Path('scorer_saw.json').write_text(json.dumps(seen))\n"
+        "pathlib.Path(os.environ['HILLCLIMB_RESULT']).write_text('1')\n"
+    )
+    executor = CommandExecutor(
+        Path(sys.executable), ["{python}", "{solution}", str(outside)],
+        score_argv=["{python}", str(scorer), str(outside)], sandbox=SandboxPolicy(),
+        private=(sandbox.real(outside / "labels.txt"),), holdout_inputs=(sandbox.real(outside / "holdout.txt"),),
+    )
+    result = executor.execute(solution, solution.parent, 60)
+    assert result.ok, Path(result.stderr_path).read_text()
+    assert json.loads((solution.parent / "solution_saw.json").read_text()) == {"labels.txt": None, "holdout.txt": None}
+    assert json.loads((solution.parent / "scorer_saw.json").read_text()) == {"labels.txt": "7", "holdout.txt": None}
 
 
 def test_no_network_means_none(real_sandbox, tmp_path):

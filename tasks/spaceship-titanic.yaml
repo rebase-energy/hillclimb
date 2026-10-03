@@ -1,4 +1,0 @@
-# MLE-bench smoke-test competition (binary classification, accuracy)
-comp_id: spaceship-titanic
-metric: accuracy
-higher_is_better: true

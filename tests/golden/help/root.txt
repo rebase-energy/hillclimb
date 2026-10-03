@@ -1,8 +1,7 @@
                                                                                                                         
  Usage: root [OPTIONS] COMMAND [ARGS]...                                                                                
                                                                                                                         
- Hillclimbing on verifier-defined problems: a code-generation harness for model development with long-running coding    
- agents.                                                                                                                
+ Hillclimbing on verifiable rewards: coding agents search for Python programs that optimize a score you define.         
                                                                                                                         
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --version  -V        Show hillclimb's version and exit.                                                              │
@@ -14,12 +13,14 @@
 │ connect     Connect the coding agents (claude, codex, pi) and the OpenRouter route that pays for them.               │
 │ experiment  Compare setups: a study of named experiments (config overrides) × repeats on a problem                   │
 │ init        Make a folder a hillclimb dir.                                                                           │
-│ problem     Ready-made verifier problems shipped with hillclimb.                                                     │
+│ plot        Draw a solution the way its problem says: the problem's plot.py (matplotlib).                            │
+│ problem     Problems: copy a bundled one, or start your own.                                                         │
 │ resume      Resume a parked or interrupted search.                                                                   │
 │ run         Start a run on a problem or a run-spec YAML.                                                             │
 │ stop        Stop a running engine now; it can be resumed.                                                            │
 │ summit      Copy the best solution found so far into your hillclimb dir.                                             │
-│ tree        Live exploration tree of one search: what was expanded, what was left.                                   │
+│ top         The control pane for every hillclimb process on this machine.                                            │
+│ tree        Live tree of one search, drawn like the Darwin Gödel Machine's archive.                                  │
 │ verify      Run a problem's verifier once, outside a search.                                                         │
 │ watch       Live TUI: runs, searches, candidates, and candidate details.                                             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

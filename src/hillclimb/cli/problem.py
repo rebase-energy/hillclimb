@@ -20,7 +20,7 @@ from hillclimb.problem import load_problem
 
 problem_app = typer.Typer(
     cls=HillclimbGroup,
-    help="Ready-made verifier problems shipped with hillclimb.",
+    help="Problems: copy a bundled one, or start your own.",
     no_args_is_help=True,
 )
 
@@ -85,23 +85,13 @@ def problem_get(
     verifier IS the problem. An existing folder is never overwritten.
     """
     from hillclimb.demo import BUNDLED_PROBLEM_IDS, install_demo_problem
-    from hillclimb.project import MARKER_FILE, find_hillclimb_dir
 
     if problem not in BUNDLED_PROBLEM_IDS:
         available = ", ".join(BUNDLED_PROBLEM_IDS)
         fail(f"error: no bundled problem {_m(repr(problem))} [note](available: {_m(available)})[/]")
+        next_steps([(f"hillclimb problem new {_m(problem)}", "or start a problem of your own by that name")])
         raise typer.Exit(1)
-    if find_hillclimb_dir() is None:
-        here = Path.cwd().resolve()
-        say(f"[head]No hillclimb dir here.[/] {_m(problem)} needs one: a folder holding")
-        say(f"[path]{MARKER_FILE}[/], [path]problems/[/] [note](where the problem goes)[/] and [path]runs/[/] [note](where searches land)[/].")
-        _refuse_blocked(here)
-        if _stdin_is_tty() and not typer.confirm(f"Make {here} a hillclimb dir?", default=True):
-            say("Not created. Run [cmd]hillclimb init[/] where you want it, then [cmd]hillclimb problem get[/] again.")
-            raise typer.Exit(1)
-        folder = common.scaffold_hillclimb_dir(here)
-        say(f"Initialized [path]{_m(folder)}[/] [note]({MARKER_FILE}, problems/, runs/)[/]")
-    config = common.load_config()
+    config = _hillclimb_dir_or_offer(problem, "problem get")
     problem_dir, created = install_demo_problem(config.paths.problems_dir, problem)
     verb = "Fetched" if created else "Already have"
     say(f"[head]{verb} {_m(problem)}[/] at [path]{_m(problem_dir)}[/]")
@@ -110,6 +100,58 @@ def problem_get(
         (f"hillclimb verify {problem}", "scores the floor; the spread it prints is the noise"),
         (f"hillclimb run {problem} --budget 10m", "then climb"),
     ])
+
+
+@problem_app.command("new")
+def problem_new(
+    problem: str = typer.Argument(..., help="The new problem's id, which is also its folder name"),
+):
+    """Start a problem of your own in problems/<problem>.
+
+    Writes a small problem that already runs (splitting lists of numbers into
+    two equal halves) for you to edit into yours: the description and
+    contract the coding agents read, run.py that calls the solution,
+    score.py that scores what it returned, and a baseline. Verify it as it
+    is, then replace the example piece by piece, verifying as you go.
+    """
+    from hillclimb.demo import scaffold_problem
+
+    config = _hillclimb_dir_or_offer(problem, "problem new")
+    try:
+        problem_dir = scaffold_problem(config.paths.problems_dir, problem)
+    except ValueError as exc:
+        fail(f"error: {_m(exc)}")
+        raise typer.Exit(1) from None
+    except FileExistsError:
+        fail(f"error: [path]{_m(config.paths.problems_dir / problem)}[/] already exists [note](never overwritten)[/]")
+        raise typer.Exit(1) from None
+    say(f"[head]Created {_m(problem)}[/] at [path]{_m(problem_dir)}[/] [note](a working example: edit it into yours)[/]")
+    legend([(name, what) for name, what in PROBLEM_FILES if (problem_dir / name).exists()])
+    next_steps([
+        (f"hillclimb verify {problem}", "scores baseline.py; run it after every edit"),
+        (f"hillclimb run {problem} --budget 10m", "climb it once it verifies"),
+    ])
+    say("[note]How a problem works: https://docs.hillclimb.sh/problems[/]")
+
+
+def _hillclimb_dir_or_offer(problem: str, command: str) -> Config:
+    """The config of the hillclimb dir here, making one first (asking a
+    person, not a script) when there is none: `problem get` and `problem new`
+    need somewhere to put the problem."""
+    from hillclimb.project import MARKER_FILE, find_hillclimb_dir
+
+    if find_hillclimb_dir() is None:
+        here = Path.cwd().resolve()
+        say(f"[head]No hillclimb dir here.[/] {_m(problem)} needs one: a folder holding")
+        say(f"[path]{MARKER_FILE}[/], [path]problems/[/] [note](where the problem goes)[/] and [path]runs/[/] [note](where searches land)[/].")
+        target = _scaffold_target_or_exit(here)
+        if _stdin_is_tty() and not typer.confirm(f"Make {target} a hillclimb dir?", default=True):
+            say(f"Not created. Run [cmd]hillclimb init[/] where you want it, then [cmd]hillclimb {command}[/] again.")
+            raise typer.Exit(1)
+        folder = common.scaffold_hillclimb_dir(target)
+        say(f"Initialized [path]{_m(folder)}[/] [note]({MARKER_FILE}, problems/, runs/)[/]")
+    # discovery finds a ./hillclimb/ subfolder from here as well
+    return common.load_config()
 
 
 @app.command(hidden=True)
@@ -136,7 +178,11 @@ PROBLEM_FILES = (
     ("interface.py", "the output format, machine-checked (hillclimb spaces)"),
     ("verifier.sh", "the ONLY process hillclimb starts: drives solution.py and reports the score"),
     ("verifier.py", "the ONLY process hillclimb starts (Windows edition of verifier.sh, no bash needed)"),
+    ("run.py", "runs solution.py, in the solution's own sandbox (two-step problems)"),
     ("verify.py", "the scorer — writes the score to $HILLCLIMB_RESULT"),
+    ("score.py", "the scorer, in a sandbox of its own — writes the score to $HILLCLIMB_RESULT"),
+    ("instances.py", "the instances, shared by the runner and the scorer"),
+    ("holdout", "holdout inputs: only holdout runs read them, never agents or validation runs"),
     ("baseline.py", "the starting solution scored at t=0"),
     ("sample_submission.csv", "a valid, weak submission: the floor the search starts from"),
     ("requirements.txt", "the solution venv"),
@@ -167,7 +213,7 @@ def init(
             ("hillclimb init --force", "nest another one here"),
         ])
         raise typer.Exit(1)
-    _refuse_blocked(folder)
+    folder = _scaffold_target_or_exit(folder)
     common.scaffold_hillclimb_dir(folder)
     say(f"[head]Initialized hillclimb dir[/] at [path]{_m(folder)}[/]")
     legend([
@@ -176,30 +222,56 @@ def init(
         ("runs/", "one folder per run (records committed, artifacts gitignored)"),
     ])
     next_steps([
-        *([(f"cd {_m(directory)}", "commands find the dir from inside it")] if folder != Path.cwd().resolve() else []),
+        *([(f"cd {_m(directory)}", "run hillclimb from there")] if folder != Path.cwd().resolve() else []),
         ("hillclimb connect", "which coding agent runs the operators, and who pays"),
         ("hillclimb problem list", "the bundled problems to choose from"),
         ("hillclimb problem get <problem>", "copy one into problems/"),
+        ("hillclimb problem new <problem>", "or start one of your own"),
     ])
 
 
-def _refuse_blocked(folder: Path) -> None:
-    """Exit when `folder` already has a problems/ or runs/ that is not
-    hillclimb's — scaffolding there would mix hillclimb's into it."""
-    blockers = common.scaffold_blockers(folder)
+def _scaffold_target_or_exit(folder: Path) -> Path:
+    """Where the hillclimb dir for `folder` goes. When the folder already has
+    folders of hillclimb's names of its own (problems/, runs/, knowledge/,
+    climbers/), hillclimb keeps to a `hillclimb/` subfolder rather than write
+    into them; exits when that subfolder is taken the same way."""
+    target, blockers = common.scaffold_target(folder)
     if not blockers:
-        return
-    names = " and ".join(f"{path.name}/" for path in blockers)
-    fail(f"{_m(str(folder))} already has {_m(names)}, and it isn't a hillclimb dir.")
-    next_steps([("hillclimb init hillclimb", "keep hillclimb in its own subfolder instead")])
-    raise typer.Exit(1)
+        return target
+    names = ", ".join(f"{path.name}/" for path in blockers)
+    if common.scaffold_blockers(target):
+        fail(f"{_m(str(folder))} has {_m(names)} of its own, and so does {_m(str(target))}.")
+        next_steps([("hillclimb init <another folder>", "make a hillclimb dir somewhere free")])
+        raise typer.Exit(1)
+    say(
+        f"[note]{_m(str(folder))} already has {_m(names)} of its own: hillclimb keeps to "
+        f"[path]{_m(str(target))}[/] instead, and finds it from anywhere in the project.[/]"
+    )
+    return target
+
+
+def _show_failure_tail(candidate_dir: Path, lines: int = 15) -> None:
+    """The last lines a failed verifier run wrote — its stderr, else its
+    stdout — on stderr, dimmed: the traceback a user needs, from a folder
+    that is about to be deleted."""
+    for name in ("exec_stderr.log", "exec_stdout.log"):
+        path = candidate_dir / name
+        text = path.read_text(errors="replace").strip() if path.is_file() else ""
+        if text:
+            tail = text.splitlines()[-lines:]
+            say(f"  [note]last {len(tail)} lines of {_m(name)}:[/]", err=True)
+            for line in tail:
+                say(f"    [note]{_m(line)}[/]", err=True)
+            return
+    say("  [note](the run wrote no output)[/]", err=True)
 
 
 @app.command()
 def verify(
     target: str = typer.Argument(..., help="Problem folder/name to check"),
     solution: Path = typer.Option(
-        None, "--solution", help="solution.py to score (default: the problem's baseline)"
+        None, "--solution",
+        help="solution.py to score (default: the problem's baseline); a params.json beside it comes along",
     ),
     repeat: int = typer.Option(1, "--repeat", "-n", help="Score it N times to see the noise"),
     holdout: bool = typer.Option(False, "--holdout", help="Also score the hidden split"),
@@ -221,6 +293,11 @@ def verify(
     problem = load_problem(target, config)
     source = solution.read_text() if solution else problem.baseline_text
     floor_files = {} if solution else problem.baseline_files
+    # a tuned solution reads its values from the params.json beside it
+    # (`spaces.params()`); scoring it without them would score a crash
+    params_file = solution.parent / "params.json" if solution else None
+    if params_file is not None and not params_file.is_file():
+        params_file = None
     if source is None and floor_files:
         # the floor is a set of files scored as they are (heilbronn's
         # sample_submission.csv), so the "solution" has nothing to do
@@ -236,7 +313,12 @@ def verify(
         problem.unit_tests = freeze_for_run(problem, root)
         executor = build_executor(config, problem)
         test_runner = build_unit_test_runner(config, problem)
-        say(f"[head]{_m(problem.problem_id)}[/]: [path]{_m(' '.join(problem.verifier_cmd))}[/]")
+        steps = ' '.join(problem.score_cmd) if problem.score_cmd else ' '.join(problem.verifier_cmd)
+        if problem.score_cmd:
+            # two steps, two sandboxes: the solution (or the problem's runner for it), then the scorer
+            first = "solution.py" if problem.verifier_cmd == ["{python}", "{solution}"] else Path(problem.verifier_cmd[-1]).name
+            steps = f"{first}, then {Path(problem.score_cmd[-1]).name}"
+        say(f"[head]{_m(problem.problem_id)}[/]: [path]{_m(steps)}[/]")
         for index in range(max(1, repeat)):
             candidate_dir = create_candidate_dir(
                 root, f"v{index}", problem.data_dir, problem.problem_dir,
@@ -246,6 +328,8 @@ def verify(
             script.write_text(source)
             for dest, src in floor_files.items():
                 shutil.copy2(src, candidate_dir / dest)
+            if params_file is not None:
+                shutil.copy2(params_file, candidate_dir / "params.json")
             # distinct seeds, exactly as the engine's repeated trials run, so
             # the floor reported here is the one the search will face
             result = executor.execute(
@@ -255,9 +339,11 @@ def verify(
             if not result.ok:
                 reason = "timed out" if result.timed_out else f"exit {result.returncode}"
                 if result.val_score is None and not result.timed_out:
-                    reason += "; no score in eval_result.json"
+                    reason += "; no score written to $HILLCLIMB_RESULT"
                 fail(f"  run {index}: FAILED ({_m(reason)})")
-                say(f"  logs: [path]{_m(result.stdout_path)}[/]", err=True)
+                # the run's folder is a temp dir deleted on the way out, so
+                # its output is shown here rather than pointed at
+                _show_failure_tail(candidate_dir)
                 raise typer.Exit(1)
             scores.append(result.val_score)
             say(f"  run {index}: {_m(problem.metric_name)} = [head]{result.val_score:.6g}[/]")
@@ -367,7 +453,9 @@ def _summit(config: Config, problem: str | None, dest: Path):
         )
     record, candidate = best
     source = record.search_dir / "best"
-    summit_files = list(dict.fromkeys(["solution.py", *record.meta.output_artifacts]))
+    # params.json: a tunable solution reads its values from it (`spaces.params()`
+    # finds ./params.json beside it), so without it the copy cannot run
+    summit_files = list(dict.fromkeys(["solution.py", "params.json", *record.meta.output_artifacts]))
     copied = [name for name in summit_files if (source / name).is_file()]
     if not copied:
         raise typer.BadParameter(f"{source} holds no solution files yet; try again in a moment.")
@@ -384,13 +472,18 @@ def summit(
     to: Path = typer.Option(
         None, "--to", help="Destination folder (default: the hillclimb dir)"
     ),
+    plot: bool = typer.Option(
+        False, "--plot", help="Then draw it with the problem's plot.py into solution.png (`hillclimb plot`)"
+    ),
 ):
     """Copy the best solution found so far into your hillclimb dir.
 
     Ranks every search of the problem, across all runs, by its selected
-    candidate and copies that search's solution.py plus its declared output
-    artifacts into the destination. Run it at any point, even
-    mid-climb — you always get the best discovered so far.
+    candidate and copies that search's solution.py, its params.json (the
+    tuned values, when it declares any) and its declared output artifacts
+    into the destination. Run it at any point, even
+    mid-climb — you always get the best discovered so far. `--plot` then
+    draws it with the problem's plot.py, like `hillclimb plot`.
     """
     config = common.load_config()
     dest = (to or config.hillclimb_dir).resolve()
@@ -407,3 +500,8 @@ def summit(
     for name in copied:
         verb = "refreshed" if name in already_there else "wrote"
         say(f"  {verb} [path]{_m(dest / name)}[/]")
+    if plot:
+        common.show_solution_plot(
+            config, load_problem(record.meta.problem, config), dest,
+            f"summit · {candidate.candidate_id} from {record.ref}", dest / "solution.png",
+        )

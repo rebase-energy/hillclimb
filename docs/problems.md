@@ -14,36 +14,64 @@ problems/my-problem/
 └── data/                  # optional runtime inputs
 ```
 
-`hillclimb problem get <problem>` copies a bundled problem into `problems/`;
-start your own by copying one and editing it.
+`hillclimb problem new <problem>` writes a small problem that already runs (two-step:
+`run.py` calls the solution's function, `score.py` scores it) for you to edit into your own;
+`hillclimb problem get <problem>` copies a bundled one into `problems/` instead.
+
+```bash
+hillclimb problem new my-problem          # problems/my-problem/, a working example
+hillclimb verify my-problem --repeat 3    # scores its baseline; run it after every edit
+hillclimb run my-problem --budget 10m     # then climb
+```
+
+A problem scores its solutions in one of two shapes: a **verifier** (`verifier.sh`, which runs
+the solution and then its scorer; below) or **two steps** (`score:`, and `run:` to call a function
+the solution defines), where hillclimb runs the solution and the scorer in a sandbox each so the
+scorer can keep data the solution never sees, and no bash is needed
+([a scorer of its own](#private-data-a-scorer-of-its-own)).
 
 Minimum `problem.yaml`:
 
 ```yaml
-problem_id: my-problem
 metric: my-score
-higher_is_better: true
-description: description.md
-output_artifacts: [submission.csv]  # use [submission.json] for JSON-native tasks
-time_budget_s: 900
+higher_is_better: true             # true or false, unquoted
 ```
 
 Everything else is optional:
 
 ```yaml
+problem_id: my-problem           # default: the folder's name
+description: description.md      # the default
 verifier: verifier.sh            # the default
+score: score.py                  # instead of a verifier: the scorer of a two-step problem
+run: run.py                      # with score: the problem's own runner for the solution
+time_limit_s: 60                 # with score: a solution that runs longer is a failed attempt
+private: [hidden]                # with score: files only the scorer may read
 holdout: true                    # engine also runs `verifier.sh --holdout`
+holdout_inputs: [holdout]        # with score: inputs only the holdout split reads
 contract: contract.md            # what solution.py must be/do (prompt section)
 baseline: 0.5                    # scored at t=0 as the floor candidate; numeric values also become chart lines
+                                 # or a file: `baseline: baseline.py`, scored at t=0 as c000
+baseline_files:                  # or files the floor is scored on as they are
+  submission.csv: sample_submission.csv
 chart_baselines:                 # optional named horizontal lines in `hillclimb chart`
   previous best: 0.73
+output_artifacts: [submission.csv]  # files of a solution `best/` and `summit` copy beside solution.py
+time_budget_s: 900               # the default `hillclimb run --budget`
 requirements: requirements.txt   # per-problem venv (default: shared csv venv)
 unit_tests:                      # optional correctness gate, frozen at run start
   root: tests
   command: ["{python}", "-m", "pytest", "-q", "{tests}"]
-data_dir: data
+data_dir: data                   # default: data/ if the problem has one
 allow_internet_during_solution: false
 ```
+
+Files picked up by name when the problem folder has them: `description.md` (required),
+`contract.md` (the interface `solution.py` must implement, added to every prompt), `interface.py`
+(the output format as `hillclimb.spaces` objects: described in the prompt, checked against the
+baseline by `hillclimb verify`), `requirements.txt` (with `requirements:`), `plot.py`
+(`hillclimb plot`, below), `fingerprint.py` (a solution as a vector, for `hillclimb similarity`)
+and `landscape.py` (the terrain `hillclimb surface` draws).
 
 `allow_internet_during_solution` says whether `solution.py` may fetch
 external data when the verifier runs it. The contract prompt tells the coding agent
@@ -109,8 +137,51 @@ uv run hillclimb verify my-problem --repeat 5   # score it outside a search
 
 `hillclimb verify` is the fastest way to check a new verifier, and `--repeat`
 reports the spread between identical runs — an improvement smaller than that
-is noise, not progress. `problems/bin-packing/` and `problems/circle-packing/`
-are the two reference shapes (evaluator-driven, and run-then-score).
+is noise, not progress. The bundled `knapsack` and `circle-packing` problems
+are the two reference shapes: a runner that calls the solution's function plus
+a scorer with holdout inputs, and a verifier that runs the solution then scores
+its output.
+
+### Private data: a scorer of its own
+
+A verifier runs `solution.py` inside its own process tree, so anything the verifier can read, the
+solution can read too. Hidden labels, holdout instances or a secret seed next to the verifier are
+not hidden. To keep data from the solution, give the problem a scorer instead of a verifier, and
+name what only the scorer may read:
+
+```yaml title="problems/my-problem/problem.yaml"
+score: verify.py        # the scorer, instead of verifier.sh
+private: [hidden]       # files or folders only the scorer reads
+time_limit_s: 30        # optional: the engine stops a solution that runs longer
+holdout: true           # the scorer is then also run with --holdout
+```
+
+hillclimb then runs two processes, each in a sandbox of its own:
+
+1. **The solution**, `$HILLCLIMB_PYTHON solution.py`, in the candidate's working dir. It cannot
+   read the `private:` paths, and it gets no credentials, not even on the holdout split. Anything
+   it leaves running is stopped when it exits, and any result file it wrote is deleted.
+2. **The scorer**, `verify.py` (or an argv list), in the same dir. It reads what the solution
+   wrote and the private data, and writes the score to `$HILLCLIMB_RESULT`, exactly as a verifier
+   would. On the holdout split it is passed `--holdout`.
+
+Coding agents cannot read the `private:` paths either, and they are left out of the file list in
+the agent's prompt. A `private:` path may sit inside the problem folder (`hidden`) or anywhere else
+(an absolute path). Declaring `private:` without `score:` is an error. `hillclimb.Problem(score=...)`
+problems always run in two steps, and take `private=[...]` for the same purpose.
+
+The problem's folder and its data are read-only to agents and solutions in every problem, so a
+solution can never rewrite the scorer that judges it.
+
+Two more keys cover the other shapes:
+
+- **`run: run.py`** replaces the plain `solution.py` step with the problem's own runner. It runs
+  in the solution's sandbox, so it can import the solution and call a function it defines
+  (`select_items(items, capacity)`), and writes what it got back for the scorer. The bundled
+  `knapsack` problem works this way.
+- **`holdout_inputs: [holdout]`** are inputs of the hidden split, such as the holdout instances or
+  their seed. The solution and the scorer read them only when they run on the holdout split. Coding
+  agents never read them, and neither does a validation run, whose output the agents see.
 
 ### Frozen unit tests (optional)
 
@@ -220,6 +291,28 @@ circle) is the reference producer; verifiers that emit nothing lose nothing.
 A candidate that leaves an instance unscored simply lacks that key and is
 treated as having failed it; MLE-bench per-fold instances are a planned
 follow-up.
+
+### A picture of the solution (optional)
+
+A problem whose answer is easier seen than read can ship `plot.py`, picked
+up by default like `interface.py` — plain matplotlib. `hillclimb plot` (and
+`hillclimb summit --plot`) draws a solution with it, saves a PNG and opens it:
+
+```python
+def plot(solution_dir, ax):       # a pathlib.Path, and matplotlib Axes
+    rows = read_csv(solution_dir / "submission.csv")
+    ax.scatter(xs, ys, label="point")
+    ax.set_aspect("equal")
+    return "11 points · smallest triangle 0.037037"   # optional caption, under the title
+```
+
+It reads what the solution *wrote* — never reruns `solution.py`, so a plot is
+instant however long the search behind it ran — and it runs in the problem's
+runtime venv, like the verifier, so it can use the problem's own packages;
+hillclimb adds matplotlib there the first time a problem is plotted.
+`problems/heilbronn-11/plot.py` (the numbered points, one smallest triangle
+shaded) and `problems/circle-packing/plot.py` (the circles, shaded by radius)
+are the references.
 
 ## Noise: not climbing your own measurement error
 

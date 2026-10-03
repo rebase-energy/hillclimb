@@ -3,20 +3,26 @@
                                                                                                                         
  Live hillclimb chart: best score so far vs tested candidates.                                                          
                                                                                                                         
- With no argument and several charts to show (more than one problem, or                                                 
- the same problem in more than one run), first a table of them — one row                                                
- per problem worked in a run, newest activity first; enter opens that                                                   
- chart, esc comes back to the table. `hillclimb watch` reaches the same                                                 
- chart with `c` from its runs, searches and candidates tables.                                                          
+ One chart per problem. With no argument and more than one problem (or                                                  
+ study) in the folder, first a table of them, newest activity first;                                                    
+ enter opens that chart, esc comes back. `hillclimb watch` reaches the                                                  
+ same chart with `c`.                                                                                                   
                                                                                                                         
- One staircase across every search of the problem, every scored candidate                                               
- a dot (bright where it set a new best, dim where it missed), plus optional                                             
- problem-config baselines; a study gets one line per experiment instead.                                                
- Refreshes as candidates land.                                                                                          
- Keys: r=refresh, t=toggle improvement text, d=detail                                                                   
- (every scored candidate as a mark, parent edges, accepted lineage bold),                                               
- h=toggle holdout/validation, c=cost overlay, p=switch problem,                                                         
- esc=back to the table, q=quit.                                                                                         
+ The climb: one staircase across every run of the problem, every scored                                                 
+ candidate a dot (bright where it set a new best, dim where it missed).                                                 
+ With several runs, `v` cycles three views: the plain climb (the                                                        
+ default), the same climb with each run's dots in its own colour, named in                                              
+ the legend (`#2 15:08`: number and start time, or the name you gave the                                                
+ run), and a comparison — one line per run from its own first candidate,                                                
+ ending in a dot at its best. `]` / `[` focus one run (the others fade to                                               
+ grey) and step back to all; in the plain climb they open the run colours. A study gets one line per experiment.        
+ Problem-config                                                                                                         
+ baselines are dashed lines. Refreshes as candidates land.                                                              
+ Keys: v=climb/runs/compare, ]/[=focus next/previous run, r=refresh,                                                    
+ t=toggle improvement text, d=detail (the focused run's search: every                                                   
+ scored candidate as a mark, parent edges, accepted lineage bold),                                                      
+ h=toggle holdout/validation, c=cost overlay, p=switch problem, esc=back                                                
+ to the table, q=quit.                                                                                                  
                                                                                                                         
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │   [search]      TEXT  latest (default), <run-id>, or <run-id>/<search-id>                                            │

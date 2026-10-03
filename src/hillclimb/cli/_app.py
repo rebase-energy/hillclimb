@@ -28,7 +28,7 @@ typer.rich_utils.STYLE_TYPES = "cyan"
 # flow. Every other command still runs; `hillclimb --help --all` lists it.
 CORE_COMMANDS = frozenset({
     "init", "connect", "problem", "verify", "run", "watch", "chart", "tree",
-    "stop", "resume", "summit", "climber", "experiment",
+    "stop", "resume", "summit", "plot", "climber", "experiment", "top",
 })
 
 
@@ -82,7 +82,7 @@ class HillclimbGroup(typer.core.TyperGroup):
 
 app = typer.Typer(
     cls=HillclimbGroup,
-    help="Hillclimbing on verifier-defined problems: a code-generation harness for model development with long-running coding agents.",
+    help="Hillclimbing on verifiable rewards: coding agents search for Python programs that optimize a score you define.",
     no_args_is_help=True,
     # Subcommands inherit help_option_names from the parent click Context, so
     # `-h` works on every command in the tree, not just the top level.

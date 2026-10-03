@@ -1,4 +1,4 @@
-"""Package layout rules (docs/package-layout-plan.md): who may import whom.
+"""Package layout rules: who may import whom.
 
 `harness/` and `modules/` never import the tui or the cli; `tui/` never
 imports the cli; a climber module under `modules/` is held to the sdk-only

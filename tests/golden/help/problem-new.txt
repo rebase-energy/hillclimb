@@ -1,0 +1,18 @@
+                                                                                                                        
+ Usage: root problem new [OPTIONS] PROBLEM                                                                              
+                                                                                                                        
+ Start a problem of your own in problems/<problem>.                                                                     
+                                                                                                                        
+ Writes a small problem that already runs (splitting lists of numbers into                                              
+ two equal halves) for you to edit into yours: the description and                                                      
+ contract the coding agents read, run.py that calls the solution,                                                       
+ score.py that scores what it returned, and a baseline. Verify it as it                                                 
+ is, then replace the example piece by piece, verifying as you go.                                                      
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ *    problem      TEXT  The new problem's id, which is also its folder name [required]                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --help  -h        Show this message and exit.                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

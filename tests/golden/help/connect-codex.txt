@@ -3,16 +3,21 @@
                                                                                                                         
  The Codex CLI as the coding agent.                                                                                     
                                                                                                                         
- Runs `codex login`, then copies the credential into the isolated                                                       
- `CODEX_HOME` searches use, so your personal `~/.codex` settings change                                                 
- neither a search's results nor its token bill. `--auth openrouter` bills                                               
- OpenRouter credits instead (`hillclimb connect openrouter` first).                                                     
+ Operators run in a codex home of hillclimb's own                                                                       
+ (`~/.cache/hillclimb/codex-home`, with a HOME of its own too), never your                                              
+ `~/.codex` or `~/.agents`, so your settings, plugins and skills change                                                 
+ neither a search's results nor its token bill. That home logs in once,                                                 
+ here (`codex login`, run inside it) — a login of its own, not a copy of                                                
+ yours, which codex would invalidate the first time either refreshed.                                                   
+ `--auth openrouter` bills OpenRouter credits instead (`hillclimb connect                                               
+ openrouter` first).                                                                                                    
                                                                                                                         
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --auth                         TEXT  Who pays: subscription (default) | api-key | openrouter                         │
 │ --model                        TEXT  Model to ping with (default: the configured one)                                │
 │ --probe        --no-probe            Make one tool-free coding agent call to prove the route works [default: probe]  │
-│ --login        --no-login            Run `codex login` when logged out [default: login]                              │
+│ --login        --no-login            Run `codex login` when logged out or when the login no longer works             │
+│                                      [default: login]                                                                │
 │ --default      --no-default          Pin this coding agent as the default. Default: only when none is pinned there   │
 │                                      yet                                                                             │
 │ --local        --user                Where the defaults (and an OpenRouter key) go: --user (the default) is          │

@@ -1308,7 +1308,7 @@ from textual.scrollbar import ScrollBar  # noqa: E402
 from textual.screen import ModalScreen, Screen  # noqa: E402
 from textual.widgets import DataTable, Footer, Label, RichLog, Static  # noqa: E402
 
-from hillclimb.tui.header import HillclimbHeader, TimezoneMixin  # noqa: E402
+from hillclimb.tui.header import APP_TITLE, HillclimbHeader, TimezoneMixin  # noqa: E402
 from hillclimb.tui.keys import KEYS_BINDING, QUIT_BINDINGS, KeysMixin, back_binding  # noqa: E402
 
 # one tick per second: the budget countdown and coding agent stream should read as live
@@ -2889,6 +2889,7 @@ def push_chart(app: App, config: Config, search_ref: str) -> None:
 class WatchApp(TimezoneMixin, App):
     """Read-mostly dashboard over runs/; control actions go through the
     same command queue as the CLI."""
+    TITLE = f"{APP_TITLE} watch"  # the header names the command that opened it
 
     # Dragging just beside a narrow scrollbar should not paint a text
     # selection across table rows. Terminal-native selection remains

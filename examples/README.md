@@ -9,6 +9,7 @@ instead, which takes seconds.
 | Script | Shows |
 | --- | --- |
 | [`nano_climb.py`](nano_climb.py) | the whole thing in one file: a problem, a selector, a policy, two operators, a budget, a search. Start here |
+| [`nano_climb.ipynb`](nano_climb.ipynb) | the same climb as a notebook, one step per cell |
 | [`run_and_read.py`](run_and_read.py) | build a climber, `climber.search(problem)`, read the result off it: best, history, spend, a table of candidates |
 | [`step_by_step.py`](step_by_step.py) | `climber.start`, then `propose` / `run` / `step` by hand, a move of your own, `finish` |
 | [`custom_policy.py`](custom_policy.py) | your own `OperatorPolicy` (what to try next), compared with two others on one budget |

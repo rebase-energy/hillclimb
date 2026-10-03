@@ -13,6 +13,8 @@ the operating system's own mechanism to enforce it:
 What a policy means, on both:
 
   write       only the listed paths (plus the temp dirs and /dev)
+  read_only   never writable, even inside a writable path or a temp dir
+              (the problem: what scores a solution is not the solution's)
   deny_read   unreadable, and unix sockets under them unreachable
   network     `open`, `none`, or `proxy`: nothing but the engine's allowlist
               proxy, which tunnels HTTPS to `allow_hosts` and refuses the
@@ -68,11 +70,15 @@ RUNTIME_SOCKETS = (
 )
 # writable for everyone: what numeric and ML libraries cache under the home folder
 CACHE_PATHS = (".cache/huggingface", ".cache/torch", ".cache/matplotlib", ".matplotlib")
-# each coding agent's own state and credentials, under the home folder and under
-# hillclimb's machine cache; a coding agent reads only its own
+# the user's own coding-agent setups (settings, plugins, skills, MCP servers,
+# logins, history): never read by anything a search starts. Operators get an
+# isolated home of hillclimb's instead (`claude-home`, `codex-home` below)
+PERSONAL_AGENT_PATHS = (".claude", ".claude.json", ".codex", ".agents")
+# each coding agent's operator home under hillclimb's machine cache (and, for
+# pi, still its own folder); a coding agent reads only its own
 AGENT_HOMES = {
-    "claude-code": ((".claude", ".claude.json"), ()),
-    "codex": ((".codex",), ("codex-home",)),
+    "claude-code": ((), ("claude-home",)),
+    "codex": ((), ("codex-home",)),
     "pi": ((".pi",), ("pi-home",)),
 }
 # the search's own records: the journal carries holdout scores
@@ -101,6 +107,7 @@ class SandboxPolicy:
     write: tuple[str, ...] = ()
     # `<path>*`: a file and the siblings its owner writes beside it (locks, backups)
     write_prefix: tuple[str, ...] = ()
+    read_only: tuple[str, ...] = ()
     deny_read: tuple[str, ...] = ()
     network: str = "open"  # open | none | proxy
     allow_hosts: tuple[str, ...] = ()  # proxy: these hosts and their subdomains
@@ -112,6 +119,10 @@ class SandboxPolicy:
             write=_unique(self.write + tuple(real(p) for p in paths)),
             write_prefix=_unique(self.write_prefix + tuple(real(p) for p in prefix)),
         )
+
+    def protected(self, *paths: str | os.PathLike) -> "SandboxPolicy":
+        """Never writable, whatever else is (the problem and its data)."""
+        return replace(self, read_only=_unique(self.read_only + tuple(real(p) for p in paths)))
 
     def unreadable(self, *paths: str | os.PathLike) -> "SandboxPolicy":
         return replace(self, deny_read=_unique(self.deny_read + tuple(real(p) for p in paths)))
@@ -211,7 +222,7 @@ def active(config) -> bool:
 
 
 def _base(config, search_dir: Path | None, agent: str | None) -> SandboxPolicy:
-    deny = list(_home(*SECRET_PATHS)) + [real(p) for p in RUNTIME_SOCKETS]
+    deny = list(_home(*SECRET_PATHS)) + list(_home(*PERSONAL_AGENT_PATHS)) + [real(p) for p in RUNTIME_SOCKETS]
     from hillclimb.project import machine_cache_dir, user_env_path
 
     deny.append(real(user_env_path()))
@@ -238,12 +249,42 @@ def _base(config, search_dir: Path | None, agent: str | None) -> SandboxPolicy:
     )
 
 
-def agent_policy(config, search_dir: Path | None, agent: str) -> SandboxPolicy | None:
+def _for_problem(policy: SandboxPolicy, problem) -> SandboxPolicy:
+    """The problem as everything run on its behalf sees it: its folder and
+    data read-only (a solution or an agent that rewrote the verifier would
+    choose its own score), and its private paths, when it names any, kept
+    from the reader too."""
+    if problem is None:
+        return policy
+    dirs = [d for d in (getattr(problem, "problem_dir", None), getattr(problem, "data_dir", None)) if d]
+    return policy.protected(*dirs)
+
+
+def private_paths(problem) -> tuple[str, ...]:
+    """What only the problem's scorer may read (`private:` in problem.yaml)."""
+    return tuple(real(p) for p in getattr(problem, "private_paths", None) or ())
+
+
+def holdout_input_paths(problem) -> tuple[str, ...]:
+    """What only holdout runs may read (`holdout_inputs:` in problem.yaml)."""
+    return tuple(real(p) for p in getattr(problem, "holdout_inputs", None) or ())
+
+
+def hidden_from_agents(problem) -> tuple[str, ...]:
+    """Everything a coding agent, a unit test or a validation run of the
+    solution must not read: the scorer's private data and the holdout inputs."""
+    return private_paths(problem) + holdout_input_paths(problem)
+
+
+def agent_policy(config, search_dir: Path | None, agent: str, problem=None) -> SandboxPolicy | None:
     """What a coding agent runs under; None = unsandboxed. The coding agent adds
-    its candidate dir, its own state and — without internet — the proxy."""
+    its candidate dir, its own state and — without internet — the proxy. With
+    the `problem` it works on, the problem is read-only and its private paths
+    unreadable: an agent never sees what only the scorer may."""
     if not active(config):
         return None
-    return _base(config, search_dir, agent)
+    policy = _for_problem(_base(config, search_dir, agent), problem)
+    return policy.unreadable(*hidden_from_agents(problem)) if problem is not None else policy
 
 
 def verifier_policy(
@@ -256,7 +297,7 @@ def verifier_policy(
         return None
     if getattr(problem, "solution_kind", "program") == "climber":
         return None  # its verifier starts searches, and those sandbox themselves
-    policy = _base(config, search_dir, None)
+    policy = _for_problem(_base(config, search_dir, None), problem)
     if holdout and search_dir is not None:
         here = real(Path(search_dir) / "holdout-eval")
         policy = replace(policy, deny_read=tuple(p for p in policy.deny_read if p != here))
@@ -340,6 +381,10 @@ def seatbelt_profile(policy: SandboxPolicy, proxy_port: int | None = None) -> st
         "(allow default)",
         "(deny file-write*)",
         f'(allow file-write* (regex #"^/dev/") {" ".join(writable)})',
+        *(
+            [f'(deny file-write* {" ".join(f"(subpath {_quoted(p)})" for p in policy.read_only)})']
+            if policy.read_only else []
+        ),
         # its own process tree is its to stop; nothing outside is
         "(deny signal)",
         "(allow signal (target same-sandbox))",
@@ -368,6 +413,8 @@ def bwrap_args(policy: SandboxPolicy, proxy_dir: str | None = None) -> list[str]
     for prefix in policy.write_prefix:
         for path in sorted(glob.glob(glob.escape(prefix) + "*")):
             args += ["--bind-try", path, path]
+    for path in policy.read_only:
+        args += ["--ro-bind-try", path, path]
     for path in policy.deny_read:
         if os.path.isdir(path):
             args += ["--tmpfs", path]

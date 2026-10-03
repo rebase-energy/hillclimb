@@ -550,81 +550,22 @@ def tree_workspace(tmp_path, monkeypatch) -> tuple[Path, Config]:
 
 
 @pytest.mark.asyncio
-async def test_tree_app_mounts_selects_scrubs_and_opens(tree_workspace):
-    from hillclimb.tui.treeview import TreeApp, TreePlotWidget, TreeKeys
-    from hillclimb.tui.watch import CandidateScreen
-
-    _search_dir, config = tree_workspace
-    app = TreeApp(config, "r1/circle-packing")
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        canvas = app.screen.query_one("#tree-canvas", TreePlotWidget)
-        assert len(canvas._ids) == 8
-        yaw, pitch, zoom, _px, _py = canvas._plot.camera_state()
-        assert (yaw, pitch) == (0.0, 0.0)
-        await pilot.press("plus")
-        assert canvas._plot.camera_state()[2] > zoom
-        # rotation is locked: arrows pan, the camera stays face-on
-        await pilot.press("left")
-        assert canvas._plot.camera_state()[:2] == (0.0, 0.0)
-        await pilot.press("f")
-        assert canvas._plot.camera_state()[2] == 1.0
-        # * selects the best and opens its detail
-        await pilot.press("asterisk")
-        await pilot.pause()
-        assert canvas.selected == "c007"
-        assert app.screen.query_one("#node-detail").styles.display == "block"
-        assert app.screen.query_one("#node-detail").max_scroll_x == 0  # fits the dock
-        # scrub one tick back: the last landed result drops out
-        await pilot.press("j")
-        await pilot.pause()
-        assert app.screen._tree.best_id != "c007"  # c007 is still in flight at that tick
-        await pilot.press("end")
-        await pilot.pause()
-        assert app.screen._tree.best_id == "c007"
-        await pilot.press("question_mark")
-        await pilot.pause()
-        assert app.screen.query(TreeKeys)
-        # legend: `4` hides improve (most of the tree), again shows it; a click
-        # on the legend line toggles too
-        from hillclimb.tui.treeview import LEGEND_COL, LEGEND_ROW
-
-        await pilot.press("4")
-        await pilot.pause()
-        assert canvas.hidden == {"improve"} and len(canvas._ids) == 3
-        await pilot.press("4")
-        await pilot.pause()
-        assert not canvas.hidden and len(canvas._ids) == 8
-        await pilot.click("#tree-canvas", offset=(LEGEND_COL + 3, LEGEND_ROW + 3))
-        await pilot.pause()
-        assert canvas.hidden == {"improve"}
-        await pilot.press("4")
-        await pilot.pause()
-        # enter opens the selected candidate in the candidate screen
-        await pilot.press("enter")
-        await pilot.pause()
-        assert isinstance(app.screen, CandidateScreen)
-
-
-@pytest.mark.asyncio
 async def test_tree_app_drag_pans_and_switches_searches(tree_workspace):
-    from hillclimb.tui.treeview import TreeApp, TreePlotWidget
+    from hillclimb.tui.treedrawview import TreeDrawApp, TreeDrawPlotWidget
 
     _search_dir, config = tree_workspace
     # a second, later search with a smaller (3-node) tree: the one n/p moves to
     second = make_run_with_search(config.paths.runs_dir, "r2")
     meta = second / "search.yaml"
     meta.write_text(meta.read_text().replace("started_at:", "started_at_old:") + "\nstarted_at: '2099-01-01T00:00:00'\n")
-    app = TreeApp(config, "r1/circle-packing")
+    app = TreeDrawApp(config, "r1/circle-packing")
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        canvas = app.screen.query_one("#tree-canvas", TreePlotWidget)
+        canvas = app.screen.query_one("#tree-canvas", TreeDrawPlotWidget)
         assert len(canvas._ids) == 8
         assert "(1/2, n/p to switch)" in str(app.screen.query_one("#treeline").render())
         # a plain drag pans by exactly the cells the pointer moved, and the
         # camera stays face-on
-        await pilot.press("asterisk")
-        await pilot.pause()
         before = canvas._plot.camera_state()
         await pilot.mouse_down("#tree-canvas", offset=(40, 20))
         await pilot.hover("#tree-canvas", offset=(50, 20))
@@ -634,7 +575,7 @@ async def test_tree_app_drag_pans_and_switches_searches(tree_workspace):
         assert after[:2] == (0.0, 0.0)
         assert after[3] - before[3] == pytest.approx(10 * canvas._cell_w)
         assert after[4] == before[4]
-        assert canvas.selected == "c007"  # a drag is not a click
+        assert canvas.selected is None  # a drag is not a click
         # n moves to the next search: new tree, selection cleared, pan kept
         await pilot.press("n")
         await pilot.pause()
@@ -648,34 +589,16 @@ async def test_tree_app_drag_pans_and_switches_searches(tree_workspace):
         await pilot.pause()
         assert app.screen._record.ref == "r1/circle-packing"
         assert len(canvas._ids) == 8
-        # hovering a candidate's name (not just its mark) highlights it, and
-        # clicking the name selects it; the best's label is drawn in gold
-        await pilot.press("f")
-        await pilot.pause()
-        cells = {node_id: cell for cell, node_id in canvas._label_cells.items()}
-        assert "c007" in cells
-        row, col = cells["c007"]
-        gold = [
-            (text, style) for spans in canvas._overlay.values() for _c, text, style in spans
-            if text.startswith("c007 ★")
-        ]
-        assert gold and gold[0][1] == Style.parse(BEST_LABEL_STYLE)
-        await pilot.hover("#tree-canvas", offset=(col, row))
-        await pilot.pause()
-        assert canvas._hover == "c007"
-        await pilot.click("#tree-canvas", offset=(col, row))
-        await pilot.pause()
-        assert canvas.selected == "c007"
 
 
 @pytest.mark.asyncio
 async def test_tree_app_reports_a_missing_search(tmp_path, monkeypatch):
-    from hillclimb.tui.treeview import TreeApp
+    from hillclimb.tui.treedrawview import TreeDrawApp
 
     monkeypatch.setenv("PLOTUI_RENDER", "placeholder")
     config = Config()
     config.paths.runs_dir = tmp_path / "runs"
-    app = TreeApp(config, "nope/none")
+    app = TreeDrawApp(config, "nope/none")
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         assert "No search at" in str(app.screen.query_one("#treeline").render())

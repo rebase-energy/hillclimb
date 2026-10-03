@@ -1,18 +1,89 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 — 2026-10-03
+
+### Fixed
+- **`hillclimb summit` copies `params.json`**, the tuned values a tunable solution reads
+  through `spaces.params()`. Without it the copied `solution.py` crashed on its first
+  `P['…']` (`KeyError`).
+- **`hillclimb verify --solution` brings the `params.json` beside the solution**, so a
+  summited solution scores with its tuned values instead of crashing.
+- **A failed `verify` run shows its last lines of output** (the traceback) where it
+  printed a log path inside a temp folder that was already deleted.
 
 ### Added
+- **`hillclimb problem new <id>` starts a problem of your own.** It writes a small
+  two-step problem that already runs (number partitioning: `run.py` calls the solution's
+  `partition`, `score.py` checks the answer and writes the score, plus `instances.py`,
+  `description.md`, `contract.md` and `baseline.py`) for you to edit into yours, making
+  the folder a hillclimb dir first if it is not one. It never overwrites a folder. `init`'s
+  next steps and the missing-verifier error point to it.
+- **`hillclimb plot` draws a solution, and `hillclimb summit --plot` copies the best and
+  draws it.** A problem may ship `plot.py` — plain matplotlib, `plot(solution_dir, ax)`
+  drawing the solution's output files and returning an optional caption — picked up by
+  default like `interface.py`. It runs in the problem's runtime venv like the verifier
+  (matplotlib is added there on first use), saves a PNG (`solution.png` beside a summited
+  solution) and opens it; it reads what the solution wrote and never reruns it.
+  `heilbronn-11/14/17` draw their numbered points with one smallest triangle shaded (the
+  caption counts the ties), `circle-packing` and `circle-packing-32` their circles shaded
+  by radius. A problem without `plot.py` says so.
 - **A climber put together in Python runs from the CLI.** A `.py` file that builds a
   `Climber(selector_policy=…, operator_policy=…, operators=[…], tuner=…, memory=…)` is
   that whole climber wherever a climber file is accepted: `hillclimb run <problem>
   --climber climbers/my_climber.py`, a run spec, an experiment's setup, `climber show`.
   Its own classes are recorded as `my_climber.py:Class`; a file that builds two names one
   as `my_climber.py:climber`. A file that builds none is still one operator policy.
+- **`hillclimb top`**: the control pane for every hillclimb process on the machine, from
+  any folder — `ps`, live, in one table where each engine heads its own process tree.
+  Keys act on the highlighted row: `s` / `g` stop its engine (now / gracefully) through
+  the same command queue as `hillclimb stop`, `k` kills that process and what it started
+  (on an engine row the whole engine, like `hillclimb kill`), `o` / `r` order the engines.
+- **`hillclimb chart` is one chart per problem, and can tell its runs apart.** The picker
+  listed every run of a problem as a row of its own and opened the same folded climb
+  whichever you chose; it now lists problems (a study's problem still once per run) and
+  opens directly when there is one. The chart still opens on the plain climb — one
+  staircase across every run. With several runs, `v` cycles to the same climb with each
+  run's dots in its own colour, named in the legend (`#2 15:08`: number and start time, or
+  the run's own name) and the line saying which run set the best, then to a comparison,
+  one line per run from its own first candidate. `]` / `[` focus one run (the others fade
+  to grey, `d` overlays that run's tree). A tie to float precision keeps the credit with
+  the run that got there first. The line over the chart wraps between its items instead
+  of being cut off at the terminal's edge, with what the climb cost on a dimmed line of its own;
+  `tree` and `treeclimb` wrap theirs the same way (`tui/lines.py`).
+- Every TUI names its command in the header: `hillclimb watch`, `hillclimb top`,
+  `hillclimb chart`, `hillclimb tree`, … where they all read `hillclimb`.
+- **`hillclimb ps` is drawn like nvidia-smi** and is about compute only: one box sized to
+  the terminal — the machine at a glance (engines, coding agents against the slot cap,
+  cpu, memory) above one process table where each engine heads its own tree, its
+  row naming the problem and hillclimb dir — where it printed free lines that wrapped
+  past the screen. Processes are labelled by role: a coding agent's own tool calls (its
+  Bash shell trying `python solution.py`) are `tool` and the servers it loads from your
+  Claude config are `mcp`, where `ps` used to call them `verifier` / `child`; what a
+  verifier runs is `solution`. Commands are cut to what tells them apart (`claude ·
+  sonnet`, `$ python solution.py`, `python c003/trials/t0/…/solution.py`); columns that
+  do not fit are dropped, nothing wraps. `hillclimb ps --watch` (`-w`, interval `-n`)
+  redraws it in place until ctrl+c and keeps the frame on one screen (MCP servers
+  folded, rows shared between engines). Search progress stays in `watch`. A hillclimb
+  command computing in a terminal — `verify`, `grade`, `run --no-detach` — gets a block of
+  its own too (it is compute hillclimb started, engine or not); `top` lists and ends them.
 
 ### Changed
 - `hillclimb experiment report` called a gap of exactly 0 "worse" when no noise floor
   was known; it is a tie, as `--json` already said.
+- **`hillclimb tree2` is `hillclimb tree`, and the old `tree` is gone.** The tree is
+  the Darwin Gödel Machine drawing — candidate numbers in the circles, score as the
+  fill, fate as the ring, the best a star — which was `tree2`; the fate-only tree it
+  grew out of is removed (`watch` keeps that encoding for its tree panel). No alias:
+  `tree2` is not a command.
+- **`hillclimb archive` is `hillclimb treeclimb`**: the tree and the climb chart of
+  one search, side by side — the name is the two panels. `archive` is not a command
+  any more; nothing is kept under the old name. The tree (`tree`, and the left panel
+  here) takes the look the docs
+  settled on: score is one cyan ramp, dark teal to the accent, instead of viridis; the
+  best's lineage is drawn in that cyan, thinner; the star is 1.3× a disc (was 1.4);
+  ensemble-input edges are no longer drawn (ensembles are not part of the first
+  release — the data still carries them). The chart's lineage stays white beside its
+  cyan staircase. Rings are as before: white = expanded, none = scored, red = failed.
 - **The two decisions are named after the RSI framework: `selector_policy` (π_sel)
   and `operator_policy` (π_op).** In a block they were `select:` and `policy:`,
   the selector's knobs `select_params:`; they are `selector_policy:`,

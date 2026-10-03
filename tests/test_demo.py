@@ -458,8 +458,9 @@ def test_problem_get_asks_before_creating_a_hillclimb_dir(tmp_path, monkeypatch)
 
 
 def test_problem_get_wont_mix_into_a_folders_own_problems(tmp_path, monkeypatch):
-    """A folder with its own problems/ (and no hillclimb.yaml) is refused
-    before anything is asked or written."""
+    """A folder with its own problems/ (and no hillclimb.yaml) gets its
+    hillclimb dir in ./hillclimb/, and the problem goes there; the folder's
+    own problems/ is never written to."""
     from typer.testing import CliRunner
 
     from hillclimb import cli
@@ -468,7 +469,7 @@ def test_problem_get_wont_mix_into_a_folders_own_problems(tmp_path, monkeypatch)
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
     result = CliRunner().invoke(cli.app, ["problem", "get", "golomb-20"])
-    assert result.exit_code == 1
-    assert "hillclimb init hillclimb" in result.output
+    assert result.exit_code == 0, result.output
     assert not (tmp_path / "hillclimb.yaml").exists()
     assert list((tmp_path / "problems").iterdir()) == []
+    assert (tmp_path / "hillclimb" / "problems" / "golomb-20" / "problem.yaml").is_file()

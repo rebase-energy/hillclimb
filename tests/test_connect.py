@@ -246,7 +246,7 @@ def test_connect_lists_every_target_as_json(monkeypatch, tmp_path):
     result = CliRunner().invoke(cli.app, ["connect", "--json"])
     assert result.exit_code == 0, result.output
     rows = json.loads(result.stdout)
-    assert [row["target"] for row in rows] == list(connect.TARGETS)
+    assert [row["agent"] for row in rows] == list(connect.TARGETS)
     assert [row["default"] for row in rows] == [True, False, False, False]
 
 
@@ -573,3 +573,99 @@ def test_connect_codex_pings_the_clis_default_model_for_a_claude_alias(monkeypat
     result = CliRunner().invoke(cli.app, ["connect", "codex", "--model", "gpt-5"])
     assert result.exit_code == 0, result.output
     assert pinged[-1] == ("codex", "subscription", "gpt-5")
+
+
+def test_connect_logs_in_again_when_the_ping_finds_a_dead_login(monkeypatch, tmp_path):
+    """`codex login status` says logged in for any credential file, so a
+    login whose refresh token was already spent only fails in the ping.
+    `connect codex` must replace it (logout, login), re-stage and ping again
+    rather than send the person off to do that by hand."""
+    from hillclimb.agents.base import AgentResult
+
+    monkeypatch.setenv("HILLCLIMB_DIR", str(_hillclimb_dir(tmp_path)))
+    monkeypatch.setattr(
+        connect, "check", lambda target, auth: connect.Status(target, auth, "ready", "fine")
+    )
+    staged: list[str] = []
+    monkeypatch.setattr(connect, "import_credentials", lambda target, *a, **k: staged.append(target))
+    relogins: list[str] = []
+    monkeypatch.setattr(connect, "run_relogin", lambda target: relogins.append(target) or 0)
+    dead = AgentResult(
+        ok=False,
+        error_kind="error",
+        error_message=(
+            "Your access token could not be refreshed because your refresh token was "
+            "already used. Please log out and sign in again."
+        ),
+    )
+    alive = AgentResult(ok=True, model_id="gpt-5-codex", total_tokens=12, duration_s=1.0)
+    answers = iter([dead, alive])
+    monkeypatch.setattr(connect, "ping", lambda *a, **k: next(answers))
+
+    result = CliRunner().invoke(cli.app, ["connect", "codex"])
+    assert result.exit_code == 0, result.output
+    assert relogins == ["codex"]
+    assert staged == ["codex", "codex"]  # staged again from the fresh login
+    assert "codex logout, then codex login" in result.output and "ping ok" in result.output
+    assert "--model" not in result.output  # the login was the culprit, not the model
+    assert "error:" not in result.output  # a login that gets replaced is a warning, not a failure
+    assert "login no longer works" in result.output and "refresh token" in result.output
+
+    # --no-login reports the dead login and stops
+    answers = iter([dead])
+    relogins.clear()
+    result = CliRunner().invoke(cli.app, ["connect", "codex", "--no-login"])
+    assert result.exit_code == 1
+    assert relogins == [] and "refresh token" in result.output
+
+
+def test_login_expired_tells_a_dead_login_from_a_wrong_model():
+    assert connect.login_expired("refresh token was already used. Please log out and sign in again.")
+    assert not connect.login_expired("model not supported")
+    assert not connect.login_expired(None)
+
+
+def test_operators_and_logins_use_the_operator_home_never_the_users(tmp_path, monkeypatch):
+    """Claude Code and codex run, log in and log out in homes of hillclimb's
+    own; a codex home holding a copy of the user's login (what hillclimb did
+    before) is logged in afresh, and only a login hillclimb ran counts."""
+    import subprocess
+
+    from hillclimb.agents.claude_code import subscription_env
+    from hillclimb.agents.codex_cli import OWN_LOGIN_MARKER, codex_home, has_own_login
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    assert subscription_env()["CLAUDE_CONFIG_DIR"] == str(tmp_path / ".cache" / "hillclimb" / "claude-home" / "subscription")
+
+    home = codex_home("subscription")
+    (home / "auth.json").write_text('{"copied": true}')
+    calls = []
+    monkeypatch.setattr(connect.shutil, "which", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(
+        subprocess, "call", lambda argv, env=None: calls.append((argv, env)) or 0
+    )
+    assert connect.run_login("codex") == 0
+    argv, env = calls[-1]
+    assert argv == ["/bin/codex", "login"]
+    assert env["CODEX_HOME"] == str(home) and env["HOME"] == str(home / "home")
+    assert not (home / "auth.json").exists()  # the copy is never refreshed
+    assert (home / OWN_LOGIN_MARKER).exists() and has_own_login("subscription")
+
+    assert connect.run_login("claude") == 0
+    assert calls[-1][1]["CLAUDE_CONFIG_DIR"].endswith("claude-home/subscription")
+
+
+def test_a_login_link_is_made_clickable_unless_it_already_is():
+    """Codex prints its sign-in URL as plain text, which a terminal stops
+    recognising once it wraps; Claude Code marks its own as a hyperlink."""
+    url = "https://auth.openai.com/oauth/authorize?response_type=code&state=x"
+    out = connect.linkify(f"navigate to this URL:\r\n\r\n{url}\r\n")
+    assert f"\x1b]8;;{url}\x1b\\{url}\x1b]8;;\x1b\\" in out
+    marked = f"visit: \x1b]8;;{url}\x1b\\{url}\x1b]8;;\x1b\\\r\n"
+    assert connect.linkify(marked) == marked
+    assert connect.linkify("no link here") == "no link here"
+    assert connect.linkify("server on http://localhost:1455.") == (
+        "server on \x1b]8;;http://localhost:1455\x1b\\http://localhost:1455\x1b]8;;\x1b\\."
+    )
+    assert "Claude Code (Anthropic)" in connect.login_header("claude")
+    assert "Codex (OpenAI)" in connect.login_header("codex")

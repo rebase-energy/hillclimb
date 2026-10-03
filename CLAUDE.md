@@ -87,7 +87,7 @@ module prefixes (`MOVED`) and renamed classes (`RENAMED`) wherever a `module:Cla
 ref is imported.
 
 - The hillclimb dir: any folder holding a `hillclimb.yaml` (the config and
-  the marker), found by upward search; problems/, runs/, knowledge/,
+  the marker), looked for in the CWD only (or the CWD's `hillclimb/` subfolder) — no upward search, so a hillclimb checkout beside a project is never taken for it; problems/, runs/, knowledge/,
   climbers/, experiments/ and store.sqlite sit beside it and relative config
   paths resolve against it. `init [DIR]` makes the CWD (or DIR) one and
   refuses a folder with its own problems/ or runs/; `reset` deletes only
@@ -112,7 +112,8 @@ ref is imported.
   Machine-scoped state (shared venvs, emflow cache, coding agent slots) lives in
   `~/.cache/hillclimb/`.
 - Tests: `uv run pytest`
-- New problem: copy a bundled one (`hillclimb problem get <problem>`); check a
+- New problem: `hillclimb problem new <id>` (scaffold from `demo/_scaffold/`, a two-step
+  run.py + score.py problem) or copy a bundled one (`hillclimb problem get <problem>`); check a
   verifier with `hillclimb verify <problem> --repeat 5` (the spread it prints
   is the noise floor — improvements below it are not real)
 - Noisy metrics: a trial's score is the MEDIAN of its replicates;
@@ -191,7 +192,7 @@ ref is imported.
   (`subscription_env`/`codex_env`/`pi_env`), so an inherited `ANTHROPIC_API_KEY`
   shadowing a subscription shows up in the table; a bare `connect` is the
   status of all four targets (`claude`/`codex`/`pi` are coding agents and own their
-  login, `openrouter` is a billing route), `connect <target>` runs that login,
+  login, `openrouter` is a billing route), `connect <agent>` runs that login,
   materializes the isolated home, pings the route with one tool-free call
   (`connect.ping`) and pins `agent`/`agent_auth` with a line-level edit of
   a config.yaml that keeps its comments — the USER level
@@ -204,7 +205,7 @@ ref is imported.
   `mark_connected` left `connected.json` in `record_dir` (the ping's scratch dir
   under the machine cache; codex/pi also need their staged home); `Status.ok`
   is the login, `Status.connected` the `ready` state.
-  `hillclimb disconnect <target>` is the mirror on hillclimb's side only:
+  `hillclimb disconnect <agent>` is the mirror on hillclimb's side only:
   `unpin_config_defaults` comments the pin out in place, `remove_staged` drops the
   cache homes, `remove_env_key` the key. hillclimb may START a coding agent's login it
   needs, it NEVER logs a coding agent out — the account is the person's
@@ -643,43 +644,44 @@ ref is imported.
   study's child (`--run-id`), a study's experiment, and `--no-detach` run in-process;
   the in-terminal log is a clock gutter (`common.engine_log`/`split_engine_line`, clock
   from `BudgetManager.clock_str`)
-- CLI: `uv run hillclimb --help` (engine); live TUIs: `watch` (coding agents; `watch candidates` jumps to a search),
+- CLI: `uv run hillclimb --help` (engine); live TUIs (each App's `TITLE` is `hillclimb <command>`): `top` (`tui/top.py`: the control pane — ONE table, each engine heading its process tree via `psview.engine_lines`; `s`/`g` stop the row's engine through the queue, `k` kills the row's process tree (`orphans.kill_process_tree`) or, on an engine row, the engine; no jumps into watch; the data is `tui/machine.py` (`scan`: engines plus `job_kind` foreground `verify`/`grade`/`run` processes, anchored on the program, their dir from `HILLCLIMB_DIR` else their cwd, by the same no-upward-search rule), Textual-free and shared with `ps`, whose boxed nvidia-smi frame is `tui/psview.py` — compute only (`scan(read_searches=False)`, one box, each engine heading its tree), rich only, measured to fit width and, under `ps --watch`, height; roles from `harness/orphans.classify`; each engine's search read through ITS hillclimb dir via `Config.load(start=…)`), `watch` (coding agents; `watch candidates` jumps to a search),
   every screen's way back is `keys.back_binding` (esc or b, footer `esc/b back`), so
   `b` is never anything else — the tree views select the best with `*`;
-  `chart` (best score vs time per search; a bare `chart` on a folder with
-  several run×problem pairs opens `ChartPickerScreen` first — enter opens,
+  `chart` (best score vs time; ONE chart per plain problem — `chart_index` groups plain runs by problem, a study per run — opening on the plain climb; with several runs `ChartScreen.view` cycles (`v`) climb → runs → compare; in `runs` the runs colour the one climb's dots (`ClimbEvent.run`, `build_climb_plot(run_colors=)` from `RUN_PALETTE`, legend per run; labels `run_labels`: `#n HH:MM` or the run's own name; `TIE_RTOL` keeps a float-precision tie from counting as a new best); `]`/`[` cycle all → run k → all (`ChartScreen.run_focus`: the others fade to grey), `compare` = `run_curves`, one line per run, `end_dots`; `d` follows the focused run; a bare `chart` on a folder with
+  several charts opens `ChartPickerScreen` first — enter opens,
   esc pops back; `watch` pushes the same `ChartScreen` with `c` via
   `watch.push_chart`; `chart_index` is the pure row builder; a study
   anchor confines the chart to its own run (`chart_run_scope`) so two runs
   of one study never overlay each other's `experiment rN`, while a plain
   problem still folds every run into one climb;
   `--detail`/`d` overlays one search's
-  exploration tree on the curve), `tree` (one search's exploration tree —
-  `tui/tree.py` is the pure layout + fates, `tui/treeview.py` the plotui screen with a
-  face-on locked camera), `tree2` (the same layout drawn like the Darwin
-  Gödel Machine's archive tree: candidate number inside each circle, fill =
-  score on a viridis ramp (hollow = never scored), ring = fate ladder in no
-  viridis hue — white = expanded, none = scored, red = failed — star = best,
-  the best's parent chain bold — `tui/tree2.py` pure encoding + one Graph3d
-  trace using plotui's `set_graph_borders`/`set_graph_labels`/`"star"`
-  (labels are drawn by plotui inside the mark only where they fit);
-  `fit_radius` sizes marks from the closest projected pair so circles never
-  overlap, and `tui/tree2view.py` rebuilds on every zoom/reset/resize to apply
-  it, subclassing the `tree` widget/screen through `TreePlotWidget`'s
+  exploration tree on the curve), `tree` (one search's tree, drawn like the
+  Darwin Gödel Machine's archive tree: candidate number inside each circle,
+  fill = score on a cyan ramp (hollow = never scored), ring = fate ladder in no
+  ramp hue — white = expanded, none = scored, red = failed — star = best, the
+  best's parent chain in cyan. `tui/tree.py` is the pure layout + fates,
+  `tui/treeview.py` the plotui base screen with a face-on locked camera
+  (`TreePlotWidget`, `TreeScreen`, also used by `watch`'s tree panel),
+  `tui/treedraw.py` the pure encoding + one Graph3d trace using plotui's
+  `set_graph_borders`/`set_graph_labels`/`"star"` (labels are drawn by plotui
+  inside the mark only where they fit); `fit_radius` sizes marks from the
+  closest projected pair so circles never overlap, and `tui/treedrawview.py`
+  rebuilds on every zoom/reset/resize to apply it, subclassing the base
+  widget/screen through `TreePlotWidget`'s
   `_build_plot`/`_label_nodes`/`_legend_spans`/`_legend_entry_at`/
   `_flat_to_id`/`_place_labels` hooks; the ring ladder is plotui's own
-  legend box with host rows (`tree2.legend_entries` → `Plot.set_legend_entries`,
+  legend box with host rows (`treedraw.legend_entries` → `Plot.set_legend_entries`,
   top-left, node-style swatches so expanded/scored share a fill and differ
   only by the white ring; clicks resolve via `legend_entry_hit`, keys 1-5),
-  the score ramp stays a text overlay; a candidate for replacing `tree`),
-  `archive` (the DGM two-panel figure: `tree2` on the left, the progress
-  chart on the right — `tui/archive.py` pure: scored nodes at (candidate
-  number, score) where the number is the circle number (`tree2.node_number`, else
+  the score ramp stays a text overlay),
+  `treeclimb` (the DGM two-panel figure: the `tree` tree on the left, the climb
+  chart on the right — `tui/treeclimb.py` pure: scored nodes at (candidate
+  number, score) where the number is the circle number (`treedraw.node_number`, else
   creation order), best-so-far walked in NUMBER order (same final
   best as `tree.accepted`, intermediate steps may differ from `chart`'s
   landing order), the best's parent chain as a thick line, a cursor at
-  the scrub tick's candidate, axes pinned to the live tree; `tui/archiveview.py`
-  subclasses `Tree2Screen`, keeps its ids so scrubbing/detail/n-p are
+  the scrub tick's candidate, axes pinned to the live tree; `tui/treeclimbview.py`
+  subclasses `TreeDrawScreen`, keeps its ids so scrubbing/detail/n-p are
   inherited, and re-shows the chart from the same scrubbed tree in
   `_apply_view`. Two plots on one screen need two Kitty image-id pairs:
   plotui's `PlotWidget(image_slot=n)` (the chart takes slot 1;
@@ -695,7 +697,7 @@ ref is imported.
   `Replicate.metrics`; `tui/surface.py` pure layer, `tui/surfaceview.py` the free-orbit
   screen — start the camera at negative pitch, plotui's default views a
   surface from underneath; no landscape = prints why and returns;
-  `problems/fitness-landscape/` is the reference problem), `similarity` — two views of one search's candidates,
+  `problems/fitness-landscape/` is the reference problem), `plot` (NOT a TUI: a problem's optional `plot.py` is plain matplotlib, `plot(solution_dir, ax) -> caption`, run by `runtime/plot_solution.py` in the problem's runtime venv like the verifier — `cli/common.show_solution_plot` adds matplotlib there on first use, saves a PNG and opens it with the system viewer; reads output files, never reruns solution.py; `summit --plot`; heilbronn/circle-packing plots come from their generators), `similarity` — two views of one search's candidates,
   same inputs, nothing stored: `similarity map` (default; `tui/similarity_map.py`
   pure layer, `tui/similarity_mapview.py` screen) embeds every candidate by
   pairwise distance (behavioral / structural / blend, `m` cycles) with

@@ -237,6 +237,22 @@ def test_timeout_still_reports_streamed_tokens(tmp_path: Path):
     assert result.token_usage == {"input_tokens": 300, "output_tokens": 130}
 
 
+def test_a_timed_out_call_is_charged_its_streamed_turns(tmp_path: Path):
+    """No result message means no total_cost_usd; the cost ceiling must still
+    count the call, so each streamed turn is priced at list rate for the
+    model it ran on (sonnet: $2 in, $10 out per million tokens). A turn on a
+    model the table does not know adds nothing rather than a guess."""
+    priced = STUB_STREAMS_THEN_HANGS.replace('{"id": "msg_', '{"model": "claude-sonnet-5-5", "id": "msg_')
+    agent = ClaudeCodeAgent(claude_bin=make_stub(tmp_path, priced))
+    result = agent.invoke(make_request(tmp_path, timeout_s=2))
+    assert result.error_kind == "timeout"
+    assert result.cost_usd == pytest.approx((100 * 2 + 50 * 10 + 200 * 2 + 80 * 10) / 1e6)
+
+    (tmp_path / "u").mkdir()
+    unpriced = ClaudeCodeAgent(claude_bin=make_stub(tmp_path / "u", STUB_STREAMS_THEN_HANGS))
+    assert unpriced.invoke(make_request(tmp_path / "u", timeout_s=2)).cost_usd is None
+
+
 STUB_ERROR_RESULT_WITH_USAGE = f"""#!{sys.executable}
 import json, sys
 sys.stdin.read()

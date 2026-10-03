@@ -1,0 +1,26 @@
+                                                                                                                        
+ Usage: root plot [OPTIONS] [TARGET] [CANDIDATE]                                                                        
+                                                                                                                        
+ Draw a solution the way its problem says: the problem's plot.py (matplotlib).                                          
+                                                                                                                        
+ With no argument, the solution in this folder — what `hillclimb summit`                                                
+ copied here — saved beside it as solution.png; a directory, the solution                                               
+ files in it; a search, its best (or the CANDIDATE named), saved under the                                              
+ machine cache. The PNG opens in your image viewer. plot.py runs in the                                                 
+ problem's runtime venv, like its verifier (matplotlib is added there                                                   
+ once), and reads the solution's output files (submission.csv, …) — it                                                  
+ never reruns solution.py. A problem without plot.py says so; `hillclimb                                                
+ summit --plot` copies the best and draws it in one go.                                                                 
+                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│   [target]         TEXT  what to draw: nothing = the solution in this folder (what `summit` wrote), a folder holding │
+│                          a solution's files, or a search (latest, <run-id> or <run-id>/<search-id>)                  │
+│   [candidate]      TEXT  a candidate of that search (e.g. c003); default: its best                                   │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --problem  -p      TEXT  the problem, when the folder has several                                                    │
+│ --out      -o      PATH  where to save the PNG                                                                       │
+│ --no-open                save the PNG without opening it                                                             │
+│ --help     -h            Show this message and exit.                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

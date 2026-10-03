@@ -68,11 +68,74 @@ Whether the solution may use the internet when the verifier runs it is a
 different setting, the problem's `allow_internet_during_solution`
 ([problems.md](problems.md)).
 
+## Operator homes: your own setup stays out
+
+Operators never run in your own Claude Code or Codex setup. Each coding agent
+gets a home of hillclimb's own under `~/.cache/hillclimb/`:
+
+| coding agent | operator home | what keeps your setup out |
+|---|---|---|
+| Claude Code | `claude-home/<auth>` (`CLAUDE_CONFIG_DIR`) | your `~/.claude` and `~/.claude.json` are unreadable inside the sandbox |
+| codex | `codex-home/<auth>` (`CODEX_HOME`, and a `HOME` of its own) | your `~/.codex` and `~/.agents` are never on its paths |
+
+So your settings, plugins and the hooks they bring, skills, MCP servers and
+history neither change a search nor collect what it leaves behind. Each home
+logs in once, with `hillclimb connect claude` / `hillclimb connect codex`,
+which run the agent's own login inside it. That is a login of its own, never
+a copy of yours (codex spends a refresh token once, so a copy and its original
+cannot both stay valid), and your own logins are left exactly as they are.
+`CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) still works for headless
+machines.
+
+## Skills and standing instructions
+
+What operators know beyond the prompt comes from two layers, written once in
+an agent-neutral form:
+
+```text
+~/.config/hillclimb/agent/      global: every hillclimb dir on this machine
+  AGENTS.md                     standing instructions
+  skills/<name>/SKILL.md        one folder per skill
+<hillclimb dir>/agent/          local: this problem family, committed with it
+  AGENTS.md
+  skills/<name>/SKILL.md
+```
+
+A local skill overrides a global one of the same name; instructions are
+joined, global first. Before every operator call hillclimb writes them into
+the candidate's directory where the running agent reads a project's own:
+`.claude/skills/` and `CLAUDE.md` for Claude Code, `.agents/skills/` and
+`AGENTS.md` for codex and pi. A skill an operator creates there (itself, or
+through a plugin it runs) is added to the local layer, so the next search of
+the family starts with it.
+
+A skill you put in a layer yourself is `manual`. One an operator created gets
+a `skill.yaml` beside its `SKILL.md` (hillclimb's record, never shown to the
+agent): `origin: generated`, which run, search, candidate, agent and model
+wrote it, when, and the hash of what it said then; it reads `generated,
+edited` once changed since. Every candidate's journal entry also records what
+it was given (`agent_context.skills`: name, layer, origin, hash, and the hash
+of the instructions) and which skills it added, the history a skill's track
+record can later be measured from.
+
+- `hillclimb skills` lists them: layer, origin, which call wrote it, what it
+  is for (`--generated`, `--manual` to filter).
+- `hillclimb skills keep <name>` marks a generated skill as reviewed: `manual`
+  from now on, its record kept.
+- `hillclimb skills delete <name> [--global]` removes one.
+
+```yaml
+agent_context:
+  include_global: true          # false keeps this folder to its own layer
+  skip: [some-skill]            # leave skills out by name
+  claude_plugins: [agent/plugins/autoharness]   # Claude Code plugins operators run with
+```
+
 ## Connecting a coding agent
 
 ```
 $ hillclimb connect
-   target      billing       state
+   agent       billing       state
 ●  claude      subscription  ready       logged in (claude.ai, you@example.com) — 6% of the 5-hour window used
    codex       subscription  ready       Logged in using ChatGPT
    pi          subscription  logged-out  no provider logged in at ~/.pi/agent/auth.json
@@ -87,15 +150,15 @@ default.
 
 The state column has three words for an agent: `logged-out` (its own login is
 missing — the fix is that coding agent's login), `logged-in` (the login works, but
-`hillclimb connect <target>` has not completed on this machine — or its cache
+`hillclimb connect <agent>` has not completed on this machine — or its cache
 was wiped — so the fix is `connect`), and `ready` (logged in *and* connected:
 the ping passed and what a search reads is staged). The OpenRouter route says
 `no-key` / `key-set` / `ready` the same way. Only `ready` means a search gets
 through its first operator call without `connect` first.
 
 `hillclimb connect claude` (or `codex`, `pi`, `openrouter`) sets one up: it runs
-that coding agent's own login, stages the credential in the isolated per-auth home
-searches read (`~/.cache/hillclimb/codex-home/…`, `pi-home/…`), pings the route
+that coding agent's login inside its operator home (`~/.cache/hillclimb/claude-home/…`,
+`codex-home/…`, `pi-home/…`), pings the route
 with one tool-free coding agent call — which is where a model the account cannot use
 fails, in seconds instead of mid-search — and pins `agent`/`agent_auth` in
 `~/.config/hillclimb/config.yaml`: the user level, every folder on the machine,
@@ -113,11 +176,11 @@ gitignores — never into `hillclimb.yaml`, where it could be journaled. A folde
 `.env` wins over the user's, the shell over both. `--agent codex --model
 qwen/qwen3-coder` pins the route in the same command.
 
-`hillclimb disconnect <target>` undoes it on hillclimb's side: the pin is
+`hillclimb disconnect <agent>` undoes it on hillclimb's side: the pin is
 commented out of the same config file (`--local` for the folder's `hillclimb.yaml`), the staged
-homes under `~/.cache/hillclimb/` are removed, an OpenRouter key leaves the
-`.env`. The coding agent's own login stays: hillclimb may start a login it needs, it
-never ends one — your Claude, Codex or pi account is yours, not hillclimb's.
+homes under `~/.cache/hillclimb/` are removed (with the operator homes' own
+logins), an OpenRouter key leaves the `.env`. Your own Claude, Codex or pi login
+stays: hillclimb never touches it.
 
 `hillclimb smoke` is the next step up: a whole DRAFT on a real problem.
 

@@ -225,6 +225,11 @@ class Candidate(BaseModel):
     # opaque annotation from the search policy that proposed this candidate
     # (e.g. a MAP-Elites cell); the engine never reads it
     climber_meta: dict = Field(default_factory=dict)
+    # what the coding agent was given beyond the prompt, and what it left:
+    # {"skills": [{name, layer, origin, sha256}], "instructions_sha256",
+    #  "skills_added": [names]} (`harness/agent_context.py`). The history a
+    # skill's track record is measured from; empty for agents with no layout
+    agent_context: dict = Field(default_factory=dict)
     pruned: bool = False        # user cut this lineage; status stays intact
     pruned_reason: str | None = None
     summary: str = ""

@@ -497,6 +497,106 @@ def _run_problem_fleet(
 RESUMABLE_STATES = ("parked", "stopped", "crashed")
 
 
+def _live_engine_pid(store, record: SearchRecord) -> int | None:
+    """The pid of an engine still working on this search, or None. A
+    `running` state is proof enough; otherwise the pid the engine last
+    recorded counts while that process is still a hillclimb process (a
+    foreground engine, or one still draining a stop, may already read as
+    stopped or crashed). A second engine on a live search duplicates its
+    candidates and abandons work the first one still has in flight."""
+    import os
+
+    status = store.read_status(record.key)
+    if status is None or not status.pid:
+        return None
+    if record.state == "running":
+        return status.pid
+    if status.pid == os.getpid():
+        return None
+    try:
+        from hillclimb.harness.orphans import process_table
+
+        proc = process_table().get(status.pid)
+    except Exception:  # noqa: BLE001 - no process listing: trust the state
+        return None
+    return status.pid if proc is not None and "hillclimb" in proc.command else None
+
+
+def _launch_entry(config: Config, record: SearchRecord) -> dict | None:
+    """This search's entry in its run's `spec.yaml`: the settings it was
+    launched with. A run of several problems (a suite) or several climbers
+    (a mixed fleet) has one entry each; the one whose problem resolves to
+    this search's, and whose `set` carries this search's experiment
+    overrides, is it."""
+    import yaml
+
+    from hillclimb.api import RUN_SPEC_FILE
+
+    try:
+        spec = yaml.safe_load((record.search_dir.parents[1] / RUN_SPEC_FILE).read_text()) or {}
+    except (OSError, yaml.YAMLError):
+        return None
+    entries = [entry for entry in spec.get("problems") or [] if isinstance(entry, dict)]
+    if len(entries) > 1:
+        def same_problem(entry: dict) -> bool:
+            try:
+                return load_problem(str(entry.get("target")), config).problem_id == record.meta.problem_id
+            except Exception:  # noqa: BLE001 - an entry that no longer resolves is not this one
+                return False
+
+        entries = [entry for entry in entries if same_problem(entry)]
+        wanted = {f"{key}={value}" for key, value in record.meta.experiment_overrides.items()}
+        if len(entries) > 1 and wanted:
+            entries = [entry for entry in entries if wanted <= set(map(str, entry.get("set") or []))] or entries
+    return entries[0] if entries else None
+
+
+def _restore_launch_settings(config: Config, record: SearchRecord) -> None:
+    """Put back what the search was launched with beyond the folder's
+    hillclimb.yaml: its `--set` settings (spend caps among them), its agents
+    per search and replicates per trial, and its study experiment's
+    overrides. Without them a resumed search runs uncapped."""
+    from hillclimb.config import parse_set_overrides
+
+    entry = _launch_entry(config, record)
+    if entry is not None:
+        if entry.get("parallel_agents") is not None:
+            config.concurrency.parallel_agents = int(entry["parallel_agents"])
+        if entry.get("n_replicates") is not None:
+            config.evaluation.n_replicates = int(entry["n_replicates"])
+        config.apply_overrides(parse_set_overrides([str(pair) for pair in entry.get("set") or []]))
+    if record.meta.experiment_overrides:
+        config.apply_overrides(dict(record.meta.experiment_overrides))
+
+
+def _stop_what_the_dead_engine_left(record: SearchRecord) -> None:
+    """A search whose engine died outright (SIGKILL, a crash) may still have
+    its coding agents and verifiers running, and billing: stop them before
+    the new engine starts its own."""
+    from hillclimb.harness.orphans import stop_orphaned_children
+
+    stopped = stop_orphaned_children(record.search_dir)
+    if stopped:
+        names = ", ".join(sorted({entry.get("program") or "?" for entry in stopped}))
+        warn(f"stopped {len(stopped)} process(es) the dead engine of {record.ref} left running ({names})")
+
+
+def _refuse_unless_resumable(store, record: SearchRecord) -> None:
+    """Exit with a reason when resuming this search would do harm or nothing:
+    an engine is still on it, or it already finished."""
+    pid = _live_engine_pid(store, record)
+    if pid is not None:
+        fail(f"{record.ref} is still running (engine pid {pid}); a second engine would duplicate its work")
+        next_steps([
+            (f"hillclimb stop {record.ref}", "stop it, then resume"),
+            ("hillclimb watch", "follow it instead"),
+        ])
+        raise typer.Exit(1)
+    if record.state == "done":
+        fail(f"{record.ref} finished (done); there is nothing to resume")
+        raise typer.Exit(1)
+
+
 def _spawn_resume(config: Config, record: SearchRecord) -> tuple[int, Path]:
     """Start a detached `hillclimb resume <ref>` engine for this search,
     logging to <run>/logs/resume-<search-id>.log. Returns (pid, log path)."""
@@ -531,13 +631,18 @@ def resume(
     SEARCH is `<run-id>/<search-id>`, `<run-id>`, or `latest`. `--all` resumes
     everything resumable (the counterpart of `hillclimb stop --all`), each as
     its own detached engine — the pause/resume flow for changing code or env
-    under a live project.
+    under a live project. The search continues with the settings it was
+    launched with (its `--set` caps, agents and replicates). A search whose
+    engine is still running, or one that is done, is not resumed.
     """
     config = common.load_config()
     common.require_sandbox(config)
     if all_:
         store = open_store(config)
-        targets = [r for r in store.searches() if r.state in RESUMABLE_STATES]
+        targets = [
+            r for r in store.searches()
+            if r.state in RESUMABLE_STATES and _live_engine_pid(store, r) is None
+        ]
         if not targets:
             say("[head]No parked, stopped, or crashed searches to resume.[/]")
             raise typer.Exit(1)
@@ -546,12 +651,15 @@ def resume(
             say(f"[head]Resuming {_m(record.ref)}[/] ({_m(record.state)}) detached: pid {pid}, log [path]{_m(log_path)}[/]")
         return
     store, record = common.open_search(config, search)
+    _refuse_unless_resumable(store, record)
+    _stop_what_the_dead_engine_left(record)
     if detach:
         pid, log_path = _spawn_resume(config, record)
         say(f"[head]Resuming {_m(record.ref)}[/] ({_m(record.state)}) detached: pid {pid}, log [path]{_m(log_path)}[/]")
         return
     meta, search_dir = record.meta, record.search_dir
     config = common.load_config(agent=meta.agent, model=meta.model)
+    _restore_launch_settings(config, record)
     config.holdout.enabled = meta.holdout_enabled
     if not meta.learning_enabled:
         config.learning.enabled = False  # started without learning: it stays out of the knowledge

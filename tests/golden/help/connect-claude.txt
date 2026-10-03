@@ -3,10 +3,14 @@
                                                                                                                         
  Claude Code as the coding agent, billed to your Claude subscription.                                                   
                                                                                                                         
- The login is Claude Code's own (`claude auth login`); hillclimb only                                                   
- checks it the way an operator will — with `ANTHROPIC_API_KEY` stripped,                                                
- so a key left in the environment cannot masquerade as the subscription.                                                
- `--auth api-key` keeps the key instead, for headless machines.                                                         
+ Operators run in a Claude Code home of hillclimb's own                                                                 
+ (`~/.cache/hillclimb/claude-home`), never your `~/.claude`: your                                                       
+ settings, plugins, skills, MCP servers and history neither change a                                                    
+ search nor collect what it leaves behind. That home logs in once, here                                                 
+ (`claude auth login`, run inside it); your own login is left as it is.                                                 
+ The check strips `ANTHROPIC_API_KEY`, so a key left in the environment                                                 
+ cannot masquerade as the subscription. `--auth api-key` keeps the key                                                  
+ instead, for headless machines.                                                                                        
                                                                                                                         
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --auth                         TEXT  Who pays: subscription (default) | api-key                                      │

@@ -1,11 +1,35 @@
 [project]
 name = "hillclimb"
-version = "0.6.0"
-description = "Auto-hillclimbing CLI for ML engineering tasks: deterministic greedy search over agent-drafted solutions"
+version = "0.7.0"
+description = "Hillclimbing on verifiable rewards: coding agents search for Python programs that optimize a score you define"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
+authors = [{ name = "Rebasian Technologies AB" }]
+keywords = [
+    "hillclimbing",
+    "verifiable-rewards",
+    "coding-agents",
+    "claude-code",
+    "codex",
+    "program-search",
+    "optimization",
+    "evolutionary-search",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Code Generators",
+]
 dependencies = [
     "typer>=0.12",
     "pydantic>=2.7",
@@ -18,7 +42,7 @@ dependencies = [
     "textual>=1.0",
     "pydot>=4.0.1",
     "networkx>=3.0",
-    "plotui>=0.2",
+    "plotui>=0.6",
     # Windows has no `ps`/`os.kill(pid, 0)`: process listing and liveness go through psutil there
     "psutil>=5.9; sys_platform == 'win32'",
 ]
@@ -29,19 +53,27 @@ tui = []
 emflow = [
     "emflow>=0.3.1,<0.4",
 ]
-# `search.policy: openevolve` — MAP-Elites / islands search strategy
+# `selector_policy: map-elites` (the `openevolve` climber) — OpenEvolve's MAP-Elites database
 openevolve = [
     "openevolve>=0.3,<0.4",
 ]
-# `search.policy: gepa` — reflective Pareto search engine
+# `climber: gepa` — reflective Pareto search loop
 gepa = [
     "gepa>=0.1.4,<0.2",
     "optuna>=3.6,<5",
 ]
-# `search.tuner: optuna` — TPE over a candidate's declared params.json
+# `climber.tuner: optuna` — TPE over a candidate's declared params.json
 optuna = [
     "optuna>=3.6,<5",
 ]
+
+[project.urls]
+Homepage = "https://hillclimb.sh"
+Documentation = "https://docs.hillclimb.sh"
+Repository = "https://github.com/rebase-energy/hillclimb"
+Changelog = "https://github.com/rebase-energy/hillclimb/blob/main/CHANGELOG.md"
+Issues = "https://github.com/rebase-energy/hillclimb/issues"
+Discord = "https://discord.gg/DDKh9UtSH"
 
 [project.scripts]
 hillclimb = "hillclimb.cli:main"
@@ -53,11 +85,12 @@ dev = [
     "textual>=1.0",
     "pydot>=4.0.1",
     "networkx>=3.0",
-    "plotui>=0.2",
+    "plotui>=0.6",
     "emflow",
     "openevolve>=0.3,<0.4",
     "gepa>=0.1.4,<0.2",
     "optuna>=3.6,<5",
+    "matplotlib>=3.11.2",
 ]
 
 [tool.uv.sources]

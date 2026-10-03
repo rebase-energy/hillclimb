@@ -22,9 +22,12 @@ report `cpu_s=None`.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
+import threading
 import time
+from pathlib import Path
 
 from hillclimb.harness.oscompat import IS_WINDOWS, kill_group
 
@@ -82,6 +85,71 @@ def descendant_cpu_s(pid: int) -> float:
     return total
 
 
+# --- the ledger of children ---------------------------------------------
+#
+# Every coding agent and verifier an engine starts leads a process group of
+# its own (`start_new_session`), so an engine killed with SIGKILL takes none
+# of them with it: they run on, and a coding agent goes on billing. Each
+# child is written to the search's ledger while it lives, so whoever finds
+# the engine dead (`resume`, `stop`, `kill`) can stop what it left behind
+# (`orphans.stop_orphaned_children`).
+
+CHILDREN_FILE = "children.json"  # in the search dir, while children live
+_ledger: Path | None = None
+_ledger_lock = threading.Lock()
+_live: dict[int, dict] = {}
+
+
+def track_children(path: Path | None) -> None:
+    """Keep the ledger of this process's children at `path` (None: stop, and
+    remove the file). An engine calls it once its search dir exists."""
+    global _ledger
+    with _ledger_lock:
+        if _ledger is not None and path is None:
+            _ledger.unlink(missing_ok=True)
+        _ledger = Path(path) if path is not None else None
+        _live.clear()
+        _write_ledger()
+
+
+def _program(proc: subprocess.Popen) -> str:
+    """What the child runs, past a sandbox wrapper (`sandbox-exec -p PROFILE
+    cmd …`, `bwrap … -- cmd …`), for the messages that name it."""
+    args = [str(a) for a in (proc.args if isinstance(proc.args, (list, tuple)) else str(proc.args).split())]
+    if args and Path(args[0]).name == "sandbox-exec" and len(args) > 3:
+        args = args[3:]
+    elif args and Path(args[0]).name == "bwrap" and "--" in args:
+        args = args[args.index("--") + 1 :]
+    return Path(args[0]).name if args else ""
+
+
+def _write_ledger() -> None:
+    if _ledger is None:
+        return
+    try:
+        if _live:
+            staging = _ledger.with_suffix(".tmp")
+            staging.write_text(json.dumps(list(_live.values())))
+            os.replace(staging, _ledger)
+        else:
+            _ledger.unlink(missing_ok=True)
+    except OSError:
+        pass  # a ledger that cannot be written never costs the search
+
+
+def _track(proc: subprocess.Popen) -> None:
+    with _ledger_lock:
+        if _ledger is not None:
+            _live[proc.pid] = {"pid": proc.pid, "program": _program(proc), "started": time.time()}
+            _write_ledger()
+
+
+def _untrack(pid: int) -> None:
+    with _ledger_lock:
+        if _live.pop(pid, None) is not None:
+            _write_ledger()
+
+
 class Reaper:
     """Waits on one `subprocess.Popen` child through `os.wait4`, so its CPU
     time arrives with its exit status. Use `poll`/`wait` instead of the
@@ -91,6 +159,7 @@ class Reaper:
 
     def __init__(self, proc: subprocess.Popen):
         self.proc = proc
+        _track(proc)  # on the search's ledger until it is reaped
         # user+system seconds of the child and what it waited for, plus the
         # descendants sampled before a group kill; None until reaped, or
         # where the platform cannot say
@@ -100,18 +169,24 @@ class Reaper:
         """The exit code once the child has been reaped, else None."""
         proc = self.proc
         if proc.returncode is not None:
+            _untrack(proc.pid)
             return proc.returncode
         if not hasattr(os, "wait4"):
-            return proc.poll()
+            code = proc.poll()
+            if code is not None:
+                _untrack(proc.pid)
+            return code
         try:
             pid, status, usage = os.wait4(proc.pid, os.WNOHANG)
         except ChildProcessError:  # reaped elsewhere — exit status and cpu lost
             proc.wait()
+            _untrack(proc.pid)
             return proc.returncode
         if pid == 0:
             return None
         proc.returncode = os.waitstatus_to_exitcode(status)
         self.cpu_s = (self.cpu_s or 0.0) + usage.ru_utime + usage.ru_stime
+        _untrack(proc.pid)
         return proc.returncode
 
     def wait(self, timeout: float | None = None) -> int | None:

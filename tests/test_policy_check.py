@@ -320,7 +320,7 @@ def test_cli_checks_a_file_policy_relative_to_the_hillclimb_dir(tmp_path, monkey
     (root / "policies").mkdir(parents=True)
     (root / "hillclimb.yaml").write_text("")
     (root / "policies" / "drafts_only.py").write_text(FILE_POLICY)
-    monkeypatch.chdir(root / "policies")  # any subdirectory resolves the same dir
+    monkeypatch.chdir(root)  # commands run from the hillclimb dir's root
     monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
 
     with pytest.raises(SystemExit) as exc:

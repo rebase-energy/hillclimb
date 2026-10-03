@@ -239,9 +239,10 @@ def say_no_hillclimb_dir(exc) -> None:
     marked up."""
     from hillclimb.project import MARKER_FILE
 
-    say(f"[head]No {MARKER_FILE} found[/] from [path]{_m(exc.start)}[/] upward.", err=True)
+    say(f"[head]No {MARKER_FILE} in[/] [path]{_m(exc.start)}[/].", err=True)
     say(
-        f"Run [cmd]hillclimb init[/] to make this folder a hillclimb dir [note](writes ./{MARKER_FILE})[/], "
+        f"Run hillclimb from the root of a hillclimb dir [note](the folder holding {MARKER_FILE})[/], "
+        f"run [cmd]hillclimb init[/] to make this folder one [note](writes ./{MARKER_FILE})[/], "
         "or set [path]HILLCLIMB_DIR[/] to an existing one.",
         err=True,
     )
@@ -323,17 +324,31 @@ INIT_GITIGNORE = (
 
 # The folders `init` creates beside hillclimb.yaml.
 SCAFFOLD_DIRS = ("problems", "runs")
+# what hillclimb writes into beside hillclimb.yaml: a folder of one of these
+# names that is not hillclimb's means hillclimb goes in a subfolder instead
+OWNED_DIR_NAMES = ("problems", "runs", "knowledge", "climbers")
 
 
 def scaffold_blockers(folder: Path) -> list[Path]:
-    """What stops `folder` from becoming a hillclimb dir: a problems/ or
-    runs/ that is already there and not hillclimb's (a code repo's own).
-    Empty when the folder is free or already a hillclimb dir."""
-    from hillclimb.project import MARKER_FILE
+    """What stops `folder` from becoming a hillclimb dir: a folder of one of
+    hillclimb's names (problems/, runs/, knowledge/, climbers/) that is
+    already there and not hillclimb's (a project's own). Empty when the
+    folder is free or already a hillclimb dir."""
+    from hillclimb.project import MARKER_FILE, is_owned_dir
 
     if (folder / MARKER_FILE).exists():
         return []
-    return [folder / sub for sub in SCAFFOLD_DIRS if (folder / sub).exists()]
+    return [folder / sub for sub in OWNED_DIR_NAMES if (folder / sub).exists() and not is_owned_dir(folder / sub)]
+
+
+def scaffold_target(folder: Path) -> tuple[Path, list[Path]]:
+    """Where a hillclimb dir for `folder` goes: the folder itself, or its
+    `hillclimb/` subfolder when the folder already has folders of hillclimb's
+    names of its own (returned as the second item, for the message)."""
+    from hillclimb.project import SUBFOLDER
+
+    blockers = scaffold_blockers(folder)
+    return (folder / SUBFOLDER, blockers) if blockers else (folder, [])
 
 
 def scaffold_hillclimb_dir(folder: Path) -> Path:
@@ -346,8 +361,13 @@ def scaffold_hillclimb_dir(folder: Path) -> Path:
     missing. Callers check `scaffold_blockers` first."""
     from hillclimb.project import MARKER_FILE
 
+    from hillclimb.project import SUBFOLDER, ensure_owned_dir
+
+    if folder.name == SUBFOLDER and not folder.exists():
+        ensure_owned_dir(folder)  # a hillclimb/ subfolder of hillclimb's: `reset` removes it whole
+    folder.mkdir(parents=True, exist_ok=True)
     for sub in SCAFFOLD_DIRS:
-        (folder / sub).mkdir(parents=True, exist_ok=True)
+        ensure_owned_dir(folder / sub)  # marked: `reset` may delete it
         (folder / sub / ".gitkeep").touch()
     if not (folder / MARKER_FILE).exists():
         (folder / MARKER_FILE).write_text(INIT_CONFIG)
@@ -367,31 +387,38 @@ def scaffold_hillclimb_dir(folder: Path) -> Path:
     return folder
 
 
-def owned_paths(root: Path, config) -> list[Path]:
-    """What `hillclimb reset` deletes from the hillclimb dir `root`: the
-    config and everything hillclimb writes beside it, and nothing else — a
-    hillclimb dir may be a code repo's root. A configured runs_dir or
+def owned_paths(root: Path, config) -> tuple[list[Path], list[Path]]:
+    """What `hillclimb reset` does with the hillclimb dir `root`, as
+    (deleted, kept). Deleted: the config, the sqlite store, and every folder
+    hillclimb created there (it carries a `.hillclimb` marker). Kept: a
+    folder of one of hillclimb's names without the marker — the user's own,
+    or one from before markers existed. A hillclimb dir may be a code repo's
+    root; nothing else in it is touched, and a configured runs_dir or
     problems_dir counts only when it lies inside `root`."""
     from hillclimb.experiment import EXPERIMENTS_DIRNAME
-    from hillclimb.project import MARKER_FILE
+    from hillclimb.project import MARKER_FILE, is_owned_dir
 
-    candidates = [
-        root / MARKER_FILE,
+    files = [root / MARKER_FILE, *sorted(config.store.sqlite_path.parent.glob(config.store.sqlite_path.name + "*"))]
+    folders = [
         config.paths.problems_dir,
         config.paths.runs_dir,
         root / "knowledge",
         root / "climbers",  # cli/climber.py's LOCAL_CLIMBERS_DIRNAME (common imports no command module)
         root / EXPERIMENTS_DIRNAME,
-        *sorted(config.store.sqlite_path.parent.glob(config.store.sqlite_path.name + "*")),
     ]
-    owned: list[Path] = []
+    deleted: list[Path] = []
+    kept: list[Path] = []
     resolved_root = root.resolve()
-    for path in candidates:
+    for path in [*files, *folders]:
         if path.resolve() == resolved_root or not path.resolve().is_relative_to(resolved_root):
             continue
-        if (path.exists() or path.is_symlink()) and path not in owned:
-            owned.append(path)
-    return owned
+        if not (path.exists() or path.is_symlink()) or path in deleted or path in kept:
+            continue
+        if path in folders and path.is_dir() and not path.is_symlink() and not is_owned_dir(path):
+            kept.append(path)
+        else:
+            deleted.append(path)
+    return deleted, kept
 
 
 def parse_budget(value: str) -> int:
@@ -448,3 +475,122 @@ def _parse_set(pairs: list[str]) -> dict:
         return parse_set_overrides(pairs)
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
+
+
+def folder_problem(config: Config, problem: str | None):
+    """The problem a folder-level command means: the one named, else the
+    only problem this hillclimb dir has searched, else the only one in its
+    problems/ — a usage error naming the choices when that is ambiguous."""
+    from hillclimb.problem import load_problem
+
+    if problem:
+        return load_problem(problem, config)
+    store = open_store(config)
+    try:
+        records = store.searches()
+    finally:
+        store.close()
+    by_key: dict[str, SearchRecord] = {}
+    for record in records:  # oldest first: the newest record wins its key
+        by_key[record.meta.problem_key or record.meta.problem_id] = record
+    if len(by_key) == 1:
+        return load_problem(next(iter(by_key.values())).meta.problem, config)
+    if not by_key:
+        folders = sorted(
+            p.name for p in config.paths.problems_dir.iterdir() if (p / "problem.yaml").is_file()
+        ) if config.paths.problems_dir.is_dir() else []
+        if len(folders) == 1:
+            return load_problem(folders[0], config)
+        choices = folders
+    else:
+        choices = sorted(by_key)
+    raise typer.BadParameter(
+        "which problem? " + (f"this folder has {', '.join(choices)}" if choices else "this folder has none")
+        + " — name one with --problem"
+    )
+
+
+def _ensure_matplotlib(python: Path) -> None:
+    """matplotlib in a problem's runtime venv, installed once on first plot
+    (the solution package sets do not carry it — a search never plots)."""
+    import subprocess
+
+    from hillclimb.harness.oscompat import lock_file
+
+    def has_it() -> bool:
+        return subprocess.run([str(python), "-c", "import matplotlib"], capture_output=True).returncode == 0
+
+    if has_it():
+        return
+    venv_dir = python.parents[1]
+    with open(f"{venv_dir}.lock", "w") as lock:  # the lock the venv build takes
+        lock_file(lock)
+        if has_it():
+            return
+        say(f"[note]Adding matplotlib to the problem's runtime venv ({_m(venv_dir.name)}), once ...[/]")
+        done = subprocess.run(
+            ["uv", "pip", "install", "matplotlib", "--python", str(python)], capture_output=True, text=True
+        )
+        if done.returncode != 0:
+            fail("Could not add matplotlib to the runtime venv (first use needs network):")
+            say(f"    [note]{_m(done.stderr.strip()[-600:])}[/]", err=True)
+            raise typer.Exit(1)
+
+
+def open_file(path: Path) -> None:
+    """Open a file in the system's own viewer, best effort."""
+    import os
+    import subprocess
+    import sys
+
+    try:
+        if sys.platform == "darwin":
+            subprocess.run(["open", str(path)], check=False)
+        elif sys.platform == "win32":
+            os.startfile(str(path))  # type: ignore[attr-defined]
+        else:
+            subprocess.run(["xdg-open", str(path)], check=False, capture_output=True)
+    except OSError:
+        pass
+
+
+def show_solution_plot(
+    config: Config, problem, solution_dir: Path, where: str, out: Path, *, open_it: bool = True
+) -> None:
+    """Draw `solution_dir` with the problem's plot.py — matplotlib, run in the
+    problem's runtime venv like its verifier — save it to `out` and open it;
+    or say why there is nothing to draw."""
+    import subprocess
+    from importlib import resources
+
+    from hillclimb.api import ensure_runtime_venv
+
+    if problem.plot_path is None:
+        say(
+            f"[warn]{_m(problem.problem_id)} ships no plot.py[/] [note]— add one to the problem dir "
+            "(def plot(solution_dir, ax) drawing its output files with matplotlib) to see its solutions[/]"
+        )
+        raise typer.Exit(1)
+    python = ensure_runtime_venv(
+        config, kind=problem.runtime, requirements=problem.requirements_file,
+        log=lambda line: say(f"[note]{_m(line)}[/]"),
+    )
+    _ensure_matplotlib(python)
+    title = f"{problem.problem_id} · {where}"
+    with resources.as_file(resources.files("hillclimb.runtime") / "plot_solution.py") as runner:
+        done = subprocess.run(
+            [str(python), str(runner), str(problem.plot_path), str(Path(solution_dir).resolve()), str(out), title],
+            capture_output=True, text=True,
+        )
+    if done.returncode != 0 or not out.is_file():
+        fail(f"Cannot plot {_m(where)}: {_m(problem.plot_path.name)} failed")
+        for line in (done.stderr or done.stdout).strip().splitlines()[-12:]:
+            say(f"    [note]{_m(line)}[/]", err=True)
+        raise typer.Exit(1)
+    caption = next(
+        (line[len("caption: "):] for line in done.stdout.splitlines() if line.startswith("caption: ")), ""
+    )
+    say(f"[head]{_m(problem.problem_id)}[/] · {_m(where)}" + (f": {_m(caption)}" if caption else ""))
+    say(f"  wrote [path]{_m(out)}[/]")
+    if open_it:
+        open_file(out)

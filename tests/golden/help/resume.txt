@@ -6,7 +6,9 @@
  SEARCH is `<run-id>/<search-id>`, `<run-id>`, or `latest`. `--all` resumes                                             
  everything resumable (the counterpart of `hillclimb stop --all`), each as                                              
  its own detached engine — the pause/resume flow for changing code or env                                               
- under a live project.                                                                                                  
+ under a live project. The search continues with the settings it was                                                    
+ launched with (its `--set` caps, agents and replicates). A search whose                                                
+ engine is still running, or one that is done, is not resumed.                                                          
                                                                                                                         
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │   [search]      TEXT  [default: latest]                                                                              │

@@ -1,0 +1,15 @@
+                                                                                                                        
+ Usage: root skills [OPTIONS] COMMAND [ARGS]...                                                                         
+                                                                                                                        
+ The skills operators are given: the global layer and this folder's own                                                 
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --generated            Only skills an operator or a plugin wrote                                                     │
+│ --manual               Only skills a person wrote or kept                                                            │
+│ --help       -h        Show this message and exit.                                                                   │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ delete  Delete a skill from this folder's layer (or, with --global, from the global one).                            │
+│ keep    Mark a generated skill as reviewed and kept: it is `manual` from now on.                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

@@ -16,25 +16,36 @@ my-project/
 
 `hillclimb init DIR` makes `DIR` (created if missing) the hillclimb dir
 instead — `hillclimb init hillclimb` keeps everything in a `hillclimb/`
-subfolder of a repo. `init` refuses a folder that already has a `problems/`
-or `runs/` of its own and suggests the subfolder. `hillclimb problem get`
-in a folder with no hillclimb dir offers to make the current folder one.
+subfolder of a repo. When a folder already has a `problems/`, `runs/`,
+`knowledge/` or `climbers/` of its own, `init` does that by itself: hillclimb
+keeps to `./hillclimb/`, and every command finds it from anywhere in the
+project. `hillclimb problem get` in a folder with no hillclimb dir offers to
+make one, by the same rule.
+
+Every folder hillclimb creates carries a hidden `.hillclimb` file. That is
+what marks it as hillclimb's: a folder of the same name without one is yours,
+and hillclimb never deletes it.
 
 `hillclimb climber new <name>` adds `climbers/<name>.py` beside them (see
 [climbers.md](climbers.md)); learning writes `knowledge/`, experiments live in
 `experiments/`.
 
-Commands work from any subdirectory — the hillclimb dir is found by upward
-search for `hillclimb.yaml` (like git). Without one, commands error and point
-you at `hillclimb init`; `HILLCLIMB_DIR` pins it explicitly.
+Commands run from the hillclimb dir's root: the folder holding
+`hillclimb.yaml`, or a project root whose `hillclimb/` subfolder holds one.
+There is no upward search — a folder further up the tree that happens to hold
+a `hillclimb.yaml` (a hillclimb checkout beside your project, say) is never
+taken for yours. From anywhere else, commands error and point you at
+`hillclimb init`; `HILLCLIMB_DIR` pins it explicitly.
 
 Config precedence, highest first: CLI flags → the hillclimb dir's
 `hillclimb.yaml` → user `~/.config/hillclimb/config.yaml` → built-in defaults.
 
 `hillclimb reset` stops this dir's engines and deletes what hillclimb made in
-it — `hillclimb.yaml`, `problems/`, `runs/`, `knowledge/`, `climbers/`,
-`experiments/` and the sqlite store — and nothing else, since the hillclimb
-dir may be your repo's root.
+it — `hillclimb.yaml`, the sqlite store, and the folders carrying the
+`.hillclimb` marker (`problems/`, `runs/`, `knowledge/`, `climbers/`, and a
+`hillclimb/` subfolder it created) — and nothing else, since the hillclimb dir
+may be your repo's root; `experiments/` with your study specs stays. Without
+`--yes` it lists what it will delete and what it keeps, then asks.
 
 Machine-scoped state is shared across hillclimb dirs under `~/.cache/hillclimb/`
 (honors `XDG_CACHE_HOME`; `HILLCLIMB_CACHE_DIR` overrides): solution-runtime

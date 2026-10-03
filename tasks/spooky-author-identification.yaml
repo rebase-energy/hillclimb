@@ -1,3 +1,0 @@
-comp_id: spooky-author-identification
-metric: multi-class-log-loss
-higher_is_better: false

@@ -2,8 +2,8 @@
 # search). Precedence: CLI flags > this file > ~/.config/hillclimb/config.yaml
 # > built-in defaults.
 
-emflow:
-  source: "-e ../emflow"  # local checkout; drop for the PyPI/git default
+# emflow:
+#   source: "-e ../emflow"  # a local emflow checkout instead of the PyPI release
 
 # einsteinarena:
 #   base_url: https://einsteinarena.com

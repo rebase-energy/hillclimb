@@ -38,7 +38,7 @@ from textual.widgets import Footer, Label
 
 from hillclimb.tui.chart import EXPERIMENT_PALETTE
 from hillclimb.config import Config
-from hillclimb.tui.header import HillclimbHeader, TimezoneMixin
+from hillclimb.tui.header import APP_TITLE, HillclimbHeader, TimezoneMixin
 from hillclimb.harness.journal import Journal
 from hillclimb.problem import ProblemSpec, load_problem
 from hillclimb.tui.similarity import (
@@ -469,6 +469,7 @@ class RunSimilarityScreen(RunScopeMixin, SimilarityScreen):
 
 class SimilarityApp(TimezoneMixin, App):
     """Standalone shell for `hillclimb similarity`."""
+    TITLE = f"{APP_TITLE} similarity"  # the header names the command that opened it
 
     BINDINGS = [Binding("t", "choose_timezone", "time zone", show=False)]
     CSS = HILLCLIMB_CSS

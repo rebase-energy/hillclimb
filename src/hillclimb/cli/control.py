@@ -1,4 +1,4 @@
-"""`hillclimb ps|stop|prune|kill|reset`: controlling live engines."""
+"""`hillclimb ps|top|stop|prune|kill|reset`: controlling live engines."""
 
 from __future__ import annotations
 
@@ -48,12 +48,33 @@ def _load_config_or_reap_orphans(all_: bool) -> Config:
         raise typer.Exit(0)
 
 
+def _stop_orphaned_children(records) -> int:
+    """Stop what dead engines left running for these searches (their coding
+    agents and verifiers, still billing). Returns how many were stopped."""
+    from hillclimb.harness.orphans import stop_orphaned_children
+
+    total = 0
+    for record in records:
+        if record.state == "running":
+            continue  # a live engine stops its own
+        stopped = stop_orphaned_children(record.search_dir)
+        if stopped:
+            names = ", ".join(sorted({entry.get("program") or "?" for entry in stopped}))
+            say(f"[head]Stopped[/] {len(stopped)} process(es) the dead engine of [path]{_m(record.ref)}[/] left running [note]({_m(names)})[/]")
+            total += len(stopped)
+    return total
+
+
 def _search_targets(config: Config, search: str, all_: bool) -> tuple[DataStore, list[SearchRecord]]:
-    """The searches a stop/kill applies to: every running one, or the ref."""
+    """The searches a stop/kill applies to: every running one, or the ref.
+    Searches whose engine died first have what it left running stopped."""
     if not all_:
         store, record = common.open_search(config, search)
+        if record.state != "running" and _stop_orphaned_children([record]):
+            raise typer.Exit(0)
         return store, [record]
     store = open_store(config)
+    _stop_orphaned_children(store.searches())
     running = running_searches(store)
     if not running:
         say("[head]No running searches.[/]")
@@ -61,43 +82,97 @@ def _search_targets(config: Config, search: str, all_: bool) -> tuple[DataStore,
     return store, running
 
 
+def _ps_frame(width: int, *, max_height: int | None = None, footer: str | None = None, table=None):
+    """One `hillclimb ps` frame: the boxed machine + processes view."""
+    from hillclimb.tui.machine import scan
+    from hillclimb.tui.psview import render_ps
+
+    try:
+        slots = Config.load(require_dir=False).concurrency.effective_machine_max_agents()
+    except Exception:
+        slots = None
+    # compute only: no search records (that is `watch`'s), the engine as the
+    # root of its own tree
+    machine, engines = scan(table=table, agent_slots=slots, read_searches=False, root_guides=True)
+    return render_ps(machine, engines, width, max_height=max_height, footer=footer)
+
+
+def _watch_ps(interval: float) -> None:
+    """Redraw the frame in place every `interval` seconds until ctrl+c —
+    plain terminal output, like `watch hillclimb ps`, sized to the terminal
+    so it stays on one screen; `hillclimb top` is the interactive one."""
+    import time
+
+    from rich.live import Live
+
+    console = common._console()
+    footer = f"[note] every {interval:g}s · ctrl+c to quit · [cmd]hillclimb top[/] to sort, stop or open them[/]"
+
+    def frame():
+        return _ps_frame(console.width, max_height=console.height, footer=footer)
+
+    try:
+        with Live(frame(), console=console, auto_refresh=False, vertical_overflow="crop") as live:
+            while True:
+                time.sleep(interval)
+                live.update(frame(), refresh=True)
+    except KeyboardInterrupt:
+        pass
+
+
 @app.command()
-def ps():
-    """Every process hillclimb is responsible for on this machine.
+def ps(
+    watch: bool = typer.Option(False, "--watch", "-w", help="Keep redrawing it in place until ctrl+c"),
+    interval: float = typer.Option(1.0, "--interval", "-n", help="Seconds between redraws with --watch"),
+):
+    """Every process hillclimb is responsible for on this machine — compute only.
 
-    One block per live engine (`hillclimb run`), with its coding agents, verifiers
-    and their children nested underneath. Engines whose hillclimb dir has
-    been deleted are tagged `orphan` — `hillclimb stop --all` reaps those.
+    One box, sized to the terminal: the machine at a glance (engines, coding
+    agents against the machine's slot cap, cpu, memory) above one
+    process table — each engine on a row of its own (its problem and
+    hillclimb dir), its processes nested under it. A hillclimb command
+    computing in a terminal (`verify`, `grade`, `run --no-detach`) gets a
+    block of its own the same way. Roles: agent (a coding
+    agent), tool (a command the coding agent runs itself, e.g. trying its
+    solution), mcp (a server it loaded from your own Claude config),
+    verifier (a scored run) and solution (what the verifier runs). Engines
+    whose hillclimb dir has been deleted are marked orphan — `hillclimb stop
+    --all` reaps those. `--watch` redraws it every second; search progress
+    is `hillclimb watch`, and `hillclimb top` sorts, stops and opens them.
     """
-    from hillclimb.harness.orphans import engine_trees, process_table
-
-    table = process_table()
-    trees = engine_trees(table)
-    if not trees:
-        say("[head]No hillclimb engines running.[/]")
+    if watch:
+        if interval <= 0:
+            fail("--interval must be positive.")
+            raise typer.Exit(1)
+        _watch_ps(interval)
         return
-    total = 0
-    for engine, kids in trees:
-        proc = table[engine.pid]
-        where = str(engine.hillclimb_dir) if engine.hillclimb_dir else "?"
-        tag = "  [orphan: dir deleted]" if engine.hillclimb_dir and not engine.hillclimb_dir.exists() else ""
-        argv = proc.command.split("hillclimb.cli run", 1)[-1].strip()
-        say(f"[head]engine pid {proc.pid}[/]  up {_m(proc.elapsed)}  run [cmd]{_m(argv)}[/]")
-        say(f"  dir [path]{_m(where)}[/][warn]{_m(tag)}[/]")
-        for kid in kids:
-            role = (
-                "agent" if "claude -p" in kid.command or "claude --" in kid.command
-                else "verifier" if "verifier.sh" in kid.command
-                else "child"
-            )
-            say(
-                f"  {role:8} pid {kid.pid:<6} cpu {kid.cpu:5.1f}%  mem {kid.rss_mb:6.0f}M  "
-                f"up {_m(kid.elapsed):>8}  [note]{_m(kid.command[:70])}[/]"
-            )
-        total += 1 + len(kids)
-    cpu = sum(table[e.pid].cpu for e, _ in trees) + sum(k.cpu for _, kids in trees for k in kids)
-    mem = sum(table[e.pid].rss_mb for e, _ in trees) + sum(k.rss_mb for _, kids in trees for k in kids)
-    say(f"[head]{len(trees)} engine(s)[/], {total} processes, {cpu:.0f}% cpu, {mem:.0f}M rss")
+    console = common._console()
+    console.print(_ps_frame(console.width))
+
+
+@app.command()
+def top():
+    """The control pane for every hillclimb process on this machine.
+
+    `hillclimb ps`, live and with controls: the machine at a glance
+    (engines, coding agents against the machine's slot cap, cpu, memory)
+    above one table where each engine heads its own process tree — coding
+    agents, their tool shells and MCP servers, verifiers and the solution
+    they score. Works from any folder. Keys act on the highlighted row:
+    s=stop its engine (resumable), g=stop gracefully, k=kill that process
+    and what it started (on an engine row: the whole engine), o=change the
+    order of the engines, r=reverse it, q=quit. Search progress is
+    `hillclimb watch`.
+    """
+    try:
+        from hillclimb.tui.top import TopApp
+    except ModuleNotFoundError as exc:
+        raise typer.BadParameter("`hillclimb top` needs the TUI extra: pip install 'hillclimb[tui]'") from exc
+    try:
+        slots = Config.load(require_dir=False).concurrency.effective_machine_max_agents()
+    except Exception:
+        slots = None
+    TopApp(agent_slots=slots).run()
 
 
 @app.command()
@@ -217,10 +292,12 @@ def reset(
 
     The hillclimb dir is the one found from the current directory (or
     `HILLCLIMB_DIR`). Only engines pinned to that exact dir are signalled —
-    their coding agents and verifiers go with them — then hillclimb.yaml and the
-    folders beside it that hillclimb owns (problems/, runs/, knowledge/,
-    climbers/, experiments/, the sqlite store) are removed. Anything else in
-    the folder — your code, .env, .gitignore — stays. Searches of other
+    their coding agents and verifiers go with them — then hillclimb.yaml, the
+    sqlite store and the folders hillclimb created beside it (each carries a
+    hidden `.hillclimb` file: problems/, runs/, knowledge/, climbers/) are
+    removed. A folder of the same name without the marker is yours and stays,
+    and so does everything else in the folder — your code, .env, .gitignore.
+    Without --yes it lists what goes and what stays first. Searches of other
     folders on the machine are untouched. `runs_dir` or `problems_dir`
     configured outside the hillclimb dir are left in place and reported.
     """
@@ -237,10 +314,14 @@ def reset(
     mine = engines_for(root, engines)
     unknown = [e for e in engines if e.hillclimb_dir is None]
 
-    owned = common.owned_paths(root, config)
-    say(f"[head]Will delete[/] from [path]{_m(root)}[/]:")
+    owned, kept = common.owned_paths(root, config)
+    say(f"[head]Will delete[/] from [path]{_m(root)}[/] [note](what hillclimb created)[/]:")
     for path in owned:
         say(f"  [path]{_m(path.relative_to(root))}{'/' if path.is_dir() else ''}[/]")
+    if kept:
+        say("[head]Will keep[/] [note](no .hillclimb marker: yours, or made before hillclimb marked its folders)[/]:")
+        for path in kept:
+            say(f"  [path]{_m(path.relative_to(root))}/[/]")
     if mine:
         say(f"and terminate {len(mine)} engine(s) running against it [note](with their coding agents and verifiers)[/]:")
         for engine in mine:
@@ -273,5 +354,12 @@ def reset(
         if path.is_dir() and not path.is_symlink():
             shutil.rmtree(path)
         else:
-            path.unlink()
+            path.unlink(missing_ok=True)
+    from hillclimb.project import OWNED_MARKER, is_owned_dir
+
+    left = [p.name for p in root.iterdir() if p.name not in (OWNED_MARKER, ".gitignore")] if root.is_dir() else []
+    if is_owned_dir(root) and not left:
+        shutil.rmtree(root)  # a hillclimb/ subfolder hillclimb made, now empty of anything else
+        say(f"[head]Reset[/]: removed [path]{_m(root)}[/]")
+        return
     say(f"[head]Reset[/] [path]{_m(root)}[/] [note](it is no longer a hillclimb dir)[/]")

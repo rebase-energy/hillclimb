@@ -1,5 +1,5 @@
-"""Module paths that moved (the package-layout refactor, docs/package-layout-plan.md;
-the 0.6 split of integrations/).
+"""Module paths that moved (the package-layout refactor into harness/,
+modules/, tui/ and cli/; the 0.6 split of integrations/).
 
 Run folders carry `module:Class` refs — a search's climber snapshot, the
 the `climber_spec` in search.yaml, a `similarity:` entry in config.yaml —

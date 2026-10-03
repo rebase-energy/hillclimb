@@ -11,6 +11,8 @@ import sys
 from importlib import resources
 from pathlib import Path
 
+import yaml
+
 DEMO_PROBLEM_ID = "circle-packing"
 
 # The example catalog, in ladder order: construction problems in one shape —
@@ -76,10 +78,16 @@ def install_demo_problem(
     problems_dir.mkdir(parents=True, exist_ok=True)
     skip = "verifier.sh" if windows else "verifier.py"
     with resources.as_file(source_resource) as source:
+        # a two-step problem (`score:` in problem.yaml) has no verifier to pick
+        two_step = "score" in (yaml.safe_load((source / "problem.yaml").read_text()) or {})
         shutil.copytree(
             source, target, dirs_exist_ok=True,
-            ignore=lambda directory, names: {skip} & set(names) if Path(directory) == source else set(),
+            ignore=lambda directory, names: (
+                ({skip} & set(names) if Path(directory) == source else set()) | ({"__pycache__"} & set(names))
+            ),
         )
+    if two_step:
+        return target, True
     if windows:
         if not (target / "verifier.py").exists():
             shared = resources.files(__package__) / WINDOWS_VERIFIER
@@ -88,3 +96,31 @@ def install_demo_problem(
         # wheels keep mode bits, but a copy through some installers does not
         (target / "verifier.sh").chmod(0o755)
     return target, True
+
+
+# `hillclimb problem new`: a working two-step problem (run.py, score.py) to
+# edit into your own. Two steps need no bash, so it runs on Windows as it is.
+SCAFFOLD = "_scaffold"
+SCAFFOLD_TOKEN = "__PROBLEM_ID__"
+PROBLEM_ID_PATTERN = r"[a-z0-9][a-z0-9._-]*"
+
+
+def scaffold_problem(problems_dir: Path, problem_id: str) -> Path:
+    """Write a new problem named `problem_id` into `problems_dir` from the
+    scaffold. Refuses an id that is not a plain folder name, and a folder
+    that already exists (it may hold the user's work)."""
+    import re
+
+    if not re.fullmatch(PROBLEM_ID_PATTERN, problem_id):
+        raise ValueError(
+            f"problem id {problem_id!r} must be lowercase letters, digits, '.', '_' or '-', "
+            "starting with a letter or digit"
+        )
+    target = problems_dir / problem_id
+    if target.exists():
+        raise FileExistsError(f"{target} already exists")
+    target.mkdir(parents=True)
+    for item in sorted((resources.files(__package__) / SCAFFOLD).iterdir(), key=lambda item: item.name):
+        if item.is_file():
+            (target / item.name).write_text(item.read_text().replace(SCAFFOLD_TOKEN, problem_id))
+    return target

@@ -1,0 +1,30 @@
+# __PROBLEM_ID__: written by `hillclimb problem new`. It runs as it is (a
+# number-partitioning example); replace the example with your own problem.
+#
+#   hillclimb verify __PROBLEM_ID__ --repeat 3     scores baseline.py; check this first
+#   hillclimb run __PROBLEM_ID__ --budget 10m      then climb
+
+problem_id: __PROBLEM_ID__
+metric: mean-log10-imbalance     # a name for the score, shown in every view
+higher_is_better: false          # true or false: which way the search climbs
+
+description: description.md      # what the coding agents read before drafting
+contract: contract.md            # the interface solution.py must implement
+
+# Two steps, each in a sandbox of its own: run.py calls the solution and
+# writes what it returned, then score.py checks that and writes the score.
+run: run.py
+score: score.py
+time_limit_s: 60                 # a solution that runs longer is a failed attempt
+
+baseline: baseline.py            # the starting solution, scored at t=0 as c000
+time_budget_s: 600               # the default `hillclimb run --budget`
+allow_internet_during_solution: false
+
+# Optional, when you need them:
+# requirements: requirements.txt   # packages the solution and scorer may import
+# private: [hidden]                # files only score.py may read (hidden labels)
+# holdout: true                    # also score the selected solution on a hidden split
+# holdout_inputs: [holdout]        # inputs only the holdout split reads
+# chart_baselines:                 # reference lines in `hillclimb chart`
+#   best known: 0.0

@@ -1,61 +1,38 @@
-"""Official evaluator for the bin-packing problem.
+"""Official scorer for the bin-packing problem.
 
-Imports `pack` from the solution in the working directory, runs it on 50
-fixed instances (seed 0 = validation, seed 1 = holdout), validates every
-packing, and scores the mean bin count. Writes `eval_result.json` (score +
-report) and prints the final `val_score:` line — hillclimb's evaluator
-contract. Stdlib only.
+run.py has already called the solution's `pack` on 50 fixed instances, in the
+solution's own sandbox, and written packings.json. This validates every
+packing against instances it builds itself, scores the mean bin count, writes
+`eval_result.json` (score + report) and prints the final `val_score:` line.
+It never imports the solution. Stdlib only.
 """
 
 from __future__ import annotations
 
 import json
 import math
-import os
-import random
 import sys
+from pathlib import Path
 
-N_INSTANCES = 50
-N_ITEMS = 120
-CAPACITY = 1.0
-TOL = 1e-9
+from instances import CAPACITY, TOL, make_instances, seed_for, validate
+
 WORST_K = 6
-
-
-def make_instances(seed: int) -> list[list[float]]:
-    rng = random.Random(seed)
-    return [
-        [round(rng.uniform(0.05, 0.7), 9) for _ in range(N_ITEMS)]
-        for _ in range(N_INSTANCES)
-    ]
-
-
-def validate(items: list[float], bins: list[list[float]]) -> str | None:
-    if not isinstance(bins, list) or not all(isinstance(b, list) for b in bins):
-        return "pack() must return a list of bins (list[list[float]])"
-    packed = sorted(value for b in bins for value in b)
-    expected = sorted(items)
-    if len(packed) != len(expected) or any(
-        abs(a - b) > TOL for a, b in zip(packed, expected)
-    ):
-        return "bins do not partition the input items (missing/extra/altered values)"
-    for index, b in enumerate(bins):
-        if sum(b) > CAPACITY + TOL:
-            return f"bin {index} overflows capacity ({sum(b):.6f} > {CAPACITY})"
-        if not b:
-            return f"bin {index} is empty"
-    return None
 
 
 def main() -> None:
     split = "holdout" if "--holdout" in sys.argv else "validation"
-    sys.path.insert(0, os.getcwd())
-    import solution
-
-    instances = make_instances(seed=1 if split == "holdout" else 0)
+    instances = make_instances(seed_for(split))
+    try:
+        recorded = json.loads(Path("packings.json").read_text())
+    except (OSError, ValueError) as exc:
+        print(f"no packings to score: {exc}", file=sys.stderr)
+        sys.exit(1)
+    packings = recorded.get("packings") if isinstance(recorded, dict) else None
+    if recorded.get("split") != split or not isinstance(packings, list) or len(packings) != len(instances):
+        print(f"packings.json must hold one packing per {split} instance", file=sys.stderr)
+        sys.exit(1)
     results = []
-    for index, items in enumerate(instances):
-        bins = solution.pack(list(items), CAPACITY)
+    for index, (items, bins) in enumerate(zip(instances, packings)):
         error = validate(items, bins)
         if error is not None:
             print(f"instance {index}: INVALID packing — {error}", file=sys.stderr)

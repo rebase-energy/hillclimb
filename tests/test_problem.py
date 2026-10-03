@@ -259,15 +259,18 @@ def test_bin_packing_repo_problem_loads_and_scores(config, tmp_path):
     from hillclimb.harness.dirs import create_search_dir
 
     spec = load_problem("bin-packing", config)
-    assert spec.verifier_cmd[0].endswith("problems/bin-packing/verifier.sh")
-    assert spec.holdout_cmd == spec.verifier_cmd + ["--holdout"]
+    # two steps: run.py calls the solution's `pack`, evaluate.py scores what it wrote
+    assert spec.verifier_cmd[1].endswith("problems/bin-packing/run.py")
+    assert spec.score_cmd[1].endswith("problems/bin-packing/evaluate.py")
+    assert spec.holdout_cmd == spec.verifier_cmd
+    assert [p.name for p in spec.holdout_inputs] == ["holdout"]
     assert spec.baseline_text is not None
     assert "pack(items" in spec.contract
 
     search_dir = create_search_dir(tmp_path / "runs" / "r1", "bin-packing")
     from hillclimb.harness.evaluation import CandidateEvaluator
 
-    executor = CommandExecutor(Path(sys.executable), spec.verifier_cmd)
+    executor = CommandExecutor(Path(sys.executable), spec.verifier_cmd, score_argv=spec.score_cmd)
     evaluator = CandidateEvaluator(executor=executor, problem=spec, config=config)
     baseline = write_baseline(spec, search_dir, evaluator=evaluator, timeout_s=120)
     assert baseline.val_score is not None

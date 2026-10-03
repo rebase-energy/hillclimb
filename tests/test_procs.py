@@ -78,3 +78,56 @@ def test_agent_cpu_reaches_the_journal(task, config):
     assert len(drafted) == 1
     assert drafted[0].agent.cpu_s == 12.5
     assert drafted[0].agent.total_tokens == 10
+
+
+def test_the_ledger_lists_children_while_they_live(tmp_path):
+    """An engine killed with SIGKILL takes none of its children with it: the
+    ledger in the search dir is how resume/stop/kill find them."""
+    import json
+    import subprocess
+
+    from hillclimb.harness import procs
+
+    ledger = tmp_path / procs.CHILDREN_FILE
+    procs.track_children(ledger)
+    try:
+        proc = subprocess.Popen(["sleep", "5"], start_new_session=True)
+        reaper = procs.Reaper(proc)
+        [entry] = json.loads(ledger.read_text())
+        assert entry["pid"] == proc.pid and entry["program"] == "sleep"
+        reaper.kill_group()
+        assert not ledger.exists()  # reaped: off the ledger
+    finally:
+        procs.track_children(None)
+
+
+def test_what_a_dead_engine_left_running_is_stopped(tmp_path):
+    """A child still leading its own process group is stopped with its
+    group; a pid that no longer leads one (recycled) is left alone."""
+    import json
+    import os
+    import subprocess
+
+    from hillclimb.harness import procs
+    from hillclimb.harness.orphans import stop_orphaned_children
+
+    leader = subprocess.Popen(["sleep", "30"], start_new_session=True)
+    entries = [
+        {"pid": leader.pid, "program": "sleep", "started": 0},
+        {"pid": os.getpid(), "program": "python", "started": 0},  # alive, but no group leader of its own
+    ]
+    (tmp_path / procs.CHILDREN_FILE).write_text(json.dumps(entries))
+    stopped = stop_orphaned_children(tmp_path, grace_s=2)
+    assert [entry["pid"] for entry in stopped] == [leader.pid]
+    assert leader.wait(timeout=5) is not None
+    assert not (tmp_path / procs.CHILDREN_FILE).exists()
+
+
+def test_a_sandbox_wrapper_is_named_by_what_it_runs():
+    from types import SimpleNamespace
+
+    from hillclimb.harness.procs import _program
+
+    assert _program(SimpleNamespace(args=["sandbox-exec", "-p", "(version 1)", "/usr/local/bin/claude", "-p"])) == "claude"
+    assert _program(SimpleNamespace(args=["bwrap", "--ro-bind", "/", "/", "--", "bash", "verifier.sh"])) == "bash"
+    assert _program(SimpleNamespace(args=["codex", "exec"])) == "codex"

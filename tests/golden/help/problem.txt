@@ -1,7 +1,7 @@
                                                                                                                         
  Usage: root problem [OPTIONS] COMMAND [ARGS]...                                                                        
                                                                                                                         
- Ready-made verifier problems shipped with hillclimb.                                                                   
+ Problems: copy a bundled one, or start your own.                                                                       
                                                                                                                         
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --help  -h        Show this message and exit.                                                                        │
@@ -9,5 +9,6 @@
 ╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ get   Copy a ready-made problem into problems/.                                                                      │
 │ list  List every problem bundled with hillclimb.                                                                     │
+│ new   Start a problem of your own in problems/<problem>.                                                             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 

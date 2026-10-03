@@ -296,7 +296,7 @@ class Climber:
 
         `problem` is a `Problem` or a problem id; `options` are what
         `hillclimb.run` takes (`budget` — a `Budget` or "10m" —, `agent`,
-        `model`, `learning`, `holdout`, `seed_from`, `name`, `config`, `log`)."""
+        `model`, `learning`, `holdout`, `seed_from`, `name`, `config`, `log`, `hints`)."""
         self.start(problem, **options).finish()
         return self
 

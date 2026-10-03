@@ -28,6 +28,35 @@ ENGINE_RE = re.compile(r"^\S*python\S*\s+-m\s+hillclimb\.cli\s+(?:run|resume)\b"
 _DIR_RE = re.compile(r"HILLCLIMB_DIR=(\S+)")
 
 
+# the coding agents' headless argv (claude_code.py, codex_cli.py, pi_cli.py),
+# possibly behind a sandbox-exec / bwrap wrapper
+_AGENT_RE = re.compile(r"(?:^|[\s/])(?:claude\s+-p\b|codex\s+exec\b|pi\s+-p\b)")
+_VERIFIER_RE = re.compile(r"(?:^|[\s/])verifier\.(?:sh|py)\b")
+_SHELL_RE = re.compile(r"^\S*/?(?:ba|z|da|k|fi)?sh\s+-c\b")
+
+
+def classify(command: str, parent_role: str | None) -> str:
+    """The role of one process from its command line and its parent's role.
+
+    Under a coding agent everything is the coding agent's own doing. Its
+    tool calls run through a shell (`tool`; a `python solution.py` there is
+    the coding agent trying its code, NOT a scored run); any other direct
+    child is a server it started at launch from the user's own Claude
+    config (`mcp`). Descendants keep their parent's role. Under a verifier
+    it is the scored run (`solution`)."""
+    if parent_role == "agent":
+        return "tool" if _SHELL_RE.match(command) else "mcp"
+    if parent_role in ("tool", "mcp"):
+        return parent_role
+    if parent_role in ("verifier", "solution"):
+        return "solution"
+    if _AGENT_RE.search(command):
+        return "agent"
+    if _VERIFIER_RE.search(command):
+        return "verifier"
+    return "child"
+
+
 def is_engine(command: str) -> bool:
     return ENGINE_RE.search(command) is not None
 
@@ -245,3 +274,71 @@ def kill_engines(engines: list[Engine], grace_s: float = 5.0) -> list[Engine]:
     for engine in forced:
         _signal_tree(engine, trees[engine.pid], KILL_SIGNAL)
     return forced
+
+
+def kill_process_tree(pid: int, grace_s: float = 3.0) -> bool:
+    """SIGTERM one process and every descendant, then SIGKILL whatever
+    survives `grace_s` — for a single process under an engine (a coding agent,
+    a verifier run) that `hillclimb top` was asked to end; the engine sees
+    it die like any other failure. True when SIGKILL was needed."""
+    pids = [pid, *_descendants(pid)]
+    for target in pids:
+        try:
+            signal_pid(target, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+    deadline = time.monotonic() + grace_s
+    while time.monotonic() < deadline and any(_alive(p) for p in pids):
+        time.sleep(0.1)
+    survivors = [p for p in pids if _alive(p)]
+    for target in survivors:
+        try:
+            signal_pid(target, KILL_SIGNAL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    return bool(survivors)
+
+
+def stop_orphaned_children(search_dir: Path, grace_s: float = 5.0) -> list[dict]:
+    """Stop what a dead engine left running for this search: every child on
+    its ledger (`procs.CHILDREN_FILE`) that is still alive and still leads
+    its own process group, as every child an engine starts does (a recycled
+    pid almost never would; a sandbox wrapper such as sandbox-exec replaces
+    itself with what it runs, so the program name is no test), with that
+    whole group. Call it only once the engine is known dead. Returns the
+    children stopped."""
+    import json
+    import signal as _signal
+    import time
+
+    from hillclimb.harness.procs import CHILDREN_FILE
+
+    ledger = Path(search_dir) / CHILDREN_FILE
+    try:
+        entries = json.loads(ledger.read_text())
+    except (OSError, ValueError):
+        return []
+    if IS_WINDOWS:
+        return []
+    table = process_table()
+    alive = [
+        entry for entry in entries
+        if isinstance(entry, dict) and isinstance(entry.get("pid"), int)
+        and entry["pid"] in table and table[entry["pid"]].pgid == entry["pid"]
+    ]
+    for entry in alive:
+        try:
+            os.killpg(entry["pid"], _signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+    deadline = time.monotonic() + grace_s
+    while alive and time.monotonic() < deadline and any(_alive(e["pid"]) for e in alive):
+        time.sleep(0.1)
+    for entry in alive:
+        if _alive(entry["pid"]):
+            try:
+                os.killpg(entry["pid"], _signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+    ledger.unlink(missing_ok=True)
+    return alive

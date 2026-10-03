@@ -186,6 +186,10 @@ def test_a_class_that_exists_only_here_still_runs_but_is_not_portable(runnable, 
 
     monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config.model_copy(deep=True))
     monkeypatch.setattr("hillclimb.cli.common.require_sandbox", lambda *a, **k: None)
+    from hillclimb.harness.status import read_status, write_status
+
+    # a finished search is refused before its climber is looked at: stop it
+    write_status(outcome.search_dir, read_status(outcome.search_dir).model_copy(update={"state": "stopped"}))
     with pytest.raises(typer.BadParameter, match="cannot be rebuilt"):
         resume(f"{outcome.run_dir.name}/{outcome.search_dir.name}")
 

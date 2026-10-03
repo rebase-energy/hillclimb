@@ -4,15 +4,18 @@
  Copy the best solution found so far into your hillclimb dir.                                                           
                                                                                                                         
  Ranks every search of the problem, across all runs, by its selected                                                    
- candidate and copies that search's solution.py plus its declared output                                                
- artifacts into the destination. Run it at any point, even                                                              
- mid-climb — you always get the best discovered so far.                                                                 
+ candidate and copies that search's solution.py, its params.json (the                                                   
+ tuned values, when it declares any) and its declared output artifacts                                                  
+ into the destination. Run it at any point, even                                                                        
+ mid-climb — you always get the best discovered so far. `--plot` then                                                   
+ draws it with the problem's plot.py, like `hillclimb plot`.                                                            
                                                                                                                         
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │   [problem]      TEXT  Problem key; defaults to the only problem in the hillclimb dir                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --to            PATH  Destination folder (default: the hillclimb dir)                                                │
+│ --plot                Then draw it with the problem's plot.py into solution.png (`hillclimb plot`)                   │
 │ --help  -h            Show this message and exit.                                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 

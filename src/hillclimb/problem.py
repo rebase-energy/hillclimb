@@ -87,6 +87,22 @@ class ProblemSpec(BaseModel):
     # same contract against the hidden split; None = this problem has no
     # holdout and selection climbs on validation alone
     holdout_cmd: list[str] | None = None
+    # Two steps instead of one verifier (`score:` in problem.yaml): the
+    # engine runs `verifier_cmd` (the solution) and then this scorer, each in
+    # a sandbox of its own, so the scorer may read what the solution may not
+    # (`private_paths`) and nothing the solution leaves behind runs as the
+    # scorer. None = one verifier that runs the solution itself.
+    score_cmd: list[str] | None = None
+    # files and folders only the scorer reads: hidden labels, holdout
+    # instances, a seed. Unreadable to coding agents and to solutions.
+    private_paths: list[Path] = Field(default_factory=list)
+    # the hidden split's inputs (instances the solution must solve there):
+    # read by the solution and the scorer only when they run on the holdout
+    # split; never by coding agents, never during validation runs, whose
+    # output reaches the agents
+    holdout_inputs: list[Path] = Field(default_factory=list)
+    # two-step problems: the engine stops a solution that runs longer
+    solution_time_limit_s: float | None = None
     verifier_env: dict[str, str] = Field(default_factory=dict)  # extra env, validation runs only
     verifier_display: str = "./problem/verifier.sh"  # prompt-facing form of the command
     # True: the verifier computes the score (and any eval_result.json report)
@@ -125,6 +141,14 @@ class ProblemSpec(BaseModel):
     # whatever the problem considers equivalent — point order, symmetry).
     # Without it the view falls back to the flattened submission file.
     fingerprint_path: Path | None = None
+
+    # --- solution plot (`hillclimb plot`, `summit --plot`) ---
+    # optional module (`plot.py`, picked up by default): exposes
+    # `plot(solution_dir, ax) -> str | None`, drawing a solution's output
+    # files (submission.csv, …) on matplotlib Axes and returning a caption.
+    # It runs in the problem's runtime venv like the verifier
+    # (runtime/plot_solution.py; matplotlib is added there on first use).
+    plot_path: Path | None = None
 
     # --- t=0 floor ---
     baseline_text: str | None = None  # solution.py source scored as c000
@@ -389,12 +413,50 @@ def _verifier_argv(problem_yaml: Path, problem_dir: Path, meta: dict) -> list[st
     path = windows_edition((problem_dir / name).resolve())
     if not path.exists():
         raise FileNotFoundError(
-            f"{problem_yaml}: verifier not found: {path} — a problem is defined by its "
-            "verifier (see `hillclimb init` for a scaffold)"
+            f"{problem_yaml}: verifier not found: {path} — a problem needs a verifier, or "
+            "`score:` (a scorer) in problem.yaml; `hillclimb problem new <id>` writes one that runs"
         )
     if not os.access(path, os.X_OK):
         raise PermissionError(f"{problem_yaml}: verifier is not executable: chmod +x {path}")
     return [str(path)]
+
+
+def _scorer_argv(problem_yaml: Path, problem_dir: Path, raw) -> list[str]:
+    """`score:` as argv: a script (`verify.py`, run with the runtime's
+    python) or an argv whose tokens may name files of the problem. Paths are
+    made absolute: the scorer runs in the candidate's directory, and its
+    script must not be found relative to anything the solution can write."""
+    tokens = [raw] if isinstance(raw, str) else list(raw) if isinstance(raw, list) else None
+    if not tokens or not all(isinstance(token, str) and token for token in tokens):
+        raise ValueError(f"{problem_yaml}: score must be a script (score: verify.py) or an argv list")
+    if len(tokens) == 1 and tokens[0].endswith(".py"):
+        tokens = ["{python}", tokens[0]]
+    argv = []
+    for token in tokens:
+        candidate = problem_dir / token
+        argv.append(str(candidate.resolve()) if "{" not in token and candidate.is_file() else token)
+    named = [token for token in tokens if token.endswith((".py", ".sh")) and "{" not in token]
+    for token in named:
+        if not (problem_dir / token).is_file():
+            raise FileNotFoundError(f"{problem_yaml}: scorer not found: {problem_dir / token}")
+    return argv
+
+
+def _private_paths(problem_yaml: Path, problem_dir: Path, raw, key: str = "private") -> list[Path]:
+    """`private:` (or `holdout_inputs:`) as absolute paths: relative ones are the problem's own."""
+    if raw is None:
+        return []
+    items = [raw] if isinstance(raw, str) else raw
+    if not isinstance(items, list) or not all(isinstance(item, str) and item for item in items):
+        raise ValueError(f"{problem_yaml}: {key} must be a path or a list of paths")
+    paths = []
+    for item in items:
+        path = Path(item).expanduser()
+        path = (path if path.is_absolute() else problem_dir / path).resolve()
+        if not path.exists():
+            raise FileNotFoundError(f"{problem_yaml}: {key} path not found: {path}")
+        paths.append(path)
+    return paths
 
 
 def load_problem(target: str | Path, config: Config) -> ProblemSpec:
@@ -446,7 +508,29 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
         # a climber is prompted for as a climber, not as a script
         contract_template=CONTRACT_TEMPLATES[solution_kind],
     )
-    verifier_cmd = _verifier_argv(problem_yaml, problem_dir, meta)
+    score_cmd = _scorer_argv(problem_yaml, problem_dir, meta["score"]) if meta.get("score") else None
+    private_paths = _private_paths(problem_yaml, problem_dir, meta.get("private"))
+    holdout_inputs = _private_paths(problem_yaml, problem_dir, meta.get("holdout_inputs"), "holdout_inputs")
+    if (private_paths or holdout_inputs or meta.get("run")) and score_cmd is None:
+        raise ValueError(
+            f"{problem_yaml}: private data needs a scorer of its own (`score: verify.py`): a "
+            "verifier.sh runs the solution inside its own sandbox, so anything it can read, the "
+            "solution can read too"
+        )
+    if holdout_inputs and not meta.get("holdout"):
+        raise ValueError(f"{problem_yaml}: holdout_inputs need `holdout: true`")
+    # two steps: the engine runs the solution, or the problem's own runner
+    # for it (`run:`, which imports or drives solution.py and runs in the
+    # solution's sandbox), then the scorer
+    if score_cmd and meta.get("run"):
+        verifier_cmd = _scorer_argv(problem_yaml, problem_dir, meta["run"])
+    elif score_cmd:
+        verifier_cmd = ["{python}", "{solution}"]
+    else:
+        verifier_cmd = _verifier_argv(problem_yaml, problem_dir, meta)
+    time_limit = meta.get("time_limit_s")
+    if time_limit is not None and (isinstance(time_limit, bool) or not isinstance(time_limit, (int, float)) or time_limit <= 0):
+        raise ValueError(f"{problem_yaml}: time_limit_s must be a positive number of seconds")
     contract_path = _optional_file(problem_dir, meta, "contract", default="contract.md")
     interface_path, interface_text = load_interface_fields(problem_dir, meta)
     baseline_raw = meta.get("baseline")
@@ -487,14 +571,24 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
     return ProblemSpec(
         **common,
         verifier_cmd=verifier_cmd,
-        holdout_cmd=(verifier_cmd + ["--holdout"]) if meta.get("holdout") else None,
-        verifier_display=f"./problem/{Path(verifier_cmd[0]).name}",
+        # a two-step problem's scorer is told the split; the solution step is the same
+        holdout_cmd=(
+            (list(verifier_cmd) if score_cmd else verifier_cmd + ["--holdout"]) if meta.get("holdout") else None
+        ),
+        score_cmd=score_cmd,
+        private_paths=private_paths,
+        holdout_inputs=holdout_inputs,
+        solution_time_limit_s=float(time_limit) if score_cmd and time_limit is not None else None,
+        verifier_display=(
+            f"./problem/{Path(score_cmd[-1]).name}" if score_cmd else f"./problem/{Path(verifier_cmd[0]).name}"
+        ),
         contract=contract_path.read_text() if contract_path else None,
         interface_path=interface_path,
         interface_text=interface_text,
         landscape_path=_optional_file(problem_dir, meta, "landscape", default="landscape.py"),
         surface_metrics=list(meta.get("surface_metrics") or ["x", "y"]),
         fingerprint_path=_optional_file(problem_dir, meta, "fingerprint", default="fingerprint.py"),
+        plot_path=_optional_file(problem_dir, meta, "plot", default="plot.py"),
         requirements_file=_optional_file(problem_dir, meta, "requirements"),
         unit_tests=unit_tests,
         baseline_text=baseline_path.read_text() if baseline_path else None,
@@ -618,60 +712,32 @@ def resolve_target(target: str | Path, config: Config) -> ResolvedTarget:
 
 # --- the Python side: a problem as the thing you hand a climber -----------------
 
-# What a Python-defined problem's verifier runs: the solution first, then the
-# scorer, with the engine's interpreter (the one `hillclimb` is installed in),
-# because the scoring function lives in the user's own code.
-_DEFINED_VERIFIER_SH = """\
-#!/usr/bin/env bash
-# hillclimb verifier, written by hillclimb.Problem: run the candidate (within
-# its time limit, if one is set), then score what it produced. Both steps are
-# problem/verify.py's, run with the engine's interpreter, because the scoring
-# function lives in the user's own code.
-set -euo pipefail
-
-"$HILLCLIMB_ENGINE_PYTHON" problem/verify.py
-"""
-
-_DEFINED_VERIFIER_PY = '''\
-"""hillclimb verifier, written by hillclimb.Problem (the Windows edition of verifier.sh)."""
-
-import os
-import subprocess
-import sys
-
-sys.exit(subprocess.call([os.environ["HILLCLIMB_ENGINE_PYTHON"], "problem/verify.py"]))
-'''
+# A Python-defined problem has two steps, which the engine runs as two
+# processes, each in a sandbox of its own: the solution, and then the scorer
+# (`score:` in its problem.yaml). The scorer runs with the engine's
+# interpreter, because the scoring function lives in the user's own code, and
+# it may read the problem's private paths, which the solution may not.
+_DEFINED_SCORE_ARGV = ["{engine_python}", "verify.py"]
 
 _DEFINED_VERIFY_PY = '''\
-"""Verifier written by hillclimb.Problem: runs the solution (within TIME_LIMIT_S
-when set), then calls `{name}` from {source}
+"""Scorer written by hillclimb.Problem. hillclimb has already run the
+solution, in a sandbox of its own (and stopped it at the problem's time limit,
+when it has one); this calls `{name}` from {source}
 on the directory it ran in, and writes what it returns to $HILLCLIMB_RESULT.
 A number is the score; a mapping must hold "score" and may add other numbers
-(journaled as the candidate's metrics). A solution that fails, or runs past
-its limit, is a buggy candidate."""
+(journaled as the candidate's metrics)."""
 
 import importlib.util
 import json
 import math
+import numbers
 import os
-import subprocess
 import sys
 import traceback
 from pathlib import Path
 
 SOURCE = {source!r}
 NAME = {name!r}
-TIME_LIMIT_S = {time_limit_s!r}
-
-
-def run_solution() -> int:
-    """The candidate, as its own process (it never touches this one)."""
-    argv = [os.environ["HILLCLIMB_PYTHON"], os.environ["HILLCLIMB_SOLUTION"]]
-    try:
-        return subprocess.call(argv, timeout=TIME_LIMIT_S)
-    except subprocess.TimeoutExpired:
-        print(f"solution.py did not finish within the time limit of {{TIME_LIMIT_S}}s", file=sys.stderr)
-        return 124
 
 
 def load_score():
@@ -690,23 +756,28 @@ def load_score():
     return getattr(module, NAME)
 
 
+def number(value):
+    """A real number as a float (numpy scalars included), else None."""
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        return None
+    return float(value)
+
+
 def main() -> int:
-    code = run_solution()
-    if code != 0:
-        return code
-    # trust boundary: only the scorer may report a score, so anything the
-    # solution left behind is discarded before the scorer runs
-    Path(os.environ["HILLCLIMB_RESULT"]).unlink(missing_ok=True)
     try:
         value = load_score()(Path.cwd())
     except Exception:  # noqa: BLE001 - the scorer's own failure is a buggy candidate, with the trace
         traceback.print_exc()
         return 1
     payload = dict(value) if isinstance(value, dict) else {{"score": value}}
-    score = payload.get("score")
-    if not isinstance(score, (int, float)) or isinstance(score, bool) or not math.isfinite(score):
+    score = number(payload.get("score"))
+    if score is None or not math.isfinite(score):
         print(f"score() must return a finite number or a mapping with one, got {{value!r}}", file=sys.stderr)
         return 1
+    # other numbers become metrics; anything else is dropped
+    payload = {{key: number(item) if number(item) is not None else item for key, item in payload.items()}}
+    payload = {{key: item for key, item in payload.items() if isinstance(item, (float, int, str))}}
+    payload["score"] = score
     Path(os.environ["HILLCLIMB_RESULT"]).write_text(json.dumps(payload))
     print(f"score: {{score}}")
     return 0
@@ -740,8 +811,11 @@ class Problem:
             output="answer.txt",
         )
 
-    `time_limit_s` makes the verifier stop a solution that runs longer (a
-    failed attempt, which the climber repairs like any other). `score` may
+    hillclimb runs the solution and then `score` as two processes, each in a
+    sandbox of its own. `time_limit_s` stops a solution that runs longer (a
+    failed attempt, which the climber repairs like any other). `private`
+    names files or folders only `score` may read, such as hidden labels:
+    coding agents and solutions cannot open them. `score` may
     also return a mapping with a `score` and other numbers, which the search
     journals as the candidate's metrics. It must be a function at
     the top level of a .py file: the verifier imports that file again (keep
@@ -768,6 +842,7 @@ class Problem:
         time_budget_s: int = 3600,
         allow_internet_during_solution: bool = False,
         chart_baselines: Mapping[str, float] | None = None,
+        private: Sequence[str | Path] | None = None,
     ):
         self.name = str(name)
         self.score = score
@@ -782,6 +857,9 @@ class Problem:
         self.time_budget_s = int(time_budget_s)
         self.allow_internet_during_solution = bool(allow_internet_during_solution)
         self.chart_baselines = dict(chart_baselines or {})
+        # what only `score` reads (hidden labels, a held-back set): absolute,
+        # since the scorer and the paths live in the user's code, not the problem
+        self.private = [Path(p).expanduser().resolve() for p in (private or ())]
         if self.defined:
             if _split_scheme(self.name) is not None or "/" in self.name or self.name in ("", ".", ".."):
                 raise ValueError(f"a problem defined in Python needs a plain name, not {self.name!r}")
@@ -790,6 +868,9 @@ class Problem:
             if self.time_limit_s is not None and not self.time_limit_s > 0:
                 raise ValueError(f"Problem({self.name!r}): time_limit_s must be positive, not {time_limit_s!r}")
             _score_source(score)  # fails now, with the fix, not at the first verifier run
+            missing = [str(p) for p in self.private if not p.exists()]
+            if missing:
+                raise FileNotFoundError(f"Problem({self.name!r}): private path not found: {', '.join(missing)}")
 
     @property
     def defined(self) -> bool:
@@ -834,7 +915,10 @@ class Problem:
             "output_artifacts": [self.output],
             "written_by": "hillclimb.Problem",
             "score_function": f"{source}:{function}",
+            "score": list(_DEFINED_SCORE_ARGV),
         }
+        if self.private:
+            meta["private"] = [str(p) for p in self.private]
         if self.time_limit_s is not None:
             meta["time_limit_s"] = self.time_limit_s
         if self.baseline is not None:
@@ -853,13 +937,10 @@ class Problem:
                 (folder / dest).write_bytes(Path(content).read_bytes())
             else:
                 (folder / dest).write_text(str(content))
-        (folder / "verify.py").write_text(
-            _DEFINED_VERIFY_PY.format(source=str(source), name=function, time_limit_s=self.time_limit_s)
-        )
-        verifier = folder / "verifier.sh"
-        verifier.write_text(_DEFINED_VERIFIER_SH)
-        verifier.chmod(0o755)
-        (folder / "verifier.py").write_text(_DEFINED_VERIFIER_PY)
+        (folder / "verify.py").write_text(_DEFINED_VERIFY_PY.format(source=str(source), name=function))
+        # written by an earlier hillclimb: a verifier that ran the solution itself
+        for stale in ("verifier.sh", "verifier.py"):
+            (folder / stale).unlink(missing_ok=True)
         return folder
 
     def _submission_note(self) -> str:

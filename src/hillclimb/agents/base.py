@@ -23,6 +23,9 @@ class AgentRequest(BaseModel):
     # the OS sandbox the coding agent runs in (`harness/sandbox.py`); None = none.
     # The coding agent adds its candidate dir and its own state to what is writable
     sandbox: SandboxPolicy | None = None
+    # Claude Code plugins to run with (`--plugin-dir`), from the hillclimb
+    # dir's `agent_context.claude_plugins`; the user's own never apply
+    plugins: list[Path] = Field(default_factory=list)
 
 
 class AgentResult(BaseModel):

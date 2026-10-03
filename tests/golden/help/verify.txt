@@ -12,7 +12,8 @@
 │ *    target      TEXT  Problem folder/name to check [required]                                                       │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ --solution          PATH     solution.py to score (default: the problem's baseline)                                  │
+│ --solution          PATH     solution.py to score (default: the problem's baseline); a params.json beside it comes   │
+│                              along                                                                                   │
 │ --repeat    -n      INTEGER  Score it N times to see the noise [default: 1]                                          │
 │ --holdout                    Also score the hidden split                                                             │
 │ --help      -h               Show this message and exit.                                                             │

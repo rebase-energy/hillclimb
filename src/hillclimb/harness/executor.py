@@ -292,7 +292,8 @@ def render_argv(argv: list[str], python: Path, solution: Path, result: Path) -> 
     """Provider-supplied commands carry placeholders (a shell verifier reads
     the env instead). Substituted per token so paths with spaces survive."""
     return [
-        token.replace("{python}", str(python))
+        token.replace("{engine_python}", sys.executable)
+        .replace("{python}", str(python))
         .replace("{solution}", str(solution))
         .replace("{result}", str(result))
         for token in argv
@@ -315,6 +316,7 @@ def run_logged(
     env: dict[str, str] | None = None,
     abort: "threading.Event | None" = None,
     sandbox: "SandboxPolicy | None" = None,
+    end_group: bool = False,
 ) -> RunResult:
     """Run cmd in its own process group with logs redirected; kill the whole
     group on timeout or abort so stray workers don't linger. With a `sandbox`
@@ -344,10 +346,52 @@ def run_logged(
     deadline = time.monotonic() + timeout_s
     while True:
         if reaper.wait(timeout=0.2) is not None:
+            if end_group:
+                # what it left running must not outlive it (a solution's
+                # straggler could rewrite its output while the scorer reads)
+                reaper.kill_group()
             return RunResult(proc.returncode, False, reaper.cpu_s)
         if (abort is not None and abort.is_set()) or time.monotonic() >= deadline:
             reaper.kill_group()
             return RunResult(proc.returncode, True, reaper.cpu_s)
+
+
+def run_then_score(
+    run_argv: list[str],
+    score_argv: list[str],
+    run_dir: Path,
+    timeout_s: float,
+    out: IO,
+    err: IO,
+    *,
+    run_env: dict[str, str],
+    score_env: dict[str, str],
+    result_path: Path,
+    run_sandbox: "SandboxPolicy | None",
+    score_sandbox: "SandboxPolicy | None",
+    time_limit_s: float | None = None,
+    abort: "threading.Event | None" = None,
+) -> RunResult:
+    """A two-step problem's run: the solution, then the scorer, each a
+    process in a sandbox of its own (the solution's cannot read the
+    problem's private paths; the scorer's can). Whatever the solution leaves
+    behind — a result file, a process still running — is gone before the
+    scorer starts. The scorer gets the time the solution left over."""
+    started = time.monotonic()
+    limit = timeout_s if time_limit_s is None else min(timeout_s, time_limit_s)
+    ran = run_logged(run_argv, run_dir, limit, out, err, run_env, abort=abort, sandbox=run_sandbox, end_group=True)
+    if ran.timed_out or ran.returncode != 0:
+        if ran.timed_out and not (abort is not None and abort.is_set()) and limit < timeout_s:
+            err.write(f"\nsolution.py did not finish within the time limit of {limit:g}s\n")
+            err.flush()
+            # its own limit, not the engine's clock: a failed attempt, not a cut-off one
+            return RunResult(124, False, ran.cpu_s)
+        return ran
+    result_path.unlink(missing_ok=True)  # only the scorer reports a score
+    left = max(1.0, timeout_s - (time.monotonic() - started))
+    scored = run_logged(score_argv, run_dir, left, out, err, score_env, abort=abort, sandbox=score_sandbox)
+    cpu = None if ran.cpu_s is None and scored.cpu_s is None else (ran.cpu_s or 0.0) + (scored.cpu_s or 0.0)
+    return RunResult(scored.returncode, scored.timed_out, cpu)
 
 
 def confined(policy: "SandboxPolicy | None", run_dir: Path) -> "SandboxPolicy | None":
@@ -371,9 +415,20 @@ class CommandExecutor:
         env_extra: dict[str, str] | None = None,
         pythonpath: str | None = None,
         sandbox: "SandboxPolicy | None" = None,
+        score_argv: list[str] | None = None,
+        private: tuple[str, ...] = (),
+        holdout_inputs: tuple[str, ...] = (),
+        time_limit_s: float | None = None,
     ):
         # what every run is confined to; each run adds its candidate's dir
         self.sandbox = sandbox
+        # a two-step problem: `argv` runs the solution, then `score_argv`
+        # scores it. Only the scorer may read `private`; a validation run's
+        # output reaches the agents, so neither step reads `holdout_inputs`
+        self.score_argv = list(score_argv) if score_argv else None
+        self.private = tuple(private)
+        self.holdout_inputs = tuple(holdout_inputs)
+        self.time_limit_s = time_limit_s
         # absolute() not resolve(): a venv python must be invoked via its
         # symlink path or the interpreter escapes the venv's site-packages
         self.python = python.absolute()
@@ -383,6 +438,10 @@ class CommandExecutor:
         # "validation runs only" env, while the interface shim is engine
         # infrastructure applied symmetrically here and on the holdout scorer
         self.pythonpath = pythonpath
+        # the engine's stop signal, wired in by the Harness (as it is for
+        # agents): a stop or a hard deadline kills a running verifier at once
+        # instead of waiting for it to finish
+        self.abort: "threading.Event | None" = None
 
     def execute(
         self,
@@ -409,11 +468,24 @@ class CommandExecutor:
         prepend_pythonpath(env, self.pythonpath)
         start = time.monotonic()
         with stdout_path.open("w") as out, stderr_path.open("w") as err:
-            returncode, timed_out, cpu_s = run_logged(
-                render_argv(self.argv, self.python, script, result_path),
-                candidate_dir, timeout_s, out, err, env,
-                sandbox=confined(self.sandbox, candidate_dir),
-            )
+            policy = confined(self.sandbox, candidate_dir)
+            if self.score_argv:
+                returncode, timed_out, cpu_s = run_then_score(
+                    render_argv(self.argv, self.python, script, result_path),
+                    render_argv(self.score_argv, self.python, script, result_path),
+                    candidate_dir, timeout_s, out, err,
+                    run_env=env, score_env=env, result_path=result_path,
+                    run_sandbox=policy.unreadable(*self.private, *self.holdout_inputs) if policy is not None else None,
+                    score_sandbox=policy.unreadable(*self.holdout_inputs) if policy is not None else None,
+                    time_limit_s=self.time_limit_s, abort=self.abort,
+                )
+            else:
+                returncode, timed_out, cpu_s = run_logged(
+                    render_argv(self.argv, self.python, script, result_path),
+                    candidate_dir, timeout_s, out, err, env,
+                    abort=self.abort,
+                    sandbox=policy,
+                )
         duration = time.monotonic() - start
         score, payload = (None, None) if timed_out else read_result(result_path)
         return ExecResult(
@@ -446,10 +518,18 @@ class CommandHoldoutScorer:
         timeout_s: int,
         pythonpath: str | None = None,
         sandbox: "SandboxPolicy | None" = None,
+        score_argv: list[str] | None = None,
+        private: tuple[str, ...] = (),
+        holdout_inputs: tuple[str, ...] = (),  # readable here: this is the holdout split
+        time_limit_s: float | None = None,
     ):
         self.sandbox = sandbox
         self.python = python.absolute()
         self.argv = list(argv)
+        # a two-step problem (see CommandExecutor); its scorer is told `--holdout`
+        self.score_argv = list(score_argv) + ["--holdout"] if score_argv else None
+        self.private = tuple(private)
+        self.time_limit_s = time_limit_s
         self.problem_dir = problem_dir
         self.data_dir = data_dir
         self.work_root = work_root
@@ -494,11 +574,29 @@ class CommandHoldoutScorer:
         stdout_path = eval_dir / "exec_stdout.log"
         stderr_path = eval_dir / "exec_stderr.log"
         with stdout_path.open("w") as out, stderr_path.open("w") as err:
-            returncode, timed_out, cpu_s = run_logged(
-                render_argv(self.argv, self.python, eval_dir / "solution.py", result_path),
-                eval_dir, self.timeout_s, out, err, env,
-                sandbox=self.sandbox.writable(eval_dir) if self.sandbox is not None else None,
-            )
+            policy = self.sandbox.writable(eval_dir) if self.sandbox is not None else None
+            if self.score_argv:
+                # the solution gets the scrubbed environment; only the scorer
+                # gets credentials (gated holdout data is the scorer's to fetch)
+                run_env = scrubbed_env()
+                run_env.update({
+                    key: value for key, value in env.items() if key.startswith("HILLCLIMB_") or key == "PYTHONPATH"
+                })
+                returncode, timed_out, cpu_s = run_then_score(
+                    render_argv(self.argv, self.python, eval_dir / "solution.py", result_path),
+                    render_argv(self.score_argv, self.python, eval_dir / "solution.py", result_path),
+                    eval_dir, self.timeout_s, out, err,
+                    run_env=run_env, score_env=env, result_path=result_path,
+                    run_sandbox=policy.unreadable(*self.private) if policy is not None else None,
+                    score_sandbox=policy,
+                    time_limit_s=self.time_limit_s,
+                )
+            else:
+                returncode, timed_out, cpu_s = run_logged(
+                    render_argv(self.argv, self.python, eval_dir / "solution.py", result_path),
+                    eval_dir, self.timeout_s, out, err, env,
+                    sandbox=policy,
+                )
         if timed_out:
             return None, "holdout evaluation timed out", cpu_s
         if returncode != 0:

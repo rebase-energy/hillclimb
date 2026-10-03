@@ -173,6 +173,50 @@ def test_a_toy_search_climbs_and_its_spec_reruns_it(config, lean_runtime):
     assert entry["set"] == ["learning.enabled=false", "budget.max_evaluations=6"]
 
 
+def test_a_search_from_python_says_where_to_watch_and_reports_every_candidate(config, lean_runtime):
+    """A Python search names the live views once, at the start (`hints=False`
+    leaves that out), and every finished candidate gets its own line: its
+    status, its score and how long it took, not only the new bests."""
+    lines: list[str] = []
+    hc.run(
+        "fitness-landscape", agent="toy", max_evaluations=3, learning=False, holdout=False,
+        config=config, log=lines.append,
+    )
+    assert lines[1] == api.FOLLOW_HINT
+    landed = [line for line in lines if line.startswith("  c0") and " passing val=" in line]
+    started = [line for line in lines if "] draft" in line or "] improve" in line]
+    assert started and len(landed) == len(started)
+
+    quiet: list[str] = []
+    hc.run(
+        "fitness-landscape", agent="toy", max_evaluations=1, learning=False, holdout=False,
+        config=config, log=quiet.append, hints=False,
+    )
+    assert api.FOLLOW_HINT not in quiet
+
+
+def test_landed_line_names_why_a_candidate_has_no_score():
+    from hillclimb.harness.candidate import Candidate
+    from hillclimb.harness.core import landed_line
+
+    common = dict(candidate_id="c004", operator="improve", created_at="2026-10-03T10:00:00+00:00")
+    abandoned = Candidate(**common, status="abandoned", summary="coding agent call failed (timeout)\nmore",
+                          finished_at="2026-10-03T10:01:32+00:00")
+    assert landed_line(abandoned) == "  c004 abandoned (1m32s) — coding agent call failed (timeout)"
+    from hillclimb.harness.candidate import Replicate, Trial
+
+    crashed = Candidate(**common, status="buggy", summary="the agent's notes", finished_at="2026-10-03T10:00:05+00:00",
+                        trials=[Trial(index=0, verdict="buggy", replicates=[Replicate(returncode=1)])])
+    assert landed_line(crashed) == "  c004 buggy (5s) — verifier exited 1"
+    slow = Candidate(**common, status="buggy", finished_at="2026-10-03T10:00:12+00:00",
+                     trials=[Trial(index=0, verdict="buggy",
+                                   replicates=[Replicate(returncode=-9, timed_out=True, duration_s=10.2)])])
+    assert landed_line(slow) == "  c004 buggy (12s) — timed out after 10s"
+    passing = Candidate(**common, status="passing", finished_at="2026-10-03T10:00:09+00:00")
+    passing.trials = []
+    assert landed_line(passing).startswith("  c004 passing")
+
+
 def test_a_registered_agent_runs_a_search_in_this_process(registry, config, lean_runtime):
     class Corner:
         """Always stands in the same corner."""
@@ -193,3 +237,41 @@ def test_a_registered_agent_runs_a_search_in_this_process(registry, config, lean
     assert outcome.state == "done"
     journal = Journal(outcome.search_dir / "journal.jsonl")
     assert [c.metrics for c in journal.candidates.values() if c.operator == "draft"] == [{"x": 4.0, "y": 4.0}] * 2
+
+
+def test_ctrl_c_stops_a_python_script_instead_of_moving_on(registry, config, lean_runtime):
+    """S9: from Python a Ctrl-C (SIGINT to the main thread) ends the search
+    as `stopped`, resumable, and then goes on as a KeyboardInterrupt, so the
+    next search of a script never starts."""
+    import os
+    import signal
+    import threading
+    import time
+
+    from hillclimb.harness.journal import Journal
+    from hillclimb.harness.status import read_status
+
+    class Slow:
+        name = "slow"
+
+        def invoke(self, request):
+            time.sleep(0.3)
+            stand_at(Path(request.candidate_dir), 0.5, 0.5)
+            return AgentResult(ok=True, session_id="s")
+
+    register_agent("slow", Slow)
+    lines: list[str] = []
+    timer = threading.Timer(2.0, lambda: os.kill(os.getpid(), signal.SIGINT))
+    timer.start()
+    started = time.monotonic()
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            hc.run("fitness-landscape", agent="slow", budget="2m", learning=False,
+                   holdout=False, config=config, log=lines.append)
+    finally:
+        timer.cancel()
+    assert time.monotonic() - started < 60
+    [search_dir] = list(config.paths.runs_dir.glob("*/searches/*"))
+    assert read_status(search_dir).state == "stopped"
+    assert any("Resume with: hillclimb resume" in line for line in lines)
+    assert Journal(search_dir / "journal.jsonl").candidates  # the record is kept

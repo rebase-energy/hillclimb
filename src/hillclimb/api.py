@@ -178,7 +178,7 @@ def build_executor(
     """The problem's verifier command, wired to the runtime venv it needs and
     confined to the sandbox (`harness/sandbox.py`)."""
     from hillclimb.harness.executor import CommandExecutor
-    from hillclimb.harness.sandbox import verifier_policy
+    from hillclimb.harness.sandbox import holdout_input_paths, private_paths, verifier_policy
 
     env_extra = dict(problem.verifier_env)
     if config.hillclimb_dir is not None:
@@ -194,6 +194,10 @@ def build_executor(
         env_extra=env_extra,
         pythonpath=interface_shim(log),
         sandbox=verifier_policy(config, problem, search_dir),
+        score_argv=problem.score_cmd,
+        private=private_paths(problem),
+        holdout_inputs=holdout_input_paths(problem),
+        time_limit_s=problem.solution_time_limit_s,
     )
 
 
@@ -203,16 +207,18 @@ def build_unit_test_runner(
     """The run-frozen correctness gate, or None for verifier-only problems."""
     if problem.unit_tests is None:
         return None
-    from hillclimb.harness.sandbox import verifier_policy
+    from hillclimb.harness.sandbox import hidden_from_agents, verifier_policy
     from hillclimb.harness.unit_tests import UnitTestRunner
 
+    policy = verifier_policy(config, problem, search_dir)
     return UnitTestRunner(
         ensure_runtime_venv(
             config, kind=problem.runtime, log=log, requirements=problem.requirements_file
         ),
         problem.unit_tests,
         pythonpath=interface_shim(log),
-        sandbox=verifier_policy(config, problem, search_dir),
+        # the tests run the solution: they read what it may, no more
+        sandbox=policy.unreadable(*hidden_from_agents(problem)) if policy is not None else None,
     )
 
 
@@ -235,7 +241,7 @@ def build_holdout_scorer(config: Config, problem: ProblemSpec, search_dir: Path,
             # silently scores nan
             os.environ["HF_TOKEN"] = os.environ["HUGGINGFACE_TOKEN"]
     from hillclimb.harness.executor import CommandHoldoutScorer
-    from hillclimb.harness.sandbox import verifier_policy
+    from hillclimb.harness.sandbox import holdout_input_paths, private_paths, verifier_policy
 
     return CommandHoldoutScorer(
         ensure_runtime_venv(
@@ -248,6 +254,10 @@ def build_holdout_scorer(config: Config, problem: ProblemSpec, search_dir: Path,
         timeout_s=config.budget.exec_timeout_s,
         pythonpath=interface_shim(log),
         sandbox=verifier_policy(config, problem, search_dir, holdout=True),
+        score_argv=problem.score_cmd,
+        private=private_paths(problem),
+        holdout_inputs=holdout_input_paths(problem),
+        time_limit_s=problem.solution_time_limit_s,
     )
 
 
@@ -631,10 +641,16 @@ class Search:
         seed_from: Path | None = None,
         knowledge_context: str | None = None,
         target: str = "",
+        interrupt_raises: bool = False,
     ):
         self.config = config
         self.problem = problem
         self.search_dir = search_dir
+        # Ctrl-C from Python (`hillclimb.run`, `Climber.search`): the search is
+        # settled `stopped` (resumable), then the KeyboardInterrupt goes on, so
+        # a script or a notebook stops instead of starting its next search.
+        # The CLI keeps it: it prints how to resume and exits 2
+        self.interrupt_raises = interrupt_raises
         self.run_dir = search_dir.parents[1]
         self.budget = budget
         self.log = log
@@ -691,7 +707,9 @@ class Search:
         try:
             self._build()
         except (StopRequested, KeyboardInterrupt) as exc:
-            return self._settle("stopped", exc)
+            outcome = self._settle("stopped", exc)
+            self._reraise_interrupt(exc)
+            return outcome
         except Exception as exc:
             self._settle("failed", exc)
             raise
@@ -707,6 +725,16 @@ class Search:
         config, problem, search_dir, log = self.config, self.problem, self.search_dir, self.log
         memory, store, key, journal, status = self.memory, self.store, self.key, self.journal, self.status
         abort = threading.Event()
+        from hillclimb.harness.procs import CHILDREN_FILE, track_children
+
+        # every coding agent and verifier this engine starts, while it lives:
+        # what `resume`/`stop`/`kill` stop if this process is killed outright
+        track_children(search_dir / CHILDREN_FILE)
+        knowledge = resolve_knowledge_dir(config)
+        if knowledge is not None and config.hillclimb_dir is not None and knowledge.parent == config.hillclimb_dir:
+            from hillclimb.project import ensure_owned_dir
+
+            ensure_owned_dir(knowledge)  # the folder's own knowledge/, marked for `reset`
         # what the search is handed before it starts: prior experience for the
         # prompts (an externally supplied section stands in for the memory's
         # own), a reference solution, and what memory learned about how to start
@@ -807,6 +835,9 @@ class Search:
         return self.journal.selected_candidate(self.problem.higher_is_better, self.config.holdout.selection)
 
     def _finalize(self, state: str, last_error: str | None = None) -> None:
+        from hillclimb.harness.procs import track_children
+
+        track_children(None)  # settled: nothing of this search runs any more
         self.status.finalize(state, last_error=last_error)
         self.store.close()
 
@@ -826,6 +857,12 @@ class Search:
         _closed(self)
         return self.outcome
 
+    def _reraise_interrupt(self, exc: BaseException) -> None:
+        """A Ctrl-C from Python goes on once the search is recorded `stopped`."""
+        if isinstance(exc, KeyboardInterrupt) and self.interrupt_raises:
+            self.log(f"stopped (Ctrl-C). Resume with: hillclimb resume {search_ref(self.search_dir)}")
+            raise exc
+
     def _end(self, body: Callable[[], Candidate | None]) -> SearchOutcome:
         """Run `body` — whatever is left of the search; it returns what ships
         — then settle: the host's holdout, the final status, and what a
@@ -837,7 +874,9 @@ class Search:
         except ParkedSearch as exc:
             return self._settle("parked", exc)
         except (StopRequested, KeyboardInterrupt) as exc:
-            return self._settle("stopped", exc)
+            outcome = self._settle("stopped", exc)
+            self._reraise_interrupt(exc)
+            return outcome
         except Exception as exc:
             self._settle("failed", exc)
             raise
@@ -900,6 +939,7 @@ class Search:
             self.harness.start()
         except (StopRequested, KeyboardInterrupt) as exc:
             self._settle("stopped", exc)
+            self._reraise_interrupt(exc)
             return
         except Exception as exc:
             self._settle("failed", exc)
@@ -1151,6 +1191,11 @@ def _mlebench_grade(
         log(f"mlebench grading failed (search result unaffected): {exc}")
 
 
+# printed at the start of a search run from Python (`run`, `start`), where
+# nothing else says the live views exist; `hints=False` leaves it out
+FOLLOW_HINT = "follow it live in another terminal: hillclimb watch · hillclimb tree · hillclimb chart"
+
+
 def run_search(
     target: str,
     *,
@@ -1166,6 +1211,8 @@ def run_search(
     knowledge_context: str | None = None,
     spec_set: Sequence[str] = (),
     log: Log = print,
+    hint: bool = False,
+    interrupt_raises: bool = False,
 ) -> SearchOutcome:
     """Resolve a single-problem target, create the Run/Search dirs, and run
     the engine to completion. Suites are a CLI concern (parallel processes);
@@ -1174,7 +1221,8 @@ def run_search(
     search = _new_search(
         target, budget_s=budget_s, name=name, run_id=run_id, run_name=run_name, config=config,
         agent=agent, model=model, holdout=holdout, seed_from=seed_from,
-        knowledge_context=knowledge_context, spec_set=spec_set, log=log,
+        knowledge_context=knowledge_context, spec_set=spec_set, log=log, hint=hint,
+        interrupt_raises=interrupt_raises,
     )
     return search.open() or search.finish()
 
@@ -1194,6 +1242,8 @@ def _new_search(
     knowledge_context: str | None = None,
     spec_set: Sequence[str] = (),
     log: Log = print,
+    hint: bool = False,
+    interrupt_raises: bool = False,
 ) -> Search:
     """A new search on `target`, created (run dir, spec, search dir, climber
     snapshot) and not yet opened."""
@@ -1234,6 +1284,8 @@ def _new_search(
         f"Search {search_ref(search_dir)} (problem={problem.problem_id}, "
         f"agent={config.agent}, model={config.model}, budget={total_s}s)"
     )
+    if hint:
+        log(FOLLOW_HINT)
     return Search(
         config,
         problem,
@@ -1243,6 +1295,7 @@ def _new_search(
         seed_from=seed_path,
         knowledge_context=knowledge_context,
         target=target,
+        interrupt_raises=interrupt_raises,
     )
 
 
@@ -1305,6 +1358,7 @@ def run(
     seed_from: Path | str | None = None,
     name: str | None = None,
     log: Log = print,
+    hints: bool = True,
 ) -> SearchOutcome:
     """Run one search, here, to completion — the Python counterpart of
     `hillclimb run PROBLEM --no-detach`.
@@ -1332,7 +1386,8 @@ def run(
         _target(problem, config),
         budget_s=limits.seconds,
         name=name, config=config, agent=agent, model=model, holdout=holdout,
-        seed_from=seed_from, spec_set=_front_door_set(config, learning, limits), log=log,
+        seed_from=seed_from, spec_set=_front_door_set(config, learning, limits), log=log, hint=hints,
+        interrupt_raises=True,
     )
 
 
@@ -1361,6 +1416,7 @@ def start(
     seed_from: Path | str | None = None,
     name: str | None = None,
     log: Log = print,
+    hints: bool = True,
 ) -> Search:
     """Open one search, here, to drive a step at a time — `run` with the loop
     in your hands. Takes what `run` takes and returns the open `Search`
@@ -1384,7 +1440,8 @@ def start(
         _target(problem, config),
         budget_s=limits.seconds,
         name=name, config=config, agent=agent, model=model, holdout=holdout,
-        seed_from=seed_from, spec_set=_front_door_set(config, learning, limits), log=log,
+        seed_from=seed_from, spec_set=_front_door_set(config, learning, limits), log=log, hint=hints,
+        interrupt_raises=True,
     )
     _STEPPING = search
     if search.open() is None:
