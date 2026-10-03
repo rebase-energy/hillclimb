@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hillclimb-logo.svg">
-  <img alt="hillclimb" src="docs/assets/hillclimb-logo-light.svg" width="520">
+  <img alt="hillclimb" src="docs/assets/hillclimb-logo-light.svg" width="620">
 </picture>
 
 **Hillclimbing on verifiable rewards.**<br>
