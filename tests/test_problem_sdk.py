@@ -212,3 +212,35 @@ def test_a_budget_sets_every_limit_and_the_spec_records_them(scoring, counter, f
     # the shorthand lays over the Budget
     climber.search(largest_number(scoring), budget=Budget(wall_clock="5m"), max_evaluations=1, agent=counter, learning=False, config=folder, **QUIET)
     assert climber.spend.evaluations == 1
+
+
+def test_a_time_limit_makes_a_slow_solution_a_buggy_candidate(scoring, folder, monkeypatch):
+    monkeypatch.setattr("hillclimb.agents._AGENTS", dict(hc.agents._AGENTS))
+
+    class Sleeper:
+        """The first solution dawdles past the limit; the next one is quick."""
+
+        name = "sleeper"
+
+        def __init__(self):
+            self.n = 0
+
+        def invoke(self, request):
+            self.n += 1
+            nap = "import time; time.sleep(5)\n" if self.n == 1 else ""
+            (request.candidate_dir / "solution.py").write_text(nap + f'open("answer.txt", "w").write("{self.n}")\n')
+            return AgentResult(ok=True)
+
+    register_agent("sleeper", Sleeper)
+    problem = largest_number(scoring, time_limit_s=0.5)
+    with pytest.raises(ValueError, match="time_limit_s"):
+        largest_number(scoring, time_limit_s=0)
+    folder_path = problem.save(folder.paths.problems_dir)
+    assert yaml.safe_load((folder_path / "problem.yaml").read_text())["time_limit_s"] == 0.5
+    assert "within 0.5 seconds" in (folder_path / "description.md").read_text()
+
+    climber = Climber(selector_policy=Best(num_drafts=1, ensemble=False, debug=False), operator_policy=Greedy(tune_budget=0))
+    climber.search(problem, agent="sleeper", max_evaluations=2, learning=False, config=folder, **QUIET)
+    slow, quick = climber.candidates[1], climber.candidates[2]
+    assert slow.status == "buggy" and "did not finish within the time limit" in slow.last_replicate.stdout_tail
+    assert quick.status == "passing" and quick.val_score == 2.0

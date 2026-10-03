@@ -58,7 +58,7 @@ def main(evaluations: int = 10, agent: str = "claude-code") -> dict[str, SearchO
     for name, policy in [
         ("drafts only", DraftsOnly),
         ("give up quickly", GiveUpQuickly(patience=2)),
-        ("bundled greedy", Greedy()),
+        ("greedy", Greedy()),
     ]:
         climber = Climber(
             selector_policy=Best(num_drafts=4, ensemble=False),  # π_sel, the same for all three

@@ -3,7 +3,7 @@
     uv run python examples/custom_operator.py          # with Claude Code writing the solutions
     uv run python examples/custom_operator.py toy      # with the free scripted agent, in seconds
 
-The bundled operators (`Draft`, `Debug`, `Improve`, `Ensemble`) are classes
+The built-in operators (`Draft`, `Debug`, `Improve`, `Ensemble`) are classes
 like any you would write. An operator never touches the agent, the disk or
 the journal. It returns an `Attempt`: the prompt, and what the harness should
 put in the candidate dir (here: a copy of the parent's solution). The prompt

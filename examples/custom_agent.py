@@ -4,7 +4,7 @@
 
 An agent is any object with a `name` and `invoke(request) -> AgentResult`:
 it is handed a prompt and a candidate dir, and leaves a `solution.py` there.
-The bundled ones (`claude-code`, `codex`, `pi`) run a coding agent's CLI. A
+The built-in ones (`claude-code`, `codex`, `pi`) run a coding agent's CLI. A
 scripted one is handy for trying a climber for free, or for testing your
 own modules.
 

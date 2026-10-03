@@ -38,25 +38,26 @@ def _import(path: Path):
     return module
 
 
-class Digits:
-    """A scripted stand-in for nano_climb: each attempt writes one more digit of pi."""
+class Primes:
+    """A scripted stand-in for nano_climb: each attempt writes a bigger prime."""
 
-    name = "digits"
+    name = "primes"
+    PRIMES = ("7", "97", "997", "9973", "99991", "999983", "9999991", "99999989")
 
     def __init__(self):
-        self.n = 2
+        self.n = -1
 
     def invoke(self, request):
         self.n += 1
-        digits = "3.14159265358979323846"[: self.n]
-        (request.candidate_dir / "solution.py").write_text(f'open("pi.txt", "w").write("{digits}")\n')
+        prime = self.PRIMES[min(self.n, len(self.PRIMES) - 1)]
+        (request.candidate_dir / "solution.py").write_text(f'open("prime.txt", "w").write("{prime}")\n')
         return AgentResult(ok=True)
 
 
 @pytest.fixture(autouse=True)
 def _scripted_agents(monkeypatch):
     monkeypatch.setattr("hillclimb.agents._AGENTS", dict(hillclimb.agents._AGENTS))
-    register_agent("digits", Digits)
+    register_agent("primes", Primes)
 
 
 def test_there_are_examples():
@@ -70,7 +71,7 @@ def test_example_runs(path, fresh_dir, capsys):
     assert 'if __name__ == "__main__":\n    main(' in source, f"{path.name} must guard its entry point"
     module = _import(path)
     # the scripts default to Claude Code; the suite runs them on a scripted agent
-    agent = {"define_a_problem": "bisector", "custom_agent": "grid", "nano_climb": "digits"}.get(path.stem, "toy")
+    agent = {"define_a_problem": "bisector", "custom_agent": "grid", "nano_climb": "primes"}.get(path.stem, "toy")
     try:
         result = module.main(evaluations=EVALUATIONS, agent=agent)
     finally:

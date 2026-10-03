@@ -13,7 +13,7 @@ instead, which takes seconds.
 | [`step_by_step.py`](step_by_step.py) | `climber.start`, then `propose` / `run` / `step` by hand, a move of your own, `finish` |
 | [`custom_policy.py`](custom_policy.py) | your own `OperatorPolicy` (what to try next), compared with two others on one budget |
 | [`custom_operator.py`](custom_operator.py) | your own `Operator` (how one attempt is made) and the prompt it writes |
-| [`custom_selector.py`](custom_selector.py) | your own `SelectorPolicy` (which candidate to expand) under the bundled greedy policy |
+| [`custom_selector.py`](custom_selector.py) | your own `SelectorPolicy` (which candidate to expand) under the built-in greedy policy |
 | [`custom_agent.py`](custom_agent.py) | `register_agent`: a scripted agent of your own |
 | [`define_a_problem.py`](define_a_problem.py) | `Problem(name, score=...)`: a problem of your own from a scoring function, searched |
 
