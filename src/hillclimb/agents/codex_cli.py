@@ -1,4 +1,4 @@
-"""Codex CLI operator agent.
+"""Codex CLI coding agent.
 
 One Hillclimb operator call becomes one non-interactive ``codex exec`` turn
 inside the candidate directory. Codex's JSONL events are normalized to the
@@ -53,7 +53,7 @@ def codex_home(auth: str) -> Path:
     if source.exists() and (
         not target.exists() or source.stat().st_mtime > target.stat().st_mtime
     ):
-        # atomic: concurrent agents share this directory — threads of one
+        # atomic: concurrent coding agents share this directory — threads of one
         # search process as much as separate processes, so the staging file
         # must be unique per call, not per pid
         fd, staging = tempfile.mkstemp(prefix=".auth.", suffix=".json", dir=home)
@@ -141,7 +141,7 @@ def _error_message(message: dict) -> str:
 
 
 # Claude Code's model aliases (and ids) mean nothing to the Codex CLI, but
-# hillclimb's one `model` setting defaults to `sonnet` for every agent. A
+# hillclimb's one `model` setting defaults to `sonnet` for every coding agent. A
 # codex call with such a model omits `--model` and lets the Codex CLI's own
 # default model answer — the CLI knows which model the account may use
 # better than a pinned id that goes stale with every release. OpenRouter
@@ -458,7 +458,7 @@ class CodexCliAgent:
             return AgentResult(
                 ok=False,
                 error_kind="timeout",
-                error_message=f"agent call exceeded {request.timeout_s}s",
+                error_message=f"coding agent call exceeded {request.timeout_s}s",
                 **common,
             )
         assert proc is not None and reader is not None

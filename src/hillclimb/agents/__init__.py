@@ -30,12 +30,44 @@ def _make_pi(auth: str, models_file: Path | None = None) -> Agent:
     return PiCliAgent(auth=auth, models_file=models_file)
 
 
+def _make_toy(auth: str) -> Agent:
+    from hillclimb.agents.toy import ToyAgent
+
+    return ToyAgent()
+
+
 _AGENTS: dict[str, Callable[[str], Agent]] = {
     "claude-code": _make_claude_code,
     "codex": _make_codex,
     "dummy": _make_dummy,
     "pi": _make_pi,
+    "toy": _make_toy,
 }
+# the names every hillclimb process knows; anything else was registered here
+_BUILTIN = frozenset(_AGENTS)
+
+
+def register_agent(name: str, factory: Callable[[], Agent], *, replace: bool = False) -> None:
+    """Make `factory()` — a class or function returning an object with
+    `name` and `invoke(request) -> AgentResult` — the agent called `name`,
+    in THIS process: `hc.run(..., agent=name)` and `climber.start(...,
+    agent=name)` find it, a detached engine does not. A search builds its
+    own instance per route."""
+    if name in _BUILTIN:
+        raise ValueError(f"{name!r} is a built-in agent: register yours under another name")
+    if name in _AGENTS and not replace:
+        raise ValueError(f"agent {name!r} is already registered (pass replace=True to swap it)")
+    if not callable(factory):
+        raise TypeError(f"register_agent({name!r}, ...) takes a class or a function returning the agent")
+    _AGENTS[name] = lambda auth: factory()
+
+
+def agent_names() -> tuple[str, ...]:
+    return tuple(sorted(_AGENTS))
+
+
+def is_builtin(name: str) -> bool:
+    return name in _BUILTIN
 
 
 def get_agent(
@@ -45,10 +77,15 @@ def get_agent(
     pi_models_file: Path | None = None,
 ) -> Agent:
     if name not in _AGENTS:
-        raise ValueError(f"Unknown agent: {name} (available: {', '.join(sorted(_AGENTS))})")
+        raise ValueError(
+            f"Unknown agent: {name} (available: {', '.join(agent_names())}; an agent registered "
+            "with register_agent exists only in the process that registered it)"
+        )
     if name == "pi":
         return _make_pi(auth, pi_models_file)
     return _AGENTS[name](auth)
 
 
-__all__ = ["Agent", "AgentRequest", "AgentResult", "get_agent"]
+__all__ = [
+    "Agent", "AgentRequest", "AgentResult", "agent_names", "get_agent", "is_builtin", "register_agent",
+]

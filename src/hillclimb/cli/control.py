@@ -42,7 +42,7 @@ def _load_config_or_reap_orphans(all_: bool) -> Config:
             say(f"  pid [path]{engine.pid}[/]  [note](was {_m(engine.hillclimb_dir)})[/]")
         forced = kill_engines(orphans)
         say(
-            f"[head]Terminated[/] {len(orphans)} engine process group(s) with their agents and verifiers"
+            f"[head]Terminated[/] {len(orphans)} engine process group(s) with their coding agents and verifiers"
             + (f"; {len(forced)} needed SIGKILL." if forced else ".")
         )
         raise typer.Exit(0)
@@ -65,7 +65,7 @@ def _search_targets(config: Config, search: str, all_: bool) -> tuple[DataStore,
 def ps():
     """Every process hillclimb is responsible for on this machine.
 
-    One block per live engine (`hillclimb run`), with its agents, verifiers
+    One block per live engine (`hillclimb run`), with its coding agents, verifiers
     and their children nested underneath. Engines whose hillclimb dir has
     been deleted are tagged `orphan` — `hillclimb stop --all` reaps those.
     """
@@ -110,7 +110,7 @@ def stop(
 ):
     """Stop a running engine now; it can be resumed.
 
-    The operators in flight are aborted within about a second — their agents
+    The operators in flight are aborted within about a second — their coding agents
     and verifiers are killed and their candidates journaled as abandoned (the
     tokens they spent are not recovered). `--graceful` instead starts no new
     work and parks once the operators in flight have finished and been
@@ -172,7 +172,7 @@ def kill(
 ):
     """Last resort for an engine that does not respond to `hillclimb stop`.
 
-    SIGTERMs the engine with its agents and verifiers, then SIGKILLs whatever
+    SIGTERMs the engine with its coding agents and verifiers, then SIGKILLs whatever
     is still alive after `--grace` seconds. The search stays resumable: a
     candidate left pending is recovered as abandoned on resume. `--all` kills
     every running search.
@@ -217,7 +217,7 @@ def reset(
 
     The hillclimb dir is the one found from the current directory (or
     `HILLCLIMB_DIR`). Only engines pinned to that exact dir are signalled —
-    their agents and verifiers go with them — then hillclimb.yaml and the
+    their coding agents and verifiers go with them — then hillclimb.yaml and the
     folders beside it that hillclimb owns (problems/, runs/, knowledge/,
     climbers/, experiments/, the sqlite store) are removed. Anything else in
     the folder — your code, .env, .gitignore — stays. Searches of other
@@ -242,7 +242,7 @@ def reset(
     for path in owned:
         say(f"  [path]{_m(path.relative_to(root))}{'/' if path.is_dir() else ''}[/]")
     if mine:
-        say(f"and terminate {len(mine)} engine(s) running against it [note](with their agents and verifiers)[/]:")
+        say(f"and terminate {len(mine)} engine(s) running against it [note](with their coding agents and verifiers)[/]:")
         for engine in mine:
             say(f"  pid [path]{engine.pid}[/]")
     else:

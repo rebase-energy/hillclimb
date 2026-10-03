@@ -14,7 +14,7 @@ official emflow Verifier instead (scorecard + leaderboard row).
 Validation runs also embed a `report` block in the result JSON: per-zone /
 per-horizon / per-quantile breakdowns accumulated during the eval, the
 feedback operators receive in improve prompts. Holdout and verify runs never
-get one (their numbers must not reach agent prompts), and a report bug can
+get one (their numbers must not reach coding agent prompts), and a report bug can
 never fail a scored eval — assembly is best-effort by construction.
 
 Validation runs also emit the reserved `instances` key: one entry per scored
@@ -358,7 +358,7 @@ def main() -> None:
     else:
         model = ef.load_submission(solution)
         analyzers = "default"
-        # validation only: holdout/verify numbers must never reach agent prompts
+        # validation only: holdout/verify numbers must never reach coding agent prompts
         if args.split == "validation" and not args.no_report:
             from emflow.run.analyzers import default_analyzers
 

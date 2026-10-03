@@ -6,5 +6,5 @@
 # shim and would shadow the real package.
 set -euo pipefail
 
-env -u PYTHONPATH "$HILLCLIMB_ENGINE_PYTHON" -m hillclimb.cli meta evaluate \
-  --climber "$HILLCLIMB_SOLUTION" --spec problem/meta.yaml --result "$HILLCLIMB_RESULT"
+env -u PYTHONPATH "$HILLCLIMB_ENGINE_PYTHON" -m hillclimb.cli grade \
+  --climber "$HILLCLIMB_SOLUTION" --spec problem/grade.yaml --result "$HILLCLIMB_RESULT"

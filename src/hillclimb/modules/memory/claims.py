@@ -1,7 +1,7 @@
 """Semantic memory: typed claims distilled from finished searches.
 
 The statistical layer (knowledge.py) records what happened; this module
-records what it means. After a search finishes, one cheap agent pass reads a
+records what it means. After a search finishes, one cheap coding agent pass reads a
 digest of the journal plus the winning solution and writes typed claims —
 "histgradientboosting helps on spaceship-titanic under a 600s budget" — each
 carrying a canonical entity slug, a confidence, and provenance (candidate
@@ -10,7 +10,7 @@ trace them.
 
 Entities are canonicalized against a per-hillclimb-dir registry
 (knowledge/entities.yaml) and auto-categorized into a small curated concept
-ontology (knowledge/concepts.yaml) by CLOSED-SET classification: the agent
+ontology (knowledge/concepts.yaml) by CLOSED-SET classification: the coding agent
 picks concepts from the ontology and may only PROPOSE additions (flagged
 `proposed: true` for the user to promote), which keeps the taxonomy from
 fragmenting into near-duplicates.
@@ -51,7 +51,7 @@ ENTITY_KINDS = ("technique", "library", "model_family", "feature", "practice")
 # the distill pass is cheap summarization work; route it to the small model
 # unless the user's routing block says otherwise
 DEFAULT_DISTILL_MODEL = "haiku"
-# the journal audit line a memory pass leaves with what its own agent call spent
+# the journal audit line a memory pass leaves with what its own coding agent call spent
 MEMORY_AGENT_CALL = "memory_agent_call"
 
 
@@ -269,7 +269,7 @@ def merge_entities(
 
 def merge_concepts(existing: list[Concept], proposed: list[Concept]) -> list[Concept]:
     """Proposed concepts are appended (flagged) only when the slug is new;
-    the agent never mutates the curated set."""
+    the coding agent never mutates the curated set."""
     merged = list(existing)
     known = {c.slug for c in existing}
     for concept in proposed:
@@ -300,7 +300,7 @@ def parse_claims_file(
     problem_id: str,
     budget_s: int,
 ) -> tuple[list[Claim], list[Entity], list[Concept]]:
-    """Validate the agent-written claims.yaml. Per-entry: one malformed claim
+    """Validate the coding-agent-written claims.yaml. Per-entry: one malformed claim
     drops that claim, not the file. A missing/unparseable file yields empty
     results — the search must never fail on a bad distill pass."""
     if not path.exists():
@@ -403,7 +403,7 @@ def _entities_block(entities: list[Entity], limit: int = 80) -> str:
 def resolve_pass_route(
     config: Config, operator: str, default_model: str
 ) -> tuple[str, str, str, dict[str, int | float] | None]:
-    """(agent, model, auth, sampling) for a knowledge pass.
+    """(coding agent, model, auth, sampling) for a knowledge pass.
     Falls through the normal routing layers, but when neither the operator
     key nor `default` pins a model the global scalar is overridden by the
     pass's own default — these passes don't need the search's operator
@@ -426,7 +426,7 @@ def invoke_knowledge_agent(
     timeout_s: int,
     default_model: str,
 ):
-    """One headless agent call for a knowledge pass; the agent communicates
+    """One headless coding agent call for a knowledge pass; the coding agent communicates
     by writing files into `work_dir` (prompt.md stays there for
     inspection). Resolved through the api seam tests patch."""
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -435,7 +435,7 @@ def invoke_knowledge_agent(
         config, operator, default_model
     )
     # resolve through the api namespace — the seam tests patch to keep every
-    # agent call fake; lazy import avoids the module cycle
+    # coding agent call fake; lazy import avoids the module cycle
     from hillclimb.api import get_agent
     from hillclimb.harness.sandbox import agent_policy
 
@@ -491,7 +491,7 @@ def _distill(
     if on_result is not None:
         on_result(result)
     if not result.ok:
-        log(f"learning: distill agent failed ({result.error_kind}): {result.error_message}")
+        log(f"learning: distill coding agent failed ({result.error_kind}): {result.error_message}")
         return []
     claims, new_entities, proposed = parse_claims_file(
         work_dir / CLAIMS_FILENAME,

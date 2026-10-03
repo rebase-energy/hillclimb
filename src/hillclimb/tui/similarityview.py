@@ -19,7 +19,7 @@ best candidate; `n`/`p` step through the run's problems.
 
 The reading this view is built for: near the structure axis and far on
 behavior = a sensitive knob was found; far on structure and near on
-behavior = agents refactored without changing behavior (wasted operators).
+behavior = coding agents refactored without changing behavior (wasted operators).
 In run scope: experiments whose clouds overlap explored the same way.
 
 Same architecture as surfaceview.py: pure functions up top, thin Textual

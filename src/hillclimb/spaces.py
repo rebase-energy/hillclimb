@@ -22,11 +22,11 @@ A problem dir may ship an `interface.py` exposing module-level `output`
         raise SystemExit(spaces.main(output))
 
 One declaration feeds three consumers: `describe()` renders the contract
-into agent prompts, `check()`/`check_value()` give verifiers and agents
+into coding agent prompts, `check()`/`check_value()` give verifiers and coding agents
 located format violations instead of stack traces, and `sample()` writes a
 format-valid random artifact (Gym's `space.sample()`) for authoring lints.
 The engine never runs a check itself — a problem is still its verifier;
-this module is a library the verifier and the agent call voluntarily.
+this module is a library the verifier and the coding agent call voluntarily.
 
 This file is copied verbatim into the runtime-venv import shim
 (`runtime.ensure_interface_shim`), so it must stay self-contained:
@@ -577,7 +577,7 @@ def main(space: Space, argv: list[str] | None = None) -> int:
 # (flat `name -> spec`, see PARAM_TYPES); the engine then runs extra trials of
 # the SAME code with other values and keeps the best. The candidate-root copy
 # carries each param's `default`; the copy the engine writes into a trial dir
-# adds a `value` per param. `params()` is the agent-facing reader — it works
+# adds a `value` per param. `params()` is the coding-agent-facing reader — it works
 # with no file at all (the solution's own defaults), so declaring is optional.
 #
 # Stdlib-only on purpose: this file is byte-copied into the runtime shim.
@@ -729,7 +729,7 @@ def fold_defaults(raw: dict, values: dict) -> dict:
 
 
 def params(defaults: dict | None = None, path=None) -> dict:
-    """The agent-facing reader: `{name: value}` for this run. Resolution:
+    """The coding-agent-facing reader: `{name: value}` for this run. Resolution:
     `path` → `$HILLCLIMB_PARAMS` (the engine points it at the trial's copy)
     → `./params.json` → no file, in which case `defaults` is returned as is.
     With a file, every declared param gets its `value` (else `default`),

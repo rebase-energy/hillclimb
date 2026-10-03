@@ -35,14 +35,14 @@ class Draft(Operator):
     them all would fight exploration."""
 
     name = "draft"
-    role = "create"
+    kind = "create"
 
     def prepare(self, ctx: OperatorContext) -> Attempt:
         problem = ctx.problem
         prior = "\n\n".join(part for part in (ctx.memory.text, ctx.live_experience()) if part)
         research_cue = (
             ctx.render("research_cue", network_note=problem.network_note).rstrip() + "\n"
-            # an agent without internet cannot do the research the cue asks for
+            # a coding agent without internet cannot do the research the cue asks for
             if self.params.get("retrieval", True) and ctx.agent_internet
             else ""
         )
@@ -77,11 +77,11 @@ class Draft(Operator):
 
 class Debug(Operator):
     """A fix of a candidate that failed. The chain's earlier failed fixes ride
-    in the prompt; where the agent can, the target's agent session is
+    in the prompt; where the coding agent can, the target's coding agent session is
     continued as well."""
 
     name = "debug"
-    role = "repair"
+    kind = "repair"
     needs_target = True
 
     def valid_target(self, target: Candidate | None) -> str | None:
@@ -114,12 +114,12 @@ class Debug(Operator):
 
 
 class Improve(Operator):
-    """A change to a scored candidate. `ablation` (default on) asks the agent
+    """A change to a scored candidate. `ablation` (default on) asks the coding agent
     to measure which components carry the score, and hands the next improve
     of the same target what the last one measured."""
 
     name = "improve"
-    role = "refine"
+    kind = "refine"
     needs_target = True
 
     def valid_target(self, target: Candidate | None) -> str | None:
@@ -168,7 +168,7 @@ class Ensemble(Operator):
     and tabled with their validation scores."""
 
     name = "ensemble"
-    role = "combine"
+    kind = "combine"
     needs_target = True
 
     def prepare(self, ctx: OperatorContext) -> Attempt:

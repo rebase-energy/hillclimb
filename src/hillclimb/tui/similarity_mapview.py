@@ -4,7 +4,7 @@ Every candidate is a node of one 3D graph laid out by `similarity_map`:
 nearby dots really are similar solutions (the reference cube next door
 measures everything from one candidate instead). Lineage edges join parent
 to child, dimmed, so a long edge is an operator that jumped far and a
-knot of short ones is an agent fiddling; the best-so-far sequence is
+knot of short ones is a coding agent fiddling; the best-so-far sequence is
 drawn as a gold trail through the cloud.
 
 Search scope: colour is the score's rank bin (cold→hot), size grows with

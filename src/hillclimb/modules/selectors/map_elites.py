@@ -3,7 +3,7 @@
 Its feature grid, islands, migration and elite archive — and its
 parent/inspiration sampler — decide WHICH candidate to expand and what to
 show beside it. Everything else stays hillclimb's: the policy's schedule, the
-mutation itself (an agent call rather than a one-shot LLM diff), evaluation
+mutation itself (a coding agent call rather than a one-shot LLM diff), evaluation
 (the verifier) and journaling.
 
 What is outsourced: parent selection (exploration / exploitation / weighted,
@@ -65,9 +65,10 @@ def _timestamp(iso: str) -> float:
 
 
 def known_params() -> tuple[str, ...]:
-    """Every setting the selector takes: its own, and the database's."""
+    """Every setting the selector takes: the schedule every selector has,
+    its own, and the database's."""
     DatabaseConfig, _, _ = _require_openevolve()
-    return (*OWN_PARAMS, *sorted(f.name for f in dataclass_fields(DatabaseConfig)))
+    return (*Selector.defaults(), *OWN_PARAMS, *sorted(f.name for f in dataclass_fields(DatabaseConfig)))
 
 
 class MapElites(Selector):
@@ -80,10 +81,11 @@ class MapElites(Selector):
         super().__init__(params, **knobs)
         DatabaseConfig, self._Program, self._ProgramDatabase = _require_openevolve()
         db_fields = {f.name for f in dataclass_fields(DatabaseConfig)}
-        unknown = sorted(set(self.params) - db_fields - set(OWN_PARAMS))
+        unknown = sorted(set(self.params) - db_fields - set(OWN_PARAMS) - set(Selector.defaults()))
         if unknown:
             raise ValueError(
-                f"map-elites has no setting {unknown} (it takes num_inspirations and openevolve's "
+                f"map-elites has no setting {unknown} (it takes the schedule's "
+                f"{', '.join(sorted(Selector.defaults()))}, num_inspirations, and openevolve's "
                 f"DatabaseConfig fields: {', '.join(sorted(db_fields))})"
             )
         self.num_inspirations = int(self.param("num_inspirations"))
@@ -127,8 +129,7 @@ class MapElites(Selector):
             self._add(state, candidate, position)
             self._synced.append((candidate.candidate_id, float(candidate.val_score)))
 
-    def select(self, state: SearchState, *, busy=frozenset()) -> Selection | None:
-        self.sync(state)
+    def pick(self, state: SearchState, *, busy=frozenset()) -> Selection | None:
         pool = self._parent_pool(state)
         if not pool:
             return None

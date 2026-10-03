@@ -121,19 +121,19 @@ class DummyAgent:
             return AgentResult(ok=True, session_id=f"dummy-{self.calls}", duration_s=0.0)
         # canned behaviour follows the KIND of attempt, so a climber's own
         # operators get a sensible stand-in too
-        from hillclimb.modules.operators import role_of
+        from hillclimb.modules.operators import operator_kind
 
-        role = request.role or role_of(request.operator)
-        if role == "create" and self.calls == 1:
+        kind = request.kind or operator_kind(request.operator)
+        if kind == "create" and self.calls == 1:
             script = SOLVER_TEMPLATE.format(max_iter=50, bug=BUGGY_LINE)
             note = "buggy first draft (HistGradientBoosting, 50 iters)"
-        elif role == "repair":
+        elif kind == "repair":
             script = SOLVER_TEMPLATE.format(max_iter=50, bug="")
             note = "fix: removed undefined variable"
-        elif role == "refine":
+        elif kind == "refine":
             script = SOLVER_TEMPLATE.format(max_iter=300, bug="")
             note = "improve: raise max_iter 100 -> 300"
-        elif role == "combine":
+        elif kind == "combine":
             script = SOLVER_TEMPLATE.format(max_iter=500, bug="")
             note = "ensemble: blend of top candidates (canned stand-in)"
         else:

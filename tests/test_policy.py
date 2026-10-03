@@ -17,7 +17,9 @@ from tests.conftest import local_executor
 from hillclimb.harness.journal import Journal
 from hillclimb.harness.evaluation import accept_band
 from hillclimb.climber import ClimberLoadError, climber_label
+from hillclimb.harness.loop import PolicyLoop
 from hillclimb.modules.policies.greedy import Greedy
+from hillclimb.modules.selectors.best import Best
 from hillclimb.modules.policies.base import Action, BudgetView, InflightRef, SearchState
 from tests.harness_factory import SearchRig
 from hillclimb.harness.dirs import create_search_dir
@@ -75,14 +77,20 @@ def add_candidate(
     return candidate
 
 
+def decide(view: SearchState, *, select=None, policy=None) -> Action | None:
+    """One decision as the loop makes it: the selector (π_sel) first, then
+    the policy (π_op) on what it chose."""
+    policy = policy or Greedy(selector=select or Best())
+    return PolicyLoop(policy).propose(view)
+
+
 @pytest.fixture
 def journal(tmp_path: Path) -> Journal:
     return Journal(tmp_path / "journal.jsonl")
 
 
 def test_propose_drafts_on_empty_journal(journal, config):
-    policy = Greedy()
-    action = policy.propose(make_view(journal, config))
+    action = decide(make_view(journal, config))
     assert action == Action(operator="draft", args={"complexity": "minimal"})
 
 
@@ -96,73 +104,70 @@ def test_complexity_escalates_per_draft_with_offset(journal, config, tmp_path):
 
 
 def test_propose_debugs_newest_buggy_tip_until_depth_cap(journal, config):
-    policy = Greedy()
     add_candidate(journal, "c001", "draft", status="buggy")
-    action = policy.propose(make_view(journal, config))
+    action = decide(make_view(journal, config))
     assert (action.operator, action.target_id) == ("debug", "c001")
 
     # a full-depth chain of failed fixes exhausts the cap -> back to drafting
     add_candidate(journal, "c002", "debug", status="buggy", parent_id="c001")
     add_candidate(journal, "c003", "debug", status="buggy", parent_id="c002")
     add_candidate(journal, "c004", "debug", status="buggy", parent_id="c003")
-    action = policy.propose(make_view(journal, config))
+    action = decide(make_view(journal, config))
     assert action.operator == "draft"
 
 
 def test_propose_skips_tip_with_active_child(journal, config):
-    policy = Greedy()
     add_candidate(journal, "c001", "draft", status="buggy")
     add_candidate(journal, "c002", "debug", status="pending", parent_id="c001")
-    action = policy.propose(make_view(journal, config))
+    action = decide(make_view(journal, config))
     assert action.operator == "draft"  # chain already being worked
 
 
 def test_propose_spreads_improves_across_busy_targets(journal, config, tmp_path):
-    policy = Greedy()
     for i, score in enumerate((0.9, 0.8, 0.7), start=1):
         add_candidate(journal, f"c00{i}", "draft", val_score=score)
     view = make_view(journal, config)
-    assert policy.prospective_branches(view) == 3  # draft quota met
-    assert policy.propose(view).target_id == "c001"  # best first
+    assert Best().prospective_branches(view) == 3  # draft quota met
+    assert decide(view).target_id == "c001"  # best first
 
     busy = (InflightRef(candidate_id="c004", operator="improve", parent_id="c001"),)
-    action = policy.propose(make_view(journal, config, inflight=busy))
+    action = decide(make_view(journal, config, inflight=busy))
     assert (action.operator, action.target_id) == ("improve", "c002")
 
 
 def test_propose_ensemble_in_final_window_with_drain(journal, config, tmp_path):
-    policy = Greedy()
     add_candidate(journal, "c001", "draft", val_score=0.9, solution="a\n", tmp_path=tmp_path)
     add_candidate(journal, "c002", "draft", val_score=0.8, solution="b\n", tmp_path=tmp_path)
     add_candidate(journal, "c003", "draft", val_score=0.7, solution="c\n", tmp_path=tmp_path)
     in_window = dict(remaining_s=100.0, total_s=3600, stop_margin_s=300)
 
-    action = policy.propose(make_view(journal, config, **in_window))
+    action = decide(make_view(journal, config, **in_window))
     assert action.operator == "ensemble"
     assert action.target_id == "c001"
     assert action.inspiration_ids == ("c001", "c002", "c003")
 
     # in-flight work: hold the slot so ensemble inputs snapshot at launch
     busy = (InflightRef(candidate_id="c004", operator="improve", parent_id="c001"),)
-    assert policy.propose(make_view(journal, config, inflight=busy, **in_window)) is None
+    assert decide(make_view(journal, config, inflight=busy, **in_window)) is None
 
     # identical scripts dedupe below the 2-candidate minimum -> no ensemble
     for cid in ("c001", "c002", "c003"):
         Path(journal.get(cid).candidate_dir, "solution.py").write_text("same\n")
-    action = policy.propose(make_view(journal, config, **in_window))
+    action = decide(make_view(journal, config, **in_window))
     assert action.operator != "ensemble"
 
 
 def test_a_bundled_name_resolves_greedy_and_an_unknown_one_is_refused():
-    policy = make_policy("greedy", {"num_drafts": 5}, priors={"complexity_start": 2, "not_a_knob": 1})
+    policy = make_policy("greedy", {"num_drafts": 5, "tune_budget": 4}, priors={"complexity_start": 2, "not_a_knob": 1})
     assert isinstance(policy, Greedy)
     assert policy.name == "greedy"
     # the caller's params over the block's; what memory learned under both,
-    # and only the knobs the policy declares
-    assert policy.params == {"num_drafts": 5, "complexity_start": 2}
+    # and only the knobs the policy declares — the schedule's went to the selector
+    assert policy.params == {"tune_budget": 4, "complexity_start": 2}
+    assert policy.selector.param("num_drafts") == 5
     assert make_policy("greedy", {"complexity_start": 0}, priors={"complexity_start": 2}).param("complexity_start") == 0
     # a param the policy does not have is refused before anything runs
-    with pytest.raises(ClimberLoadError, match="greedy has no param 'note' .it has: .*num_drafts.*select_params"):
+    with pytest.raises(ClimberLoadError, match="greedy has no param 'note' .it has: .*tune_budget.*select_params"):
         make_policy("greedy", {"note": "x"})
     with pytest.raises(ClimberLoadError, match="bundled: gepa, greedy, openevolve"):
         make_policy("map-elites")
@@ -179,7 +184,7 @@ class ScriptedPolicy:
         self.observed: list[str] = []
         self.proposals = 0
 
-    def propose(self, view: SearchState) -> Action | None:
+    def propose(self, view: SearchState, selection=None) -> Action | None:
         self.proposals += 1
         return Action(
             operator="draft",
@@ -250,32 +255,37 @@ def test_every_knob_is_one_dict_with_defaults(config):
     climber's `params`, else the class's DEFAULTS."""
     from hillclimb.harness.glue import build_loop
 
-    assert Greedy().resolved_params()["num_drafts"] == 3
-    resolved = build_loop(config).policy.resolved_params()  # the folder's block: greedy, no params
-    assert resolved["num_drafts"] == 3 and resolved["ensemble_top_k"] == 3 and resolved["tune_budget"] == 8
-    # the block's params win over the defaults
+    assert Greedy().resolved_params()["tune_budget"] == 8 and Best().param("num_drafts") == 3
+    policy = build_loop(config).policy  # the folder's block: greedy over best, no params
+    assert policy.resolved_params()["tune_budget"] == 8
+    assert policy.selector.param("num_drafts") == 3 and policy.selector.param("ensemble_top_k") == 3
+    # the block's params win over the defaults; the schedule's knobs under
+    # `params` reach the selector (every block before 0.7 wrote them there)
     config.climber.params = {"num_drafts": 1, "ensemble": False, "tune_budget": 0}
-    resolved = build_loop(config).policy.resolved_params()
-    assert resolved["num_drafts"] == 1 and resolved["ensemble"] is False and resolved["tune_budget"] == 0
-    assert resolved["max_debug_depth"] == 3  # untouched knobs keep their default
-    assert set(resolved) == {
-        "num_drafts", "debug", "max_debug_depth", "complexity_start",  # the last two: every Policy's
-        "ensemble", "ensemble_reserve_fraction", "ensemble_top_k", "ensemble_max_attempts",
+    policy = build_loop(config).policy
+    assert policy.resolved_params()["tune_budget"] == 0 and "num_drafts" not in policy.params
+    assert policy.selector.param("num_drafts") == 1 and policy.selector.param("ensemble") is False
+    assert policy.selector.param("max_debug_depth") == 3  # untouched knobs keep their default
+    assert set(policy.resolved_params()) == {
+        "complexity_start",  # every Policy's
         "tune_budget", "tune_gate", "tune_parallel", "tune_burst",
+    } == set(Greedy.defaults())  # DEFAULTS merge over the class hierarchy
+    assert set(Best.defaults()) == {
+        "num_drafts", "debug", "max_debug_depth",
+        "ensemble", "ensemble_reserve_fraction", "ensemble_top_k", "ensemble_max_attempts",
     }
-    assert set(resolved) == set(Greedy.defaults())  # DEFAULTS merge over the class hierarchy
 
 
 def test_num_drafts_and_debug_depth_from_policy_params(journal, config):
     add_candidate(journal, "c001", "draft", val_score=0.5)
-    assert Greedy().propose(make_view(journal, config)).operator == "draft"  # config: 3 drafts
-    action = Greedy(params={"num_drafts": 1}).propose(make_view(journal, config))
+    assert decide(make_view(journal, config)).operator == "draft"  # config: 3 drafts
+    action = decide(make_view(journal, config), select=Best(num_drafts=1))
     assert (action.operator, action.target_id) == ("improve", "c001")
 
     add_candidate(journal, "c002", "draft", status="buggy")
     add_candidate(journal, "c003", "debug", status="buggy", parent_id="c002")
-    assert Greedy().propose(make_view(journal, config)).operator == "debug"  # depth 1 < 3
-    action = Greedy(params={"num_drafts": 1, "max_debug_depth": 1}).propose(make_view(journal, config))
+    assert decide(make_view(journal, config)).operator == "debug"  # depth 1 < 3
+    action = decide(make_view(journal, config), select=Best(num_drafts=1, max_debug_depth=1))
     assert action.operator == "improve"  # chain exhausted at depth 1
 
 
@@ -283,19 +293,19 @@ def test_ensemble_knobs_from_policy_params(journal, config, tmp_path):
     for i, (score, text) in enumerate(zip((0.9, 0.8, 0.7, 0.6), "abcd"), start=1):
         add_candidate(journal, f"c00{i}", "draft", val_score=score, solution=text + "\n", tmp_path=tmp_path)
     in_window = dict(remaining_s=100.0, total_s=3600, stop_margin_s=300)
-    assert Greedy().propose(make_view(journal, config, **in_window)).operator == "ensemble"
-    assert Greedy(params={"ensemble": False}).propose(
+    assert decide(make_view(journal, config, **in_window)).operator == "ensemble"
+    assert decide(select=Best(ensemble=False), view=
         make_view(journal, config, **in_window)
     ).operator != "ensemble"
     # a wider reserve opens the window earlier; a bigger top_k blends more
     mid = dict(remaining_s=1500.0, total_s=3600, stop_margin_s=300)
-    assert Greedy().propose(make_view(journal, config, **mid)).operator != "ensemble"
-    action = Greedy(params={"ensemble_reserve_fraction": 0.4, "ensemble_top_k": 4}).propose(
+    assert decide(make_view(journal, config, **mid)).operator != "ensemble"
+    action = decide(select=Best(ensemble_reserve_fraction=0.4, ensemble_top_k=4), view=
         make_view(journal, config, **mid)
     )
     assert action.operator == "ensemble" and len(action.inspiration_ids) == 4
     # max_attempts=0 disables it outright
-    assert Greedy(params={"ensemble_max_attempts": 0}).propose(
+    assert decide(select=Best(ensemble_max_attempts=0), view=
         make_view(journal, config, **in_window)
     ).operator != "ensemble"
 
@@ -312,11 +322,11 @@ class DraftsOnly(Greedy):
 
     name = "drafts-only"
 
-    def propose(self, view):
-        tip = self.debuggable_tip(view)
-        if tip is not None:
-            return Action(operator="debug", target_id=tip.candidate_id)
-        return self._draft_action(view)
+    def propose(self, view, selection):
+        node = view.journal.candidates[selection.target_id] if selection is not None else None
+        if node is not None and node.status in ("failing", "buggy"):
+            return Action(operator="debug", target_id=node.candidate_id)
+        return self.draft_action(view)
 '''
 
 
@@ -327,10 +337,10 @@ def test_file_policy_loads_by_path_and_is_hashed(tmp_path, journal, config):
     path.parent.mkdir(parents=True)
     path.write_text(FILE_POLICY)
     policy = make_policy(str(path), {"num_drafts": 1}, priors={"complexity_start": 1})
-    assert policy.name == "drafts-only" and policy.params == {"num_drafts": 1, "complexity_start": 1}
-    assert policy.param("complexity_start") == 1
+    assert policy.name == "drafts-only" and policy.params == {"complexity_start": 1}
+    assert policy.param("complexity_start") == 1 and policy.selector.param("num_drafts") == 1
     add_candidate(journal, "c001", "draft", val_score=0.5)
-    assert policy.propose(make_view(journal, config)).operator == "draft"  # greedy would improve
+    assert decide(make_view(journal, config), policy=policy).operator == "draft"  # greedy would improve
 
     # relative paths anchor at the folder holding the hillclimb dir; a
     # one-file climber's identity follows its bytes, not its place
@@ -488,7 +498,7 @@ def test_greedy_ensemble_inputs_ignore_holdout(journal, config, tmp_path):
     for cid, val, hold in (("c001", 0.9, 0.1), ("c002", 0.8, 0.5), ("c003", 0.7, 0.9)):
         _add_with_holdout(journal, tmp_path, cid, val, hold)
     config.holdout.selection = "holdout"
-    action = Greedy(params={"ensemble_top_k": 2}).propose(
+    action = decide(select=Best(ensemble_top_k=2), view=
         make_view(journal, config, remaining_s=100.0, total_s=3600, stop_margin_s=300)
     )
     assert action.operator == "ensemble"

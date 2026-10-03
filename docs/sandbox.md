@@ -1,8 +1,8 @@
 # The sandbox
 
 hillclimb starts two kinds of process that run code nobody has read: the
-agents, which work with their permission prompts off, and the verifier, which
-runs the `solution.py` an agent wrote. Both run as you. The sandbox is what
+coding agents, which work with their permission prompts off, and the verifier, which
+runs the `solution.py` a coding agent wrote. Both run as you. The sandbox is what
 keeps a mistake, or a prompt injection, from costing you anything outside
 the search.
 
@@ -26,30 +26,30 @@ one got through; `--json` for scripts.
 | | allowed | blocked |
 |---|---|---|
 | write | its candidate's folder, the temp dirs, the caches of `huggingface`, `torch` and `matplotlib` | everything else: your home folder, the repository, the search's journal and `best/`, the runtime venvs |
-| read | most of the disk | `~/.ssh`, `~/.aws`, `~/.gnupg`, cloud and GitHub logins, browser profiles, shell history, `.env` files, the other agents' logins, the search's journal and its holdout runs, container runtime sockets |
-| network, agents | everything, or with `allow_internet_for_agents: false` only their model provider | the rest |
+| read | most of the disk | `~/.ssh`, `~/.aws`, `~/.gnupg`, cloud and GitHub logins, browser profiles, shell history, `.env` files, the other coding agents' logins, the search's journal and its holdout runs, container runtime sockets |
+| network, coding agents | everything, or with `allow_internet_for_agents: false` only their model provider | the rest |
 | network, verifier | nothing, or with the problem's `allow_internet_during_solution: true` everything | the rest, name lookups included |
 | processes | its own children | signalling anything outside |
 
-An agent additionally writes to its own state: `~/.claude` and
+A coding agent additionally writes to its own state: `~/.claude` and
 `~/.claude.json` for Claude Code, pi's isolated home and session folder for pi.
 
-## Per agent
+## Per coding agent
 
-| agent | how it is confined |
+| coding agent | how it is confined |
 |---|---|
 | `claude-code` | the whole process runs inside the sandbox |
 | `pi` | the whole process runs inside the sandbox |
 | `codex` | by its own sandbox (`--sandbox workspace-write`): writes stay in the candidate's folder and its commands have no network. hillclimb's sandbox is not put round it, because macOS allows no sandbox inside a sandbox. Codex can therefore still read files the table above lists as blocked |
 | `dummy` | runs no model and no tools |
 
-## Agents without internet
+## Coding agents without internet
 
 ```yaml
 allow_internet_for_agents: false
 ```
 
-The agents then reach their model provider and nothing else. Everything
+The coding agents then reach their model provider and nothing else. Everything
 they and their tools send goes through a small proxy inside the engine that
 lets HTTPS through to the provider's hosts and refuses the rest; the engine's
 log names each host it refused. Claude Code's web search and fetch and its
@@ -65,7 +65,7 @@ sandbox: off              # run everything unsandboxed
 sandbox:                  # or adjust it
   write: [scratch]        # more writable paths, relative to the hillclimb dir
   deny_read: [~/private]  # more unreadable paths
-  allow_hosts: [bedrock-runtime.eu-north-1.amazonaws.com]   # more hosts for agents without internet
+  allow_hosts: [bedrock-runtime.eu-north-1.amazonaws.com]   # more hosts for coding agents without internet
   local_ports: [8000]     # localhost ports left open when the network is off
 ```
 
@@ -93,10 +93,10 @@ machine. It stops writes outside the candidate's folder, reads of your keys
 and traffic to hosts you did not allow. It does not protect against a flaw
 in the kernel, and these stay open:
 
-- An agent can read its own login, because it needs it.
+- A coding agent can read its own login, because it needs it.
 - A sandboxed process can still read most of your files. Add what is private
   to `sandbox.deny_read`.
-- An agent without internet still talks to its model provider, so what it
+- A coding agent without internet still talks to its model provider, so what it
   can read can reach that provider.
 - A meta-problem's verifier is not sandboxed; the searches it starts are.
-- emflow's once-per-search leaderboard submission runs unsandboxed.
+- A benchmark provider's once-per-search official grading runs unsandboxed.

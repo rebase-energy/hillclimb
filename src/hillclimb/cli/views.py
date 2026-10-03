@@ -307,7 +307,7 @@ def chart(
         "h toggles either way"
     ),
     cost: bool = typer.Option(
-        False, "--cost", help="Overlay cumulative agent tokens and verifier CPU-minutes "
+        False, "--cost", help="Overlay cumulative coding agent tokens and verifier CPU-minutes "
         "on right-hand axes — what the climb cost as it climbed"
     ),
 ):

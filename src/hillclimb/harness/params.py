@@ -2,7 +2,7 @@
 `params.json` contract lives in `spaces.py`, stdlib-only, shared with the
 runtime; this module is what the engine and tuners import).
 
-The engine never imports agent code: it reads the declaration file, writes a
+The engine never imports coding agent code: it reads the declaration file, writes a
 values document per trial, and hands typed `ParamSpec`s to the tuner.
 """
 

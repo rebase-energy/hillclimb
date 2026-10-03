@@ -62,7 +62,7 @@ def run_scored_baseline(
     solution_text: str,
     summary: str,
 ) -> Candidate:
-    """c000 evaluated for real — a genuine scored floor agent drafts must
+    """c000 evaluated for real — a genuine scored floor coding agent drafts must
     beat. Shared by the emflow and evaluator kinds; degrades to the
     unscored-placeholder semantics when the eval fails (keeps the search
     alive). `evaluator` is the host's `CandidateEvaluator`: its executor runs
@@ -114,7 +114,7 @@ def write_baseline(
     timeout_s: int = 1800,
 ) -> Candidate:
     """t=0 scored floor: the problem's baseline solution evaluated for real,
-    so agent drafts must beat something honest to become best. Problems that
+    so coding agent drafts must beat something honest to become best. Problems that
     ship no baseline (or callers without an evaluator) get the unscored
     placeholder."""
     if problem.baseline_score is not None:

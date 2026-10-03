@@ -5,7 +5,7 @@ debug/improve/ensemble candidate hangs off the candidate it was built from.
 `build_tree` turns that into a drawable tidy tree (y = depth, x = subtree
 order) and classifies every node by its *fate* — what the search did with
 it — so the topology of the exploration reads at a glance: which lineages
-were expanded, which were scored and then left, where the agents failed,
+were expanded, which were scored and then left, where the coding agents failed,
 what the user pruned.
 
 `treeview.py` renders this through plotui; `chart.py --detail` reuses the

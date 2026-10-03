@@ -35,8 +35,8 @@ class DraftsThenCross:
     """Two drafts, then cross the two best."""
     def __init__(self, params=None):
         self.params = params or {}
-    def propose(self, view):
-        scored = [c for c in view.journal.scored_candidates() if c.role == "create"]
+    def propose(self, view, selection):
+        scored = [c for c in view.journal.scored_candidates() if c.kind == "create"]
         if len(scored) + len(view.inflight) < int(self.params.get("drafts", 2)):
             return Action(operator="draft")
         if any(c.operator == "cross" for c in view.journal.candidates.values()) or view.inflight:
@@ -52,7 +52,7 @@ OPERATORS_PY = '''\
 from hillclimb.sdk import Operator, Attempt, inspiration_filename
 
 class Cross(Operator):
-    name, role, needs_target = "cross", "combine", True
+    name, kind, needs_target = "cross", "combine", True
     def prepare(self, ctx):
         files = ", ".join(inspiration_filename(i) for i, _ in enumerate(ctx.inspirations, 1))
         return Attempt(prompt=ctx.render("cross", files=files, style=self.params.get("style", "plain")))
@@ -93,7 +93,8 @@ def test_the_bundled_climbers_load_and_name_their_modules():
     greedy = load_climber("greedy")
     loop = greedy.build_loop(params={"num_drafts": 1})
     assert isinstance(loop, PolicyLoop) and isinstance(loop.policy, Greedy)
-    assert loop.policy.param("num_drafts") == 1 and loop.policy.param("ensemble_top_k") == 3  # overlay, then the class's default
+    # the overlay's schedule knob reaches the selector; the rest keeps the class's default
+    assert loop.policy.selector.param("num_drafts") == 1 and loop.policy.selector.param("ensemble_top_k") == 3
     assert greedy.operator_set().names() == ("draft", "debug", "improve", "ensemble")
     assert greedy.operator_set().get("draft").params == {}  # the operator's own defaults
     # a preset is a complete block because the classes declare what they need
@@ -107,9 +108,9 @@ def test_a_block_is_a_climber(tmp_path):
     """The `climber:` block: a bare string is a preset or one file, a mapping
     names each module; with neither `policy:` nor `loop:` it is greedy."""
     assert ClimberSpec.model_validate("openevolve").block() == {
-        "name": "openevolve", "policy": "greedy", "params": {"ensemble": False, "tune_budget": 0},
-        "select": "map-elites", "tuner": "random", "memory": "files",
-    }  # a preset is a composition: greedy's schedule over the MAP-Elites selector
+        "name": "openevolve", "policy": "greedy", "params": {"tune_budget": 0},
+        "select": "map-elites", "select_params": {"ensemble": False}, "tuner": "random", "memory": "files",
+    }  # a preset is a composition: greedy over the MAP-Elites selector, without ensemble or tune
     assert ClimberSpec.model_validate({"params": {"num_drafts": 5}}).policy == "greedy"
     spec = ClimberSpec.model_validate({"policy": "mine.py:Mine", "operators": ["draft", {"ops.py:Cross": None}]})
     assert spec.label == "mine" and spec.operator_items() == [("draft", {}), ("ops.py:Cross", {})]
@@ -137,7 +138,7 @@ def test_a_block_runs_with_its_own_operator_and_prompts(task, config, tmp_path):
     selected = harness.execute(climber.build_loop())
 
     assert [r.operator for r in agent.requests] == ["draft", "draft", "cross"]
-    assert selected.operator == "cross" and selected.role == "combine" and selected.val_score == 0.9
+    assert selected.operator == "cross" and selected.kind == "combine" and selected.val_score == 0.9
     cross_prompt = Path(selected.candidate_dir, "prompt.md").read_text()
     assert cross_prompt.startswith("Cross candidate_1.py, candidate_2.py in a bold way.")  # manifest params reached it
     assert "# Output contract" in cross_prompt  # no {{contract}} token: the harness appended it
@@ -321,9 +322,9 @@ def test_a_run_folder_written_before_climbers_still_loads(tmp_path):
     assert meta.climber_sha256 == "ab" * 32 and meta.hillclimb_version is None  # unknown for an old run
     # the name, the params and the tuner it recorded, as the one block 0.6 keeps
     assert meta.climber_spec == {
-        "policy": "hillclimb/policies/drafts_only.py", "params": {"num_drafts": 1},
+        "policy": "hillclimb/policies/drafts_only.py", "select_params": {"num_drafts": 1},
         "tuner": "optuna", "tuner_params": {"seed": 3},
-    }
+    }  # the schedule knob it recorded under `params` is the selector's now
     # and the same record as the sqlite store holds it
     again = SearchMeta.model_validate_json(meta.model_dump_json())
     assert (again.climber, again.climber_spec) == (meta.climber, meta.climber_spec)
@@ -359,8 +360,9 @@ def test_a_run_folder_written_by_0_5_still_loads(tmp_path):
         "agent": "claude-code", "model": "sonnet", "metric": "m",
         "policy": "openevolve", "policy_params": {"random_seed": 42, "num_drafts": 2},
     })
-    assert old.climber_spec["select"] == "map-elites" and old.climber_spec["select_params"] == {"random_seed": 42}
-    assert old.climber_spec["params"] == {"ensemble": False, "tune_budget": 0, "num_drafts": 2}
+    assert old.climber_spec["select"] == "map-elites"
+    assert old.climber_spec["select_params"] == {"random_seed": 42, "ensemble": False, "num_drafts": 2}
+    assert old.climber_spec["params"] == {"tune_budget": 0}
     # a 0.6 record is left as it is
     current = SearchMeta.model_validate({**meta.model_dump(), "climber_ref": None})
     assert current.climber_spec == block and current.climber_ref is None
@@ -479,7 +481,7 @@ def test_a_pre_06_snapshot_of_a_bundled_climber_still_loads(tmp_path, name):
         assert not climber.is_loop and type(loop.policy).__name__ == {"greedy": "Greedy", "openevolve": "OpenEvolvePolicy"}[name]
         assert climber.operator_set().names() == ("draft", "debug", "improve", "ensemble")
         assert climber.operator_set().get("draft").params == {"retrieval": True}
-        assert loop.policy.params["num_drafts"] == 3  # the manifest's params
+        assert loop.policy.selector.param("num_drafts") == 3  # the manifest's params, where the selector reads them
     assert manifest.read_text() == text
 
 

@@ -40,7 +40,8 @@ def test_the_namespaces_are_lazy_windows_onto_the_modules():
 
 def test_a_composed_climber_is_the_block_a_run_config_takes():
     climber = hc.Climber(
-        policy=hc.policies.Greedy(num_drafts=3, ensemble=False),
+        select=hc.selectors.Best(num_drafts=3, ensemble=False),
+        policy=hc.policies.Greedy(tune_budget=4),
         operators=[hc.operators.Draft(retrieval=False), hc.operators.Debug(), hc.operators.Improve],
         tuner=hc.tuners.RandomSearch(seed=7),
         memory=hc.memory.FilesMemory(max_cards=1),
@@ -48,7 +49,8 @@ def test_a_composed_climber_is_the_block_a_run_config_takes():
     )
     block = climber.to_spec().block()
     assert block == {
-        "name": "mine", "policy": "greedy", "params": {"num_drafts": 3, "ensemble": False},
+        "name": "mine", "policy": "greedy", "params": {"tune_budget": 4},
+        "select": "best", "select_params": {"num_drafts": 3, "ensemble": False},
         "operators": [{"draft": {"retrieval": False}}, "debug", "improve"],
         "tuner": "random", "tuner_params": {"seed": 7}, "memory": "files", "memory_params": {"max_cards": 1},
     }
@@ -56,7 +58,7 @@ def test_a_composed_climber_is_the_block_a_run_config_takes():
     assert climber.portable and resolve_climber(block).sha256 == climber.sha256
     assert climber.operator_set().get("draft").params == {"retrieval": False}
     loop = climber.build_loop()
-    assert loop.policy.param("num_drafts") == 3 and loop.policy is not climber.build_loop().policy  # built fresh
+    assert loop.policy.selector.param("num_drafts") == 3 and loop.policy is not climber.build_loop().policy  # built fresh
     # names work too, a loop instead of a policy, and a policy that brings its selector
     assert hc.Climber(loop="gepa").is_loop and hc.Climber("openevolve").spec.select == "map-elites"
     best_first = hc.Climber(policy=hc.policies.Greedy(selector=hc.selectors.Best()))
@@ -74,7 +76,7 @@ from hillclimb.sdk import Attempt, Operator
 
 
 class Shake(Operator):
-    name, role, needs_target = "shake", "refine", True
+    name, kind, needs_target = "shake", "refine", True
 
     def prepare(self, ctx):
         return Attempt(prompt="Shake it." + self.params.get("how", ""), copy_parent=True)
@@ -83,11 +85,10 @@ class Shake(Operator):
 class DraftOnce(hc.policies.Greedy):
     """One draft, then shake the best."""
     name = "draft-once"
-    DEFAULTS = {"num_drafts": 1, "ensemble": False, "tune_budget": 0}
+    DEFAULTS = {"tune_budget": 0}
 
-    def _expand_action(self, state, busy):
-        action = super()._expand_action(state, busy)
-        return None if action is None else hc.sdk.Action(operator="shake", target_id=action.target_id)
+    def expand_action(self, state, selection, operator="improve"):
+        return super().expand_action(state, selection, operator="shake")
 '''
 
 
@@ -123,7 +124,10 @@ def test_classes_from_a_file_are_written_down_as_that_file(runnable, config, tmp
     path = tmp_path / "mine.py"
     path.write_text(MINE_PY)
     mine = _import(path, "my_script_module")
-    climber = hc.Climber(policy=mine.DraftOnce, operators=["draft", mine.Shake(how=" Gently.")])
+    climber = hc.Climber(
+        select=hc.selectors.Best(num_drafts=1, ensemble=False), policy=mine.DraftOnce,
+        operators=["draft", mine.Shake(how=" Gently.")],
+    )
     assert climber.to_spec().block()["policy"] == f"{path.resolve()}:DraftOnce"
     assert climber.to_spec().operators == ["draft", {f"{path.resolve()}:Shake": {"how": " Gently."}}]
 
@@ -151,11 +155,11 @@ def test_a_class_that_exists_only_here_still_runs_but_is_not_portable(runnable, 
         "import hillclimb as hc\n"
         "class DraftsOnly(hc.policies.Greedy):\n"
         "    name = 'drafts-only'\n"
-        "    def propose(self, state):\n"
-        "        return self._draft_action(state)\n",
+        "    def propose(self, state, selection):\n"
+        "        return self.draft_action(state)\n",
         namespace,
     )
-    climber = hc.Climber(policy=namespace["DraftsOnly"](num_drafts=9))
+    climber = hc.Climber(policy=namespace["DraftsOnly"](tune_budget=0))
     assert not climber.portable and climber.spec.policy == "live:DraftsOnly"
     with pytest.raises(NotPortableError, match="live:DraftsOnly exists only in this process"):
         climber.to_spec()
@@ -200,10 +204,10 @@ def test_run_spec_runs_every_entry_here_under_one_run(runnable, config, tmp_path
     assert (first.state, second.state) == ("done", "done")
     metas = [load_search_meta(outcome.search_dir) for outcome in (first, second)]
     assert [m.budget_s for m in metas] == [300, 3600]  # the entry's budget, else the problem's
-    assert [m.climber_spec["params"]["num_drafts"] for m in metas] == [1, 2]  # the spec's default, the entry's own
+    assert [m.climber_spec["select_params"]["num_drafts"] for m in metas] == [1, 2]  # the spec's default, the entry's own
     assert len(runnable.requests) == 3
     rerun = yaml.safe_load((first.run_dir / "spec.yaml").read_text())["problems"]
-    assert [entry["climber"]["params"]["num_drafts"] for entry in rerun] == [1, 2]
+    assert [entry["climber"]["select_params"]["num_drafts"] for entry in rerun] == [1, 2]
 
 
 def test_a_script_that_runs_at_import_is_told_to_guard_it(tmp_path):
@@ -223,5 +227,6 @@ def test_a_script_that_runs_at_import_is_told_to_guard_it(tmp_path):
 def test_a_written_climber_is_a_block_file(tmp_path):
     path = hc.Climber(policy="greedy", params={"num_drafts": 2}, tuner="random").write(tmp_path / "climber.yaml")
     text = yaml.safe_load(path.read_text())
-    assert text == {"climber": {"policy": "greedy", "params": {"num_drafts": 2}, "tuner": "random", "memory": "files"}}
-    assert resolve_climber(text["climber"]).build_loop().policy.param("num_drafts") == 2
+    # a schedule knob written under `params` is the selector's: it lands as `select_params`
+    assert text == {"climber": {"policy": "greedy", "select_params": {"num_drafts": 2}, "tuner": "random", "memory": "files"}}
+    assert resolve_climber(text["climber"]).build_loop().policy.selector.param("num_drafts") == 2

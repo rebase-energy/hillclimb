@@ -167,7 +167,7 @@ def test_search_record_pins_the_climber_and_snapshots_it(config, tmp_path):
     meta = load_search_meta(search_dir)
     before = resolve_climber(block).sha256
     assert (meta.climber, meta.climber_sha256) == ("mine", before)
-    assert meta.climber_spec["params"] == {"num_drafts": 1} and meta.hillclimb_version
+    assert meta.climber_spec["select_params"] == {"num_drafts": 1} and meta.hillclimb_version
 
     # the author keeps iterating on the live prompts; the search keeps what it started with
     (climber_dir / "prompts" / "improve.md").write_text("a different prompt: {{best_score}}\n\n{{contract}}\n")

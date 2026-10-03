@@ -1,0 +1,25 @@
+                                                                                                                        
+ Usage: root grade [OPTIONS]                                                                                            
+                                                                                                                        
+ Grade a climber: run the inner searches of a meta-problem with CLIMBER and report how far they climbed — the verifier  
+ of a problem whose solution is a climber.                                                                              
+                                                                                                                        
+ Reads the hillclimb dir it runs under (`$HILLCLIMB_DIR`, set by the                                                    
+ engine for every verifier) for the user's coding agent, model and problems,                                            
+ runs one `hillclimb run` per inner problem and repeat in a nested                                                      
+ hillclimb dir under the working directory, and writes the grade: each                                                  
+ result scored by the spec's `score` (gap closed by default) and combined                                               
+ by its `aggregate` (the mean by default). On the holdout split the                                                     
+ problems are the spec's `outer_holdout`.                                                                               
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --climber          PATH  The one-file climber to grade (default: $HILLCLIMB_SOLUTION)                                │
+│ --spec             PATH  grade.yaml: inner problems, budget, repeats, score, aggregate, outer_holdout                │
+│                          [default: problem/grade.yaml]                                                               │
+│ --result           PATH  Where to write {score, instances} (default: $HILLCLIMB_RESULT, else stdout)                 │
+│ --workdir          PATH  Where the inner searches run (default: cwd)                                                 │
+│ --split            TEXT  validation: the spec's `problems`; holdout: its `outer_holdout` (default: $HILLCLIMB_SPLIT, │
+│                          else validation)                                                                            │
+│ --help     -h            Show this message and exit.                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

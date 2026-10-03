@@ -26,7 +26,7 @@ default — repeat by repeat, experiments round-robin inside, so shared state
 such as the knowledge graph is seen by every experiment at the same point
 (mandatory when an experiment touches memory) — or `--parallel` for stateless comparisons (climber,
 model). Parallel without a bound starts every search at once, and past the
-machine's agent slots (`concurrency.machine_max_agents`, default
+machine's coding agent slots (`concurrency.machine_max_agents`, default
 `min(8, cores-2)`) the rest burn their wall clock in `waiting-slot` — so
 give it `max_concurrent: N` in the spec (or `--max-concurrent N`): the
 launcher starts searches in job order, waits on its children before starting

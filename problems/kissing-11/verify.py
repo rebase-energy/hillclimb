@@ -22,7 +22,7 @@ COLS = [f"c{i}" for i in range(D)]
 
 def emit(score: float) -> None:
     """hillclimb's verifier contract: the score is written to the result
-    file, not scraped from stdout (agent-authored code shares this stream)."""
+    file, not scraped from stdout (coding-agent-authored code shares this stream)."""
     path = Path(os.environ.get("HILLCLIMB_RESULT", "eval_result.json"))
     path.write_text(json.dumps({"split": os.environ.get("HILLCLIMB_SPLIT", "validation"),
                                 "score": score}))

@@ -50,7 +50,7 @@ hillclimb problem get heilbronn-11     # the verifier is the problem; descriptio
 hillclimb verify heilbronn-11          # score the floor solution
 
 hillclimb run heilbronn-11 --budget 10m
-hillclimb watch                        # live agents and scores (also: chart, tree)
+hillclimb watch                        # live coding agents and scores (also: chart, tree)
 hillclimb stop --all
 ```
 
@@ -76,11 +76,21 @@ Every slot takes a prebuilt module, a `.py` file of your own, or
 Python:
 
 ```python
-import hillclimb as hc
+from hillclimb import Budget, Climber, Problem
+from hillclimb.policies import Greedy
+from hillclimb.selectors import MapElites
 
-climber = hc.Climber(policy=hc.policies.Greedy(num_drafts=5), select=hc.selectors.MapElites())
-hc.run("heilbronn-11", climber=climber, budget="10m")
+problem = Problem("heilbronn-11")
+budget = Budget(wall_clock="10m", evaluations=40)
+climber = Climber(select=MapElites(num_drafts=5), policy=Greedy())
+
+climber.search(problem, budget=budget)
+climber.best, climber.history, climber.to_frame()
 ```
+
+`climber.start(...)` opens the same search to drive by hand, one `climber.step()` at a
+time, and `Problem(name, score=my_function, ...)` defines a problem from a scoring function.
+Runnable scripts are in [`examples/`](examples/).
 
 Compare two head to head:
 
@@ -106,9 +116,8 @@ target line. `hillclimb problem list` shows the full catalog.
 | TSP / knapsack | `tsp-200`, `mknap-100-5`, `mknap-250-10` | tour ↓ / value ↑ |
 
 [Define your own](https://docs.hillclimb.sh/problems/defining-problems) by
-copying one and editing `verify.py`. Kaggle (MLE-bench), energy forecasting
-(emflow) and Einstein Arena come in as
-[benchmark problems](https://docs.hillclimb.sh/benchmarks).
+copying one and editing `verify.py`. Kaggle (MLE-bench) and Einstein Arena
+come in as [benchmark problems](https://docs.hillclimb.sh/benchmarks).
 
 ## Learn more
 

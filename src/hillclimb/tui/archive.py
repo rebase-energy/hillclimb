@@ -16,7 +16,7 @@ shows the chart as it stood at that tick (the scrubbed tree is the input)
 with a cursor at the candidate that landed there; the frame (the live tree)
 pins both axes so the picture never rescales while stepping.
 
-Number order, not landing order: with parallel agents a later-numbered
+Number order, not landing order: with parallel coding agents a later-numbered
 candidate may land first. The staircase here climbs by number — what the
 paper plots — and reaches the same final best as `tree.accepted` (the best
 of a set is the best whichever way it is walked); only the intermediate

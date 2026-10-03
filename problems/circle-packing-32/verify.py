@@ -22,7 +22,7 @@ TOL = 1e-9  # numerical slack on containment/overlap
 
 def emit(score: float, instances: dict | None = None) -> None:
     """hillclimb's verifier contract: the score is written to the result
-    file, not scraped from stdout (agent-authored code shares this stream)."""
+    file, not scraped from stdout (coding-agent-authored code shares this stream)."""
     payload = {"split": os.environ.get("HILLCLIMB_SPLIT", "validation"), "score": score}
     if instances:
         payload["instances"] = instances  # reserved key: per-circle breakdown of `score`

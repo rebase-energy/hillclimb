@@ -32,8 +32,9 @@ STARTER_PROBLEM_IDS = (
     "tsp-200",
     "mknap-100-5", "mknap-250-10",
 )
-# bundled beyond the example set: a data + holdout example
-BUNDLED_PROBLEM_IDS = (*STARTER_PROBLEM_IDS, "knapsack")
+# bundled beyond the example set: a data + holdout example, and the terrain
+# the scripted `toy` agent walks (the Python SDK's examples run on it)
+BUNDLED_PROBLEM_IDS = (*STARTER_PROBLEM_IDS, "knapsack", "fitness-landscape")
 
 # The Windows edition of the standard verifier.sh (run the candidate, drop
 # any stale result, run problem/verify.py): a problem that ships no

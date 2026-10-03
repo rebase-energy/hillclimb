@@ -1,10 +1,10 @@
 """Minimal OpenRouter client: one chat completion, one embeddings batch.
 
-For one-shot calls that are not operators (no agent, no tools, no
+For one-shot calls that are not operators (no coding agent, no tools, no
 candidate dir) — the solution-card similarity score is the first user. The
 key is read from `OPENROUTER_API_KEY` at call time (config loading puts a
 `.env` beside hillclimb.yaml into the environment), never passed around or
-stored. Operators still reach OpenRouter through the codex/pi agents.
+stored. Operators still reach OpenRouter through the codex/pi coding agents.
 """
 
 from __future__ import annotations

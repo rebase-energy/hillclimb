@@ -46,11 +46,11 @@ allow_internet_during_solution: false
 ```
 
 `allow_internet_during_solution` says whether `solution.py` may fetch
-external data when the verifier runs it. The contract prompt tells the agent
+external data when the verifier runs it. The contract prompt tells the coding agent
 which, and the [sandbox](sandbox.md) enforces it: without it the verifier,
 and the solution it runs, have no network. A verifier that downloads
 something itself needs it set to `true`. `allow_network` is its old name and
-still loads. Whether the agents may use the internet while they write the
+still loads. Whether the coding agents may use the internet while they write the
 solution is `allow_internet_for_agents` in `hillclimb.yaml`.
 
 `chart_baselines` accepts any number of `label: score` entries. Each becomes
@@ -87,7 +87,7 @@ rm -f "$HILLCLIMB_RESULT"                   # only the scorer may score
 The result file is both the score carrier and the completion proof: the engine
 deletes it before every run, so a stale file can never fake success, and exit 0
 without one is a contract violation rather than a silent zero. Reading the
-score from a file rather than stdout is what keeps it honest — agent-authored
+score from a file rather than stdout is what keeps it honest — coding-agent-authored
 code runs inside the verifier and shares its stdout.
 
 **On Windows** the bundled problems need no bash: `hillclimb problem get`
@@ -96,11 +96,11 @@ Python (`src/hillclimb/demo/windows_verifier.py`, or a problem's own), and the
 engine runs it with its own interpreter. A problem that has only a
 `verifier.sh` still runs on Windows, through Git for Windows' bash
 (`HILLCLIMB_BASH` points at another). A `verifier.py` must run the solution as
-a subprocess, never import it: in-process, agent code could reach the scorer.
+a subprocess, never import it: in-process, coding agent code could reach the scorer.
 
 The command runs with cwd = the candidate's working dir (`solution.py`, plus
 `./problem/` and `./data/` symlinks). Validation runs get a
-credential-scrubbed environment; `--holdout` runs in a directory agents never
+credential-scrubbed environment; `--holdout` runs in a directory coding agents never
 see, with the full environment (private holdout data may be gated).
 
 ```bash
@@ -115,7 +115,7 @@ are the two reference shapes (evaluator-driven, and run-then-score).
 ### Frozen unit tests (optional)
 
 When `unit_tests` is declared, hillclimb snapshots the test tree and command
-before any search worker in the run starts. Agents receive a disposable copy at `./unit_tests`,
+before any search worker in the run starts. Coding agents receive a disposable copy at `./unit_tests`,
 but evaluation always uses the frozen bundle. Each parameter trial first runs
 the verifier, then runs the suite once; score replicates continue only after
 the suite passes. `{python}`, `{solution}`, and `{tests}` are available in the
@@ -160,12 +160,10 @@ and shown by `hillclimb show` and the watch TUI:
 All sections are optional; order `zones` (any segmentation — the label is
 yours via `segment_label`) worst-first. Producers, by trust:
 
-- **emflow problems** — the evaluator computes the full breakdown (per-zone,
-  per-horizon, per-quantile calibration, persistence skill) automatically.
 - **directory problems** — the verifier writes the file (see
   `problems/circle-packing/verify.py`); a verifier that discards what the
   solution left behind gives its report evaluator trust.
-- **self-reported problems** (MLE-bench) — the number is the agent's own
+- **self-reported problems** (MLE-bench) — the number is the coding agent's own
   claim, so the report is stored and rendered labelled *self-reported*.
 
 Only `"split": "validation"` reports are ever fed back to operators — holdout
@@ -188,7 +186,7 @@ from hillclimb import spaces
 P = spaces.params()   # {"restarts": 8, "step": 0.01, "init": "grid"} — the trial's values, else the defaults
 ```
 
-The engine then spends verifier runs, not agent turns, on that code: the
+The engine then spends verifier runs, not coding agent turns, on that code: the
 climber's search policy proposes *tune* actions on promising candidates, each one a
 new **trial** of the same `solution.py` with values from the tuner
 (`random` by default, `optuna` with `pip install 'hillclimb[optuna]'`; the
@@ -219,12 +217,9 @@ median like everything else, and consumed by climbers whose selection is
 per-instance — GEPA keeps a candidate alive if it wins on *any* instance, not
 just on average. `problems/circle-packing/verify.py` (one instance per
 circle) is the reference producer; verifiers that emit nothing lose nothing.
-emflow problems emit one instance per scored origin, keyed `<asof>/<zone>`
-— for GEFCom2014 that is every task x zone of the validation split (solar:
-3 tasks x 3 plants = 9 instances) — so a GEPA experiment on `emflow://gefcom2014:solar`
-keeps a candidate that wins any single task. A candidate that leaves an
-origin unscored simply lacks that key and is treated as having failed it;
-MLE-bench per-fold instances are a planned follow-up.
+A candidate that leaves an instance unscored simply lacks that key and is
+treated as having failed it; MLE-bench per-fold instances are a planned
+follow-up.
 
 ## Noise: not climbing your own measurement error
 
@@ -240,12 +235,12 @@ evaluation:
 ```
 
 Concurrency is bounded machine-wide, not per search: `concurrency.parallel_agents`
-is how many agents one search keeps in flight, and
+is how many coding agents one search keeps in flight, and
 `concurrency.machine_max_agents` (default `min(8, cores - 2)`, `0` = off) caps
-the total across every search on the machine — extra agents wait
-(`waiting-slot` in `hillclimb watch`). Every verifier and agent process gets
+the total across every search on the machine — extra coding agents wait
+(`waiting-slot` in `hillclimb watch`). Every verifier and coding agent process gets
 `OMP/OPENBLAS/MKL_NUM_THREADS=1` unless the parent environment sets them, so
-N agents cost at most N cores; `hillclimb ps` shows what is actually running.
+N coding agents cost at most N cores; `hillclimb ps` shows what is actually running.
 
 - **A trial's score is the MEDIAN of its replicates**, so one slow run or
   unlucky seed does not become the number the search ranks on. With

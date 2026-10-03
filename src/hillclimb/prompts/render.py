@@ -2,8 +2,8 @@
 override dir first, then this package.
 
 The override dir (`config.paths.prompts_dir`, default `<hillclimb dir>/
-prompts/`) is how the exploration process's *prompts* become data an
-agent or a study experiment can edit without touching the installed
+prompts/`) is how the exploration process's *prompts* become data a
+coding agent or a study experiment can edit without touching the installed
 package. The engine activates it once per process (`set_override_dir` in
 `api.execute_search`); `templates_digest` hashes the effective template
 set so `SearchMeta.templates_sha256` pins exactly which prompts a search
@@ -127,7 +127,7 @@ def templates_digest(override: Path | None = None) -> TemplatesDigest:
 def lint_overrides(override: Path | None = None) -> list[str]:
     """Problems with the override dir's templates, one line each, empty
     when clean. An override may drop tokens (a leaner prompt) but never
-    introduce one the engine does not fill — it would reach the agent as a
+    introduce one the engine does not fill — it would reach the coding agent as a
     literal `{{name}}`. A template with no package counterpart is checked
     only for being non-empty."""
     base = _override_dir if override is None else override

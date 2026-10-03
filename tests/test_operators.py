@@ -1,6 +1,6 @@
 """The operator seam: a climber's own operator runs end to end, the harness
 keeps the contract and the evaluator out of its reach, and the journal speaks
-in roles so nothing else needs to know the operator's name."""
+in kinds so nothing else needs to know the operator's name."""
 
 from __future__ import annotations
 
@@ -22,11 +22,11 @@ CRASH = 'raise RuntimeError("boom")\n'
 
 
 class ReflectOperator(Operator):
-    """A refine-role operator with a hand-written prompt: no template, no
+    """A refine-kind operator with a hand-written prompt: no template, no
     contract token, records what it was shown."""
 
     name = "reflect"
-    role = "refine"
+    kind = "refine"
     needs_target = True
     seen: list[OperatorContext] = []
 
@@ -53,8 +53,8 @@ def test_custom_operator_runs_end_to_end_with_the_contract_appended(task, config
     job = searcher._prepare(Action(operator="reflect", target_id=parent.candidate_id))
     child = searcher._commit(searcher._execute_job(job))
 
-    assert child.operator == "reflect" and child.role == "refine" and child.val_score == 0.7
-    assert agent.requests[-1].operator == "reflect" and agent.requests[-1].role == "refine"
+    assert child.operator == "reflect" and child.kind == "refine" and child.val_score == 0.7
+    assert agent.requests[-1].operator == "reflect" and agent.requests[-1].kind == "refine"
     prompt = Path(child.candidate_dir, "prompt.md").read_text()
     assert prompt.startswith(f"Reflect on {parent.candidate_id} and do better.\n\n")
     # the operator never mentioned the contract; the harness appended it
@@ -104,43 +104,43 @@ def test_operator_context_is_holdout_blind(task, config, reflect, tmp_path):
     assert journal.get("c001").holdout_score == 0.123
 
 
-def test_role_is_journaled_and_backfilled_for_older_records(task, config, tmp_path):
+def test_kind_is_journaled_and_backfilled_for_older_records(task, config, tmp_path):
     agent = FakeAgent()
     agent.queue(script=CRASH, notes="buggy\n")
     agent.queue(script=ok_script(0.6), notes="fixed\n")
     searcher, journal, search_dir = make_searcher(task, config, agent)
     broken = searcher.run_operator("draft", None)
     fixed = searcher.run_operator("debug", broken)
-    assert (broken.role, fixed.role, fixed.debug_depth) == ("create", "repair", 1)
+    assert (broken.kind, fixed.kind, fixed.debug_depth) == ("create", "repair", 1)
     chain = [broken.candidate_id, fixed.candidate_id]
     assert [c.candidate_id for c in journal.debug_chain(fixed.candidate_id)] == chain
     assert [c.candidate_id for c in journal.drafts()] == [broken.candidate_id]
 
-    # a record written before roles existed gets its operator's role on load
+    # a record written before kinds existed gets its operator's kind on load
     old = Candidate.model_validate({"candidate_id": "c9", "operator": "ensemble"})
-    assert old.role == "combine"
-    assert Candidate.model_validate({"candidate_id": "c0", "operator": "baseline"}).role == "baseline"
-    # an operator this process does not know stays role-less instead of failing to load
-    assert Candidate.model_validate({"candidate_id": "c8", "operator": "crossover"}).role is None
+    assert old.kind == "combine"
+    assert Candidate.model_validate({"candidate_id": "c0", "operator": "baseline"}).kind == "baseline"
+    # an operator this process does not know stays kind-less instead of failing to load
+    assert Candidate.model_validate({"candidate_id": "c8", "operator": "crossover"}).kind is None
     replayed = Journal(search_dir / "journal.jsonl")
-    assert replayed.get(fixed.candidate_id).role == "repair"
+    assert replayed.get(fixed.candidate_id).kind == "repair"
 
 
-def test_operator_registry_rejects_an_unknown_role():
+def test_operator_registry_rejects_an_unknown_kind():
     class Odd(Operator):
-        name, role = "odd", "measure"
+        name, kind = "odd", "measure"
 
         def prepare(self, ctx):  # pragma: no cover
             return Attempt(prompt="")
 
-    with pytest.raises(ValueError, match="role 'measure'"):
+    with pytest.raises(ValueError, match="kind 'measure'"):
         operators.register_operator(Odd)
     assert "odd" not in operators.operator_names()
 
 
 def test_extra_files_must_be_bare_names(task, config):
     class Escaper(Operator):
-        name, role = "escaper", "create"
+        name, kind = "escaper", "create"
 
         def prepare(self, ctx):
             return Attempt(prompt="x", files={"../evil.py": Path(__file__)})

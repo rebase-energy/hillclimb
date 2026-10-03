@@ -66,7 +66,7 @@ class StudySpec(BaseModel):
     schedule: str = "sequential"  # sequential | parallel
     # parallel only: at most this many searches alive at once — the launcher
     # waits on its children before starting the next. Without it every job
-    # starts at once and, past the machine's agent slots, burns its wall
+    # starts at once and, past the machine's coding agent slots, burns its wall
     # clock in `waiting-slot`. None = unbounded (the old behaviour)
     max_concurrent: int | None = None
     noise_floor: float | dict[str, float] | None = None
@@ -241,7 +241,7 @@ class StudyRow:
     higher_is_better: bool
     started_at: str
     candidates: int = 0      # scored candidates
-    tokens: int = 0          # agent tokens across the search
+    tokens: int = 0          # coding agent tokens across the search
     minutes_to_best: float | None = None
 
     @property

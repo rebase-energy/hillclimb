@@ -359,7 +359,7 @@ def test_preflight_says_what_runs_and_refuses_what_cannot(monkeypatch, sandbox_o
 
     lines.clear()
     api._preflight_sandbox(Config(sandbox=False), lines.append)
-    assert lines == ["sandbox: off — agents and solutions run with your full user rights"]
+    assert lines == ["sandbox: off — coding agents and solutions run with your full user rights"]
 
     lines.clear()
     api._preflight_sandbox(Config(allow_internet_for_agents=False), lines.append)
@@ -453,8 +453,8 @@ def test_proxy_tunnels_allowed_hosts_and_refuses_the_rest(echo_server, monkeypat
     assert ask(b"GET http://localhost/ HTTP/1.1\r\n\r\n").startswith(b"HTTP/1.1 403")
     assert ask(b"CONNECT example.com:443 HTTP/1.1\r\n\r\n").startswith(b"HTTP/1.1 403")
     assert refused == [  # once per host
-        "sandbox: no internet for agents, refused example.com",
-        "sandbox: no internet for agents, refused http://localhost/",
+        "sandbox: no internet for coding agents, refused example.com",
+        "sandbox: no internet for coding agents, refused http://localhost/",
     ]
 
 

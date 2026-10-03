@@ -131,7 +131,7 @@ def _stdin_is_tty() -> bool:
 
 PROBLEM_FILES = (
     ("problem.yaml", "metric, direction, budget — the problem's identity"),
-    ("description.md", "what the agents read before drafting"),
+    ("description.md", "what the coding agents read before drafting"),
     ("contract.md", "the interface solution.py must implement"),
     ("interface.py", "the output format, machine-checked (hillclimb spaces)"),
     ("verifier.sh", "the ONLY process hillclimb starts: drives solution.py and reports the score"),
@@ -177,7 +177,7 @@ def init(
     ])
     next_steps([
         *([(f"cd {_m(directory)}", "commands find the dir from inside it")] if folder != Path.cwd().resolve() else []),
-        ("hillclimb connect", "which agent runs the operators, and who pays"),
+        ("hillclimb connect", "which coding agent runs the operators, and who pays"),
         ("hillclimb problem list", "the bundled problems to choose from"),
         ("hillclimb problem get <problem>", "copy one into problems/"),
     ])

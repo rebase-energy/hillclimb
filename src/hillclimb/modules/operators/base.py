@@ -1,11 +1,11 @@
 """The operator seam: HOW one attempt is made.
 
 An `Operator` turns a policy's `Action` into an `Attempt` — the prompt for
-the agent plus what the harness should put in the new candidate dir. It never
-touches the filesystem, the journal or a agent itself: the harness executes
+the coding agent plus what the harness should put in the new candidate dir. It never
+touches the filesystem, the journal or a coding agent itself: the harness executes
 the preparation, fills in the problem's contract (an operator cannot drop
 it), clamps the timeout to the budget, routes the call by the operator's
-name, runs the agent and scores the result.
+name, runs the coding agent and scores the result.
 
 Everything an operator sees is holdout-blind: `OperatorContext.target`,
 `.inspirations` and `.journal` are the same masked copies a policy gets.
@@ -25,17 +25,17 @@ if TYPE_CHECKING:
     from hillclimb.modules.policies.base import Action, BudgetView
 
 # What an operator's candidates ARE to the rest of the system. Views colour
-# by role and the journal walks chains by role, so a climber's own operators
+# by kind and the journal walks chains by kind, so a climber's own operators
 # ("crossover", "reflect") need no change anywhere else.
 #   create  — a new solution from the problem alone
 #   repair  — a fix of a candidate that failed
 #   refine  — a change to a scored candidate
 #   combine — one solution out of several
-ROLES = ("create", "repair", "refine", "combine")
+OPERATOR_KINDS = ("create", "repair", "refine", "combine")
 
-# operators the harness runs itself (no agent, no prompt): their candidates
-# carry the operator's own name as role
-RESERVED_ROLES = {"baseline": "baseline", "seed": "seed", "inject": "inject"}
+# operators the harness runs itself (no coding agent, no prompt): their candidates
+# carry the operator's own name as kind
+RESERVED_KINDS = {"baseline": "baseline", "seed": "seed", "inject": "inject"}
 
 # the token a template marks the contract's place with; the harness fills it
 CONTRACT_TOKEN = "{{contract}}"
@@ -110,7 +110,7 @@ class OperatorContext:
     budget: BudgetView
     memory: MemoryContext
     services: OperatorServices = field(repr=False)
-    # may the agent making this attempt reach the internet (web search, curl)?
+    # may the coding agent making this attempt reach the internet (web search, curl)?
     # The user's `allow_internet_for_agents`; False = its shell is jailed and
     # its web tools are off, so a prompt must not ask it to search
     agent_internet: bool = True
@@ -137,7 +137,7 @@ class OperatorContext:
         return self.services.report_section(candidate.candidate_id)
 
     def read_text(self, candidate: Candidate, name: str, max_chars: int = READ_TEXT_CHARS) -> str:
-        """A text file an agent left in a candidate's dir (`ablation.md`,
+        """A text file a coding agent left in a candidate's dir (`ablation.md`,
         `notes.md`, `exec_stderr.log`), confined to that dir; empty when
         missing or unreadable."""
         if not candidate.candidate_dir:
@@ -189,21 +189,28 @@ class Attempt:
     copy_parent: bool = False  # start from the target's solution.py
     inherit_params: bool = False  # carry the target's best parameter values as defaults
     copy_inspirations: bool = True  # copy the action's inspirations in (`inspiration_filename`)
-    fork_session: bool = False  # ask to continue the target's agent session (granted only where a agent can)
+    fork_session: bool = False  # ask to continue the target's coding agent session (granted only where a coding agent can)
     files: Mapping[str, Path] = field(default_factory=dict)  # extra files: name in the dir -> source
     texts: Mapping[str, str] = field(default_factory=dict)  # extra files written from text: name -> content
-    # the attempt only counts if the agent CHANGED the copied parent solution;
+    # the attempt only counts if the coding agent CHANGED the copied parent solution;
     # an untouched one comes back as Outcome `unchanged` and is never scored
     require_change: bool = False
 
 
 class Operator(ABC):
-    """One way of making an attempt. Subclasses set `name` and `role` and
+    """One way of making an attempt. Subclasses set `name` and `kind` and
     implement `prepare`; `params` is the operator's own configuration."""
 
     name: str
-    role: str
+    kind: str
     needs_target: bool = False
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        # up to 0.6 the attribute was `role`: a climber written for it, and the
+        # snapshot a started search resumes from, still load
+        if "kind" not in vars(cls) and "role" in vars(cls):
+            cls.kind = vars(cls)["role"]
 
     def __init__(self, params: Mapping | None = None, **knobs):
         self.params = {**dict(params or {}), **knobs}  # `Draft(retrieval=False)`

@@ -105,7 +105,7 @@ def knowledge_live(run: str = typer.Argument("latest", help="Run id, or `latest`
 
 
 @knowledge_app.command("show")
-def knowledge_show(target: str = typer.Argument(..., help="Problem target, e.g. emflow://gefcom2014:solar")):
+def knowledge_show(target: str = typer.Argument(..., help="Problem target, e.g. circle-packing")):
     """Render the prior experience a new search would receive.
 
     Scoped to this target.
@@ -252,7 +252,7 @@ def knowledge_query(
 ):
     """Read-only memory lookup (no model calls).
 
-    Also advertised to operator agents so they can consult accumulated
+    Also advertised to coding agents so they can consult accumulated
     knowledge mid-search.
     """
     import json as _json
@@ -276,13 +276,13 @@ def knowledge_query(
 @knowledge_app.command("consolidate")
 def knowledge_consolidate(
     dry_run: bool = typer.Option(
-        False, "--dry-run", help="Show what would generalize / which playbooks would rewrite; no writes, no agent calls"
+        False, "--dry-run", help="Show what would generalize / which playbooks would rewrite; no writes, no coding agent calls"
     ),
 ):
     """The sleep phase: generalize claims, rewrite playbooks.
 
     Lifts multi-family claims up the concept hierarchy (mechanical) and
-    rewrites per-concept playbooks (one agent call per qualifying concept,
+    rewrites per-concept playbooks (one coding agent call per qualifying concept,
     routing key `consolidate`). Playbook rewrites land as reviewable git
     diffs.
     """
@@ -350,7 +350,7 @@ def _paper_knowledge_dir() -> tuple[Config, Path]:
 def paper_add(
     pdfs: list[Path] = typer.Argument(..., help="PDF paper(s) to distill into claims"),
     problem: str = typer.Option(
-        None, "--problem", help="Scope the claims: emflow://pkg:name or a local problem id. "
+        None, "--problem", help="Scope the claims: a problem id (or a provider target). "
         "Omitted, claims are global and reach searches through concept overlap only"
     ),
     force: bool = typer.Option(
@@ -359,7 +359,7 @@ def paper_add(
 ):
     """Distill papers into typed claims and rebuild the knowledge graph.
 
-    One agent pass per paper (routing key `paper`, default model sonnet)
+    One coding agent pass per paper (routing key `paper`, default model sonnet)
     writes knowledge/papers/<slug>.yaml; the claims then ride the normal
     retrieval and credit paths — inspect the wiring with `hillclimb graph`
     before starting a run.

@@ -93,7 +93,7 @@ def materialize_problem_dir(problem, name: str, cache_root: Path) -> Path:
 
 def load_emflow_problem(name: str, config: Config) -> ProblemSpec:
     problem = ef.load_problem(name)  # KeyError / ProblemNotIngestedError propagate
-    # Materialize public data to the local build cache so agent-time evals run
+    # Materialize public data to the local build cache so coding-agent-time evals run
     # offline and credential-free. Private holdout data deliberately stays on
     # HF: the holdout scorer fetches it live with the orchestrator's token.
     if hasattr(ef, "cache_problem_data"):
@@ -129,7 +129,7 @@ def load_emflow_problem(name: str, config: Config) -> ProblemSpec:
         chart_baselines=reference_baselines(problem),
         verifier_cmd=verifier_cmd,
         holdout_cmd=holdout_cmd,
-        # cache pre-warmed at resolve time; offline keeps agent-side evals
+        # cache pre-warmed at resolve time; offline keeps coding-agent-side evals
         # hermetic (and no ambient HF credentials exist either way)
         verifier_env={"HF_HUB_OFFLINE": "1"},
         verifier_display=f"the emflow evaluator, on the validation split of {name}",

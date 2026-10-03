@@ -10,12 +10,12 @@ the ones `Memory` names (base.py):
                draft-complexity offset for the policy
     live       the cards sibling searches of the same run have published so far
     publish    this search's card, for them
-    record     the card, its claims (one agent pass, `routing.distill`),
+    record     the card, its claims (one coding agent pass, `routing.distill`),
                credit for the claims it was shown, a harvested skill, the graph
 
 Every step is best effort: memory never fails a search. The settings are the
 block's `memory_params` (`DEFAULTS` below); where the knowledge lives
-(`learning.dir`), whether agents get the lookup tool (`learning.tool`) and the
+(`learning.dir`), whether coding agents get the lookup tool (`learning.tool`) and the
 distill pass's timeout (`learning.claims_timeout_s`) are the user's, in
 hillclimb.yaml.
 
@@ -99,7 +99,7 @@ class FilesMemory(Memory):
         # opt-in policy bias: start the draft complexity schedule one step up
         # when past winners were never 'minimal'
         "complexity_prior": False,
-        # semantic layer: one cheap agent pass after each finished search
+        # semantic layer: one cheap coding agent pass after each finished search
         # distills typed claims into the card (claims.py). Routed via
         # `routing: distill:` (default model: haiku)
         "claims": True,

@@ -49,7 +49,7 @@ def test_legacy_workspace_key_loads_as_candidate_dir():
 RENAMED_IN_06 = re.compile(
     r"\b(SearchPolicy|SearchLoop|PolicyInput|PolicyJournal|Preparation|OperatorRequest|OperatorResult|policy_meta)\b"
 )
-RENAMED_OK = re.compile(r"_legacy_policy_meta_key|\"policy_meta\"|\"(SearchPolicy|SearchLoop|PolicyInput|PolicyJournal|Preparation)\": \"")
+RENAMED_OK = re.compile(r"_legacy_policy_meta_key|\"policy_meta\"|\"(SearchPolicy|SearchLoop|PolicyInput|PolicyJournal|Preparation)\": \(\"")
 META_PROBLEM = SRC.parents[1] / "problems" / "meta-heilbronn"
 
 
@@ -76,8 +76,47 @@ def test_legacy_policy_meta_key_loads_as_climber_meta():
 def test_a_renamed_sdk_name_says_where_it_went():
     import pytest
 
-    with pytest.raises(ImportError, match="PolicyInput was renamed SearchState"):
+    with pytest.raises(ImportError, match="PolicyInput was renamed SearchState in hillclimb 0.6"):
         from hillclimb.sdk import PolicyInput  # noqa: F401
+    with pytest.raises(ImportError, match="ROLES was renamed OPERATOR_KINDS in hillclimb 0.7"):
+        from hillclimb.sdk import ROLES  # noqa: F401
+
+
+# 0.7: what an operator's candidates are is its `kind` (`role` is what a
+# climber plays in a search: solver | improver). The old spelling survives
+# only where it is read.
+OPERATOR_ROLE_NAMES = re.compile(r"\b(ROLES|RESERVED_ROLES|role_of)\b")
+OPERATOR_ROLE_OK = re.compile(r"\"ROLES\": \(\"")
+
+
+def test_no_operator_role_names_in_source():
+    offenders = []
+    for root in (SRC, META_PROBLEM):
+        for path in root.rglob("*"):
+            if path.suffix not in {".py", ".md", ".yaml"}:
+                continue
+            for n, line in enumerate(path.read_text().splitlines(), 1):
+                if OPERATOR_ROLE_NAMES.search(line) and not OPERATOR_ROLE_OK.search(line):
+                    offenders.append(f"{path.relative_to(root)}:{n}: {line.strip()}")
+    assert not offenders, "\n".join(offenders)
+
+
+def test_legacy_role_key_loads_as_kind():
+    cand = Candidate.model_validate({"candidate_id": "c001", "operator": "improve", "role": "refine"})
+    assert cand.kind == "refine"
+    assert "role" not in cand.model_dump()
+
+
+def test_an_operator_written_with_role_still_loads():
+    from hillclimb.sdk import Attempt, Operator
+
+    class Old(Operator):
+        name, role = "old", "refine"
+
+        def prepare(self, ctx):
+            return Attempt(prompt="")
+
+    assert Old.kind == "refine"
 
 
 # Score direction is `higher_is_better` (hillclimb climbs). `lower_is_better`

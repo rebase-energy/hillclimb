@@ -2,7 +2,7 @@
 
 A climber is *how* to hillclimb: a policy (or a whole loop), the selector it
 expands with, the operators it may use and their prompts, a tuner and a
-memory. The harness — candidate dirs, agent calls, trials, holdout, the
+memory. The harness — candidate dirs, coding agent calls, trials, holdout, the
 journal, budgets, `best/` — is fixed and the same for every climber.
 
 A climber is **defined where the run is defined**: it is one block of config.
@@ -78,16 +78,21 @@ for, ready to paste and edit.
 
 ## The slots
 
+One step of a search is two decisions, always in this order: the selector
+(π_sel) reads the history and picks the node(s) the next attempt starts
+from, or none; then the policy (π_op) reads the same history and that pick
+and names the operator. The slots, in the order a step runs them:
+
 | slot | decides | base class | built in |
 |---|---|---|---|
-| `policy` | what to try next: draft, repair, tune, combine, expand | `Policy` | `greedy` |
-| `select` | which candidate to expand, and what rides along | `Selector` | `best`, `map-elites` |
-| `loop` | the control flow itself (instead of a policy) | `Loop` | `gepa` |
-| `operators` | how one attempt is made: the prompt the agent gets | `Operator` | `draft`, `debug`, `improve`, `ensemble` |
+| `select` | which node, or none: a failing tip first, roots until `num_drafts`, the top-k to combine in the final window, else the subclass's `pick` | `Selector` | `best`, `map-elites` |
+| `policy` | which operator on what the selector chose (draft, debug, ensemble, improve; greedy adds tune) | `Policy` | `greedy` |
+| `loop` | the control flow itself (instead of a selector and a policy) | `Loop` | `gepa` |
+| `operators` | how one attempt is made: the prompt the coding agent gets | `Operator` | `draft`, `debug`, `improve`, `ensemble` |
 | `tuner` | which parameter values a tunable candidate tries | `Tuner` | `random`, `optuna` |
 | `memory` | what a search knows from others and leaves for the next | `Memory` | `files`, `none` |
 
-Which agent and model run is **not** a climber's: `routing:` in a block is
+Which coding agent and model run is **not** a climber's: `routing:` in a block is
 refused. That is the user's choice, in `hillclimb.yaml`.
 
 A climber's own file imports the contracts from `hillclimb.sdk` and, to
@@ -102,15 +107,15 @@ from hillclimb.sdk import Action, Policy
 
 
 class DraftsOnly(Policy):
-    """Never improves: drafts forever."""
+    """Never improves: whatever the selector chose, draft (repair a failing tip first)."""
 
-    DEFAULTS = {"num_drafts": 3}          # its knobs; `params` in the block set them
+    DEFAULTS = {}                         # its knobs; `params` in the block set them
 
-    def propose(self, state):
-        tip = self.debuggable_tip(state)
-        if tip is not None:
-            return Action(operator="debug", target_id=tip.candidate_id)
-        return Action(operator="draft", args={"complexity": self.draft_complexity(state)})
+    def propose(self, state, selection):
+        node = state.journal.candidates[selection.target_id] if selection is not None else None
+        if node is not None and node.status in ("failing", "buggy"):
+            return Action(operator="debug", target_id=node.candidate_id)
+        return self.draft_action(state)
 ```
 
 ```bash
@@ -118,15 +123,20 @@ hillclimb climber check --climber climbers/drafts_only.py   # before spending bu
 hillclimb run circle-packing --climber climbers/drafts_only.py
 ```
 
-`propose(state)` returns one `Action` — an operator, the candidate to
-target, optional `inspiration_ids` — or `None` to hold the slot until an
-in-flight result lands. `observe(state, candidate)` is called after every
+`propose(state, selection)` returns one `Action` — an operator, the
+candidate to target, optional `inspiration_ids` — or `None` to hold the slot
+until an in-flight result lands. `selection` is what the selector chose:
+`None` for a root step, else a `Selection` with the node (`target_id`),
+`inspiration_ids`, and `combine=True` when those nodes are the inputs of one
+combined candidate. `observe(state, candidate)` is called after every
 result, and replayed over the journal when a search starts or resumes.
 
-`Policy` carries what a schedule needs: `param(name)` and
-`resolved_params()`, `self.selector`, and the journal questions
-`debuggable_tip`, `prospective_branches`, `draft_complexity`, `top_distinct`.
-A class with just `propose` and `observe` and no base runs too.
+The base `propose` is the plain mapping (no node → draft, a failing node →
+debug, several → ensemble, a scored node → improve), so a policy overrides
+only where it differs; `draft_action(state)` and `expand_action(state,
+selection, operator=...)` build the usual actions, `param(name)` and
+`resolved_params()` read its knobs, `self.selector` is the selector the loop
+asks first. A class with just `propose` and `observe` and no base runs too.
 
 Three rules the harness relies on:
 
@@ -149,9 +159,9 @@ from hillclimb.sdk import Selection, Selector
 
 
 class Oldest(Selector):
-    """Expand the oldest scored candidate."""
+    """Build on the oldest scored candidate."""
 
-    def select(self, state, *, busy=frozenset()):
+    def pick(self, state, *, busy=frozenset()):
         scored = state.journal.scored_candidates()
         return Selection(scored[0].candidate_id, prompt_context="Oldest first.") if scored else None
 ```
@@ -160,11 +170,16 @@ class Oldest(Selector):
 climber: {policy: greedy, select: oldest.py}
 ```
 
-The policy decides *that* it is time to expand; the selector picks the
-candidate — and may hand back inspirations (copied in beside the parent), a
-paragraph for the prompt, and a note journaled on the new candidate.
-`None` means there is nothing to expand, and the policy drafts. A selector
-with state keeps it a function of the journal (`sync(state)`), like a policy.
+A selector implements `pick`: the scored node to build on, with whatever
+rides along — inspirations (copied in beside the parent), a paragraph for the
+prompt, a note journaled on the new candidate; `None` means a root step (the
+policy drafts). The base class's `select` wraps it with the schedule every
+selector shares and its knobs are `select_params`: `num_drafts` (3), `debug`
+(True), `max_debug_depth` (3), `ensemble` (True), `ensemble_reserve_fraction`
+(0.2), `ensemble_top_k` (3), `ensemble_max_attempts` (2). A block that still
+writes those under `params` (every block before 0.7) loads; they land in
+`select_params`. A selector with state keeps it a function of the journal
+(`sync(state)`), like a policy.
 
 `map-elites` takes OpenEvolve's `DatabaseConfig` fields as `select_params`
 (`num_islands`, `feature_dimensions`, `population_size`, `random_seed`, …)
@@ -181,7 +196,7 @@ from hillclimb.sdk import Attempt, Operator, inspiration_filename
 
 
 class Crossover(Operator):
-    name, role, needs_target = "crossover", "combine", True
+    name, kind, needs_target = "crossover", "combine", True
 
     def prepare(self, ctx):
         files = ", ".join(inspiration_filename(i) for i, _ in enumerate(ctx.inspirations, 1))
@@ -190,7 +205,7 @@ class Crossover(Operator):
 
 An operator turns an action into an `Attempt`: the prompt, and what the
 harness should put in the new candidate dir. It never touches disk, the
-journal or an agent. The problem's contract is the harness's — it fills
+journal or a coding agent. The problem's contract is the harness's — it fills
 `{{contract}}`, and appends it to a prompt that has no such token. See
 [operators-and-memory.md](operators-and-memory.md).
 
@@ -209,8 +224,8 @@ reflection and selection themselves. Those bring a `Loop`: the block says
 declares what it needs of its search (`operators = (...)`, `holdout_timing =
 "after"`), so `{loop: gepa}` is complete.
 
-- `greedy`: hillclimb chooses the parent and asks an agent to mutate;
-- `openevolve`: MAP-Elites picks parent and inspirations, hillclimb's agent
+- `greedy`: hillclimb chooses the parent and asks a coding agent to mutate;
+- `openevolve`: MAP-Elites picks parent and inspirations, hillclimb's coding agent
   still mutates;
 - `gepa`: GEPA drives reflective mutation and Pareto search, hillclimb
   evaluates and records.
@@ -221,8 +236,8 @@ uv run hillclimb run <problem> --climber gepa --seed-from my_solution.py
 ```
 
 GEPA's reflective mutation is the `gepa-reflect` operator, run by a routed
-hillclimb agent (`routing.gepa-reflect`, falling back to `routing.default`
-and the global agent/model) in an ordinary candidate dir; every evaluation
+hillclimb coding agent (`routing.gepa-reflect`, falling back to `routing.default`
+and the global coding agent/model) in an ordinary candidate dir; every evaluation
 is a normal journaled `cNNN` candidate, so `watch`, `tree` and `chart` work
 unchanged. GEPA checkpoints under `SEARCH_DIR/loop/state/` and `hillclimb
 resume` continues both the journal and the optimizer, with a warm evaluation
@@ -259,7 +274,7 @@ hillclimb climber check --climber mine.py --set climber.params.k=v --problem P -
 ```
 
 It resolves every module the block names, then replays every recorded
-journal in the store (plus an empty one) through the policy with no agent or
+journal in the store (plus an empty one) through the policy with no coding agent or
 verifier, and reports each contract breach: a hold on an empty journal (the
 search would never start), two fresh instances disagreeing at some budget
 point, a policy that watched the journal grow proposing something else than
@@ -307,25 +322,50 @@ committed spec, noise floors and a control, use `hillclimb experiment run`
 
 ## In Python
 
-The same building blocks, composed as objects:
+The same building blocks, composed as objects, in the sklearn shape: a
+`Problem` is what you search, a `Climber` searches it within a `Budget`, and
+the result reads off the climber afterwards:
 
 ```python
-import hillclimb as hc
+from hillclimb import Budget, Climber, Problem, run_spec
+from hillclimb.memory import FilesMemory
+from hillclimb.operators import Debug, Draft
+from hillclimb.policies import Greedy
+from hillclimb.selectors import MapElites
 
-climber = hc.Climber(
-    policy=hc.policies.Greedy(num_drafts=3),
-    select=hc.selectors.MapElites(num_islands=2),
-    operators=[hc.operators.Draft(retrieval=False), hc.operators.Debug(), MyCrossover],
+climber = Climber(
+    select=MapElites(num_islands=2, num_drafts=3),   # π_sel: which node, or none
+    policy=Greedy(),                                 # π_op: which operator for it
+    operators=[Draft(retrieval=False), Debug(), MyCrossover],
     tuner="optuna",
-    memory=hc.memory.FilesMemory(max_cards=1),
+    memory=FilesMemory(max_cards=1),
 )
 
 if __name__ == "__main__":
-    outcome = hc.run("heilbronn-11", climber=climber, budget="10m")   # one search, in this process
-    print(outcome.selected.val_score)
+    problem = Problem("heilbronn-11")
+    budget = Budget(wall_clock="10m", evaluations=40)
+    climber.search(problem, budget=budget)   # one search, here
+    print(climber.best.val_score)
     climber.write("climber.yaml")     # the same climber, as the block
-    hc.run_spec("run.yaml")           # every entry of a spec, one after the other
+    run_spec("run.yaml")              # every entry of a spec, one after the other
 ```
+
+`hillclimb.run(problem, climber=climber, ...)` is the same search as a function, returning
+the `SearchOutcome` that `climber.result` holds. A `Problem` is one that exists
+(`Problem("heilbronn-11")`: the folder's, else a bundled one copied in) or one defined
+here from a scoring function:
+
+```python
+def closeness_to_pi(run_dir):
+    return -abs(float((run_dir / "answer.txt").read_text()) - 3.14159265358979)
+
+problem = Problem("closest-to-pi", score=closeness_to_pi, output="answer.txt",
+                  description="Write your best approximation of pi to answer.txt.")
+```
+
+Its folder is written under `problems/` the first time a climber searches it (a
+`verify.py` imports the function, so it must sit at the top level of a .py
+file), and it is a problem like any other from then on.
 
 A block may be a name, a class, or an instance — an instance stands for its
 class and params, and a search always builds its own. `hc.Climber("openevolve",
@@ -338,6 +378,52 @@ registry name, as `module:Class` when the module is importable, else as
 class that exists only in the running process (a notebook cell) still runs
 with `hc.run`, but the climber is not `portable`: `to_spec()`, `resume` and
 detached engines refuse it, saying why.
+
+### Reading what a search found
+
+After `search`, the search is readable off the climber:
+
+```python
+climber.best                 # the best candidate by validation score (`selected` is the one that ships)
+climber.candidates           # every candidate, in creation order
+climber.history              # every rise of the best-so-far: (minutes, candidate_id, score)
+climber.spend                # evaluations, tokens, cost_usd, seconds
+climber.solution             # the source that ships; climber.params its parameter values
+climber.to_frame()           # one pandas row per candidate
+climber.result               # the whole SearchOutcome: .source("c004"), .journal, .meta, .status
+open_search("run-id/search-id")   # an earlier search (no ref: the latest); a running one is followed
+```
+
+### One step at a time
+
+`climber.start` opens the same search and leaves the loop to you:
+
+```python
+budget = Budget(evaluations=30)
+climber.start(Problem("fitness-landscape"), budget=budget, agent="toy", learning=False)
+
+action = climber.propose()       # what the policy would do next; nothing runs
+outcome = climber.run(action)    # run it: attempted, scored, committed, observed by the policy
+outcome = climber.step()         # both in one call; None when there is nothing to run
+climber.run(Action("improve", target_id="c002"))   # a move of your own
+climber.state                    # what the policy sees: journal, in flight, budget
+climber.finish()                 # the climber's own loop runs the rest
+result = climber.close()         # settle it; the same object `search` leaves as climber.result
+```
+
+The budget's clock runs only while a step does. An action that cannot run
+(an unknown candidate, a spent budget) comes back as a `rejected` outcome
+saying why. A search closed with budget left is `stopped`, and
+`hillclimb resume` continues it; one a budget closed is `done`. It is an
+ordinary search, so `hillclimb watch` shows it while you step. One search
+at a time per process, and a `loop:` climber (gepa) owns its control flow:
+it can only `finish()`.
+
+The `toy` agent makes all of this free to try: on the bundled
+`fitness-landscape` problem a solution is one point on a terrain, so a
+search takes seconds and its scores move. [`examples/`](../examples/) has a
+script for each of the above and for writing your own policy, operator,
+selector and scripted agent.
 
 ## From 0.5
 

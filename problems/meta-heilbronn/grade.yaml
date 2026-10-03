@@ -1,0 +1,26 @@
+# What one verifier run of this meta-problem does (`hillclimb grade`): one inner
+# `hillclimb run` per problem x repeat, serially, with the candidate solution.py
+# as the climber and the user's coding agent/model. Each inner search's result
+# is scored (`score:`), the median is taken over repeats, and the per-problem
+# scores are combined (`aggregate:`) into the grade.
+problems:
+  - heilbronn-11
+  - heilbronn-14
+budget: 3m        # wall clock per inner search
+repeats: 1        # inner searches are noisy: raise this before trusting a gain
+# How one inner search's result is put on a scale every problem shares:
+#   gap-closed  the fraction of the way from the inner search's floor to `target`
+#               (default target: the best chart_baselines value in the metric's direction)
+#   solved      1 when the search reached the target, else 0
+#   raw         the inner search's own score (problems that share a scale and a direction)
+#   or your own: `file.py:function` beside this file, or `module:function`,
+#   called as function(best, floor, target, higher_is_better)
+score: gap-closed
+# How the per-problem scores become the grade: mean | median | min, or your own
+# function of the list of scores, named the same way
+aggregate: mean
+# The outer holdout: problems the search on this meta-problem never climbs on.
+# With `holdout: true` in problem.yaml the engine runs the verifier once more on
+# the holdout split, and the grade is then measured on these instead:
+# outer_holdout:
+#   - heilbronn-17

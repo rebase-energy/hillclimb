@@ -286,7 +286,7 @@ def run(
         None, "--agent", "--backend",
         help="The coding agent that runs the operators: claude-code | codex | pi | dummy (--backend is the old spelling)",
     ),
-    model: str = typer.Option(None, help="Model the agent runs, e.g. sonnet / opus"),
+    model: str = typer.Option(None, help="Model the coding agent runs, e.g. sonnet / opus"),
     climber: list[str] = typer.Option(
         None, "--climber",
         help=(
@@ -305,7 +305,7 @@ def run(
     name: str = typer.Option(None, "--name", help="Run name shown in the TUI"),
     parallel_agents: int = typer.Option(
         None, "--parallel-agents", "--parallel-operators",
-        help="Concurrent agents per search, one candidate each (--parallel-operators is the old spelling)",
+        help="Concurrent coding agents per search, one candidate each (--parallel-operators is the old spelling)",
     ),
     parallel_searches: int = typer.Option(
         1, "--parallel-searches", min=1,
@@ -473,18 +473,18 @@ def _run_problem_fleet(
     if engines:
         experiments = ", ".join(dict.fromkeys(engine.experiment for engine in engines))
         say(
-            f"[head]Run {_m(fleet.run_id)}[/]: {len(engines)} searches ({_m(experiments)}) x {agents} agents "
+            f"[head]Run {_m(fleet.run_id)}[/]: {len(engines)} searches ({_m(experiments)}) x {agents} coding agents "
             f"running in the background"
         )
     else:
         searches = "1 search" if parallel_searches == 1 else f"{parallel_searches} searches"
         say(
-            f"[head]Run {_m(fleet.run_id)}[/]: {searches} x {agents} agent{'' if agents == 1 else 's'} "
+            f"[head]Run {_m(fleet.run_id)}[/]: {searches} x {agents} coding agent{'' if agents == 1 else 's'} "
             f"running in the background"
         )
     say(f"Engine logs in [path]{_m(fleet.run_dir / 'logs')}[/]")
     steps = [
-        ("hillclimb watch", "follow the search: every agent, what it is doing, its candidate's score"),
+        ("hillclimb watch", "follow the search: every coding agent, what it is doing, its candidate's score"),
         ("hillclimb chart", "best score so far against time"),
         ("hillclimb stop --all", "end the run; the best solution of every search stays in runs/"),
     ]
@@ -553,6 +553,8 @@ def resume(
     meta, search_dir = record.meta, record.search_dir
     config = common.load_config(agent=meta.agent, model=meta.model)
     config.holdout.enabled = meta.holdout_enabled
+    if not meta.learning_enabled:
+        config.learning.enabled = False  # started without learning: it stays out of the knowledge
     # the search resumes as the climber it started as: its snapshot is the
     # whole truth (policy, params, operators, tuner, memory), whatever the
     # live config says by now
@@ -623,7 +625,7 @@ def _agent_preflight(agent: str) -> None:
         missing.append("uv is not on PATH (it builds the solution venv): pip install uv")
     if agent == "claude-code" and shutil.which("claude") is None:
         missing.append(
-            "claude (Claude Code CLI) is not on PATH — the agents run through it:\n"
+            "claude (Claude Code CLI) is not on PATH — the coding agents run through it:\n"
             "    npm install -g @anthropic-ai/claude-code && claude login"
         )
     if agent == "codex" and shutil.which("codex") is None:
@@ -635,7 +637,7 @@ def _agent_preflight(agent: str) -> None:
     if missing:
         for line in missing:
             fail(f"error: {_m(line)}")
-        say("[cmd]hillclimb connect[/] checks every agent's credential.", err=True)
+        say("[cmd]hillclimb connect[/] checks every coding agent's credential.", err=True)
         raise typer.Exit(1)
 
 
@@ -648,7 +650,7 @@ def smoke(
         help="The coding agent that runs the operators: claude-code | codex | pi | dummy (--backend is the old spelling)",
     ),
 ):
-    """One real DRAFT call through the selected agent, end to end.
+    """One real DRAFT call through the selected coding agent, end to end.
 
     Executes the result and reports — verifies auth, JSON field names, and
     the filesystem contract.

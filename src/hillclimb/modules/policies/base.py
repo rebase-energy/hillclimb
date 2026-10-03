@@ -1,20 +1,29 @@
-"""The search-policy seam: WHAT to try next is a policy decision; everything
-else is the harness.
+"""The policy seam — π_op: WHICH OPERATOR to apply to the node(s) the
+selector chose. Everything else is the harness.
 
-A `Policy` proposes `Action`s over a read-only `SearchState`; the
-harness (`hillclimb.harness.Harness`) materializes each action into a candidate dir, prompt,
-and agent call, executes it, and journals the outcome.
+One step of a search is two decisions in a fixed order. The selector (π_sel,
+`modules/selectors`) reads the history and picks the node(s) the next
+attempt starts from, or none. Then the policy reads the same history and
+that pick and names the operator: a root step gets a `create` operator
+(draft), a failing node a `repair` one (debug), scored nodes a `refine` one
+(improve, or a `tune` trial of the same code), several nodes a `combine` one
+(ensemble). The loop (`harness/loop.py`) makes the two calls in that order;
+a policy never picks a node, a selector never names an operator.
+
+A `Policy` proposes `Action`s over a read-only `SearchState`; the harness
+(`hillclimb.harness.Harness`) materializes each action into a candidate dir,
+prompt and coding agent call, executes it, and journals the outcome.
 
 Contracts every policy must honor:
 
 - `propose()`/`observe()` run only on the scheduler thread, under the
   searcher's state lock — the same discipline as the harness's own journal
-  access. Policies may read candidate candidate dirs from disk (greedy hashes
-  solution.py to dedupe ensemble inputs) but must never write.
+  access. Policies may read candidate dirs from disk but must never write.
 - Decisions must be derivable from replayed journal state: either compute
-  every proposal from the `SearchState` alone, or rebuild internal caches via
-  `observe()` — on construction the harness replays every existing candidate
-  through `observe()` in journal order, so `hillclimb resume` works.
+  every proposal from the `SearchState` and the `Selection` alone, or
+  rebuild internal caches via `observe()` — on construction the harness
+  replays every existing candidate through `observe()` in journal order, so
+  `hillclimb resume` works.
 - Ensemble-style actions must carry their inputs in `inspiration_ids`; the
   harness copies those candidates' solutions into the new candidate_dir.
 - A policy never sees holdout: `SearchState.journal` is a `JournalView`
@@ -23,11 +32,9 @@ Contracts every policy must honor:
   must not be able to select on the split that judges it.
 
 Harness-owned, NOT policy: candidate-dir creation, journal writes, prompt
-assembly, `AgentRequest` construction, trials, holdout gating and scoring
-(`_holdout_threshold` is query-budget hygiene, not strategy), `is_best`/
-selection syncing into `best/`, the control queue, and the cost ceiling.
-Survival-style strategies (keep worse-but-diverse candidates alive) need none
-of these: which candidate gets expanded next is already fully policy-owned.
+assembly, `AgentRequest` construction, trials, holdout gating and scoring,
+`is_best`/selection syncing into `best/`, the control queue, and the cost
+ceiling.
 """
 
 from __future__ import annotations
@@ -39,12 +46,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from hillclimb.harness.candidate import Candidate
     from hillclimb.harness.journal import Journal
+    from hillclimb.modules.selectors.base import Selection
 
 
 TUNE_ACTION = "tune"
-# harness-native, agent-free: score `action.payload["source"]` as a candidate
+# harness-native, coding-agent-free: score `action.payload["source"]` as a candidate
 # (child of `target_id` when given). How a loop evaluates a text it produced
-# itself — an optimizer's merge, a seed — without an agent call.
+# itself — an optimizer's merge, a seed — without a coding agent call.
 INJECT_ACTION = "inject"
 
 
@@ -63,9 +71,9 @@ class Action:
     """One proposed operator invocation. Candidates are referenced by id, not
     object, so actions stay serializable and trivially journal-derivable."""
 
-    # draft | debug | improve | ensemble create a candidate through an agent;
+    # draft | debug | improve | ensemble create a candidate through a coding agent;
     # `tune` (TUNE_ACTION) adds one trial — a new parameter set from the
-    # search's tuner — to the existing candidate `target_id`, no agent
+    # search's tuner — to the existing candidate `target_id`, no coding agent
     operator: str
     target_id: str | None = None  # parent candidate (the tuned candidate for `tune`)
     inspiration_ids: tuple[str, ...] = ()  # extra candidates as prompt/candidate-dir context
@@ -136,25 +144,29 @@ class SearchState:
             object.__setattr__(self, "journal", JournalView(self.journal))
 
 
+_MISSING = object()
+
+
 class Policy:
-    """What to expand next, with which operator — nothing else.
+    """π_op: which operator to apply to what the selector chose — nothing
+    else.
 
-    Subclass it, list your knobs in `DEFAULTS`, implement `propose`. The
-    base carries what every policy ends up needing: the knobs (`param`,
-    `resolved_params`), the selector that picks a parent (`self.selector`,
-    `default_selector` unless the climber's block names another) and the
-    journal questions a schedule asks (`debuggable_tip`,
-    `prospective_branches`, `draft_complexity`, `top_distinct`).
+    Subclass it, list your knobs in `DEFAULTS`, override `propose`. The base
+    `propose` is the plain mapping — no node: draft; a failing node: debug;
+    several nodes: ensemble; a scored node: improve — so a policy of your own
+    only has to say where it differs (which `refine` operator, when to tune,
+    …). The base also carries `param`, `resolved_params`, the selector the
+    loop asks first (`self.selector`, `default_selector` unless the climber's
+    block names another) and `draft_complexity`.
 
-    A class with `propose` and `observe` and no base still runs — the
-    contract is the two methods — it just brings its own helpers.
+    A class with `propose(state, selection)` and `observe(state, candidate)`
+    and no base still runs — the contract is the two methods.
     """
 
     name: str = ""
     # every knob and its default, merged over the class hierarchy: a
     # subclass lists only what it adds or changes
     DEFAULTS: Mapping[str, Any] = {
-        "max_debug_depth": 3,  # failed fixes per failing chain
         "complexity_start": 0,  # offset of the draft-complexity cue (memory may have learned one)
     }
     # the selector a policy of this class uses when the block names none
@@ -165,10 +177,19 @@ class Policy:
 
     def __init__(self, params: Mapping | None = None, selector=None, **knobs):
         # held, never copied: what the climber resolved IS the policy's params.
-        # `**knobs` is the same by keyword, for composing in Python: `Greedy(num_drafts=3)`
+        # `**knobs` is the same by keyword, for composing in Python: `Greedy(tune_budget=4)`
         from hillclimb.modules.refs import with_knobs
 
         known = self.defaults() if self.strict_params else None
+        if known is not None:
+            from hillclimb.modules.selectors.base import Selector
+
+            moved = sorted(set(knobs) & set(Selector.defaults()) - set(known))
+            if moved:
+                raise TypeError(
+                    f"{type(self).__name__} has no param {', '.join(map(repr, moved))}: the schedule is the "
+                    f"selector's (π_sel), e.g. Best({moved[0]}=...) or `select_params:` in the block"
+                )
         self.params = with_knobs(params, knobs, known, type(self).__name__)
         self._selector = selector
 
@@ -194,7 +215,8 @@ class Policy:
 
     @property
     def selector(self):
-        """Picks the candidate to expand (`modules/selectors`)."""
+        """π_sel: picks the node(s) to start from (`modules/selectors`). The
+        loop asks it before it asks the policy."""
         if self._selector is None and self.default_selector:
             from hillclimb.modules.selectors import get_selector
 
@@ -203,10 +225,26 @@ class Policy:
 
     # --- the contract ---
 
-    def propose(self, state: SearchState) -> Action | None:
-        """Next action given current state; None = hold (keep the slot empty
-        until an in-flight result lands)."""
-        raise NotImplementedError(f"{type(self).__name__} must implement propose(state)")
+    def propose(self, state: SearchState, selection: Selection | None) -> Action | None:
+        """The operator for what the selector chose, as an Action; None =
+        hold (keep the slot empty until an in-flight result lands).
+        `selection` is None for a root step."""
+        if selection is None:
+            return self.draft_action(state)
+        if selection.combine:
+            if state.inflight:
+                return None  # drain: the inputs of a combination snapshot at launch
+            return Action(
+                operator="ensemble",
+                target_id=selection.target_id,
+                inspiration_ids=tuple(selection.inspiration_ids),
+                extra_prompt_context=selection.prompt_context,
+                climber_meta=dict(selection.meta),
+            )
+        node = state.journal.candidates[selection.target_id]
+        if node.status in ("failing", "buggy"):
+            return Action(operator="debug", target_id=node.candidate_id)
+        return self.expand_action(state, selection)
 
     def observe(self, state: SearchState, candidate: Candidate) -> None:
         """Called after every journaled terminal result (and replayed for
@@ -216,7 +254,29 @@ class Policy:
         if selector is not None:
             selector.sync(state)
 
-    # --- journal questions a schedule asks ---
+    # --- the moves, for a subclass to reuse ---
+
+    def draft_action(self, state: SearchState) -> Action:
+        """A root step: a fresh draft, with the complexity cue and whatever
+        the selector tags new roots with."""
+        selector = self.selector
+        return Action(
+            operator="draft",
+            args={"complexity": self.draft_complexity(state)},
+            climber_meta=selector.creation_meta(state) if selector is not None else {},
+        )
+
+    def expand_action(self, state: SearchState, selection: Selection, operator: str = "improve") -> Action:
+        """Build on the chosen node with a `refine` operator (`improve`)."""
+        return Action(
+            operator=operator,
+            target_id=selection.target_id,
+            inspiration_ids=tuple(selection.inspiration_ids),
+            extra_prompt_context=selection.prompt_context,
+            climber_meta=dict(selection.meta),
+        )
+
+    # --- journal questions ---
 
     @staticmethod
     def improvable(candidate: Candidate) -> bool:
@@ -226,66 +286,7 @@ class Policy:
 
         return improvable(candidate)
 
-    def debuggable_tip(self, state: SearchState) -> Candidate | None:
-        """Newest failing/buggy candidate with no active child and chain depth
-        under `max_debug_depth`. In serial history this is exactly the serial
-        debug rule."""
-        journal = state.journal
-        for candidate in reversed(list(journal.candidates.values())):
-            if candidate.status not in ("failing", "buggy") or candidate.pruned:
-                continue
-            children = journal.children(candidate.candidate_id, include_pruned=True)
-            if any(c.status in ("pending", "passing", "failing", "buggy") for c in children):
-                continue
-            chain = journal.debug_chain(candidate.candidate_id)
-            depth = sum(1 for c in chain if c.operator == "debug")
-            if depth < int(self.param("max_debug_depth")):
-                return candidate
-        return None
-
-    def prospective_branches(self, state: SearchState) -> int:
-        """Draft branches whose subtree holds a scored OR pending candidate —
-        in-flight work counts toward a number-of-drafts target."""
-        journal = state.journal
-        count = 0
-        for draft in journal.drafts():
-            frontier = [draft]
-            while frontier:
-                candidate = frontier.pop()
-                if candidate.is_scored or candidate.status == "pending":
-                    count += 1
-                    break
-                frontier.extend(journal.children(candidate.candidate_id))
-        return count
-
     def draft_complexity(self, state: SearchState) -> str:
         """The complexity cue for the next draft: it escalates per draft."""
         index = len(state.journal.drafts()) + int(self.param("complexity_start"))
         return "minimal" if index == 0 else "moderate" if index == 1 else "advanced"
-
-    def top_distinct(self, state: SearchState, k: int, skip_operator: str | None = None) -> list[Candidate]:
-        """The top-k scored candidates by val score, deduped by solution
-        content so near-identical ones don't fill the slots; candidates an
-        operator named `skip_operator` made are left out. (`holdout.selection`
-        decides what SHIPS; a policy never sees holdout.)"""
-        import hashlib
-        from pathlib import Path
-
-        picked, seen_hashes = [], set()
-        for candidate in state.journal.ranked_candidates(state.higher_is_better, "val"):
-            if skip_operator is not None and candidate.operator == skip_operator:
-                continue
-            solution = Path(candidate.candidate_dir) / "solution.py"
-            if not solution.exists():
-                continue
-            digest = hashlib.md5(solution.read_bytes()).hexdigest()
-            if digest in seen_hashes:
-                continue
-            seen_hashes.add(digest)
-            picked.append(candidate)
-            if len(picked) >= k:
-                break
-        return picked
-
-
-_MISSING = object()

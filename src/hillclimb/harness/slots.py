@@ -1,6 +1,6 @@
-"""Machine-wide agent-concurrency slots.
+"""Machine-wide coding-agent-concurrency slots.
 
-Caps concurrent agent calls across every search process sharing a runs_dir
+Caps concurrent coding agent calls across every search process sharing a runs_dir
 (suites spawn one process per search; each may run several workers). Slots
 are locked files (flock; msvcrt on Windows) — the lock dies with the
 process, so crashes free their slot with no reclamation logic. Caveat: advisory flock is unreliable on NFS

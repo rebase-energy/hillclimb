@@ -1,7 +1,7 @@
                                                                                                                         
  Usage: root sandbox [OPTIONS] COMMAND [ARGS]...                                                                        
                                                                                                                         
- The sandbox agents and solutions run in: what it stops, shown on this machine                                          
+ The sandbox coding agents and solutions run in: what it stops, shown on this machine                                   
                                                                                                                         
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --help  -h        Show this message and exit.                                                                        │

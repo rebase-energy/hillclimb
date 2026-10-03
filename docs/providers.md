@@ -1,35 +1,13 @@
 # Providers
 
-Problems that come from somewhere else — emflow's forecasting registry, MLE-bench's Kaggle competitions, Einstein Arena's construction problems — resolved into the same verifier contract.
-
-## emflow problems (optional extra)
-
-With the `emflow` extra installed (`pip install 'hillclimb[emflow]'`),
-targets of the form `emflow://<name>` run problems from
-[emflow](https://github.com/rebase-energy/emflow)'s registry — agents author
-`Predictor` classes (`solution.py` exposing `get_model()`), and the provider
-supplies the verifier command: a generic evaluator fits and scores them on the
-problem's validation split, with the hidden holdout as a second run of the
-same command. A bare package name is a virtual
-suite (one search per variant):
-
-```bash
-uv run hillclimb run emflow://gefcom2014:solar --budget 2h   # one track
-uv run hillclimb run emflow://gefcom2014 --budget 2h         # all four tracks
-```
-
-The baseline candidate (`c000`) is the benchmark's reference model evaluated
-for real, and a finished search ends with one official emflow Verifier run
-(leaderboard row + rank, with `n_trials` recorded for selection honesty).
-Programmatic use: `hillclimb.run_search("emflow://gefcom2014:solar",
-budget_s=7200)`.
+Problems that come from somewhere else — MLE-bench's Kaggle competitions, Einstein Arena's construction problems — resolved into the same verifier contract.
 
 ## MLE-bench problems
 
 Targets of the form `mlebench://<competition-id>` run
 [MLE-bench](https://github.com/openai/mle-bench) competitions against a local
 mle-bench checkout (located via `paths.mlebench_python`; prepare data first
-with `mlebench prepare -c <competition-id>` in that venv). Agents see only the
+with `mlebench prepare -c <competition-id>` in that venv). Coding agents see only the
 prepared PUBLIC split and climb on their own validation score; when the search
 finishes, the engine runs `mlebench grade-sample` exactly once on the selected
 candidate and writes the report (score + medal flags) to

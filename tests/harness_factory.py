@@ -33,6 +33,7 @@ def make_harness(task, config, agent, *, name: str = "test-search", **kwargs):
 from hillclimb.harness.candidate import Candidate  # noqa: E402
 from hillclimb.harness.loop import PolicyLoop  # noqa: E402
 from hillclimb.modules.policies.greedy import Greedy  # noqa: E402
+from hillclimb.modules.selectors.best import Best  # noqa: E402
 from hillclimb.modules.policies.base import TUNE_ACTION, Action, Policy  # noqa: E402
 
 
@@ -73,7 +74,8 @@ class SearchRig(Harness):
         super().__init__(*args, **kwargs)
         self.complexity_start = complexity_start
         self.policy = policy or Greedy(
-            params=LiveParams(self.config, complexity_start=complexity_start)
+            params=LiveParams(self.config, complexity_start=complexity_start),
+            selector=Best(params=LiveParams(self.config)),
         )
         self._loop = PolicyLoop(self.policy)
         self._loop.catch_up(self)  # the resume contract: the policy replays the journal
@@ -104,29 +106,30 @@ class SearchRig(Harness):
         return Action(operator=operator, target_id=target_id)
 
     def decide(self) -> tuple[str, Candidate | None]:
-        action = self.policy.propose(self._view())
+        action = self._loop.propose(self._view())
         if action is None:
             return ("hold", None)
         target = self.journal.candidates.get(action.target_id) if action.target_id else None
         return (action.operator, target)
 
+    # the schedule's questions are the selector's (π_sel)
     def _debuggable_tip(self) -> Candidate | None:
-        return self.policy.debuggable_tip(self._view())
+        return self.policy.selector.debuggable_tip(self._view())
 
     def _prospective_branches(self) -> int:
-        return self.policy.prospective_branches(self._view())
+        return self.policy.selector.prospective_branches(self._view())
 
     def _in_ensemble_window(self) -> bool:
-        return self.policy.in_ensemble_window(self._view())
+        return self.policy.selector.in_ensemble_window(self._view())
 
     def _should_ensemble(self) -> bool:
-        return self.policy.should_ensemble(self._view())
+        return self.policy.selector.should_combine(self._view())
 
     def _ensemble_succeeded(self) -> bool:
-        return self.policy.ensemble_succeeded(self._view())
+        return self.policy.selector.combine_succeeded(self._view())
 
     def _ensemble_candidates(self) -> list[Candidate]:
-        return self.policy.ensemble_candidates(self._view())
+        return self.policy.selector.combine_candidates(self._view())
 
     def _draft_complexity(self) -> str:
         return self.policy.draft_complexity(self._view())

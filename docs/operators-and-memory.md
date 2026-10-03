@@ -11,17 +11,17 @@ climber.operators.draft.retrieval=false`; both gate prompt injection only,
 so A/B experiments record identical data):
 
 - **Retrieval-augmented draft** (`climber.operators.draft.retrieval`) — the draft
-  agent is told to web-search the current state of the art for the problem
+  coding agent is told to web-search the current state of the art for the problem
   *class* before writing code (methods only — searching for solutions to the
   specific competition is explicitly forbidden).
 - **Ablation-guided improve** (`climber.operators.improve.ablation`) — the improve
-  agent first attributes the score to the solution's components (fast,
+  coding agent first attributes the score to the solution's components (fast,
   subsampled ablation runs, focused by the trial report's breakdown), records
   findings in `ablation.md`, then confines its ONE change to the
   highest-leverage component. Later improves of the same solution are handed
   the newest sibling `ablation.md` so components aren't re-measured.
 
-The `routing:` block maps operators to agents/models; giving a route a
+The `routing:` block maps operators to coding agents/models; giving a route a
 `models:` **pool** instead of a scalar turns model choice into a UCB1 bandit
 (per operator) that learns which model earns improvements — rewards derive
 from journaled results (improved on parent = 1, working-but-flat = 0.25,
@@ -35,7 +35,7 @@ routing:
 ```
 
 Routing is the user's: a climber's block may not carry `routing:`
-(see [climbers.md](climbers.md)). Which agents can be routed to, and how
+(see [climbers.md](climbers.md)). Which coding agents can be routed to, and how
 they are paid for, is in [agents.md](agents.md).
 
 ## Cross-search memory: the files, and the graph over them
@@ -44,7 +44,7 @@ hillclimb learns across searches. Memory is a module the climber's block
 names — `memory: files` by default — and the built-in one is file-based and
 git-versionable: it lives in your hillclimb dir, under `knowledge/`. How it
 behaves is `memory_params` in the block (the settings in backticks below);
-where it lives (`learning.dir`), whether agents get the lookup tool
+where it lives (`learning.dir`), whether coding agents get the lookup tool
 (`learning.tool`) and the master switch (`learning.enabled`, `--no-learning`)
 are yours, in `hillclimb.yaml`:
 
@@ -60,13 +60,13 @@ climber:
   prompt section. Concurrent searches in one run also share **live cards**
   mid-flight.
 - **Claims** (`claims`, default on) — after distilling the card, one
-  cheap agent pass (routing key `distill`, default model haiku) turns the
+  cheap coding agent pass (routing key `distill`, default model haiku) turns the
   search into typed claims: `histgradientboosting helps` on this family,
   with confidence and candidate-id evidence. Claim subjects are canonical
   **entities** (`knowledge/entities.yaml`, alias-deduped) classified
   closed-set into a small curated **concept ontology**
   (`knowledge/concepts.yaml` — tabular / time-series / decision-trees /
-  neural-networks / …; the agent may only *propose* additions, which you
+  neural-networks / …; the coding agent may only *propose* additions, which you
   promote by flipping `proposed: false`).
 - **Graph** (`knowledge/graph.json`) — a derived index rebuilt
   deterministically from the YAML (never hand-edit; `hillclimb knowledge
@@ -84,14 +84,14 @@ climber:
 - **Playbooks** (`playbooks`, default on) — `hillclimb knowledge
   consolidate` is the sleep phase: multi-family claims generalize up the
   concept hierarchy, and each concept with enough evidence gets an
-  agent-written playbook (`knowledge/playbooks/<concept>.md`, a reviewable
+  coding-agent-written playbook (`knowledge/playbooks/<concept>.md`, a reviewable
   git diff) that replaces the raw claims block in draft prompts; credit
   flows to the playbook's source claims.
 - **Skills** (`skills`, default on) — winning solutions are
   harvested into `knowledge/skills/` (2 best per family) and the best match
   lands in the next search's first draft as `reference_solution.py`: proven
   scaffolds, not prose hints.
-- **Query tool** (`learning.tool`, default on) — operator agents
+- **Query tool** (`learning.tool`, default on) — coding agents
   are told they can run `hillclimb knowledge query "<keywords>"` mid-search
   to consult the memory before re-deriving something expensive.
 - **Does it help?** — a study with a memory-on and a memory-off experiment

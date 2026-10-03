@@ -32,7 +32,7 @@ or `package.module:Class`. The contract has three parts over one data model:
 2. `retrieve(graph, *, family, problem_id, concepts, limit)` — the claim
    nodes a new search is shown as prior experience.
 3. `query(graph, terms, *, family, limit)` — JSON-serializable hits for the
-   read-only lookup operator agents call mid-search.
+   read-only lookup coding agents call mid-search.
 
 `retrieve` and `query` default to the built-in claim walk, so a module that
 only changes the graph's structure has nothing to write but `build` — as
@@ -137,7 +137,7 @@ class Memory:
         self.env = env
 
     def agent_passes(self) -> tuple[str, ...]:
-        """Routing keys of the agent calls this memory makes (`routing.distill`),
+        """Routing keys of the coding agent calls this memory makes (`routing.distill`),
         so a route that cannot work is found before the search spends anything."""
         return ()
 

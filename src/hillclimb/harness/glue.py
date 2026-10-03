@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 
 class ParkedSearch(Exception):
-    """Raised when the agent hits a rate limit; the search can be resumed."""
+    """Raised when the coding agent hits a rate limit; the search can be resumed."""
 
 
 class StopRequested(Exception):

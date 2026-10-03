@@ -3,7 +3,7 @@
                                                                                                                         
  Read-only memory lookup (no model calls).                                                                              
                                                                                                                         
- Also advertised to operator agents so they can consult accumulated                                                     
+ Also advertised to coding agents so they can consult accumulated                                                       
  knowledge mid-search.                                                                                                  
                                                                                                                         
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮

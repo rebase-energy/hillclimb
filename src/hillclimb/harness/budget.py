@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from hillclimb.config import Config
     from hillclimb.harness.journal import Journal
 
 # the harness's own floor measurements: their first trial is not the climber's spend
@@ -19,6 +20,9 @@ class Spend:
     evaluations: int = 0
     tokens: int = 0
     cost_usd: float = 0.0
+    # wall clock, where a reader has the status record beside the journal
+    # (a search's result); the harness's own clock is its BudgetManager
+    seconds: float | None = None
 
 
 def journal_spend(journal: Journal) -> Spend:
@@ -30,6 +34,72 @@ def journal_spend(journal: Journal) -> Spend:
         tokens += candidate.agent.total_tokens or 0
         cost += candidate.agent.cost_usd or 0.0
     return Spend(evaluations=evaluations, tokens=tokens, cost_usd=cost)
+
+
+@dataclass(frozen=True)
+class Budget:
+    """What a search may spend, in every dimension the harness counts. Pass
+    it where a budget goes (`climber.search(problem, budget=Budget(...))`):
+
+        Budget(wall_clock="10m")                  # the clock alone
+        Budget(evaluations=30)                    # scored attempts, whatever the clock says
+        Budget(wall_clock="2h", evaluations=200, tokens=5_000_000, cost_usd=20)
+
+    The search ends when the first limit is reached: the clock and the
+    evaluation or token caps end it as `done`, the cost ceiling parks it
+    (resumable). A dimension left as None has no limit, except the wall
+    clock, which falls back to the problem's own `time_budget_s`. A plain
+    "10m" or a number of seconds where a Budget is expected means
+    `Budget(wall_clock=...)`."""
+
+    wall_clock: str | int | None = None  # "2h", "30m", "90s" or seconds of wall-clock time
+    evaluations: int | None = None     # scored attempts: one per attempt, one per tune trial
+    tokens: int | None = None          # tokens the coding agent calls consume, all kinds summed
+    cost_usd: float | None = None      # the coding agents' bill, where the agent reports one
+
+    def __post_init__(self) -> None:
+        if self.wall_clock is not None:
+            parse_budget(self.wall_clock)  # a budget nobody can read fails here, not at the first search
+        for name in ("evaluations", "tokens"):
+            value = getattr(self, name)
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 1):
+                raise ValueError(f"Budget({name}=...) takes a positive whole number, not {value!r}")
+        if self.cost_usd is not None and not self.cost_usd > 0:
+            raise ValueError(f"Budget(cost_usd=...) takes a positive amount, not {self.cost_usd!r}")
+
+    @classmethod
+    def of(cls, value: Any) -> Budget:
+        """A Budget from what people pass: a Budget, "10m", seconds, or None."""
+        if value is None:
+            return cls()
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, (str, int)) and not isinstance(value, bool):
+            return cls(wall_clock=value)
+        raise TypeError(f"budget must be a Budget, a duration like '10m', or seconds, not {value!r}")
+
+    @property
+    def seconds(self) -> int | None:
+        return parse_budget(self.wall_clock) if self.wall_clock is not None else None
+
+    def apply(self, config: Config) -> list[str]:
+        """Set the limits on `config.budget` (the clock is the search's own
+        argument) and return them as the `set` pairs a run's spec records."""
+        pairs = []
+        if self.evaluations is not None:
+            config.budget.max_evaluations = self.evaluations
+            pairs.append(f"budget.max_evaluations={self.evaluations}")
+        if self.tokens is not None:
+            config.budget.max_tokens = self.tokens
+            pairs.append(f"budget.max_tokens={self.tokens}")
+        if self.cost_usd is not None:
+            config.budget.max_cost_usd = float(self.cost_usd)
+            pairs.append(f"budget.max_cost_usd={self.cost_usd}")
+        return pairs
+
+    def __repr__(self) -> str:
+        fields = {k: v for k, v in vars(self).items() if v is not None}
+        return "Budget(" + ", ".join(f"{k}={v!r}" for k, v in fields.items()) + ")"
 
 
 def parse_budget(value: str | int) -> int:
@@ -45,8 +115,8 @@ def parse_budget(value: str | int) -> int:
 
 
 def format_remaining(seconds: float) -> str:
-    """How the clock reads in prompts: `1h 05m` or `59 minutes` — prose an
-    agent reads. Logs use `format_clock`."""
+    """How the clock reads in prompts: `1h 05m` or `59 minutes` — prose a
+    coding agent reads. Logs use `format_clock`."""
     whole = int(round(seconds))
     hours, rest = divmod(whole, 3600)
     minutes = rest // 60
@@ -73,9 +143,28 @@ class BudgetManager:
         # it is capped at a tenth of the budget
         self.stop_margin_s = min(stop_margin_s, total_s // 10)
         self._started = time.monotonic() - spent_s
+        self._paused_at: float | None = None
 
     def elapsed(self) -> float:
-        return time.monotonic() - self._started
+        now = self._paused_at if self._paused_at is not None else time.monotonic()
+        return now - self._started
+
+    # A search stepped by hand spends its budget only while a step runs: the
+    # time a person takes to read an outcome is theirs, not the search's.
+    def pause(self) -> None:
+        """Stop the clock (idempotent)."""
+        if self._paused_at is None:
+            self._paused_at = time.monotonic()
+
+    def resume(self) -> None:
+        """Start it again where it stopped (idempotent)."""
+        if self._paused_at is not None:
+            self._started += time.monotonic() - self._paused_at
+            self._paused_at = None
+
+    @property
+    def paused(self) -> bool:
+        return self._paused_at is not None
 
     def remaining(self) -> float:
         return max(0.0, self.total_s - self.elapsed())

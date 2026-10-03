@@ -1,4 +1,4 @@
-"""Connecting hillclimb to the agents that run its operators.
+"""Connecting hillclimb to the coding agents that run its operators.
 
 `agent` + `agent_auth` say WHO runs an operator call and WHO pays for it.
 Both were only settings: the credential behind them was discovered at the
@@ -8,14 +8,14 @@ module makes it a step you take on purpose.
 
 Two things make a check trustworthy here:
 
-* It runs **through the same env builders the agents use** —
+* It runs **through the same env builders the coding agents use** —
   `subscription_env`, `codex_env`, `pi_env` — so what it reports is what an
   operator will see, not what the personal CLI config happens to hold. The
   difference is real: an inherited `ANTHROPIC_API_KEY` silently rebills a
   "subscription" search to the API, and `subscription_env` drops it. A check
   against the ambient environment would miss exactly the failure worth
   catching.
-* A **target is not a agent**. `claude`, `codex` and `pi` are agents and
+* A **target is not a coding agent**. `claude`, `codex` and `pi` are coding agents and
   own their own login flow — hillclimb shells out to it and then materializes
   the isolated per-auth home the searches read (`codex_home`, `pi_home`).
   `openrouter` is a billing route for codex and pi, and is the one credential
@@ -29,7 +29,7 @@ Connecting writes at most two things: that `.env` line, and the `agent` /
 default — `~/.config/hillclimb/` — so one login serves every folder on the
 machine and `hillclimb connect` works before `hillclimb init`; a folder's
 own `hillclimb.yaml`/`.env` overrides them (`--local` writes there instead).
-Everything else lives where the agent's own CLI put it.
+Everything else lives where the coding agent's own CLI put it.
 """
 
 from __future__ import annotations
@@ -42,11 +42,11 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-# targets in the order the status table lists them: the agents that run
+# targets in the order the status table lists them: the coding agents that run
 # operators, then the route that pays for them
 TARGETS = ("claude", "codex", "pi", "openrouter")
 AGENT_FOR = {"claude": "claude-code", "codex": "codex", "pi": "pi"}
-# which billing modes each agent implements (config.AGENT_AUTHS is the
+# which billing modes each coding agent implements (config.AGENT_AUTHS is the
 # full vocabulary; claude-code has no OpenRouter route)
 AUTHS_FOR = {
     "claude": ("subscription", "api-key"),
@@ -110,7 +110,7 @@ class Status:
 
 
 # --------------------------------------------------------------------------
-# reading what the agent CLIs report (pure: the subprocess result in, a
+# reading what the coding agent CLIs report (pure: the subprocess result in, a
 # verdict out — so the interpretation is testable without a login)
 # --------------------------------------------------------------------------
 
@@ -382,12 +382,12 @@ def is_connected(target: str, auth: str) -> bool:
 
 
 def configured_auth(config, target: str) -> str | None:
-    """The billing mode this config actually selects for a agent, or None
+    """The billing mode this config actually selects for a coding agent, or None
     when nothing routes to it. Routing overrides the scalar per operator, so
-    a agent can appear under several modes; the global one wins the row,
+    a coding agent can appear under several modes; the global one wins the row,
     else the first routed one in sorted order."""
     agent = AGENT_FOR.get(target)
-    if agent is None:  # openrouter is a route, not a agent
+    if agent is None:  # openrouter is a route, not a coding agent
         return "openrouter"
     if config.agent == agent:
         return config.agent_auth
@@ -428,12 +428,12 @@ def status_rows(config) -> list[tuple[Status, bool]]:
 
 
 def login_command(target: str) -> list[str] | None:
-    """The agent's own login flow, or None when it has no CLI entry point."""
+    """The coding agent's own login flow, or None when it has no CLI entry point."""
     return {"claude": ["claude", "auth", "login"], "codex": ["codex", "login"]}.get(target)
 
 
 def run_login(target: str) -> int:
-    """Hand the terminal to the agent's login (browser flow, prompts, all of
+    """Hand the terminal to the coding agent's login (browser flow, prompts, all of
     it) and return its exit code. hillclimb never sees the credential."""
     cmd = login_command(target)
     if cmd is None:
@@ -448,7 +448,7 @@ def staged_homes(target: str) -> list[Path]:
     """Everything `connect <target>` materialized under the machine cache
     for searches to read — the isolated per-auth homes (every auth mode of
     the target) and the ping's scratch dirs. What `disconnect` removes. The
-    agent's own login (`~/.claude`, `~/.codex`, `~/.pi`) is never among
+    coding agent's own login (`~/.claude`, `~/.codex`, `~/.pi`) is never among
     them: hillclimb may start a login it needs, never end one — the account
     belongs to the person, not to hillclimb."""
     from hillclimb.project import machine_cache_dir
@@ -573,7 +573,7 @@ def apply_config_defaults(text: str, updates: dict[str, str]) -> str:
 def unpin_config_defaults(text: str, target: str) -> str:
     """The inverse of `apply_config_defaults` for one target: comment out
     the column-zero `agent:` (and `agent_auth:`) lines when they name
-    that target's agent — a agent `disconnect` is not what pins another
+    that target's coding agent — a coding agent `disconnect` is not what pins another
     one — or, for the `openrouter` route, just the `agent_auth:` line that
     names it. Anything else is left byte-for-byte."""
     lines = text.splitlines()
@@ -590,7 +590,7 @@ def unpin_config_defaults(text: str, target: str) -> str:
 
 
 def pins_agent(text: str) -> bool:
-    """Does this config.yaml already choose a agent on purpose?
+    """Does this config.yaml already choose a coding agent on purpose?
 
     Connecting should not silently repoint an existing setup at whatever was
     connected last; it should complete a fresh one. An active column-zero

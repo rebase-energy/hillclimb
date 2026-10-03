@@ -29,8 +29,8 @@ class BudgetConfig(BaseModel):
     # operator; the TUI shows by how much), `hard` aborts them at the deadline
     # and journals them abandoned
     deadline: Literal["graceful", "hard"] = "graceful"
-    # hard agent-spend ceiling; the search parks (resumable) when cumulative
-    # agent cost reaches it. 0 = no ceiling.
+    # hard coding-agent-spend ceiling; the search parks (resumable) when cumulative
+    # coding agent cost reaches it. 0 = no ceiling.
     max_cost_usd: float = 0.0
     # The budget is the USER's, in every dimension — a climber sees what is
     # left (BudgetView) and never sets it. Both end the search like the clock
@@ -38,13 +38,13 @@ class BudgetConfig(BaseModel):
     #   max_evaluations  verifier trials the climber caused: one per scored
     #                    attempt plus one per tune trial; the baseline and the
     #                    seed are the harness's own floor and do not count
-    #   max_tokens       tokens its agent calls consumed, all kinds summed
+    #   max_tokens       tokens its coding agent calls consumed, all kinds summed
     max_evaluations: int = 0
     max_tokens: int = 0
 
 
 def default_machine_max_agents() -> int:
-    """min(8, cores - 2): each operator is an API-bound agent plus, at worst,
+    """min(8, cores - 2): each operator is an API-bound coding agent plus, at worst,
     one single-threaded solution process, so this keeps a laptop responsive
     however many searches are launched."""
     return max(1, min(8, (os.cpu_count() or 4) - 2))
@@ -101,7 +101,7 @@ REMOVED_SETTINGS = {
 }
 
 
-# The coding agent used to be called the backend, and the agents run in
+# The coding agent used to be called the backend, and the coding agents run in
 # parallel used to be counted as operators: keys in either spelling load.
 RENAMED_KEYS = {
     "backend": "agent",
@@ -138,6 +138,14 @@ def current_setting(key: str) -> str:
         # `operators` is the LIST of what may run; one operator's params are
         # addressed by its name
         return "climber.operator_params." + key[len("climber.operators."):]
+    if key.startswith("climber.params."):
+        # the schedule is the selector's: `climber.params.num_drafts` (every
+        # spelling before 0.7) is `climber.select_params.num_drafts`
+        from hillclimb.modules.spec import SCHEDULE_KNOBS
+
+        knob = key[len("climber.params."):].split(".", 1)[0]
+        if knob in SCHEDULE_KNOBS:
+            return "climber.select_params." + key[len("climber.params."):]
     return key
 
 
@@ -171,7 +179,7 @@ class ConcurrencyConfig(BaseModel):
         return renamed_keys(data)
 
     parallel_agents: int = 1  # attempts in flight per search; 1 = serial (default)
-    # Machine-wide cap on concurrent agents across every search on this
+    # Machine-wide cap on concurrent coding agents across every search on this
     # machine (flock slots in ~/.cache/hillclimb/agent-slots/). Operators
     # beyond it wait (`waiting-slot` in watch). 0 = off; None = default_machine_max_agents().
     machine_max_agents: int | None = None
@@ -183,7 +191,7 @@ class ConcurrencyConfig(BaseModel):
 
 
 class RouteConfig(BaseModel):
-    """Per-operator agent/model override (the `routing:` config block).
+    """Per-operator coding agent/model override (the `routing:` config block).
     None fields inherit the global `agent`/`model`/`agent_auth` scalars."""
 
     model_config = ConfigDict(extra="forbid")
@@ -267,12 +275,12 @@ class LearningConfig(BaseModel):
     # memory, whatever its block says (`--no-learning` is the same)
     enabled: bool = True
     # advertise the read-only `hillclimb knowledge query` lookup to every
-    # agent (a clause of the contract; needs `enabled`)
+    # coding agent (a clause of the contract; needs `enabled`)
     tool: bool = True
     # default: <hillclimb dir>/knowledge (git-versionable); explicit
     # path overrides; None + no hillclimb dir = learning off
     dir: Path | None = None
-    # wall clock for the one agent pass a memory may make after a search
+    # wall clock for the one coding agent pass a memory may make after a search
     # (claim distillation; routed via `routing: distill:`)
     claims_timeout_s: int = 300
 
@@ -322,7 +330,7 @@ class SimilarityConfig(BaseModel):
 
 
 class PiConfig(BaseModel):
-    """pi agent settings shared by routed pi instances."""
+    """pi coding agent settings shared by routed pi instances."""
 
     models_file: Path | None = None
 
@@ -357,7 +365,7 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 
 class SandboxConfig(BaseModel):
-    """The OS sandbox agents and verifiers run in (`harness/sandbox.py`):
+    """The OS sandbox coding agents and verifiers run in (`harness/sandbox.py`):
     sandbox-exec on macOS, bubblewrap on Linux. On by default; a search
     refuses to start when it is on and cannot be started. `sandbox: off`
     is the short form of `sandbox: {enabled: false}`."""
@@ -367,7 +375,7 @@ class SandboxConfig(BaseModel):
     enabled: bool = True
     write: list[Path] = Field(default_factory=list)  # writable beyond the candidate dir
     deny_read: list[Path] = Field(default_factory=list)  # unreadable beyond the built-in secrets
-    # hosts agents still reach with allow_internet_for_agents: false, beyond
+    # hosts coding agents still reach with allow_internet_for_agents: false, beyond
     # their model provider's
     allow_hosts: list[str] = Field(default_factory=list)
     local_ports: list[int] = Field(default_factory=list)  # localhost ports left open without network
@@ -380,7 +388,7 @@ class Config(BaseModel):
     agent: str = "claude-code"
     agent_auth: str = "subscription"  # one of AGENT_AUTHS
     model: str = "sonnet"
-    # may the operator agents reach the internet (web search/fetch, curl, pip
+    # may the coding agents reach the internet (web search/fetch, curl, pip
     # from their shell)? False turns their web tools off, runs every shell
     # command they issue in an OS network jail and drops the draft's
     # web-research cue. Whether the SOLUTION may use the internet is the
@@ -477,7 +485,7 @@ class Config(BaseModel):
 
     @model_validator(mode="after")
     def _check_agent_auth(self):
-        """Reject auth/sampling combinations a agent would silently ignore.
+        """Reject auth/sampling combinations a coding agent would silently ignore.
 
         `openrouter` is implemented by codex and pi. Sampling is implemented
         only by pi's explicitly loaded provider-payload extension.

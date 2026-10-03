@@ -3,7 +3,7 @@
                                                                                                                         
  Last resort for an engine that does not respond to `hillclimb stop`.                                                   
                                                                                                                         
- SIGTERMs the engine with its agents and verifiers, then SIGKILLs whatever                                              
+ SIGTERMs the engine with its coding agents and verifiers, then SIGKILLs whatever                                       
  is still alive after `--grace` seconds. The search stays resumable: a                                                  
  candidate left pending is recovered as abandoned on resume. `--all` kills                                              
  every running search.                                                                                                  

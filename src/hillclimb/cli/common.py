@@ -18,7 +18,7 @@ _ERR_CONSOLE = None
 # The CLI's voice. Every sentence hillclimb speaks goes through `say` (or
 # `warn`/`fail` for the two stderr registers) with rich markup on the
 # theme's styles, so a reader tells hillclimb's words from a verifier's
-# stdout or an agent's log at a glance:
+# stdout or a coding agent's log at a glance:
 #
 #   [head]   the lead of a line — the verdict, the thing that happened
 #            ("Deleted", "Search r1/alpha", "No hillclimb dir here.")
@@ -41,7 +41,7 @@ def _make_console(stderr: bool, width: int | None = None):
     from rich.console import Console
     from rich.theme import Theme
 
-    # emoji off: a `:tag:` inside a path or an agent's summary must print
+    # emoji off: a `:tag:` inside a path or a coding agent's summary must print
     # as written. No color when the stream is not a terminal (a pipe, a
     # test), exactly like the banner.
     return Console(stderr=stderr, highlight=False, emoji=False, theme=Theme(THEME), width=width)
@@ -101,7 +101,7 @@ def engine_line(line: str) -> str:
     (`learning:`, `new selection:`, `baseline written:`) goes bold,
     candidate ids go in the path colour, and a line reporting trouble
     (`failed`, `crashed`, `refused`, `TIMEOUT`) is warned as a whole. The
-    text itself is escaped first, so a `[` in an agent's summary is never
+    text itself is escaped first, so a `[` in a coding agent's summary is never
     read as markup."""
     text = _m(line)
     if _TROUBLE.search(line):
@@ -212,7 +212,7 @@ def load_config(*, raise_not_found: bool = False, **overrides) -> Config:
 
 
 def require_sandbox(config: Config, overrides: dict | None = None) -> None:
-    """Before a command starts agents or a verifier: exit with the fix when
+    """Before a command starts coding agents or a verifier: exit with the fix when
     the sandbox is on and cannot start here, and say so when what follows
     runs without one (`sandbox: off`, or an OS that has none)."""
     from hillclimb.harness import sandbox
@@ -230,7 +230,7 @@ def require_sandbox(config: Config, overrides: dict | None = None) -> None:
     except sandbox.SandboxUnavailable as exc:
         fail(f"Not started: {_m(exc)}")
         raise typer.Exit(1) from exc
-    warn(f"sandbox: {reason} — agents and solutions run with your full user rights")
+    warn(f"sandbox: {reason} — coding agents and solutions run with your full user rights")
 
 
 def say_no_hillclimb_dir(exc) -> None:
@@ -276,7 +276,7 @@ model: sonnet
 #   min_improvement: 0     # ...or an absolute floor, in metric units
 
 # concurrency:
-#   parallel_agents: 1   # >1 runs concurrent agents
+#   parallel_agents: 1   # >1 runs concurrent coding agents
 #   machine_max_agents: 8  # cap across every search on this machine (default min(8, cores-2))
 
 # holdout:
@@ -303,7 +303,7 @@ model: sonnet
 # of every run is committed — run.yaml, spec.yaml, each search's search.yaml,
 # journal, status, knowledge card, climber snapshot, and the best solution —
 # so `git log` explains every run and `hillclimb chart` works on a fresh
-# clone. The BULK is not: candidates (agent streams, replicate outputs,
+# clone. The BULK is not: candidates (coding agent streams, replicate outputs,
 # runtime data), engine logs, the control queue, the rest of best/ (a
 # submission can be large), the sqlite store and the derived knowledge graph.
 # Keys never are. Leading slashes anchor each rule at the hillclimb dir.

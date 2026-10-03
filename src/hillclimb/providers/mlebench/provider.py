@@ -4,7 +4,7 @@ Competition metadata (description, metric, score direction) is read straight
 from the mle-bench checkout — located by walking up from
 `config.paths.mlebench_python` — and the problem's data is the PREPARED
 PUBLIC split (`<data>/<comp_id>/prepared/public`). The engine never sees the
-private answers: candidates climb on the agent's own validation score, and
+private answers: candidates climb on the coding agent's own validation score, and
 the official `mlebench grade-sample` run happens exactly once on the selected
 candidate after the search finishes (api._mlebench_grade). That ordering is
 the MLE-bench selection-integrity contract: the private test set must not
@@ -99,7 +99,7 @@ def load_mlebench_problem(comp_id: str, config: Config) -> ProblemSpec:
         metric_name=meta["grader"]["name"],
         higher_is_better=_higher_is_better(comp_dir / "leaderboard.csv"),
         time_budget_s=config.budget.total_s,
-        # the competition ships no runnable validator: the agent splits the
+        # the competition ships no runnable validator: the coding agent splits the
         # public data and reports its own score; official grading is one
         # `mlebench grade-sample` run after the search
         verifier_cmd=["{python}", str(RUN_SOLUTION), "{solution}", "--require", "submission.csv"],

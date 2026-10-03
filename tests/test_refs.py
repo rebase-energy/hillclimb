@@ -78,7 +78,7 @@ def test_a_climbers_files_share_one_package_and_import_each_other(tmp_path):
     write(
         tmp_path / "c" / "ops" / "cross.py",
         "from ..helpers import NUM\nfrom hillclimb.sdk import Operator, Attempt\n"
-        "class Cross(Operator):\n    name, role = 'cross', 'combine'\n"
+        "class Cross(Operator):\n    name, kind = 'cross', 'combine'\n"
         "    def prepare(self, ctx):\n        return Attempt(prompt=str(NUM))\n",
     )
     scope = FileScope([tmp_path / "c" / "policy.py", tmp_path / "c" / "ops" / "cross.py"])

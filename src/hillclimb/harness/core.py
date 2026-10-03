@@ -11,7 +11,7 @@ from pathlib import Path
 from hillclimb.agents.base import Agent, AgentRequest, AgentResult
 from hillclimb.harness.baseline import write_baseline
 from hillclimb.harness.budget import BudgetManager, Spend, journal_spend
-from hillclimb.harness.candidate import AgentInfo, Candidate, source_hash, utcnow
+from hillclimb.harness.candidate import AgentInfo, Candidate, read_solution, source_hash, utcnow
 from hillclimb.config import Config
 from hillclimb.harness.control import ControlCommand, apply_prune, drain_commands_dir, resync_best
 from hillclimb.harness import evaluation
@@ -51,7 +51,7 @@ class Job:
     by the worker until _commit (the journal holds its own deep copy)."""
 
     candidate: Candidate
-    request: AgentRequest | None  # None for the agent-less seed candidate
+    request: AgentRequest | None  # None for the coding-agent-less seed candidate
     candidate_dir: Path
     ensemble_inputs: "list[Candidate] | None" = None
     agent: Agent | None = None  # routed instance; None = harness default
@@ -59,7 +59,7 @@ class Job:
     # deep copy the worker may mutate, the live object is only touched in
     # _commit_tune under the state lock
     kind: str = "operator"  # operator | tune
-    # `Attempt.require_change`: the parent's source hash — an agent that
+    # `Attempt.require_change`: the parent's source hash — a coding agent that
     # hands back the same text made no attempt
     unchanged_hash: str | None = None
     trial_index: int | None = None
@@ -115,7 +115,7 @@ class _OperatorServices:
 
 class Harness:
     """The fixed core of a search: runs whatever a `Loop` submits and
-    owns every state invariant — candidate dirs, agent calls, verifier trials,
+    owns every state invariant — candidate dirs, coding agent calls, verifier trials,
     the journal (single writer), `best/` selection, the accept band, budgets,
     the control queue, crash recovery and holdout. A loop reaches it only
     through `view`/`capacity`/`inflight`/`open`/`submit`/`wait`/`run`/`source`
@@ -172,7 +172,7 @@ class Harness:
             executor=executor, problem=problem, config=config
         )
         self.status = status
-        self.slots = slots  # machine-wide agent-concurrency cap (optional)
+        self.slots = slots  # machine-wide coding-agent-concurrency cap (optional)
         self.abort = abort or threading.Event()
         self.seed_solution = seed_solution  # incumbent model: scored as a floor candidate
         # cross-search memory (`modules/memory`): what it handed this search
@@ -340,13 +340,7 @@ class Harness:
 
     def source(self, candidate_id: str) -> str | None:
         candidate = self.journal.candidates.get(candidate_id)
-        if candidate is None or not candidate.candidate_dir:
-            return None
-        path = Path(candidate.candidate_dir) / "solution.py"
-        try:
-            return path.read_text(errors="replace")
-        except OSError:
-            return None
+        return read_solution(candidate) if candidate is not None else None
 
     def submit(self, action: Action) -> Ticket:
         self._assert_owner()
@@ -401,17 +395,24 @@ class Harness:
         if isinstance(job, Ticket):
             return Outcome(ticket=job, kind="rejected", candidate=None)
         self._inflight[job.key] = job
-        with self._watch_control():
-            msg = self._execute_job(job)
+        try:
+            with self._watch_control():
+                msg = self._execute_job(job)
+        except (StopRequested, KeyboardInterrupt):
+            # no worker will ever report this job: journal it now, so nothing
+            # is left in flight (or pending) behind an interrupted call
+            self._abandon(job)
+            raise
         outcome = self._commit_outcome(msg)
         self._tick()
         return outcome
 
     # --- running a search ---
 
-    def execute(self, loop: Loop) -> Candidate | None:
-        """Run `loop` to the end of the search. Raises ParkedSearch /
-        StopRequested once everything in flight has been committed."""
+    def start(self) -> None:
+        """The search's floor: the baseline, then the seed. Idempotent (a
+        resumed search has both), so `execute` runs it first and a caller
+        that drives `run()` itself calls it before its first action."""
         if not self.journal.candidates:
             baseline = write_baseline(
                 self.problem,
@@ -425,6 +426,11 @@ class Harness:
             c.operator == "seed" for c in self.journal.candidates.values()
         ):
             self._run_seed()  # resume-idempotent: at most one seed per search
+
+    def execute(self, loop: Loop) -> Candidate | None:
+        """Run `loop` to the end of the search. Raises ParkedSearch /
+        StopRequested once everything in flight has been committed."""
+        self.start()
         # one pool for every parallelism level: n=1 is a pool with one slot.
         # Recorded golden sequences pin it to the historical serial behavior.
         self._pool = ThreadPoolExecutor(max_workers=self.parallelism, thread_name_prefix="operator")
@@ -442,13 +448,25 @@ class Harness:
         finally:
             self._pool.shutdown(wait=True)
             self._pool, self._owner = None, None
+        self.raise_latched()
+        return self.journal.selected_candidate(
+            self.problem.higher_is_better, self.config.holdout.selection
+        )
+
+    def raise_latched(self) -> None:
+        """Raise the stop or park that closed the harness, if one did. A stop
+        or park never raises into loop code (`_tick` latches it): whoever
+        drives the harness asks here, once everything in flight has landed."""
         if self._latch is not None:
             if isinstance(self._latch, StopRequested):
                 self.abort.set()
             raise self._latch
-        return self.journal.selected_candidate(
-            self.problem.higher_is_better, self.config.holdout.selection
-        )
+
+    def clear_strikes(self) -> None:
+        """Forget refused actions. Three refusals in a row end a search whose
+        POLICY keeps proposing the impossible; a person trying an action by
+        hand is not a policy, and whoever drives for them says so here."""
+        self._rejections = 0
 
     def _refuse_new_work(self) -> str | None:
         """Raise on a closed harness — except when only the CLOCK closed it.
@@ -605,23 +623,28 @@ class Harness:
         """After abort: collect whatever workers return (they die within ~1s
         poll intervals) and journal the candidates as abandoned. `reason`
         names why in the summary (a hard budget deadline); without one, a
-        summary the agent already wrote is kept."""
+        summary the coding agent already wrote is kept."""
         while self._inflight:
             try:
                 msg = self._done_q.get(timeout=30.0)
             except queue.Empty:
                 break  # workers wedged; stale-pending recovery handles them on resume
-            if msg.job.kind == "tune":
-                self._discard_tune(msg.job, reason or "stopped mid-tune (abort)")
-                continue
-            candidate = msg.job.candidate
-            candidate.status = "abandoned"
-            candidate.summary = reason or candidate.summary or "stopped mid-operator (abort)"
-            candidate.finished_at = utcnow()
-            self._record_result(candidate)
-            self._inflight.pop(msg.job.key, None)
-            if self.status is not None:
-                self.status.remove_current(candidate.candidate_id)
+            self._abandon(msg.job, reason)
+
+    def _abandon(self, job: Job, reason: str | None = None) -> None:
+        """Journal a job that will never report as abandoned (a tune trial:
+        discarded, nothing lands on its candidate)."""
+        if job.kind == "tune":
+            self._discard_tune(job, reason or "stopped mid-tune (abort)")
+            return
+        candidate = job.candidate
+        candidate.status = "abandoned"
+        candidate.summary = reason or candidate.summary or "stopped mid-operator (abort)"
+        candidate.finished_at = utcnow()
+        self._record_result(candidate)
+        self._inflight.pop(job.key, None)
+        if self.status is not None:
+            self.status.remove_current(candidate.candidate_id)
 
     # --- cost accounting ---
 
@@ -633,7 +656,7 @@ class Harness:
         )
 
     def _check_cost_ceiling(self) -> None:
-        """Park (resumable) when cumulative agent spend reaches the ceiling —
+        """Park (resumable) when cumulative coding agent spend reaches the ceiling —
         the engine-side guarantee behind hosted credit reservations."""
         ceiling = self.config.budget.max_cost_usd
         if ceiling > 0 and self.total_cost_usd() >= ceiling:
@@ -782,7 +805,7 @@ class Harness:
 
     def _run_seed(self) -> Candidate:
         """Score the incumbent solution as a real candidate: the floor a
-        re-search must beat. No agent call (the evaluator scores its hidden
+        re-search must beat. No coding agent call (the evaluator scores its hidden
         split ungated — it is the selection floor)."""
         seed = self.seed_solution.absolute()
         if not seed.exists():
@@ -802,7 +825,7 @@ class Harness:
         return committed
 
     def _prepare_inject(self, action: Action, *, operator: str = INJECT_ACTION, summary: str = "") -> Job:
-        """An agent-free candidate from a source text the loop (or the user's
+        """An coding-agent-free candidate from a source text the loop (or the user's
         --seed-from) already has: write it, journal `created`, score it like
         any other attempt. The text itself is never journaled — its
         `solution_sha256` is."""
@@ -846,7 +869,7 @@ class Harness:
     def _prepare(self, action: Action) -> Job:
         """Scheduler-side setup: id, candidate_dir, prompt, journal `created`.
         The operator says what the attempt needs (`Attempt`); everything
-        that touches disk, the journal or a agent happens here."""
+        that touches disk, the journal or a coding agent happens here."""
         operator = action.operator
         target = self.journal.candidates.get(action.target_id) if action.target_id else None
         ensemble_inputs = (
@@ -902,11 +925,11 @@ class Harness:
             candidate_id=candidate_id,
             parent_id=target.candidate_id if target else None,
             operator=operator,
-            role=op.role,
+            kind=op.kind,
             args=dict(action.args),
             debug_depth=(
-                sum(1 for c in self.journal.debug_chain(target.candidate_id) if c.role == "repair") + 1
-                if op.role == "repair" and target
+                sum(1 for c in self.journal.debug_chain(target.candidate_id) if c.kind == "repair") + 1
+                if op.kind == "repair" and target
                 else 0
             ),
             candidate_dir=str(candidate_dir),
@@ -934,7 +957,7 @@ class Harness:
             ),
             model=route.model,
             sampling=route.sampling,
-            role=op.role,
+            kind=op.kind,
             allow_internet=self.config.allow_internet_for_agents,
             sandbox=agent_policy(self.config, self.search_dir, route.agent),
             resume_session_id=(
@@ -1038,13 +1061,13 @@ class Harness:
         )
 
     def _execute_job(self, job: Job) -> OutcomeMsg:
-        """Worker-side: agent call + trials (the evaluator scores holdout
+        """Worker-side: coding agent call + trials (the evaluator scores holdout
         inside run_trial). Lock-free — touches only the job's own
         candidate/candidate_dir, never the journal."""
         if job.kind == "tune":
             return self._execute_tune(job)
         candidate = job.candidate
-        if job.request is None:  # inject / seed: there is no agent to call
+        if job.request is None:  # inject / seed: there is no coding agent to call
             return self._evaluate_job(job, None)
         agent = job.agent if job.agent is not None else self.agent
 
@@ -1167,15 +1190,15 @@ class Harness:
                 if msg.kind == "agent_failed":
                     candidate.status = "abandoned"
                     candidate.summary = (
-                        f"agent call failed ({result.error_kind}): {result.error_message[:150]}"
+                        f"coding agent call failed ({result.error_kind}): {result.error_message[:150]}"
                     )
                     candidate.finished_at = utcnow()
                     self._record_result(candidate)
                     self._consecutive_failures += 1
-                    self.log(f"  agent call failed ({self._consecutive_failures} in a row)")
+                    self.log(f"  coding agent call failed ({self._consecutive_failures} in a row)")
                     if self._consecutive_failures >= 3:
                         raise ParkedSearch(
-                            f"3 consecutive agent failures; last: {result.error_message[:200]}"
+                            f"3 consecutive coding agent failures; last: {result.error_message[:200]}"
                         )
                     return candidate
                 self._consecutive_failures = 0
@@ -1333,8 +1356,8 @@ class Harness:
     def _execute_tune(self, job: Job) -> OutcomeMsg:
         """Worker-side: run the trial's replicates on the candidate copy (the
         evaluator scores its hidden split iff the new trial is the copy's
-        best and passes the gate). No agent, no machine slot (those meter
-        agent processes)."""
+        best and passes the gate). No coding agent, no machine slot (those meter
+        coding agent processes)."""
         copy = job.candidate
         if self.abort.is_set():
             return OutcomeMsg(job=job, kind="aborted")
@@ -1498,7 +1521,7 @@ class Harness:
         return self._with_contract(prep.prompt, target, inherited)
 
     def _contract(self, target: Candidate | None, inherited: dict | None = None) -> str:
-        """The problem's contract as the agent reads it: how the solution is
+        """The problem's contract as the coding agent reads it: how the solution is
         run and scored, what it may assume, what it must write. Harness-owned
         — the same for every operator."""
         holdout_clause = render(
@@ -1516,7 +1539,7 @@ class Harness:
 
         tools_clause = ""
         if self.config.learning.tool and self.config.learning.enabled:
-            # the engine's own interpreter — the agent's PATH may lack uv
+            # the engine's own interpreter — the coding agent's PATH may lack uv
             tools_clause = render(
                 "tools_cue", knowledge_cli=f"{_sys.executable} -m hillclimb.cli"
             ).rstrip()
@@ -1588,9 +1611,9 @@ class Harness:
         return "The script failed."
 
     def _report_clause(self) -> str:
-        """Tier-2 agent-report instructions, only where the agent's own script
+        """Tier-2 coding-agent-report instructions, only where the coding agent's own script
         computes the score. Where the verifier owns scoring, the executor
-        takes the verifier's result file, so asking the agent for one would be
+        takes the verifier's result file, so asking the coding agent for one would be
         a contradiction."""
         if self.problem.report_trusted:
             return ""
@@ -1614,7 +1637,7 @@ class Harness:
     def _interface_section(self) -> str:
         """Contract section rendered from the problem's optional interface.py
         (spaces.py declaration): the machine-checked I/O contract plus the
-        exact self-check command. Spelled out in full — agents inherit the
+        exact self-check command. Spelled out in full — coding agents inherit the
         orchestrator's env, not the runtime venv's, so nothing can be
         assumed importable or exported on their side."""
         if not self.problem.interface_text:
@@ -1661,7 +1684,7 @@ class Harness:
         return render(cue, shim_note=shim_note, inherited=inherited_note).rstrip("\n") + "\n"
 
     def _verifier_clause(self) -> str:
-        """How the agent's script is expected to surface its score, for the
+        """How the coding agent's script is expected to surface its score, for the
         self-reported contract (the verifier-owned one says nothing)."""
         if self.problem.report_trusted:
             return ""

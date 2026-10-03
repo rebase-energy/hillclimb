@@ -184,10 +184,10 @@ class SearchMeta(BaseModel):
             # file), with the params laid over it — the 0.5 config shape, and
             # read the same way (an openevolve search's MAP-Elites settings
             # among them go to the selector)
-            from hillclimb.modules.spec import block_from_05
+            from hillclimb.modules.spec import block_from_05, schedule_to_selector
 
             try:
-                block = block_from_05({"ref": data["climber"], "params": dict(overlay)})
+                block = schedule_to_selector(block_from_05({"ref": data["climber"], "params": dict(overlay)}))
             except ValueError:
                 block = {"params": dict(overlay)} if overlay else {}
         else:

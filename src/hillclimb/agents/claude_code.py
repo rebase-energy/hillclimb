@@ -21,7 +21,7 @@ def subscription_env(auth: str = "subscription") -> dict[str, str]:
     CLAUDE_CODE_OAUTH_TOKEN) — an inherited API key silently takes precedence
     otherwise. auth="api-key" keeps it (headless/hosted runs with no
     subscription login). Single-threaded (see executor.SINGLE_THREAD_ENV):
-    the agent's own experiment runs inherit it."""
+    the coding agent's own experiment runs inherit it."""
     from hillclimb.harness.executor import single_threaded
 
     env = os.environ.copy()
@@ -62,12 +62,12 @@ def is_concrete_model_id(model_id: str | None) -> bool:
 
 
 class _StreamReader(threading.Thread):
-    """Drains the agent's stdout line-by-line into agent_stream.jsonl so the
+    """Drains the coding agent's stdout line-by-line into agent_stream.jsonl so the
     transcript is observable while the call is still running (watch TUI tails
     this file), and keeps the final `result` message for the caller.
 
     Rate-limit markers are deliberately NOT matched against ordinary
-    transcript lines — an agent that merely *mentions* limits (or fixes code
+    transcript lines — a coding agent that merely *mentions* limits (or fixes code
     that does) would park the run. Only error-shaped messages count: a
     `result` with is_error, or non-JSON noise lines (CLI error banners)."""
 
@@ -214,7 +214,7 @@ class ClaudeCodeAgent:
     ):
         self.claude_bin = claude_bin
         self.auth = auth  # subscription | api-key (see subscription_env)
-        self.abort = abort  # set → kill the agent and report error_kind="aborted"
+        self.abort = abort  # set → kill the coding agent and report error_kind="aborted"
 
     def _sandboxed(self, cmd: list[str], request: AgentRequest) -> sandbox.Launch:
         """The command as it starts: inside the sandbox, writing only to the
@@ -351,7 +351,7 @@ class ClaudeCodeAgent:
                 duration_s=duration,
                 raw_output_path=str(raw_path),
                 error_kind="timeout",
-                error_message=f"agent call exceeded {request.timeout_s}s",
+                error_message=f"coding agent call exceeded {request.timeout_s}s",
             )
         if reader.rate_limited or _has_rate_limit_marker(stderr_text):
             return AgentResult(

@@ -62,7 +62,7 @@ class GateAgent(FakeAgent):
     """FakeAgent whose invokes block until released — the workhorse for
     concurrency tests. Each invoke registers an Event in `gates` (indexed by
     arrival order) and waits on it; `release(i)` lets call i proceed.
-    Honors an abort event like the real agent."""
+    Honors an abort event like the real coding agent."""
 
     def __init__(self, responses: list[dict] | None = None, abort: threading.Event | None = None):
         super().__init__(responses)

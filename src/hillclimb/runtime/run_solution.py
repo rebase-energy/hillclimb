@@ -3,7 +3,7 @@ score.
 
 Standalone by construction — it runs inside the solution runtime venv, which
 has no hillclimb installed. Used where the score is the solution's own claim
-rather than an independent evaluation (MLE-bench: agents climb on their own
+rather than an independent evaluation (MLE-bench: coding agents climb on their own
 validation number, official grading happens once after the search).
 
 Contract, in order of preference:

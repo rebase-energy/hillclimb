@@ -2,7 +2,7 @@
 
 Runs `sandbox_probe.py` — a script that behaves like a hostile solution —
 inside the very policies a search uses, and says for every attempt whether it
-got through. Two runs: one as a verifier (no network at all), one as an agent
+got through. Two runs: one as a verifier (no network at all), one as a coding agent
 without internet (only the proxy). Pure apart from the probe itself: whatever
 an attempt managed to write outside its folder is removed again.
 """

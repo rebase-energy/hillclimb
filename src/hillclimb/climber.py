@@ -119,9 +119,9 @@ class OperatorSet:
             raise ValueError(f"Unknown operator {name!r}. Available: {sorted(self._entries)}") from None
         return operator_cls(params)
 
-    def role_of(self, name: str) -> str | None:
+    def kind_of(self, name: str) -> str | None:
         entry = self._entries.get(name)
-        return entry[0].role if entry is not None else None
+        return entry[0].kind if entry is not None else None
 
 
 class NotPortableError(ClimberLoadError):
@@ -142,8 +142,8 @@ class Climber:
         import hillclimb as hc
 
         climber = hc.Climber(
-            policy=hc.policies.Greedy(num_drafts=3),
-            select=hc.selectors.MapElites(num_islands=2),
+            select=hc.selectors.MapElites(num_islands=2, num_drafts=3),   # π_sel: which node, or none
+            policy=hc.policies.Greedy(),                                  # π_op: which operator for it
             operators=[hc.operators.Draft(retrieval=False), hc.operators.Debug(), MyCrossover],
             tuner="optuna",
             memory=hc.memory.FilesMemory(max_cards=1),
@@ -152,8 +152,8 @@ class Climber:
         climber.to_spec()          # the same climber as the block a run config takes
 
     A preset's name stands for its block: `hc.Climber("openevolve",
-    params={"num_drafts": 5})`. An instance stands for its class and params (`Greedy(num_drafts=3)` is
-    `policy: greedy` + `params: {num_drafts: 3}`): a search always builds its
+    params={"tune_budget": 4})`. An instance stands for its class and params (`Best(num_drafts=3)` is
+    `select: best` + `select_params: {num_drafts: 3}`): a search always builds its
     own. A class is written down the most portable way it can be — a
     registry name, `module:Class`, else `its_file.py:Class` — and a class
     that exists only in this process (a notebook cell) still runs here, but
@@ -164,22 +164,36 @@ class Climber:
     starting from a block.
     """
 
-    def __init__(self, policy=None, *, loop=None, select=None, operators=None, tuner=None,
-                 memory=None, params: Mapping | None = None, prompts=None, name: str | None = None,
-                 base_dir: Path | None = None):
-        preset: dict[str, Any] = {}
-        if isinstance(policy, str) and policy in PRESETS and loop is None:
+    def __init__(self, preset=None, *, select=None, policy=None, operators=None, tuner=None,
+                 memory=None, loop=None, params: Mapping | None = None, select_params: Mapping | None = None,
+                 prompts=None, name: str | None = None, base_dir: Path | None = None):
+        # the keywords are in the order one step runs them: π_sel, π_op, the
+        # operator, a tune trial of the result, the memory the operator reads
+        block: dict[str, Any] = {}
+        if isinstance(preset, str) and preset in PRESETS and loop is None:
             # `Climber("openevolve", params=...)`: a preset's name stands for
             # its whole block, and the other arguments lie over it
-            preset, policy = expand_name(policy), None
+            block, preset = expand_name(preset), None
+        if preset is not None:
+            if policy is not None:
+                raise TypeError("Climber(): the policy is given twice (positionally and as `policy=`)")
+            policy = preset  # `Climber(Greedy())`: a policy, positionally
+        preset_block, block = block, {}
         block, live = _compose(
             policy=policy, loop=loop, select=select, operators=operators, tuner=tuner,
             memory=memory, params=params, prompts=prompts, name=name,
         )
-        if preset:
-            block = {**preset, **block, "params": {**preset.get("params", {}), **block.get("params", {})}}
-            if not block["params"]:
-                del block["params"]
+        if select_params:
+            block["select_params"] = {**block.get("select_params", {}), **dict(select_params)}
+        if preset_block:
+            block = {
+                **preset_block, **block,
+                "params": {**preset_block.get("params", {}), **block.get("params", {})},
+                "select_params": {**preset_block.get("select_params", {}), **block.get("select_params", {})},
+            }
+            for key in ("params", "select_params"):
+                if not block[key]:
+                    del block[key]
         self._setup(as_spec(block).anchored(base_dir if base_dir is not None else Path.cwd()), live=live)
 
     @classmethod
@@ -241,6 +255,147 @@ class Climber:
         path = Path(path)
         path.write_text(yaml.safe_dump({"climber": self.to_spec().block()}, sort_keys=False))
         return path
+
+    # --- searching a problem, and stepping through it ---
+    #
+    # `search` runs one search; `start` opens one to drive by hand. Both go
+    # through `hillclimb.api.Search`, which the climber only forwards to, so
+    # the climber stays the definition it is: nothing here touches its spec
+    # or its identity. What the search found reads back off the climber.
+
+    _search = None  # the search `search` or `start` opened last
+
+    def search(self, problem, **options) -> Climber:
+        """Search `problem` for a solution, here, to the end of the budget,
+        and return self with what it found on it — the sklearn shape,
+        `model.fit(data)`:
+
+            problem = Problem("fitness-landscape")
+            budget = Budget(evaluations=30)
+            climber = Climber(select=Best(num_drafts=3), policy=Greedy())
+            climber.search(problem, budget=budget)
+            climber.best           # the best candidate
+            climber.solution       # the source that ships
+            climber.history        # every time the best score rose
+            climber.to_frame()     # one pandas row per candidate
+            climber.result         # the whole SearchOutcome
+
+        `problem` is a `Problem` or a problem id; `options` are what
+        `hillclimb.run` takes (`budget` — a `Budget` or "10m" —, `agent`,
+        `model`, `learning`, `holdout`, `seed_from`, `name`, `config`, `log`)."""
+        self.start(problem, **options).finish()
+        return self
+
+    def start(self, problem, **options):
+        """Open one search on `problem` to drive by hand, and return it.
+        Takes what `search` takes:
+
+            climber.start("fitness-landscape", budget=Budget(evaluations=30))
+            climber.select()                # π_sel: which node(s), or None
+            action = climber.propose()      # π_op on it: the Action
+            outcome = climber.run(action)   # run it (or an Action of your own)
+            outcome = climber.step()        # both in one call
+            climber.finish()                # let the climber run the rest
+            result = climber.close()        # the SearchOutcome `search` leaves on the climber
+
+        One search at a time: close this one before starting the next."""
+        from hillclimb import api
+
+        if self._search is not None and self._search.outcome is None:
+            raise RuntimeError(
+                f"this climber is still on search {self._search.ref}: close() it before starting "
+                "another (a second Climber can run one alongside only in another process)"
+            )
+        self._search = api.start(problem, climber=self, **options)
+        return self._search
+
+    @property
+    def session(self):
+        """The `Search` underneath: the one `search` or `start` opened last
+        (open, or since closed)."""
+        if self._search is None:
+            raise RuntimeError("no search yet: climber.search(problem, ...) or climber.start(problem, ...) opens one")
+        return self._search
+
+    def select(self):
+        """π_sel alone: which node(s) the next attempt would start from in
+        the open search (None: a root step); nothing runs."""
+        return self.session.select()
+
+    def propose(self):
+        """What the climber would do next in the open search: the selector's
+        node(s), the policy's operator on them, as an Action; nothing runs."""
+        return self.session.propose()
+
+    def run(self, action):
+        """Run one action in the open search and return its Outcome."""
+        return self.session.run(action)
+
+    def step(self):
+        """One move: `run(propose())`. None when there was nothing to run."""
+        return self.session.step()
+
+    @property
+    def state(self):
+        """The `SearchState` the policy sees in the open search."""
+        return self.session.state
+
+    def finish(self):
+        """Let the climber's own loop run the open search to its end."""
+        return self.session.finish()
+
+    def close(self):
+        """Settle the open search where it stands; returns its SearchOutcome."""
+        return self.session.close()
+
+    # --- what the search found ---
+
+    @property
+    def result(self):
+        """The search as a `SearchOutcome`: settled once it is over, a live
+        reading while it is open."""
+        return self.session.result
+
+    @property
+    def candidates(self):
+        """Every candidate of the search so far."""
+        search = self.session
+        return search.candidates if search.outcome is None else search.outcome.candidates
+
+    @property
+    def best(self):
+        """The best scored candidate of the search, by validation score."""
+        search = self.session
+        return search.best if search.outcome is None else search.outcome.best
+
+    @property
+    def selected(self):
+        """The candidate that ships (the best, unless a holdout split says otherwise)."""
+        return self.result.selected
+
+    @property
+    def history(self):
+        """Every time the best-so-far moved: `(minutes, candidate_id, score)`."""
+        return self.result.history
+
+    @property
+    def spend(self):
+        """Evaluations, tokens, cost and seconds the search used."""
+        return self.result.spend
+
+    @property
+    def solution(self):
+        """The source that ships (`best/solution.py`)."""
+        return self.result.solution
+
+    @property
+    def params(self):
+        """The parameter values the selected candidate ran with."""
+        return self.result.params
+
+    def to_frame(self):
+        """One pandas row per candidate of the search."""
+        return self.result.to_frame()
 
     def _resolve(self, ref: str, kind: str) -> Resolved:
         if ref in self._live:
@@ -312,22 +467,24 @@ class Climber:
         declared = getattr(self.brain.target, "defaults", None)
         return dict(declared()) if callable(declared) else None
 
-    def selector(self):
-        """The selector the policy expands with: the block's `select:`, else
-        the policy class's own default. None for a loop, and for a policy
-        that names none."""
+    def selector(self, extra: Mapping | None = None):
+        """The selector (π_sel) the loop asks first: the block's `select:`,
+        else the policy class's own default. None for a loop, and for a
+        policy that names none. `extra` lays more settings over the block's
+        `select_params` (the schedule knobs a caller handed `build_loop`)."""
         from hillclimb.modules.selectors import get_selector
 
         if self.is_loop:
             return None
         ref = self.spec.select or getattr(self.brain.target, "default_selector", None)
+        params = {**self.spec.select_params, **dict(extra or {})}
         if ref is None:
-            if self.spec.select_params:
+            if params:
                 raise ClimberLoadError(f"{self.source}: `select_params` without a selector to give them to")
             return None
         if ref in self._live:
-            return self._live[ref](dict(self.spec.select_params))
-        return get_selector(ref, self.spec.select_params, scope=self.scope)
+            return self._live[ref](params)
+        return get_selector(ref, params, scope=self.scope)
 
     def build_loop(self, *, params: Mapping | None = None, priors: Mapping | None = None,
                    parallelism: int = 1, log=print) -> Loop:
@@ -336,9 +493,14 @@ class Climber:
         learned (a draft-complexity offset): they sit UNDER the block's
         params and reach only a policy that declares the knob. `params` is
         an overlay for callers that hold a resolved climber."""
+        from hillclimb.modules.spec import SCHEDULE_KNOBS
+
         target = self.brain.target
         known = self._known_params()
         merged = self.resolved_params(params)
+        # the schedule is the selector's: knobs handed to the policy (every
+        # block before 0.7, a caller's overlay) reach it there
+        schedule = {k: merged.pop(k) for k in SCHEDULE_KNOBS if k in merged and not (known and k in known)}
         if known is not None:
             if getattr(target, "strict_params", False):
                 unknown = sorted(set(merged) - set(known))
@@ -354,7 +516,7 @@ class Climber:
             if not isinstance(loop, Loop):
                 raise ClimberLoadError(f"{self.source}: `loop:` must name a Loop, got {type(loop).__name__}")
             return loop
-        selector = self.selector()
+        selector = self.selector(schedule)
         if selector is not None:
             if self.spec.select is not None and not _accepts(target, "selector"):
                 raise ClimberLoadError(
@@ -488,7 +650,7 @@ def identity(spec: ClimberSpec, scope: FileScope, live: Mapping[str, type] | Non
     prompts = Path(spec.prompts) if spec.prompts else None
     blob = json.dumps(
         {
-            "climber": spec.map_refs(portable).model_dump(exclude={"name", "prompts"}),
+            "climber": spec.canonical().map_refs(portable).model_dump(exclude={"name", "prompts"}),
             "files": scope.digest if scope.files else None,
             "prompts": tree_sha256(prompts) if prompts is not None and prompts.is_dir() else None,
             **({"live": {ref: _live_source(cls) for ref, cls in sorted(live.items())}} if live else {}),

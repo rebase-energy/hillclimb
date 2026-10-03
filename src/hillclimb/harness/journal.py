@@ -136,8 +136,8 @@ class Journal:
         return found
 
     def drafts(self) -> list[Candidate]:
-        """Every live candidate made from the problem alone (role `create`)."""
-        return [c for c in self.candidates.values() if c.role == "create" and not c.pruned]
+        """Every live candidate made from the problem alone (kind `create`)."""
+        return [c for c in self.candidates.values() if c.kind == "create" and not c.pruned]
 
     def noise_floor(self) -> float | None:
         """How much identical code and params move between identical
@@ -203,7 +203,7 @@ class Journal:
         """The failed candidate being repaired plus every debug attempt so far,
         oldest first (the context a DEBUG operator needs)."""
         chain = [self.get(candidate_id)]
-        while chain[0].role == "repair" and chain[0].parent_id:
+        while chain[0].kind == "repair" and chain[0].parent_id:
             chain.insert(0, self.get(chain[0].parent_id))
         return chain
 

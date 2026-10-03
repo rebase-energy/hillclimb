@@ -176,7 +176,7 @@ def verify_frozen(spec: UnitTestSpec) -> None:
 
 
 def copy_visible_root(root: Path, candidate_dir: Path) -> None:
-    """Give an agent a disposable copy; authoritative evaluation ignores it."""
+    """Give a coding agent a disposable copy; authoritative evaluation ignores it."""
     target = candidate_dir / VISIBLE_TESTS_DIR
     if not target.exists():
         shutil.copytree(root, target, symlinks=False, ignore=_ignore)

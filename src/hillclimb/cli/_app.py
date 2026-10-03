@@ -82,7 +82,7 @@ class HillclimbGroup(typer.core.TyperGroup):
 
 app = typer.Typer(
     cls=HillclimbGroup,
-    help="Hillclimbing on verifier-defined problems: a code-generation harness for model development with long-running agents.",
+    help="Hillclimbing on verifier-defined problems: a code-generation harness for model development with long-running coding agents.",
     no_args_is_help=True,
     # Subcommands inherit help_option_names from the parent click Context, so
     # `-h` works on every command in the tree, not just the top level.

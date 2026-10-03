@@ -449,10 +449,10 @@ def climb_for_problem(
 @dataclass(frozen=True)
 class CostSeries:
     """What the climb cost, cumulatively, sampled at the climb's own x slots:
-    agent tokens and verifier CPU-minutes (holdout runs included)."""
+    coding agent tokens and verifier CPU-minutes (holdout runs included)."""
 
     xs: list[float] = field(default_factory=list)       # ClimbEvent.x slots
-    tokens: list[float] = field(default_factory=list)   # cumulative agent tokens
+    tokens: list[float] = field(default_factory=list)   # cumulative coding agent tokens
     cpu_min: list[float] = field(default_factory=list)  # cumulative CPU-minutes
     wall_min: list[float] = field(default_factory=list) # wall-clock minutes since the climb began
     total_tokens: float = 0.0
@@ -462,8 +462,8 @@ class CostSeries:
 
 
 def _candidate_cost(cand: Candidate) -> tuple[float, float]:
-    """(tokens, cpu seconds) one candidate burned: the agent call's own CPU
-    (the agent process and every tool it ran; None on journals predating
+    """(tokens, cpu seconds) one candidate burned: the coding agent call's own CPU
+    (the coding agent process and every tool it ran; None on journals predating
     the field) plus every verifier trial's. Verifier CPU falls back to trial
     wall-clock where cpu_s predates the journal field — verifier envs are
     single-threaded, so wall ≈ cpu there. Holdout CPU has no such fallback:
@@ -491,7 +491,7 @@ def _candidate_evaluations(cand: Candidate) -> int:
 def cost_series(searches: list[tuple[str, list[Candidate], str | None]]) -> CostSeries:
     """Cumulative cost across the same searches the climb is built from.
 
-    Every candidate is walked — buggy, pruned, agent-failed included: they
+    Every candidate is walked — buggy, pruned, coding-agent-failed included: they
     burned tokens and CPU even though they never became climb events. Only a
     candidate that `climb_from_searches` counts (`_counts_as_scored`) advances
     x and emits the running totals, so `xs` lands 1:1 on the tested slots of
@@ -1018,7 +1018,7 @@ def _mix(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[in
 # and the attempts stay the ground.
 MISS_RGB = _mix(PLOT_BG, CYAN, 0.45)
 
-# The cost overlay: cumulative agent tokens (y2, chartreuse) and cumulative
+# The cost overlay: cumulative coding agent tokens (y2, chartreuse) and cumulative
 # verifier CPU-minutes (y3, coral) — hues that CHART_BASELINE_PALETTE does
 # not use, so a cost line is never mistaken for a reference line (the old
 # amber and violet were the palette's own yellow and purple), and distinct
@@ -1292,14 +1292,14 @@ class ImprovementAnnotation:
 
 
 def brief_improvement(summary: str, operator: str, max_chars: int = 42) -> str:
-    """Turn an agent's result summary into one chart-sized improvement label."""
+    """Turn a coding agent's result summary into one chart-sized improvement label."""
     if operator == "baseline":
         return "baseline"
     text = " ".join(summary.replace("`", "").replace("**", "").split()).strip()
     if not text:
         return operator or "improvement"
 
-    # Agent summaries often lead with a useful named technique before a
+    # Coding agent summaries often lead with a useful named technique before a
     # colon, followed by the full rationale. Prefer that natural title.
     prefix, separator, _rest = text.partition(":")
     if separator and 1 < len(prefix.split()) <= 7 and len(prefix) <= max_chars:

@@ -27,14 +27,14 @@ def utcnow() -> str:
 
 
 class AgentInfo(BaseModel):
-    """Metadata about the LLM agent call that authored the candidate's code.
+    """Metadata about the LLM coding agent call that authored the candidate's code.
     Lives on the Candidate (not a Trial): it describes creation, not execution."""
 
     name: str = ""
     model: str | None = None  # requested model/route alias (bandit arm on replay)
     sampling: dict[str, int | float] | None = None
-    # fully-qualified model that served the call, from the agent stream
-    # (e.g. "claude-sonnet-4-5-20250929"); None on old journals and agents
+    # fully-qualified model that served the call, from the coding agent stream
+    # (e.g. "claude-sonnet-4-5-20250929"); None on old journals and coding agents
     # that only know the alias
     model_id: str | None = None
     session_id: str | None = None
@@ -45,13 +45,13 @@ class AgentInfo(BaseModel):
     # cache_creation_input_tokens, cache_read_input_tokens); empty on
     # journals predating the field or when nothing was observed
     token_usage: dict[str, int] = Field(default_factory=dict)
-    # subscription limit-window utilization (%) snapshotted at agent-call
-    # start/end (see quota.py). Account-wide — parallel agents and other
+    # subscription limit-window utilization (%) snapshotted at coding-agent-call
+    # start/end (see quota.py). Account-wide — parallel coding agents and other
     # sessions move it too, so the delta is telemetry, not accounting.
     quota_start: dict | None = None
     quota_end: dict | None = None
     agent_duration_s: float | None = None
-    # local CPU seconds of the agent call (see AgentResult.cpu_s); None
+    # local CPU seconds of the coding agent call (see AgentResult.cpu_s); None
     # on journals predating the field
     cpu_s: float | None = None
     error_kind: str | None = None
@@ -130,7 +130,7 @@ class Trial(BaseModel):
     verdict: Literal["passing", "failing", "buggy"] | None = None
     unit_tests: UnitTestResult | None = None
     is_best: bool = False
-    holdout_score: float | None = None  # orchestrator-computed, hidden from agent
+    holdout_score: float | None = None  # orchestrator-computed, hidden from coding agent
     holdout_error: str | None = None  # why holdout predictions couldn't be scored
     # CPU seconds of this trial's holdout run (set even when it errored —
     # the cost was paid); None where holdout didn't run or predates the field
@@ -202,8 +202,9 @@ class Candidate(BaseModel):
     # what the operator's candidates ARE (create | repair | refine | combine |
     # baseline | seed): views colour by it and the journal walks chains by it,
     # so a climber's own operators need no change anywhere else. Stamped by
-    # the harness; records that predate it get their operator's role on load.
-    role: str | None = None
+    # the harness; records that predate it get their operator's kind on load
+    # (and records up to 0.6 call it `role`).
+    kind: str | None = None
     # `source_hash` of the solution that was scored, stamped by the harness:
     # how a loop recognises a text it has already paid to evaluate
     solution_sha256: str | None = None
@@ -219,7 +220,7 @@ class Candidate(BaseModel):
     # params_error carries why a declaration was rejected (scored on defaults)
     tunable: bool = False
     params_error: str | None = None
-    is_best: bool = False       # best by agent-reported val_score (climbing signal)
+    is_best: bool = False       # best by coding-agent-reported val_score (climbing signal)
     is_selected: bool = False   # best by holdout score (final-submission signal)
     # opaque annotation from the search policy that proposed this candidate
     # (e.g. a MAP-Elites cell); the engine never reads it
@@ -231,17 +232,26 @@ class Candidate(BaseModel):
     finished_at: str | None = None
 
     @model_validator(mode="after")
-    def _backfill_role(self) -> Candidate:
-        if self.role is None:
-            from hillclimb.modules.operators import role_of
+    def _backfill_kind(self) -> Candidate:
+        if self.kind is None:
+            from hillclimb.modules.operators import operator_kind
 
-            self.role = role_of(self.operator)
+            self.kind = operator_kind(self.operator)
         return self
 
     @model_validator(mode="before")
     @classmethod
+    def _legacy_role_key(cls, data):
+        """Journals written up to 0.6 record an operator's kind as "role"."""
+        if isinstance(data, dict) and "role" in data:
+            data = dict(data)
+            data.setdefault("kind", data.pop("role"))
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
     def _legacy_agent_key(cls, data):
-        """Journals from before the rename record the agent call as `backend`."""
+        """Journals from before the rename record the coding agent call as `backend`."""
         if isinstance(data, dict) and "backend" in data:
             data = dict(data)
             data.setdefault("agent", data.pop("backend"))
@@ -423,3 +433,16 @@ class Candidate(BaseModel):
     @property
     def is_scored(self) -> bool:
         return self.status == "passing" and self.val_score is not None
+
+
+def read_solution(candidate: Candidate) -> str | None:
+    """The text of a candidate's `solution.py` — None when it wrote none, or
+    its candidate dir is not on this machine."""
+    from pathlib import Path
+
+    if not candidate.candidate_dir:
+        return None
+    try:
+        return (Path(candidate.candidate_dir) / "solution.py").read_text(errors="replace")
+    except OSError:
+        return None

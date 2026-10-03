@@ -12,10 +12,11 @@
                                                                                                                         
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --key                          TEXT  The API key; omitted, connect asks for it (input hidden)                        │
-│ --agent                        TEXT  Also route this agent through OpenRouter: codex | pi                            │
+│ --agent                        TEXT  Also route this coding agent through OpenRouter: codex | pi                     │
 │ --model                        TEXT  OpenRouter model id, e.g. qwen/qwen3-coder                                      │
-│ --probe        --no-probe            Make one tool-free agent call to prove the route works [default: probe]         │
-│ --default      --no-default          Pin this agent as the default. Default: only when none is pinned there yet      │
+│ --probe        --no-probe            Make one tool-free coding agent call to prove the route works [default: probe]  │
+│ --default      --no-default          Pin this coding agent as the default. Default: only when none is pinned there   │
+│                                      yet                                                                             │
 │ --local        --user                Where the defaults (and an OpenRouter key) go: --user (the default) is          │
 │                                      ~/.config/hillclimb/, every folder on this machine; --local is this folder's    │
 │                                      hillclimb dir, overriding the user level for it alone                           │

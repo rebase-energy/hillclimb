@@ -1,4 +1,4 @@
-"""`best`: expand the best scored candidate nobody is expanding yet.
+"""`best`: build on the best scored candidate nobody is building on yet.
 
 The default selector — what makes greedy greedy. With several attempts in
 flight it spreads them over the top candidates instead of piling onto one;
@@ -15,7 +15,7 @@ class Best(Selector):
 
     name = "best"
 
-    def select(self, state: SearchState, *, busy=frozenset()) -> Selection | None:
+    def pick(self, state: SearchState, *, busy=frozenset()) -> Selection | None:
         direction = -1 if state.higher_is_better else 1
         ranked = sorted(
             (c for c in state.journal.scored_candidates() if improvable(c)),

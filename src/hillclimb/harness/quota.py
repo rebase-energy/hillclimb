@@ -2,8 +2,8 @@
 
 Claude Code's /usage screen reads these percentages from an undocumented
 OAuth endpoint; `snapshot()` returns the same numbers so the engine can
-journal the window state at the start and end of every agent call. The
-numbers are ACCOUNT-WIDE: parallel agents, other searches and interactive
+journal the window state at the start and end of every coding agent call. The
+numbers are ACCOUNT-WIDE: parallel coding agents, other searches and interactive
 sessions all move them, and a window reset mid-call makes a naive delta
 negative — consumers must treat per-candidate deltas as best-effort
 telemetry, never accounting (the journaled token counts are the ground

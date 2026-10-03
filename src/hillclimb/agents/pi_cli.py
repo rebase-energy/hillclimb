@@ -1,4 +1,4 @@
-"""pi coding-agent operator agent.
+"""The pi coding agent.
 
 One Hillclimb operator call is one headless ``pi`` process.  pi's JSON event
 stream is kept verbatim for diagnostics while this module extracts the small
@@ -489,7 +489,7 @@ class PiCliAgent:
             return AgentResult(
                 ok=False,
                 error_kind="timeout",
-                error_message=f"agent call exceeded {request.timeout_s}s",
+                error_message=f"coding agent call exceeded {request.timeout_s}s",
                 **common,
             )
         assert proc is not None and reader is not None

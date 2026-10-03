@@ -1,1 +1,1 @@
-"""Package data for the pi agent's explicitly loaded extension."""
+"""Package data for the pi coding agent's explicitly loaded extension."""

@@ -1,5 +1,95 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- **One step is two decisions, in a fixed order: the selector picks the node, the
+  policy picks the operator.** This is the structure of the RSI framework
+  (π_sel, then π_op) and the loop now enforces it: `PolicyLoop` asks
+  `selector.select(state, busy)` first and hands what it chose to
+  `policy.propose(state, selection)`. The selector's answer is the node(s) the next
+  attempt starts from: a failing tip (repair comes first), None (a root step), one
+  scored candidate, or the top candidates with `combine=True`. The schedule — `num_drafts`,
+  `debug`, `max_debug_depth`, `ensemble`, `ensemble_reserve_fraction`, `ensemble_top_k`,
+  `ensemble_max_attempts` — therefore moved from the policy to the `Selector` base class
+  (its `select` wraps a subclass's `pick`: `Best.pick`, `MapElites.pick`), and its knobs
+  are `select_params`. A block that still writes them under `params`, a `--set
+  climber.params.num_drafts=…`, a v2/v3 record and a pre-0.6 snapshot all load: the
+  knobs land in `select_params`. In Python it is `Best(num_drafts=3)`;
+  `Greedy(num_drafts=3)` says so. `Policy.propose(state, selection)` is the new
+  signature (`None` = a root step); the base `propose` is the plain mapping (draft,
+  debug, ensemble, improve) and `Greedy` adds tune, for the CHOSEN candidate only
+  (`tune_now`; the old scan for any tunable candidate in the gate is gone). `Policy`
+  keeps `draft_action`, `expand_action(state, selection, operator=)`, `draft_complexity`;
+  a selector of your own overrides `pick`, not `select`. The `openevolve` preset is
+  `select_params: {ensemble: false}` + `params: {tune_budget: 0}`.
+- **`Climber`'s keywords are in the order a step runs them**: `select`, `policy`,
+  `operators`, `tuner`, `memory` (then `loop`, `params`, `select_params`, `prompts`,
+  `name`). A positional first argument is still a preset name, or a policy.
+- `climber.select()` is the selector's answer alone (a `Selection`, or None for a root
+  step); `climber.propose()` is the whole decision.
+
+### Added
+- **The sklearn shape.** `Problem` is what a climber searches, `Budget` is what the
+  search may spend (`Budget(wall_clock="2h", evaluations=200, tokens=..., cost_usd=...)`; a
+  plain `"10m"` still works), and `climber.search(problem, budget=...)` is the whole
+  search in one call, with the result on the climber afterwards:
+  `climber.best`, `.selected`, `.candidates`, `.history`, `.spend`, `.solution`,
+  `.params`, `.to_frame()` and `.result` (the `SearchOutcome`). `Problem("heilbronn-11")`
+  is a problem that exists (the folder's, else a bundled one copied in);
+  `Problem(name, score=my_function, description=..., output=...)` defines one from a
+  Python scoring function and writes its folder under `problems/` the first time it is
+  searched (a generated `verify.py` imports the function with the engine's interpreter).
+  `hillclimb.run` takes a `Problem` and a `Budget` too.
+- **Step a search by hand.** `climber.start(problem, ...)` opens one search
+  and leaves the loop to you: `climber.propose()` is what the policy would do
+  next (nothing runs), `climber.run(action)` runs it or an `hc.Action` of your
+  own, `climber.step()` is both, `climber.state` is what the policy sees,
+  `climber.finish()` hands the rest to the climber and `climber.close()`
+  settles it. The clock runs only while a step does. It is an ordinary
+  search (`watch`, `chart`, `status` show it); closed with budget left it is
+  `stopped` and `hillclimb resume` continues it. One at a time per process; a
+  `loop:` climber can only `finish()`. Underneath is `hillclimb.api.Search`
+  (`hillclimb.api.start`).
+- **A search's result is readable.** What `hc.run` returns (`SearchOutcome`)
+  has `.best`, `.candidates`, `.history` (every rise of the best-so-far),
+  `.spend` (evaluations, tokens, cost, seconds), `.solution`, `.params`,
+  `.source(candidate_id)`, `.journal` (read-only), `.meta`, `.status` and
+  `.to_frame()` (one pandas row per candidate). `hc.open_search(ref)` reads
+  any earlier search, the latest without a ref, and follows a running one.
+- **A free agent whose scores move.** `--agent toy` is a scripted stand-in on
+  the bundled `fitness-landscape` problem (a solution is one point on a
+  terrain): drafts are random points, improves step from the parent, and it
+  declares two parameters so tune trials run. `hc.register_agent(name, cls)`
+  adds a scripted agent of your own, for searches run in that process.
+- **`hc.run(..., max_evaluations=, learning=)`**, both recorded in the run's
+  `spec.yaml`. `hc.Action` is exported at the root.
+- **`examples/`**: seven scripts (search and read, step by step, your own policy,
+  operator, selector and agent, a problem of your own), on Claude Code by default
+  and on the scripted agent with `toy` on the command line, which is how the test
+  suite runs them.
+- `fitness-landscape` is a bundled problem (`hillclimb problem get
+  fitness-landscape`) with its own lean runtime.
+
+### Changed
+- A search that parks or stops returns what it would ship so far as
+  `outcome.selected` (it was `None`).
+- A search whose setup fails (an unknown agent, a climber that does not lint)
+  is recorded `failed` with the reason, instead of being left `running` until
+  its process exits; a stop during setup returns a `stopped` outcome.
+- `hillclimb resume` keeps a search that started with learning off out of the
+  knowledge.
+- **An operator's `role` is its `kind`.** What an operator's candidates are
+  (`create | repair | refine | combine`) is `Operator.kind`, `Candidate.kind`
+  and the `kind` key in the journal, so `role` means one thing: what a
+  climber plays in a search (`solver | improver`). An operator written with
+  `role = ...` still loads, and so does every recorded journal. In the SDK,
+  `ROLES` is `OPERATOR_KINDS`.
+- **The CLI an operator calls is a "coding agent"** in every message, help
+  screen and doc (Claude Code, Codex, pi), since a climber is itself an
+  agent. Names you type are unchanged: `--agent`, `agent:`, `agent_auth`,
+  `parallel_agents`.
+
 ## 0.6.0 — 2026-09-30
 
 The climber becomes something you compose. It is one block of config,

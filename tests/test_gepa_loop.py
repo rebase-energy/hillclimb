@@ -46,7 +46,7 @@ def test_seed_and_improvements_become_canonical_candidates(task, config, tmp_pat
     assert improves[0].parent_id == by_op["seed"].candidate_id
     assert improves[1].parent_id == improves[0].candidate_id
     for c in improves:
-        assert c.role == "refine" and c.climber_meta["optimizer"] == "gepa"
+        assert c.kind == "refine" and c.climber_meta["optimizer"] == "gepa"
         assert c.solution_sha256 == source_hash(search.harness.source(c.candidate_id))
         assert c.agent.model_id == "m-1"
     assert selected is not None and selected.val_score == 0.7 and improves[1].is_best

@@ -13,7 +13,7 @@ change is a git diff):
    exists, authored otherwise). Deterministic claim ids make re-runs
    idempotent; results live in `knowledge/consolidated.yaml`.
 
-2. **Playbook rewrite (one agent call per qualifying concept).** Concepts
+2. **Playbook rewrite (one coding agent call per qualifying concept).** Concepts
    with >= PLAYBOOK_MIN_CLAIMS live claims get a compact prose playbook
    (`knowledge/playbooks/<concept>.md`, YAML frontmatter recording the
    source claim ids). Draft prompts inject the playbook INSTEAD of the raw
@@ -227,7 +227,7 @@ def write_concept_playbook(
     config: Config,
     log,
 ) -> Path | None:
-    """One agent call: claims digest in, prose playbook out. Best effort."""
+    """One coding agent call: claims digest in, prose playbook out. Best effort."""
     prompt = render(
         "consolidate",
         concept=concept,
@@ -245,11 +245,11 @@ def write_concept_playbook(
         default_model=DEFAULT_CONSOLIDATE_MODEL,
     )
     if not result.ok:
-        log(f"consolidate: playbook agent failed for {concept} ({result.error_kind})")
+        log(f"consolidate: playbook coding agent failed for {concept} ({result.error_kind})")
         return None
     body_path = work_dir / "playbook.md"
     if not body_path.exists() or not body_path.read_text().strip():
-        log(f"consolidate: agent wrote no playbook for {concept}")
+        log(f"consolidate: coding agent wrote no playbook for {concept}")
         return None
     body = body_path.read_text().strip()[:PLAYBOOK_MAX_CHARS]
     node_ids = {n.id for n in nodes}

@@ -4,7 +4,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Callable, Literal, Mapping, Sequence
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -73,7 +73,7 @@ class ProblemSpec(BaseModel):
     # What a solution.py IS. `program`: a script or module the verifier
     # drives (every ordinary problem). `climber`: a one-file hillclimb climber
     # — the problem is a META-problem whose verifier runs inner searches with
-    # the candidate as their climber (`hillclimb meta evaluate`), and a search
+    # the candidate as their climber (`hillclimb grade`), and a search
     # on it runs its climber in the improver role (`SearchMeta.role`).
     solution_kind: Literal["program", "climber"] = "program"
     # Named score references drawn as horizontal lines by `hillclimb chart`.
@@ -90,7 +90,7 @@ class ProblemSpec(BaseModel):
     verifier_env: dict[str, str] = Field(default_factory=dict)  # extra env, validation runs only
     verifier_display: str = "./problem/verifier.sh"  # prompt-facing form of the command
     # True: the verifier computes the score (and any eval_result.json report)
-    # independently of the agent. False: the number is the solution's own
+    # independently of the coding agent. False: the number is the solution's own
     # claim (MLE-bench), so reports are stored labelled self-reported.
     report_trusted: bool = True
     holdout_needs_credentials: bool = False  # fail fast when the hidden split is gated
@@ -614,3 +614,285 @@ def resolve_target(target: str | Path, config: Config) -> ResolvedTarget:
     if suite is not None:
         return ResolvedTarget(kind="suite", suite=suite)
     return ResolvedTarget(kind="problem", problem=load_problem(target, config))
+
+
+# --- the Python side: a problem as the thing you hand a climber -----------------
+
+# What a Python-defined problem's verifier runs: the solution first, then the
+# scorer, with the engine's interpreter (the one `hillclimb` is installed in),
+# because the scoring function lives in the user's own code.
+_DEFINED_VERIFIER_SH = """\
+#!/usr/bin/env bash
+# hillclimb verifier, written by hillclimb.Problem: run the candidate, then score what it produced.
+set -euo pipefail
+
+"$HILLCLIMB_PYTHON" "$HILLCLIMB_SOLUTION"
+
+# trust boundary: only the scorer may report a score, so anything the
+# solution left behind is discarded before the scorer runs
+rm -f "$HILLCLIMB_RESULT"
+"$HILLCLIMB_ENGINE_PYTHON" problem/verify.py
+"""
+
+_DEFINED_VERIFIER_PY = '''\
+"""hillclimb verifier, written by hillclimb.Problem (the Windows edition of verifier.sh)."""
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+code = subprocess.call([os.environ["HILLCLIMB_PYTHON"], os.environ["HILLCLIMB_SOLUTION"]])
+if code != 0:
+    sys.exit(code)
+Path(os.environ["HILLCLIMB_RESULT"]).unlink(missing_ok=True)
+sys.exit(subprocess.call([os.environ["HILLCLIMB_ENGINE_PYTHON"], "problem/verify.py"]))
+'''
+
+_DEFINED_VERIFY_PY = '''\
+"""Scorer written by hillclimb.Problem: calls `{name}` from {source}
+on the directory the solution ran in, and writes what it returns to
+$HILLCLIMB_RESULT. A number is the score; a mapping must hold "score" and
+may add other numbers (journaled as the candidate's metrics)."""
+
+import importlib.util
+import json
+import math
+import os
+import sys
+import traceback
+from pathlib import Path
+
+SOURCE = {source!r}
+NAME = {name!r}
+
+
+def load_score():
+    # the verifier's PYTHONPATH carries a shim `hillclimb` package (only
+    # `spaces`, for solutions); the scoring file wants the real one
+    sys.path[:] = [
+        entry for entry in sys.path
+        if not (Path(entry, "hillclimb", "spaces.py").is_file() and not Path(entry, "hillclimb", "api.py").is_file())
+    ]
+    for loaded in [name for name in sys.modules if name == "hillclimb" or name.startswith("hillclimb.")]:
+        del sys.modules[loaded]
+    spec = importlib.util.spec_from_file_location("hillclimb_problem_score", SOURCE)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return getattr(module, NAME)
+
+
+def main() -> int:
+    try:
+        value = load_score()(Path.cwd())
+    except Exception:  # noqa: BLE001 - the scorer's own failure is a buggy candidate, with the trace
+        traceback.print_exc()
+        return 1
+    payload = dict(value) if isinstance(value, dict) else {{"score": value}}
+    score = payload.get("score")
+    if not isinstance(score, (int, float)) or isinstance(score, bool) or not math.isfinite(score):
+        print(f"score() must return a finite number or a mapping with one, got {{value!r}}", file=sys.stderr)
+        return 1
+    Path(os.environ["HILLCLIMB_RESULT"]).write_text(json.dumps(payload))
+    print(f"score: {{score}}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
+
+
+class Problem:
+    """A problem, as the thing you hand a climber.
+
+    One that exists already — in the folder's `problems/`, or bundled with
+    hillclimb, or at a path, or a provider's (`emflow://…`):
+
+        problem = Problem("fitness-landscape")
+
+    Or a new one, from a scoring function of your own. The solution a coding
+    agent writes is a script; hillclimb runs it, then calls your function in
+    the directory it ran in, and the number it returns is the score:
+
+        def score(run_dir: Path) -> float:
+            return float(Path(run_dir, "answer.txt").read_text())
+
+        problem = Problem(
+            "largest-number",
+            score=score,
+            higher_is_better=True,
+            description="Write the largest number you can to answer.txt.",
+            output="answer.txt",
+        )
+
+    `score` may also return a mapping with a `score` and other numbers, which
+    the search journals as the candidate's metrics. It must be a function at
+    the top level of a .py file: the verifier imports that file again (keep
+    the code that starts a search under `if __name__ == "__main__":`). The
+    problem's folder is written under the hillclimb dir's `problems/` the
+    first time a climber uses it (`save` writes it by hand), so it is a
+    problem like any other afterwards: `hillclimb verify`, `hillclimb run`,
+    `hillclimb watch` all know it.
+    """
+
+    def __init__(
+        self,
+        name: str | Path,
+        *,
+        score: Callable[[Path], float | Mapping[str, float]] | None = None,
+        higher_is_better: bool = True,
+        metric: str = "score",
+        description: str = "",
+        baseline: float | None = None,
+        output: str = "submission.csv",
+        files: Mapping[str, str | Path] | None = None,
+        requirements: Sequence[str] | None = None,
+        time_budget_s: int = 600,
+        allow_internet_during_solution: bool = False,
+        chart_baselines: Mapping[str, float] | None = None,
+    ):
+        self.name = str(name)
+        self.score = score
+        self.higher_is_better = bool(higher_is_better)
+        self.metric = metric
+        self._description = description
+        self.baseline = baseline
+        self.output = output
+        self.files = dict(files or {})
+        self.requirements = list(requirements) if requirements is not None else None
+        self.time_budget_s = int(time_budget_s)
+        self.allow_internet_during_solution = bool(allow_internet_during_solution)
+        self.chart_baselines = dict(chart_baselines or {})
+        if self.defined:
+            if _split_scheme(self.name) is not None or "/" in self.name or self.name in ("", ".", ".."):
+                raise ValueError(f"a problem defined in Python needs a plain name, not {self.name!r}")
+            if not description:
+                raise ValueError(f"Problem({self.name!r}): give the coding agent a description of what to write")
+            _score_source(score)  # fails now, with the fix, not at the first verifier run
+
+    @property
+    def defined(self) -> bool:
+        """Defined here, from a scoring function (else it exists already)."""
+        return self.score is not None
+
+    @property
+    def id(self) -> str:
+        scheme = _split_scheme(self.name)
+        if scheme is not None:
+            return scheme[1].replace(":", "-").replace("/", "-")
+        return Path(self.name).name.removesuffix(".yaml") if "/" in self.name else self.name
+
+    def __repr__(self) -> str:
+        return f"Problem({self.name!r}{', defined here' if self.defined else ''})"
+
+    # --- where it is ---
+
+    def save(self, problems_dir: Path | str | None = None) -> Path:
+        """Write a defined problem's folder (and rewrite it when the
+        definition changed). Returns the folder. `problems_dir` defaults to
+        the hillclimb dir's."""
+        if not self.defined:
+            raise ValueError(f"Problem({self.name!r}) exists already; only a problem defined in Python is saved")
+        root = Path(problems_dir) if problems_dir is not None else Config.load().paths.problems_dir
+        folder = root / self.name
+        marker = folder / "problem.yaml"
+        if marker.exists() and not (_read_yaml(marker).get("written_by") == "hillclimb.Problem"):
+            raise FileExistsError(
+                f"{folder} is a problem of its own, not one hillclimb.Problem wrote: "
+                "give this one another name"
+            )
+        folder.mkdir(parents=True, exist_ok=True)
+        source, function = _score_source(self.score)
+        meta = {
+            "problem_id": self.name,
+            "metric": self.metric,
+            "higher_is_better": self.higher_is_better,
+            "description": "description.md",
+            "time_budget_s": self.time_budget_s,
+            "allow_internet_during_solution": self.allow_internet_during_solution,
+            "output_artifacts": [self.output],
+            "written_by": "hillclimb.Problem",
+            "score_function": f"{source}:{function}",
+        }
+        if self.baseline is not None:
+            meta["baseline"] = self.baseline
+        if self.chart_baselines:
+            meta["chart_baselines"] = dict(self.chart_baselines)
+        if self.requirements is not None:
+            meta["requirements"] = "requirements.txt"
+            (folder / "requirements.txt").write_text("".join(f"{line}\n" for line in self.requirements))
+        (folder / "problem.yaml").write_text(yaml.safe_dump(meta, sort_keys=False))
+        (folder / "description.md").write_text(self._description.rstrip("\n") + "\n" + self._submission_note())
+        for dest, content in self.files.items():
+            if Path(dest).name != dest:
+                raise ValueError(f"Problem({self.name!r}): files are named by a bare file name, not {dest!r}")
+            if isinstance(content, Path) or (isinstance(content, str) and "\n" not in content and Path(content).is_file()):
+                (folder / dest).write_bytes(Path(content).read_bytes())
+            else:
+                (folder / dest).write_text(str(content))
+        (folder / "verify.py").write_text(_DEFINED_VERIFY_PY.format(source=str(source), name=function))
+        verifier = folder / "verifier.sh"
+        verifier.write_text(_DEFINED_VERIFIER_SH)
+        verifier.chmod(0o755)
+        (folder / "verifier.py").write_text(_DEFINED_VERIFIER_PY)
+        return folder
+
+    def _submission_note(self) -> str:
+        return (
+            "\n## Submission format\n\n"
+            f"Your `solution.py` runs in the working directory and must write `{self.output}` there. "
+            "`problem/verify.py` reads what it wrote and reports the score "
+            f"(`{self.metric}`, {'higher' if self.higher_is_better else 'lower'} is better).\n"
+        )
+
+    def resolve(self, config: Config) -> str:
+        """The target `load_problem` takes for this problem, making sure it
+        exists: a defined problem is saved, a bundled one that the folder
+        lacks is copied in."""
+        if self.defined:
+            return str(self.save(config.paths.problems_dir))
+        if _split_scheme(self.name) is None:
+            try:
+                resolve_problem_yaml(self.name, config)
+            except FileNotFoundError:
+                from hillclimb.demo import BUNDLED_PROBLEM_IDS, install_demo_problem
+
+                if self.name in BUNDLED_PROBLEM_IDS:
+                    install_demo_problem(config.paths.problems_dir, self.name)
+        return self.name
+
+    def spec(self, config: Config | None = None) -> ProblemSpec:
+        """What the engine loads for it."""
+        config = config if config is not None else Config.load()
+        return load_problem(self.resolve(config), config)
+
+    @property
+    def description(self) -> str:
+        return self._description if self.defined else self.spec().description
+
+
+def _score_source(score: Callable) -> tuple[Path, str]:
+    """Where a scoring function lives, as (file, name), so the verifier can
+    import it in its own process."""
+    import inspect
+
+    if not callable(score):
+        raise TypeError(f"score must be a function taking the directory the solution ran in, not {score!r}")
+    name = getattr(score, "__name__", "")
+    qualname = getattr(score, "__qualname__", name)
+    if not name or name == "<lambda>" or "<locals>" in qualname or qualname != name:
+        raise ValueError(
+            "score must be a plain function at the top level of a .py file (not a lambda, a method, "
+            "or a function defined inside another), so the verifier can import it"
+        )
+    try:
+        file = inspect.getsourcefile(score)
+    except TypeError:
+        file = None
+    if not file or not Path(file).is_file():
+        raise ValueError(
+            f"score {name}() must live in a .py file the verifier can import, not in a REPL or a notebook cell"
+        )
+    return Path(file).resolve(), name

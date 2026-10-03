@@ -263,7 +263,7 @@ def ensure_utf8_mode(argv: list[str]) -> None:
     its status. Every text file hillclimb reads or writes (problem docs,
     prompts, yaml, journals) is UTF-8, and pre-3.15 Windows Pythons default
     to the ANSI code page. PYTHONUTF8 rides along to every child (engines,
-    verifiers, agents' Python)."""
+    verifiers, coding agents' Python)."""
     if not IS_WINDOWS or sys.flags.utf8_mode:
         return
     env = dict(os.environ, PYTHONUTF8="1")

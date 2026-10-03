@@ -608,7 +608,7 @@ def query_graph(
     graph: KnowledgeGraph, terms: str, *, family: str = "", limit: int = 5
 ) -> list[dict]:
     """The read-only lookup behind `hillclimb knowledge query` — built for
-    operator agents consulting memory mid-search, so it answers in facts:
+    coding agents consulting memory mid-search, so it answers in facts:
     matching nodes, the live claims about them (with measured track records
     and retirement status), and the searches that used them."""
     node_map = graph.node_map()

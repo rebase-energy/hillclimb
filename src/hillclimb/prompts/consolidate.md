@@ -2,7 +2,7 @@
 
 You are consolidating what an auto-hillclimbing system has learned across
 many searches into a compact playbook for **{{concept}}** problems. Future
-draft agents will read this playbook INSTEAD of the raw claims below, so it
+draft coding agents will read this playbook INSTEAD of the raw claims below, so it
 must carry everything worth acting on and nothing else.
 
 Write ONE file in the current directory: `playbook.md`. Do not modify any

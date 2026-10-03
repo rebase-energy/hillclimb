@@ -25,8 +25,8 @@
 │ --detail   -d        One search only, with its exploration tree drawn on the curve                                   │
 │ --holdout            Force the holdout view. Default: a holdout-scored problem opens on holdout (the split its       │
 │                      reference baselines live on), others on validation; h toggles either way                        │
-│ --cost               Overlay cumulative agent tokens and verifier CPU-minutes on right-hand axes — what the climb    │
-│                      cost as it climbed                                                                              │
+│ --cost               Overlay cumulative coding agent tokens and verifier CPU-minutes on right-hand axes — what the   │
+│                      climb cost as it climbed                                                                        │
 │ --help     -h        Show this message and exit.                                                                     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 

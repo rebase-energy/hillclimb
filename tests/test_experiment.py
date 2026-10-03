@@ -103,10 +103,11 @@ class TestSpec:
         config = Config()
         config.apply_overrides(a)
         assert config.climber.select == "map-elites"
-        assert config.climber.params == {"ensemble": False, "num_drafts": 2, "tune_budget": 0}
+        assert config.climber.params == {"tune_budget": 0}
+        assert config.climber.select_params == {"ensemble": False, "num_drafts": 2}
         config = Config()
         config.apply_overrides(b)
-        assert (config.climber.tuner, config.climber.params) == ("optuna", {"ensemble": False, "num_drafts": 2})
+        assert (config.climber.tuner, config.climber.select_params) == ("optuna", {"ensemble": False, "num_drafts": 2})
         # and as a child engine receives it: every value a `--set KEY=<json>` pair
         from hillclimb.cli.experiment import _set_value
 
@@ -426,7 +427,7 @@ class TestCli:
             experiment_overrides=parse_set_overrides(["learning.enabled=false", "search.policy_params={num_drafts: 1}"]),
         )
         assert seen["config"].learning.enabled is False
-        assert seen["config"].climber.params == {"num_drafts": 1}
+        assert seen["config"].climber.select_params == {"num_drafts": 1}
         meta = load_search_meta(seen["search_dir"])
         assert (meta.study, meta.experiment, meta.repeat, meta.learning_enabled) == ("ab", "b", 1, False)
         assert meta.experiment_overrides == {"learning.enabled": False, "search.policy_params": {"num_drafts": 1}}

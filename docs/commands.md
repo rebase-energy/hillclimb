@@ -20,7 +20,7 @@ hillclimb chart --detail     # the curve with that tree drawn on it (every score
 candidate trees, with an on-demand candidate detail panel for notes, scores,
 lineage, output, and the timestamped operator stream when present. A
 candidate still in flight gets a live console under its overview: the
-agent's stream, then the verifier's stdout/stderr, appended as they are
+coding agent's stream, then the verifier's stdout/stderr, appended as they are
 written (`tail -f` style — it follows the end until you scroll up, and `f`
 follows again). Drag the divider, use `+` / `-` to resize the detail
 panel, or `m` to maximize it.
@@ -35,11 +35,11 @@ the run has a single search), or `latest` (the default).
 | `problem list` | the bundled example problems, with the best known value and who found it |
 | `problem get <problem>` | copy a bundled problem into `problems/` (makes the current folder a hillclimb dir if there is none) and list its files (`fetch` is a deprecated alias) |
 | `init [dir]` | make the current folder (or `dir`) a hillclimb dir: `hillclimb.yaml`, an empty `problems/` and `runs/`, and the gitignore rules that commit each run's record but not its bulk; refuses a folder with its own `problems/` or `runs/` (`init hillclimb` keeps it in a subfolder) |
-| `connect` | which agents this machine can run operators with, and who pays — each credential read through the same environment an operator gets |
-| `connect <claude\|codex\|pi\|openrouter> [--auth ...] [--model ...] [--no-probe] [--default] [--local]` | run that agent's login, stage the credentials searches read, ping the route with one tool-free call, pin `agent`/`agent_auth` in `~/.config/hillclimb/config.yaml` (every folder; `--local` pins this folder's config.yaml as its override) |
+| `connect` | which coding agents this machine can run operators with, and who pays — each credential read through the same environment an operator gets |
+| `connect <claude\|codex\|pi\|openrouter> [--auth ...] [--model ...] [--no-probe] [--default] [--local]` | run that coding agent's login, stage the credentials searches read, ping the route with one tool-free call, pin `agent`/`agent_auth` in `~/.config/hillclimb/config.yaml` (every folder; `--local` pins this folder's config.yaml as its override) |
 | `verify <problem> [--repeat N] [--holdout] [--solution FILE]` | run a problem's verifier once, outside a search; `--repeat` measures the noise floor |
 | `run <target> [--name ...] [--budget 2h] [--agent ...] [--model ...] [--climber REF] [--no-detach]` | start a run for one problem or a suite YAML — a detached engine, `hillclimb watch` follows it; `--no-detach` keeps it in the terminal |
-| `run <problem> --parallel-searches N --parallel-agents M` | N independent searches (detached engines, one run) each running M agents at once |
+| `run <problem> --parallel-searches N --parallel-agents M` | N independent searches (detached engines, one run) each running M coding agents at once |
 | `run <problem> --climber A --climber B [--experiment-set EXPERIMENT:KEY=VALUE]` | a mixed fleet: one search per climber, each tagged as an experiment |
 | `resume [search] [--all] [--detach]` | continue a parked / stopped / crashed search |
 | `status [search]` | search state + candidate tree (text) |
@@ -49,9 +49,9 @@ the run has a single search), or `latest` (the default).
 | `similarity reference [search] [--single]` | live 3D cube: each candidate at behavioral / structural / lineage distance from the search's seed (or baseline; `c` toggles the champion); a study's experiment opens its whole run, coloured by experiment, `n`/`p` stepping through the run's problems; a problem's `fingerprint.py` defines the behavioral axis; `v` swaps between the two views |
 | `graph` | the knowledge-graph TUI (same screen as `knowledge graph`) |
 | `show [search] <candidate-id>` | everything about one candidate: scores, evaluation breakdown, diff vs parent, output |
-| `ps` | every process hillclimb owns on this machine: engines with their agents and verifiers nested; `orphan` marks engines whose hillclimb dir was deleted |
+| `ps` | every process hillclimb owns on this machine: engines with their coding agents and verifiers nested; `orphan` marks engines whose hillclimb dir was deleted |
 | `stop [search] [--all] [--graceful]` | stop now: abort the operators in flight (their candidates are journaled abandoned), then park, resumable; `--graceful` lets them finish and be scored first; `--all` also reaps orphaned engines when no hillclimb dir is found |
-| `kill [search] [--all] [--grace S]` | last resort for an engine that ignores `stop`: SIGTERM it with its agents and verifiers, SIGKILL after `S` s (default 5); still resumable |
+| `kill [search] [--all] [--grace S]` | last resort for an engine that ignores `stop`: SIGTERM it with its coding agents and verifiers, SIGKILL after `S` s (default 5); still resumable |
 | `reset` | kill every engine of THIS hillclimb dir and delete the dir — never another folder's |
 | `prune <search> <candidate-id> [--reason ...]` | cut a candidate and its subtree from the search |
 | `tree [search]` | live 3D exploration tree of one search: colour is the operator, silhouette the fate (expanded / discontinued / best / failed); `j`/`k` scrub through time |
@@ -59,21 +59,21 @@ the run has a single search), or `latest` (the default).
 | `archive [search]` | the `tree2` archive tree on the left and the progress chart on the right — every scored candidate at (candidate number, score), the best-so-far staircase, and the lineage of the final best as a thick line, the same parent chain drawn bold in the tree; `j`/`k` scrub both panels together, click a node to ring its dot on the chart; the chart's legend sits in the corner the climb leaves empty and toggles its series (`6`-`9` or click), the hover readout keeps off it |
 | `surface [search]` | live 3D fitness surface: the search's candidates on the problem's terrain (needs a `landscape.py` in the problem; `problems/fitness-landscape/` is the reference) |
 | `summit [problem] [--to DIR]` | copy the best solution found so far across every run of a problem into your hillclimb dir; works mid-climb |
-| `disconnect <claude\|codex\|pi\|openrouter> [--local]` | undo a connect on hillclimb's side: comment the pin out of the same config file, remove the staged homes under `~/.cache/hillclimb/`, drop an OpenRouter key from the `.env`; the agent's own login is never touched |
-| `smoke [problem]` | one real agent call end-to-end (auth / contract check) |
+| `disconnect <claude\|codex\|pi\|openrouter> [--local]` | undo a connect on hillclimb's side: comment the pin out of the same config file, remove the staged homes under `~/.cache/hillclimb/`, drop an OpenRouter key from the `.env`; the coding agent's own login is never touched |
+| `smoke [problem]` | one real coding agent call end-to-end (auth / contract check) |
 | `climber list` | the climbers `run --climber` accepts: the bundled ones and every one under `climbers/` |
 | `climber show [NAME]` | print a climber (a preset, a `.py` file, this folder's, a pre-0.6 directory) as the block a run config takes |
 | `climber new <name> [--from NAME]` | copy a policy's source into `climbers/<name>.py` and print the block that runs it |
-| `climber check [--climber REF] [--set k=v] [--problem P] [--smoke] [--json]` | conformance check for a climber over the store's recorded journals; `--smoke` adds a dummy-agent search |
+| `climber check [--climber REF] [--set k=v] [--problem P] [--smoke] [--json]` | conformance check for a climber over the store's recorded journals; `--smoke` adds a dummy-coding-agent search |
 | `store searches [--problem KEY]` / `store sync` | list what the record store holds / import the folder's searches into the configured store |
 | `knowledge graph [--stats]` | interactive knowledge-graph TUI (or a text summary) |
 | `knowledge rebuild` | force-rebuild the derived `knowledge/graph.json` index |
 | `knowledge distill [search] [--backfill]` | run the LLM claims pass on a search / all cards |
 | `knowledge backfill` | distill cards from every finished search that lacks one |
 | `knowledge live [run]` | the live cards concurrent searches in a run are sharing |
-| `paper add <pdf> [--problem <target>]` / `paper list` | distill a PDF into knowledge claims that seed future searches (one agent pass per paper, content-hash cached) |
+| `paper add <pdf> [--problem <target>]` / `paper list` | distill a PDF into knowledge claims that seed future searches (one coding agent pass per paper, content-hash cached) |
 | `knowledge consolidate [--dry-run]` | sleep phase: generalize claims + rewrite playbooks |
-| `knowledge query "<terms>" [--json]` | read-only memory lookup (also available to agents) |
+| `knowledge query "<terms>" [--json]` | read-only memory lookup (also available to coding agents) |
 | `knowledge show <target>` | the prior-experience section a new search would get |
 | `run <problem> --set key=value … [--study S --experiment E]` | any config setting, dotted; tag the search as one experiment of a study |
 | `experiment run <spec> [--repeats N] [--budget B] [--parallel] [--max-concurrent N] [--run-id R --first-repeat K] [--dry-run]` | every experiment × problem × repeat of a study spec; `--max-concurrent` bounds how many run at once, `--run-id` appends repeats to a finished run |
@@ -84,7 +84,7 @@ Exit code `2` from `run`/`resume` means the search parked or was stopped — res
 `hillclimb stop --all` ends a parallel run (the best solutions stay in `runs/`);
 `hillclimb reset` ends it AND deletes what hillclimb made in this folder (`hillclimb.yaml`, `problems/`, `runs/`, …; nothing else) — only
 engines pinned to that dir are killed, never another folder's. 3 searches x 3
-agents is 9 agents, capped machine-wide by
+coding agents is 9 coding agents, capped machine-wide by
 `concurrency.machine_max_agents`; each search's engine log is under
 `runs/<run-id>/logs/`.
 

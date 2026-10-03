@@ -55,7 +55,7 @@ def test_greedy_conforms(config, tmp_path):
 class StallingPolicy:
     name, params = "stall", {}
 
-    def propose(self, view):
+    def propose(self, view, selection):
         return None
 
     def observe(self, view, candidate):
@@ -65,7 +65,7 @@ class StallingPolicy:
 class RandomPolicy:
     name, params = "random", {}
 
-    def propose(self, view):
+    def propose(self, view, selection):
         return Action(operator="draft", args={"complexity": random.choice(["minimal", "advanced"])})
 
     def observe(self, view, candidate):
@@ -80,7 +80,7 @@ class CountingPolicy:
     def __init__(self):
         self.n = 0
 
-    def propose(self, view):
+    def propose(self, view, selection):
         self.n += 1
         return Action(operator="draft", args={"complexity": "minimal" if self.n % 2 else "advanced"})
 
@@ -91,7 +91,7 @@ class CountingPolicy:
 class DanglingPolicy:
     name, params = "dangling", {}
 
-    def propose(self, view):
+    def propose(self, view, selection):
         if view.journal.candidates:
             return Action(operator="improve", target_id="c999")
         return Action(operator="ensemble")  # no target either
@@ -103,7 +103,7 @@ class DanglingPolicy:
 class WrongTargetPolicy:
     name, params = "wrong-target", {}
 
-    def propose(self, view):
+    def propose(self, view, selection):
         if "c003" in view.journal.candidates:
             return Action(operator="debug", target_id="c003")  # c003 is ok, not buggy
         return Action(operator="draft")
@@ -115,7 +115,7 @@ class WrongTargetPolicy:
 class MutatingPolicy:
     name, params = "mutating", {}
 
-    def propose(self, view):
+    def propose(self, view, selection):
         for c in view.journal.candidates.values():
             c.pruned = True
         return Action(operator="draft")
@@ -127,7 +127,7 @@ class MutatingPolicy:
 class WritingPolicy:
     name, params = "writing", {}
 
-    def propose(self, view):
+    def propose(self, view, selection):
         for c in view.journal.candidates.values():
             if c.candidate_dir:
                 Path(c.candidate_dir, "scratch.txt").write_text("x")
@@ -174,7 +174,7 @@ class JournalSizePolicy:
     def __init__(self):
         self.seen = 0
 
-    def propose(self, view):
+    def propose(self, view, selection):
         return Action(operator="draft", args={"complexity": str(self.seen)})
 
     def observe(self, view, candidate):
@@ -191,7 +191,7 @@ def test_state_that_depends_on_when_a_result_was_shown_is_a_breach(config, tmp_p
 class CrossoverPolicy:
     name, params = "crossover", {}
 
-    def propose(self, view):
+    def propose(self, view, selection):
         return Action(operator="crossover")
 
     def observe(self, view, candidate):
@@ -204,7 +204,7 @@ def test_a_climbers_own_operator_is_known_to_the_check(config, tmp_path):
     from hillclimb.modules.operators.base import Attempt
 
     class Crossover(Operator):
-        name, role = "crossover", "combine"
+        name, kind = "crossover", "combine"
 
         def prepare(self, ctx):
             return Attempt(prompt="cross")
@@ -253,7 +253,7 @@ def test_raising_policy_is_reported_not_raised(config, tmp_path):
     class Broken:
         name, params = "broken", {}
 
-        def propose(self, view):
+        def propose(self, view, selection):
             raise KeyError("oops")
 
         def observe(self, view, candidate):
@@ -332,7 +332,7 @@ def test_cli_checks_a_file_policy_relative_to_the_hillclimb_dir(tmp_path, monkey
 
     (root / "policies" / "stalls.py").write_text(
         "class Stalls:\n"
-        "    def propose(self, view):\n        return None\n"
+        "    def propose(self, view, selection):\n        return None\n"
         "    def observe(self, view, candidate):\n        pass\n"
     )
     with pytest.raises(SystemExit) as exc:
@@ -363,7 +363,7 @@ def test_climber_check_takes_a_run_spec_and_checks_every_entrys_climber(tmp_path
     (tmp_path / "hillclimb.yaml").write_text("")
     write_problem(tmp_path / "problems", "p")
     (tmp_path / "stalls.py").write_text(
-        "class Stalls:\n    name = 'stalls'\n    def propose(self, view):\n        return None\n"
+        "class Stalls:\n    name = 'stalls'\n    def propose(self, view, selection):\n        return None\n"
         "    def observe(self, view, candidate):\n        pass\n"
     )
     monkeypatch.chdir(tmp_path)

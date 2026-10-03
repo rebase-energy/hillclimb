@@ -4,12 +4,12 @@
  The sleep phase: generalize claims, rewrite playbooks.                                                                 
                                                                                                                         
  Lifts multi-family claims up the concept hierarchy (mechanical) and                                                    
- rewrites per-concept playbooks (one agent call per qualifying concept,                                                 
+ rewrites per-concept playbooks (one coding agent call per qualifying concept,                                          
  routing key `consolidate`). Playbook rewrites land as reviewable git                                                   
  diffs.                                                                                                                 
                                                                                                                         
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ --dry-run            Show what would generalize / which playbooks would rewrite; no writes, no agent calls           │
+│ --dry-run            Show what would generalize / which playbooks would rewrite; no writes, no coding agent calls    │
 │ --help     -h        Show this message and exit.                                                                     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 

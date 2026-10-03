@@ -1,4 +1,4 @@
-"""Operators: HOW one attempt is made — the prompt an agent is given.
+"""Operators: HOW one attempt is made — the prompt a coding agent is given.
 
 `Draft(retrieval=False)`, `Debug()`, `Improve()`, `Ensemble()`; subclass `Operator` for your own.
 

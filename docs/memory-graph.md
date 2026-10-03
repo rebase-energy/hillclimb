@@ -77,7 +77,7 @@ and never pins a layout across keys.
   `hillclimb knowledge consolidate`): mechanically lifts claims asserted in
   2+ families up the concept hierarchy (evidence union, mean of MEASURED
   confidences, deterministic ids, `generalizes` edges in the graph), then
-  one agent call per concept with 3+ live claims rewrites
+  one coding agent call per concept with 3+ live claims rewrites
   `knowledge/playbooks/<concept>.md` — reviewable git diffs. Draft prompts
   inject a matching playbook INSTEAD of the raw claims block
   (`memory_params.playbooks`), and credit flows to the playbook's
@@ -140,7 +140,7 @@ episodes ≙ searches, entity/edge extraction with provenance ≙ claims with
 candidate evidence, temporal validity windows ≙ supersession — but adoption
 costs too much here:
 
-- Its only real agents are servers (Neo4j default; embedded Kuzu is
+- Its only real backends are servers (Neo4j default; embedded Kuzu is
   deprecated, FalkorDB "Lite" needs py3.12+ and Redis). Memory would leave
   git-versioned YAML for an undiffable DB, and break the hillclimb-go twin
   consuming a plain `graph.json`.

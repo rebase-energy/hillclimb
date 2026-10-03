@@ -60,7 +60,7 @@ if TYPE_CHECKING:
 
 RESULT_FILE = "eval_result.json"
 
-# Secrets must never reach agent-authored code. Deny-list (not allow-list):
+# Secrets must never reach coding-agent-authored code. Deny-list (not allow-list):
 # solution subprocesses legitimately need PATH/HOME/venv/locale/thread-pool
 # vars that no allow-list would enumerate reliably.
 SECRET_ENV_EXACT = frozenset({
@@ -73,7 +73,7 @@ SECRET_ENV_EXACT = frozenset({
 SECRET_ENV_SUFFIXES = ("_TOKEN", "_API_KEY", "_SECRET", "_SECRET_KEY", "_PASSWORD")
 
 
-# One thread per solution process. Every verifier and agent experiment runs a
+# One thread per solution process. Every verifier and coding agent experiment runs a
 # numpy/scipy/torch workload that would otherwise fan out across all cores;
 # with N of them in flight that is N x cores of demand, the machine stalls,
 # and timing-based metrics measure the contention. Parent values win, so a
@@ -106,7 +106,7 @@ def prepend_pythonpath(env: dict[str, str], path: str | None) -> dict[str, str]:
 
 def scrubbed_env(**extra: str) -> dict[str, str]:
     """Parent env minus credentials, single-threaded, for running
-    agent-authored code."""
+    coding-agent-authored code."""
     env = {
         k: v
         for k, v in os.environ.items()
@@ -397,7 +397,7 @@ class CommandExecutor:
         stderr_path = candidate_dir / "exec_stderr.log"
         result_path = candidate_dir / RESULT_FILE
         result_path.unlink(missing_ok=True)  # staleness must never fake success
-        # agent-authored code runs inside the verifier process: credentials are
+        # coding-agent-authored code runs inside the verifier process: credentials are
         # scrubbed at run time (not snapshotted at construction) so a change to
         # the orchestrator's environment can never leak into a later run
         env = scrubbed_env(**self.env_extra)
@@ -433,7 +433,7 @@ class CommandExecutor:
 
 class CommandHoldoutScorer:
     """Hidden holdout scoring: runs the problem's holdout command against a
-    copy of the candidate's solution in a dir agents never see, with the full
+    copy of the candidate's solution in a dir coding agents never see, with the full
     environment (credentials flow — private holdout data may be gated)."""
 
     def __init__(

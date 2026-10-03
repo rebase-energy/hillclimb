@@ -1,7 +1,7 @@
 """The operator timeline of one search — a cell-native gantt, live.
 
-One row per agent slot (lanes reconstructed in gantt.py), one bar per
-candidate coloured by its operator: the dim stretch is the agent writing
+One row per coding agent slot (lanes reconstructed in gantt.py), one bar per
+candidate coloured by its operator: the dim stretch is the coding agent writing
 code, the bright stretch the verifier running, `◆` the moment it scored.
 Running bars grow toward the right edge every tick and end in `▶`; a slot
 parked on rate limits reads hollow (`░`); failed and pruned bars are faded.
@@ -25,7 +25,7 @@ from hillclimb.tui.tree import FAILED_STATUSES
 from hillclimb.tui.treeview import OPERATOR_RGB, dim_rgb
 
 LANE_LABEL_W = 3  # "a1 " — keeps the track aligned across rows
-AGENT_DIM = 0.55  # the agent-phase stretch of a healthy bar
+AGENT_DIM = 0.55  # the coding-agent-phase stretch of a healthy bar
 DEAD_DIM = 0.5    # failed/pruned bars and parked fill, matching the tree
 
 GANTT_STYLES = {  # component class -> fallback Rich style (outside Textual)
@@ -85,7 +85,7 @@ def _lane_row(
         elif span.running and span.phase == "waiting-slot":
             fill = [("░", _rgb_style(dim_rgb(rgb, DEAD_DIM)))] * (c1 - c0 + 1)
         else:
-            boundary = c1 + 1  # no trial yet: the whole bar is the agent phase
+            boundary = c1 + 1  # no trial yet: the whole bar is the coding agent phase
             if span.exec_min is not None:
                 boundary = max(minute_to_col(span.exec_min, extent_min, track_width), c0)
             fill = [

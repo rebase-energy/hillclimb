@@ -1,5 +1,6 @@
-"""`hillclimb meta evaluate|check` — the meta-problem kit's commands. Hidden
-until the meta-problem launch: nothing in `--help` or the docs names them."""
+"""`hillclimb grade` and `hillclimb meta check` — the meta-problem kit's
+commands (`meta evaluate` is the old spelling of `grade`). Hidden until the
+meta-problem launch: nothing in `--help` or the docs names them."""
 
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ meta_app = typer.Typer(
     hidden=True,
     help=(
         "Meta-problems — score a one-file climber by the inner searches it runs "
-        "(the improver role). `evaluate` is what a meta-problem's verifier.sh calls."
+        "(the improver role). `evaluate` is the old spelling of `hillclimb grade`."
     ),
 )
 
@@ -26,28 +27,57 @@ meta_app = typer.Typer(
 app.add_typer(meta_app, name="meta", hidden=True)
 
 
-@meta_app.command("evaluate")
-def meta_evaluate(
-    climber: Path = typer.Option(
-        None, "--climber", help="The one-file climber to score (default: $HILLCLIMB_SOLUTION)"
-    ),
+_CLIMBER_OPTION = typer.Option(None, "--climber", help="The one-file climber to grade (default: $HILLCLIMB_SOLUTION)")
+_RESULT_OPTION = typer.Option(
+    None, "--result", help="Where to write {score, instances} (default: $HILLCLIMB_RESULT, else stdout)"
+)
+_WORKDIR_OPTION = typer.Option(None, "--workdir", help="Where the inner searches run (default: cwd)")
+_SPLIT_OPTION = typer.Option(
+    None, "--split",
+    help="validation: the spec's `problems`; holdout: its `outer_holdout` (default: $HILLCLIMB_SPLIT, else validation)",
+)
+
+
+@app.command("grade", hidden=True)
+def grade(
+    climber: Path = _CLIMBER_OPTION,
     spec: Path = typer.Option(
-        Path("problem") / "meta.yaml", "--spec", help="meta.yaml: inner problems, budget, repeats"
+        Path("problem") / "grade.yaml", "--spec",
+        help="grade.yaml: inner problems, budget, repeats, score, aggregate, outer_holdout",
     ),
-    result: Path = typer.Option(
-        None, "--result", help="Where to write {score, instances} (default: $HILLCLIMB_RESULT, else stdout)"
-    ),
-    workdir: Path = typer.Option(None, "--workdir", help="Where the inner searches run (default: cwd)"),
+    result: Path = _RESULT_OPTION,
+    workdir: Path = _WORKDIR_OPTION,
+    split: str = _SPLIT_OPTION,
 ):
-    """Run the inner searches of a meta-problem with CLIMBER and report the
-    gap they closed — the verifier of a problem whose solution is a climber.
+    """Grade a climber: run the inner searches of a meta-problem with CLIMBER
+    and report how far they climbed — the verifier of a problem whose
+    solution is a climber.
 
     Reads the hillclimb dir it runs under (`$HILLCLIMB_DIR`, set by the
-    engine for every verifier) for the user's agent, model and problems,
+    engine for every verifier) for the user's coding agent, model and problems,
     runs one `hillclimb run` per inner problem and repeat in a nested
-    hillclimb dir under the working directory, and writes the score.
+    hillclimb dir under the working directory, and writes the grade: each
+    result scored by the spec's `score` (gap closed by default) and combined
+    by its `aggregate` (the mean by default). On the holdout split the
+    problems are the spec's `outer_holdout`.
     """
-    from hillclimb.meta import MetaError, evaluate, load_meta_spec
+    _grade(climber, spec, result, workdir, split)
+
+
+@meta_app.command("evaluate")
+def meta_evaluate(
+    climber: Path = _CLIMBER_OPTION,
+    spec: Path = typer.Option(Path("problem") / "meta.yaml", "--spec", help="The grade spec"),
+    result: Path = _RESULT_OPTION,
+    workdir: Path = _WORKDIR_OPTION,
+    split: str = _SPLIT_OPTION,
+):
+    """The old spelling of `hillclimb grade` (a verifier.sh written before the rename)."""
+    _grade(climber, spec, result, workdir, split)
+
+
+def _grade(climber: Path | None, spec: Path, result: Path | None, workdir: Path | None, split: str | None) -> None:
+    from hillclimb.meta import MetaError, evaluate, load_grade_spec
 
     climber = climber or (Path(os.environ["HILLCLIMB_SOLUTION"]) if os.environ.get("HILLCLIMB_SOLUTION") else None)
     if climber is None:
@@ -66,10 +96,11 @@ def meta_evaluate(
             fail(f"params.json: {_m(exc)}")
             raise typer.Exit(1) from exc
     try:
-        meta_spec = load_meta_spec(spec)
+        grade_spec = load_grade_spec(spec)
         outcome = evaluate(
-            meta_spec, climber, config, workdir or Path.cwd(),
+            grade_spec, climber, config, workdir or Path.cwd(),
             log=lambda line: say(f"[note]{_m(line)}[/]", err=True), params=params,
+            split=split or os.environ.get("HILLCLIMB_SPLIT") or "validation",
         )
     except MetaError as exc:
         fail(str(exc))
@@ -79,7 +110,7 @@ def meta_evaluate(
         result.write_text(payload)
     else:
         typer.echo(payload)
-    say(f"[head]gap closed:[/] {outcome.score:.4f}  " + "  ".join(
+    say(f"[head]{_m(grade_spec.score)}:[/] {outcome.score:.4f}  " + "  ".join(
         f"{_m(key)}={value:.4f}" for key, value in outcome.instances.items()
     ), err=True)
 
@@ -94,7 +125,7 @@ def meta_check(
     (hillclimb.policies and its siblings) and the standard library, and
     then everything `hillclimb climber check` verifies — it loads, has
     exactly one policy, replays recorded searches deterministically and
-    never writes. Exit 1 on any breach; no agent, no verifier, no inner search.
+    never writes. Exit 1 on any breach; no coding agent, no verifier, no inner search.
     """
     from hillclimb.cli.climber import climber_check
     from hillclimb.meta import check_climber_source

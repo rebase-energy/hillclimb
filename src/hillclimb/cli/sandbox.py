@@ -1,4 +1,4 @@
-"""`hillclimb sandbox …`: the sandbox agents and verifiers run in."""
+"""`hillclimb sandbox …`: the sandbox coding agents and verifiers run in."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from hillclimb.cli.common import _m, fail, say, warn
 
 sandbox_app = typer.Typer(
     cls=HillclimbGroup,
-    help="The sandbox agents and solutions run in: what it stops, shown on this machine",
+    help="The sandbox coding agents and solutions run in: what it stops, shown on this machine",
 )
 
 
@@ -49,7 +49,7 @@ def sandbox_check(
         raise typer.Exit(0 if attempts and all(a.holds for a in attempts) else 1)
     if not attempts:
         reason = "off" if not sandbox.enabled(config) else "none exists for this operating system"
-        warn(f"sandbox: {reason} — agents and solutions run with your full user rights")
+        warn(f"sandbox: {reason} — coding agents and solutions run with your full user rights")
         raise typer.Exit(1)
     tool = {"seatbelt": "sandbox-exec", "bwrap": "bubblewrap"}[kind]
     say()

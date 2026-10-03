@@ -6,7 +6,7 @@ loudly — it stalls a search, proposes a target that does not exist, or
 makes `resume` diverge from the run it resumes. Each of those burns a
 real budget hour before anyone notices. This module replays recorded
 journals (and a synthetic empty one) through the policy WITHOUT any
-agent, verifier or venv, and reports every contract breach it can see:
+coding agent, verifier or venv, and reports every contract breach it can see:
 
 - `constructs`        the factory builds the policy (twice — no shared state)
 - `starts`            an empty journal with empty slots yields an action, not
@@ -28,7 +28,7 @@ agent, verifier or venv, and reports every contract breach it can see:
 
 Pure by construction: nothing here writes. `check_policy` is the library
 entry; `hillclimb climber check` wraps it over the store's journals and can
-follow up with a dummy-agent smoke search.
+follow up with a dummy-coding-agent smoke search.
 """
 
 from __future__ import annotations
@@ -43,6 +43,7 @@ from hillclimb.harness.evaluation import accept_band
 from hillclimb.modules.operators import get_operator, operator_names
 from hillclimb.config import Config
 from hillclimb.harness.journal import Journal
+from hillclimb.harness.loop import PolicyLoop
 from hillclimb.modules.policies.base import INJECT_ACTION, TUNE_ACTION, Action, BudgetView, SearchState, Policy
 
 # Fractions of the budget still remaining at which every journal is
@@ -142,14 +143,15 @@ def _view(case: JournalCase, config: Config, fraction: float) -> SearchState:
     )
 
 
-def _replayed(make_policy: Callable[[], Policy], case: JournalCase, config: Config) -> Policy:
-    """A fresh policy that has observed the journal in order — exactly what
+def _replayed(make_policy: Callable[[], Policy], case: JournalCase, config: Config) -> PolicyLoop:
+    """A fresh climber (its policy with its selector, in the loop that asks
+    them in order) that has observed the journal — exactly what
     `PolicyLoop.catch_up` does when a search starts."""
-    policy = make_policy()
+    loop = PolicyLoop(make_policy())
     view = _view(case, config, 1.0)
     for candidate in view.journal.candidates.values():
-        policy.observe(view, candidate)
-    return policy
+        loop.policy.observe(view, candidate)
+    return loop
 
 
 def _prefix(journal: Journal, n: int) -> Journal:
@@ -161,11 +163,12 @@ def _prefix(journal: Journal, n: int) -> Journal:
     return prefix
 
 
-def _grown(make_policy: Callable[[], Policy], case: JournalCase, config: Config) -> Policy:
-    """A fresh policy that watched the journal grow: shown each new result
+def _grown(make_policy: Callable[[], Policy], case: JournalCase, config: Config) -> PolicyLoop:
+    """A fresh climber that watched the journal grow: shown each new result
     through a view of the journal as it stood then — what `PolicyLoop.observe`
     does during a live search. (Long journals grow in `RESUME_STEPS` strides.)"""
-    policy = make_policy()
+    loop = PolicyLoop(make_policy())
+    policy = loop.policy
     ids = list(case.journal.candidates)
     stride = max(1, -(-len(ids) // RESUME_STEPS))
     shown = 0
@@ -176,7 +179,7 @@ def _grown(make_policy: Callable[[], Policy], case: JournalCase, config: Config)
         for candidate_id in ids[shown:upto]:
             policy.observe(view, view.journal.candidates[candidate_id])
         shown = upto
-    return policy
+    return loop
 
 
 def _snapshot_journal(journal: Journal) -> list[tuple[str, str]]:
@@ -254,7 +257,7 @@ def check_policy(
     replay check depends on it. `operators` is the search's operator set
     (`Climber.operator_set()`), so a climber's own operators are known;
     without one the built-in catalogue stands in. Never writes; never runs
-    an agent."""
+    a coding agent."""
     from hillclimb.prompts.render import lint_overrides
 
     findings: list[Finding] = []

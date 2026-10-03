@@ -54,7 +54,7 @@ STATUS_STYLE = {
 
 
 def display_status(status: str, live: bool) -> str:
-    """The journal's `pending` means "an agent is on it" — show that as
+    """The journal's `pending` means "a coding agent is on it" — show that as
     `running` while the engine is alive and `stale` once it is not (the
     engine marks such candidates abandoned on resume)."""
     if status == "pending":
@@ -84,10 +84,10 @@ class SearchRow:
     search_id: str
     problem: str
     climber: str  # what drives the search: greedy, openevolve, gepa, a file's stem
-    agent: str  # the agent harness the operators run in: claude-code, codex, …
+    agent: str  # the coding agent harness the operators run in: claude-code, codex, …
     model: str
-    tokens: str  # summed agent tokens across the search's candidates
-    spend: str  # summed agent cost in USD, climbing while operators stream
+    tokens: str  # summed coding agent tokens across the search's candidates
+    spend: str  # summed coding agent cost in USD, climbing while operators stream
     state: str
     candidates: str  # "7 (5 passing, 1 failing)"
     best_val: str
@@ -206,7 +206,7 @@ def _read_stream_usage(candidate_dir: Path) -> _StreamUsage:
             try:
                 msg = json.loads(line)
             except json.JSONDecodeError:
-                continue  # a half-written trailing line while the agent streams
+                continue  # a half-written trailing line while the coding agent streams
             kind = msg.get("type")
             if kind == "result":
                 if msg.get("usage"):
@@ -301,7 +301,7 @@ def _state_summary(states: list[str]) -> str:
 
 
 def _display_agent(default: str, journal: Journal) -> str:
-    """The agent cell: the search's configured agent harness, plus any
+    """The coding agent cell: the search's configured coding agent harness, plus any
     other harness a per-operator route actually authored a candidate in
     (`routing:` can send, say, the drafts to codex), in order of first use."""
     names = [default]
@@ -313,9 +313,9 @@ def _display_agent(default: str, journal: Journal) -> str:
 
 
 def _display_model(alias: str | None, model_id: str | None) -> str:
-    """The model cell: the fully-qualified id the agent stream reported,
+    """The model cell: the fully-qualified id the coding agent stream reported,
     falling back to the route alias — either way sans the redundant vendor
-    prefix, so a search whose agent has not reported yet (GEPA's proposer
+    prefix, so a search whose coding agent has not reported yet (GEPA's proposer
     works outside the candidate dirs) reads the same as its neighbours.
     Synthetic API-error messages are not model invocations."""
     shown = model_id if is_concrete_model_id(model_id) else alias
@@ -683,7 +683,7 @@ def _tool_arg_preview(args: dict, width: int = 80) -> str:
     value = next((args[k] for k in _TOOL_ARG_KEYS if args.get(k)), None)
     if value is None:
         value = next((v for v in args.values() if isinstance(v, str) and v.strip()), "")
-    flat = " ".join(str(value).split())  # one line, however the agent indented it
+    flat = " ".join(str(value).split())  # one line, however the coding agent indented it
     return flat[:width] + ("…" if len(flat) > width else "")
 
 
@@ -1161,7 +1161,7 @@ def candidate_detail_renderables(
         overview.add_row("trial", Text("(not executed)", style="dim"), "", "")
     agent = candidate.agent
     if candidate_in_flight(candidate, live):
-        # in flight: what is known now, refreshed every tick — the agent
+        # in flight: what is known now, refreshed every tick — the coding agent
         # and model from the route, tokens from the live stream, a clock
         # counting up since the candidate was created
         model = f"  model={agent.model}" if agent.model else ""
@@ -1198,7 +1198,7 @@ def candidate_detail_renderables(
             Text(agent.error_kind or "-", style="red" if agent.error_kind else "dim"),
         )
 
-    # where the operator's agent actually ran; a link to the full dir
+    # where the operator's coding agent actually ran; a link to the full dir
     overview.add_row("path", _path_link(candidate_dir), "", "")
     renderables: list[object] = [
         Panel(
@@ -1311,7 +1311,7 @@ from textual.widgets import DataTable, Footer, Label, RichLog, Static  # noqa: E
 from hillclimb.tui.header import HillclimbHeader, TimezoneMixin  # noqa: E402
 from hillclimb.tui.keys import KEYS_BINDING, QUIT_BINDINGS, KeysMixin, back_binding  # noqa: E402
 
-# one tick per second: the budget countdown and agent stream should read as live
+# one tick per second: the budget countdown and coding agent stream should read as live
 REFRESH_S = 1.0
 DETAIL_DEFAULT_HEIGHT = 10
 DETAIL_MIN_HEIGHT = 6
@@ -1727,8 +1727,8 @@ class ConsoleSource:
 
 def console_sources(search_dir: Path, candidate_id: str, candidate_dir: Path) -> list[ConsoleSource]:
     """Everything a running candidate writes, in the order the engine's
-    phases produce it: the agent's stream, the verifier's stdout/stderr, then
-    the holdout evaluation's (which runs in a dir agents never see)."""
+    phases produce it: the coding agent's stream, the verifier's stdout/stderr, then
+    the holdout evaluation's (which runs in a dir coding agents never see)."""
     holdout_dir = search_dir / "holdout-eval" / candidate_id
     return [
         ConsoleSource(candidate_dir / "agent_stream.jsonl", "agent", "stream"),
@@ -1747,7 +1747,7 @@ CONSOLE_MAX_LINES = 5000
 
 def complete_lines(path: Path) -> list[str] | None:
     """The file's newline-terminated lines, or None when it is not readable.
-    A trailing line without its newline is still being written (an agent
+    A trailing line without its newline is still being written (a coding agent
     stream message, a verifier's partial print) and waits for the next tick."""
     try:
         text = path.read_text(errors="replace")
@@ -1783,7 +1783,7 @@ def fresh_lines(seen: list[str], lines: list[str]) -> tuple[list[str], bool]:
 
 
 class ConsoleLog(RichLog):
-    """`tail -f` over a running candidate: the agent's stream while the
+    """`tail -f` over a running candidate: the coding agent's stream while the
     operator works, the verifier's output while it runs, appended as the
     files grow (a section header the first time each file speaks). Follows
     the end until the viewer scrolls up; scrolling back down, or `f`, follows
@@ -2459,7 +2459,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
 
     def action_toggle_gantt(self) -> None:
         """`a`: the highlighted search's operator timeline under the table —
-        one lane per agent slot, bars coloured by operator, `◆` where each
+        one lane per coding agent slot, bars coloured by operator, `◆` where each
         candidate scored; `a` again (or escape) closes it."""
         if self._gantt_open:
             self._close_gantt()

@@ -3,7 +3,7 @@
                                                                                                                         
  Distill papers into typed claims and rebuild the knowledge graph.                                                      
                                                                                                                         
- One agent pass per paper (routing key `paper`, default model sonnet)                                                   
+ One coding agent pass per paper (routing key `paper`, default model sonnet)                                            
  writes knowledge/papers/<slug>.yaml; the claims then ride the normal                                                   
  retrieval and credit paths — inspect the wiring with `hillclimb graph`                                                 
  before starting a run.                                                                                                 
@@ -12,8 +12,8 @@
 │ *    pdfs...      PATH  PDF paper(s) to distill into claims [required]                                               │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ --problem          TEXT  Scope the claims: emflow://pkg:name or a local problem id. Omitted, claims are global and   │
-│                          reach searches through concept overlap only                                                 │
+│ --problem          TEXT  Scope the claims: a problem id (or a provider target). Omitted, claims are global and reach │
+│                          searches through concept overlap only                                                       │
 │ --force                  Re-distill even when this exact PDF was already ingested                                    │
 │ --help     -h            Show this message and exit.                                                                 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

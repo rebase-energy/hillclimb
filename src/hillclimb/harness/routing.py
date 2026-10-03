@@ -1,4 +1,4 @@
-"""Per-operator agent/model routing: which agent runs which operator.
+"""Per-operator coding agent/model routing: which coding agent runs which operator.
 
 Field-level precedence, first non-None wins:
 action.route > config.routing[operator] > config.routing["default"] >
@@ -118,8 +118,8 @@ class Router:
 
 
 class AgentPool:
-    """Lazy name->instance cache, one instance per (agent, auth) per search
-    — agents are stateful (call counters, abort wiring), so a route must
+    """Lazy name->instance cache, one instance per (coding agent, auth) per search
+    — coding agents are stateful (call counters, abort wiring), so a route must
     resolve to the same instance every time."""
 
     def __init__(
@@ -133,7 +133,7 @@ class AgentPool:
         self._lock = threading.Lock()
 
     def seed(self, name: str, auth: str, agent: Agent) -> None:
-        """Register an existing instance (the default agent the harness
+        """Register an existing instance (the default coding agent the harness
         already constructed) so the default route reuses it."""
         self._instances[(name, auth)] = agent
 

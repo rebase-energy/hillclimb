@@ -226,7 +226,7 @@ def climber_check(
     ),
     limit: int = typer.Option(20, "--limit", help="Newest recorded searches to replay"),
     smoke: bool = typer.Option(
-        False, "--smoke", help="Then run a dummy-agent search on --problem (no LLM, real verifier)"
+        False, "--smoke", help="Then run a dummy-coding-agent search on --problem (no LLM, real verifier)"
     ),
     smoke_budget: str = typer.Option("2m", "--smoke-budget", help="Wall clock for the smoke search"),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
@@ -234,13 +234,13 @@ def climber_check(
     """Conformance check for a climber — the cheap pre-verifier.
 
     Resolves every module the block names, then replays every recorded
-    journal (plus an empty one) through the climber's policy with no agent or
+    journal (plus an empty one) through the climber's policy with no coding agent or
     verifier: two fresh instances must propose the same action at every
     budget point and a resumed one must agree with a live one (the resume
     contract), every referenced candidate must exist, the policy must never
     write, and the climber's prompts must lint clean. Exit 1 on any breach.
     `--smoke` follows up with a short `--agent dummy` search so the whole
-    loop — prompts included — runs once before an agent hour is spent on it.
+    loop — prompts included — runs once before a coding agent hour is spent on it.
     Given a run spec, every entry's climber is checked.
     """
     from hillclimb.climber import ClimberLoadError, as_spec, climber_base_dir, load_climber
@@ -315,7 +315,7 @@ def _check_climber(config: Config, *, problem, limit, smoke, smoke_budget, as_js
 
     try:
         loaded = resolve_climber(config.climber, climber_base_dir(config))
-        loaded.brain  # noqa: B018 — every module must resolve, before an agent hour is spent
+        loaded.brain  # noqa: B018 — every module must resolve, before a coding agent hour is spent
         loaded.operator_set()
         loaded.tuner()
         loaded.graph_module()
@@ -354,8 +354,13 @@ def _check_climber(config: Config, *, problem, limit, smoke, smoke_budget, as_js
         make_policy, cases, config, prompts_dir=loaded.prompts_dir, operators=loaded.operator_set()
     )
     if report.ok:
-        resolved = getattr(make_policy(), "resolved_params", None)
+        policy = make_policy()
+        resolved = getattr(policy, "resolved_params", None)
         resolved_params = resolved() if callable(resolved) else params
+        # the exploration process is the policy's knobs AND the selector's schedule
+        selector = getattr(policy, "selector", None)
+        if selector is not None and callable(getattr(selector, "resolved_params", None)):
+            resolved_params = {**selector.resolved_params(), **resolved_params}
     else:
         resolved_params = params  # the policy may not even construct
     if source is not None:

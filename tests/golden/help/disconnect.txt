@@ -7,7 +7,7 @@
  Unpinning edits the same config.yaml `connect` wrote (`~/.config/hillclimb/`,                                          
  or this folder's with `--local`), commenting the lines out in place; the                                               
  isolated homes under `~/.cache/hillclimb/` go; `openrouter` drops the key                                              
- from the `.env`. The agent's own login is left exactly as it is — hillclimb                                            
+ from the `.env`. The coding agent's own login is left exactly as it is — hillclimb                                     
  never logs you out of claude, codex or pi.                                                                             
                                                                                                                         
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮

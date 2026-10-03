@@ -2,7 +2,7 @@
 
 A climber is the block of exchangeable modules (a `Policy` with its
 `Selector`, or a `Loop`; operators, memory, a tuner) that decides
-HOW to hillclimb. Everything else — running agents, scoring, holdout, the
+HOW to hillclimb. Everything else — running coding agents, scoring, holdout, the
 journal, budgets — is the harness, and a climber only ever meets it through
 the names exported here. `tests/test_sdk_imports.py` enforces the other half
 of that sentence: climber modules import `hillclimb.sdk` and nothing else
@@ -59,7 +59,7 @@ _LAZY = {
     "ProblemInfo": ("hillclimb.modules.operators.base", "ProblemInfo"),
     "MemoryContext": ("hillclimb.modules.operators.base", "MemoryContext"),
     "inspiration_filename": ("hillclimb.modules.operators.base", "inspiration_filename"),
-    "ROLES": ("hillclimb.modules.operators.base", "ROLES"),
+    "OPERATOR_KINDS": ("hillclimb.modules.operators.base", "OPERATOR_KINDS"),
     # which parameter values next
     "Tuner": ("hillclimb.modules.tuners.base", "Tuner"),
     "Observation": ("hillclimb.modules.tuners.base", "Observation"),
@@ -83,19 +83,21 @@ _LAZY = {
 
 __all__ = sorted(_LAZY)
 
-# 0.6 renamed these; there are no aliases, the old name says where it went
+# renamed, with the version that did it; there are no aliases, the old name says where it went
 _RENAMED = {
-    "SearchPolicy": "Policy",
-    "SearchLoop": "Loop",
-    "PolicyInput": "SearchState",
-    "PolicyJournal": "JournalView",
-    "Preparation": "Attempt",
+    "SearchPolicy": ("Policy", "0.6"),
+    "SearchLoop": ("Loop", "0.6"),
+    "PolicyInput": ("SearchState", "0.6"),
+    "PolicyJournal": ("JournalView", "0.6"),
+    "Preparation": ("Attempt", "0.6"),
+    "ROLES": ("OPERATOR_KINDS", "0.7"),
 }
 
 
 def __getattr__(name: str):
     if name in _RENAMED:
-        raise ImportError(f"hillclimb.sdk.{name} was renamed {_RENAMED[name]} in hillclimb 0.6")
+        new, version = _RENAMED[name]
+        raise ImportError(f"hillclimb.sdk.{name} was renamed {new} in hillclimb {version}")
     if name in _LAZY:
         import importlib
 
@@ -125,7 +127,7 @@ if TYPE_CHECKING:  # eager for type checkers and editors only
         Ticket,
     )
     from hillclimb.modules.operators.base import (
-        ROLES,
+        OPERATOR_KINDS,
         MemoryContext,
         Operator,
         OperatorContext,

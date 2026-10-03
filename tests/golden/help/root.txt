@@ -1,7 +1,8 @@
                                                                                                                         
  Usage: root [OPTIONS] COMMAND [ARGS]...                                                                                
                                                                                                                         
- Hillclimbing on verifier-defined problems: a code-generation harness for model development with long-running agents.   
+ Hillclimbing on verifier-defined problems: a code-generation harness for model development with long-running coding    
+ agents.                                                                                                                
                                                                                                                         
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --version  -V        Show hillclimb's version and exit.                                                              │
@@ -10,7 +11,7 @@
 ╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ chart       Live hillclimb chart: best score so far vs tested candidates.                                            │
 │ climber     Climbers, the swappable search methods: list, copy, check.                                               │
-│ connect     Connect the agents that run operators (claude, codex, pi) and the OpenRouter route that pays for them.   │
+│ connect     Connect the coding agents (claude, codex, pi) and the OpenRouter route that pays for them.               │
 │ experiment  Compare setups: a study of named experiments (config overrides) × repeats on a problem                   │
 │ init        Make a folder a hillclimb dir.                                                                           │
 │ problem     Ready-made verifier problems shipped with hillclimb.                                                     │

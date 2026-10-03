@@ -6,7 +6,7 @@ current folder; `hillclimb init DIR` another). Commands find it by upward
 search from the CWD, like git finding `.git/`.
 
 Machine-scoped state (shared runtime venvs, the emflow problem cache, the
-agent-concurrency semaphore) lives under XDG-style user directories, shared
+coding-agent-concurrency semaphore) lives under XDG-style user directories, shared
 by every hillclimb dir on the machine.
 """
 

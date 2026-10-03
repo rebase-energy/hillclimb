@@ -3,7 +3,7 @@
 gepa hands the loop a parent and the evaluation feedback it wants addressed;
 this operator turns that into an ordinary attempt — the parent's solution
 copied in, the feedback beside it as `feedback.json`, and a prompt that asks
-for one focused change. `require_change` makes an agent that hands the parent
+for one focused change. `require_change` makes a coding agent that hands the parent
 back count as "did not propose" instead of a scored duplicate.
 """
 
@@ -17,7 +17,7 @@ FEEDBACK_FILE = "feedback.json"
 
 class GepaReflect(Operator):
     name = OPERATOR_NAME
-    role = "refine"
+    kind = "refine"
     needs_target = True
 
     def valid_target(self, target: Candidate | None) -> str | None:

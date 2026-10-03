@@ -12,6 +12,7 @@ from hillclimb.agents.fake import FakeAgent
 from hillclimb.climber import ClimberLoadError, resolve_climber
 from hillclimb.harness.journal import Journal
 from hillclimb.modules.policies.base import InflightRef
+from hillclimb.harness.loop import PolicyLoop
 from hillclimb.modules.policies.greedy import Greedy
 from hillclimb.modules.selectors import Selection, Selector, get_selector
 from hillclimb.modules.selectors.best import Best
@@ -34,22 +35,28 @@ def test_best_picks_the_best_candidate_nobody_is_expanding(config, tmp_path):
     state = make_view(journal, config)
     best = get_selector("best")
     assert isinstance(best, Best) and best.name == "best"
-    assert best.select(state) == Selection("c002")
-    assert best.select(state, busy={"c002"}) == Selection("c001")  # spread over the top ones
-    assert best.select(state, busy={"c001", "c002"}) == Selection("c002")  # all busy: the best gets another
-    assert best.select(make_view(journal, config, higher_is_better=False)) == Selection("c001")
-    assert best.select(make_view(Journal(tmp_path / "empty.jsonl"), config)) is None
+    assert best.pick(state) == Selection("c002")
+    assert best.pick(state, busy={"c002"}) == Selection("c001")  # spread over the top ones
+    assert best.pick(state, busy={"c001", "c002"}) == Selection("c002")  # all busy: the best gets another
+    assert best.pick(make_view(journal, config, higher_is_better=False)) == Selection("c001")
+    assert best.pick(make_view(Journal(tmp_path / "empty.jsonl"), config)) is None
+    # `select` is the schedule around the pick: a failing tip first, roots
+    # until num_drafts, then what pick says
+    assert best.select(state) == Selection("c003")
+    assert Best(debug=False).select(state) is None  # two scored roots of three: a root step
+    assert Best(debug=False, num_drafts=2).select(state) == Selection("c002")
     assert best.creation_meta(state) == {}
 
 
 def test_greedy_expands_what_its_selector_picks(config, tmp_path):
-    """The schedule is the policy's; the pick — parent, inspirations, prompt
-    context, a note for the journal — is the selector's."""
+    """The schedule is the selector base's; the pick — parent, inspirations,
+    prompt context, a note for the journal — is the subclass's; the policy
+    turns the pick into an operator."""
 
     class SecondBest(Selector):
         name = "second-best"
 
-        def select(self, state, *, busy=frozenset()):
+        def pick(self, state, *, busy=frozenset()):
             ranked = sorted(state.journal.scored_candidates(), key=lambda c: -c.val_score)
             return Selection(ranked[1].candidate_id, inspiration_ids=(ranked[0].candidate_id,),
                              prompt_context="Beat the leader.", meta={"why": "runner-up"})
@@ -58,16 +65,16 @@ def test_greedy_expands_what_its_selector_picks(config, tmp_path):
             return {"niche": len(state.journal.drafts())}
 
     journal = Journal(tmp_path / "j.jsonl")
-    policy = Greedy({"num_drafts": 2, "tune_budget": 0}, selector=SecondBest())
-    draft = policy.propose(make_view(journal, config))
+    loop = PolicyLoop(Greedy({"tune_budget": 0}, selector=SecondBest(num_drafts=2)))
+    draft = loop.propose(make_view(journal, config))
     assert (draft.operator, draft.climber_meta) == ("draft", {"niche": 0})  # the selector tags new drafts
     add_candidate(journal, "c001", "draft", val_score=0.5, solution="a\n", tmp_path=tmp_path)
     add_candidate(journal, "c002", "draft", val_score=0.7, solution="b\n", tmp_path=tmp_path)
-    action = policy.propose(make_view(journal, config))
+    action = loop.propose(make_view(journal, config))
     assert (action.operator, action.target_id, action.inspiration_ids) == ("improve", "c001", ("c002",))
     assert action.extra_prompt_context == "Beat the leader." and action.climber_meta == {"why": "runner-up"}
     # with the default selector the same journal expands the best, busy targets aside
-    default = Greedy({"num_drafts": 2, "tune_budget": 0})
+    default = PolicyLoop(Greedy({"tune_budget": 0}, selector=Best(num_drafts=2)))
     assert default.propose(make_view(journal, config)).target_id == "c002"
     busy = (InflightRef(candidate_id="c003", operator="improve", parent_id="c002"),)
     assert default.propose(make_view(journal, config, inflight=busy)).target_id == "c001"
@@ -81,7 +88,7 @@ class Oldest(Selector):
     """Expand the oldest scored candidate (a deliberately different exploration)."""
     DEFAULTS = {"skip": 0}
 
-    def select(self, state, *, busy=frozenset()):
+    def pick(self, state, *, busy=frozenset()):
         scored = state.journal.scored_candidates()
         if len(scored) <= self.param("skip"):
             return None

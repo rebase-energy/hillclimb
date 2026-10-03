@@ -222,13 +222,16 @@ def test_the_climber_block_is_the_climber():
         {"climber": {"policy": "greedy", "params": {"num_drafts": 5}, "tuner": "optuna", "memory": "none",
                      "operators": ["draft", "improve"], "operator_params": {"draft": {"retrieval": False}}}}
     )
-    assert (config.climber.params, config.climber.tuner, config.climber.memory) == ({"num_drafts": 5}, "optuna", "none")
+    # a schedule knob under `params` is the selector's (the only way to write it before 0.7)
+    assert (config.climber.params, config.climber.tuner, config.climber.memory) == ({}, "optuna", "none")
+    assert config.climber.select_params == {"num_drafts": 5}
     assert config.climber.operators == ["draft", "improve"]
     # `--set` edits the block's fields; one operator's params are addressed by its name
     config.apply_overrides(parse_set_overrides(
         ["climber.params.num_drafts=1", "climber.operators.improve.ablation=false", "climber.tuner_params.seed=3"]
     ))
-    assert config.climber.params == {"num_drafts": 1} and config.climber.tuner_params == {"seed": 3}
+    # a schedule knob set as `climber.params.X` (the old spelling) lands where the selector reads it
+    assert config.climber.select_params == {"num_drafts": 1} and config.climber.tuner_params == {"seed": 3}
     assert config.climber.operator_params == {"draft": {"retrieval": False}, "improve": {"ablation": False}}
     assert config.climber.operators == ["draft", "improve"]  # which operators run is untouched
     # naming a climber replaces the block — whole, so one policy's params never reach another
@@ -314,8 +317,9 @@ def test_a_config_file_written_for_0_3_still_loads():
     }
     config = Config.model_validate(old)
     assert (config.climber.label, config.climber.select, config.climber.tuner) == ("openevolve", "map-elites", "optuna")
-    assert config.climber.params == {"num_drafts": 2, "ensemble": False, "ensemble_top_k": 4, "tune_budget": 0}
-    assert config.climber.select_params == {"population_size": 50}  # MAP-Elites' setting: the selector's
+    assert config.climber.params == {"tune_budget": 0}
+    # MAP-Elites' setting and the schedule's knobs: the selector's
+    assert config.climber.select_params == {"population_size": 50, "num_drafts": 2, "ensemble": False, "ensemble_top_k": 4}
     assert config.climber.operator_params == {"draft": {"retrieval": False}}
     assert config.learning.tool is False
     assert (config.concurrency.parallel_agents, config.evaluation.n_replicates, config.evaluation.noise_k) == (3, 4, 2.0)
@@ -331,7 +335,8 @@ def test_legacy_set_overrides_keep_working_and_removed_keys_say_what_to_do():
          "search.parallel_agents=2", "operators.improve_ablation=false"]
     ))
     assert config.climber.label == "openevolve"
-    assert config.climber.params == {"ensemble": False, "tune_budget": 0, "population_size": 9, "ensemble_top_k": 5}
+    assert config.climber.params == {"tune_budget": 0, "population_size": 9}
+    assert config.climber.select_params == {"ensemble": False, "ensemble_top_k": 5}
     assert config.concurrency.parallel_agents == 2
     assert config.climber.operator_params == {"improve": {"ablation": False}}
     assert current_setting("budget.total_s") == "budget.total_s"  # today's keys pass through

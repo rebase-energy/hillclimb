@@ -5,7 +5,7 @@ eval and owns the schema (`version` field); this module treats reports as
 plain versioned dicts and turns them into (a) the compact subset stored on
 Trial in the journal — the only state synced off remote machines — and
 (b) markdown for improve prompts, `hillclimb show`, and the watch TUI.
-The same rendering feeds agent and human, so what you read in `show` is
+The same rendering feeds coding agent and human, so what you read in `show` is
 exactly what the operator saw. Every function degrades to ""/None on
 missing, foreign-version, or error-only reports.
 """

@@ -323,7 +323,7 @@ class CandidateEvaluator:
         """Compact validation breakdown from the eval's eval_result.json —
         hillclimb's evaluator report contract. Producers: the emflow eval
         runner, a problem's verifier script (the executor discards anything
-        else on verifier problems), or the agent's own solution when the
+        else on verifier problems), or the coding agent's own solution when the
         problem has no verifier. The split check is the orchestrator half of
         the leakage contract: holdout and verify results must never reach
         prompts."""
@@ -341,7 +341,7 @@ class CandidateEvaluator:
         except Exception:  # noqa: BLE001 — a malformed report must never fail a trial
             return None
         # provenance is stamped from problem configuration, not file contents:
-        # an agent-authored file cannot claim evaluator trust
+        # an coding-agent-authored file cannot claim evaluator trust
         compact["source"] = "evaluator" if self.problem.report_trusted else "agent"
         return compact
 

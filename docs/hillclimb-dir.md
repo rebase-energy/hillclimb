@@ -39,7 +39,7 @@ dir may be your repo's root.
 Machine-scoped state is shared across hillclimb dirs under `~/.cache/hillclimb/`
 (honors `XDG_CACHE_HOME`; `HILLCLIMB_CACHE_DIR` overrides): solution-runtime
 venvs keyed by a hash of their requirements (rebuilt automatically when
-requirements change), the emflow problem cache, and the cross-search agent
+requirements change), benchmark providers' caches, and the cross-search coding agent
 semaphore. Checkouts predating this layout left `.runtime-venv*/` and `cache/` in the
 project dir — safe to delete.
 
@@ -47,7 +47,7 @@ project dir — safe to delete.
 
 Each run writes `runs/<run-id>/spec.yaml` next to `run.yaml`: one `problems:`
 entry per search it launched, with every parameter the launch resolved to —
-target, budget, agent, model, the climber (its full `climber:` block),
+target, budget, coding agent, model, the climber (its full `climber:` block),
 parallelism, replicates, the seed (as an absolute path) and any `--set`
 overrides. It is generated from what
 actually ran, whether the run came from the CLI, a spec file, a fleet or an
@@ -94,7 +94,7 @@ not:
   `journal.jsonl`, `status.json`, `knowledge_card.yaml`, the `climber/`
   snapshot, and `best/solution.py` + `best/params.json` — enough for `git log`
   to explain every run and for `hillclimb chart` to work on a fresh clone;
-- ignored: `candidates/` (agent streams, replicate outputs, runtime data),
+- ignored: `candidates/` (coding agent streams, replicate outputs, runtime data),
   the run's `logs/`, the `control/` queue, the rest of `best/` (a submission
   can be large), `store.sqlite`, the derived `knowledge/graph.json`, and
   `.env` (keys, never).
@@ -164,7 +164,7 @@ With `sqlite`, a search dir holds only what has to be files (`candidates/`,
 `best/`, logs) and everything else lives in the database — cross-run views
 (the chart, `store searches`, experiments) query it instead of walking run dirs,
 and N concurrent engines (`--parallel-searches`) write it safely. The single-writer rule
-is unchanged: the engine owns a search's records whichever agent holds
+is unchanged: the engine owns a search's records whichever backend holds
 them; `stop`/`prune` go through the store's command queue.
 
 `hillclimb store sync` imports the folder's searches into the configured
@@ -172,11 +172,11 @@ store (skipping ones it already has) — run it once after switching to
 `sqlite` so earlier history shows up. `hillclimb store searches
 [--problem KEY]` lists what the store holds.
 
-A new agent implements the `DataStore` protocol: run/search metadata
+A new backend implements the `DataStore` protocol: run/search metadata
 (upsert), the journal (append-only, returned in append order — policies
 replay it), one status record per search, and a consume-once command queue.
-Candidate working dirs, `best/`, agent streams/logs, problems, knowledge YAML
-and agent slots stay on the local filesystem in every backend — agents and
+Candidate working dirs, `best/`, coding agent streams/logs, problems, knowledge YAML
+and coding agent slots stay on the local filesystem in every backend — coding agents and
 verifiers need real files.
 
 Search states: `running` (fresh heartbeat + live pid) · `parked` (rate limit;

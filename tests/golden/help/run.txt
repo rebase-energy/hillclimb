@@ -16,8 +16,8 @@
 │                                                                                  operators: claude-code | codex | pi │
 │                                                                                  | dummy (--backend is the old       │
 │                                                                                  spelling)                           │
-│ --model                                                    TEXT                  Model the agent runs, e.g. sonnet / │
-│                                                                                  opus                                │
+│ --model                                                    TEXT                  Model the coding agent runs, e.g.   │
+│                                                                                  sonnet / opus                       │
 │ --climber                                                  TEXT                  The climber, by name: a preset      │
 │                                                                                  (greedy | openevolve | gepa) or one │
 │                                                                                  .py file. It replaces the           │
@@ -36,8 +36,8 @@
 │                                                                                  memory-blind experiment             │
 │                                                                                  [default: learning]                 │
 │ --name                                                     TEXT                  Run name shown in the TUI           │
-│ --parallel-agents,--parallel-operat…                       INTEGER               Concurrent agents per search, one   │
-│                                                                                  candidate each                      │
+│ --parallel-agents,--parallel-operat…                       INTEGER               Concurrent coding agents per        │
+│                                                                                  search, one candidate each          │
 │                                                                                  (--parallel-operators is the old    │
 │                                                                                  spelling)                           │
 │ --parallel-searches                                        INTEGER RANGE [x>=1]  Independent searches on the problem │

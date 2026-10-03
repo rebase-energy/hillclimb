@@ -18,6 +18,7 @@ from hillclimb.harness.budget import BudgetManager
 from hillclimb.harness.candidate import Candidate
 from hillclimb.harness.dirs import create_search_dir
 from hillclimb.harness.journal import Journal
+from hillclimb.harness.loop import PolicyLoop
 from hillclimb.modules.policies.greedy import Greedy
 from hillclimb.modules.selectors.map_elites import MapElites
 from tests.harness_factory import SearchRig
@@ -74,7 +75,7 @@ def test_the_preset_is_greedy_over_map_elites(config):
     preset = load_climber("openevolve")
     policy = preset.build_loop().policy
     assert preset.name == "openevolve" and type(policy) is Greedy and isinstance(policy.selector, MapElites)
-    assert (policy.param("ensemble"), policy.param("tune_budget")) == (False, 0)
+    assert (policy.selector.param("ensemble"), policy.param("tune_budget")) == (False, 0)
     assert policy.selector.num_inspirations == 2  # the selector's own default
     policy = openevolve(PARAMS)
     assert policy.selector.db_config.num_islands == 2
@@ -92,7 +93,7 @@ def test_the_preset_is_greedy_over_map_elites(config):
 def test_drafts_until_population_seeded_then_evolves(config, tmp_path):
     journal = Journal(tmp_path / "j.jsonl")
     policy, view = replayed(journal, config, {**PARAMS, "num_drafts": 2})
-    first = policy.propose(view)
+    first = PolicyLoop(policy).propose(view)
     assert first.operator == "draft" and "island" in first.climber_meta
 
     scored(journal, tmp_path, "c000", "baseline", 0.1, code="pass\n")
@@ -101,7 +102,7 @@ def test_drafts_until_population_seeded_then_evolves(config, tmp_path):
     policy, view = replayed(journal, config, {**PARAMS, "num_drafts": 1})
     assert set(policy.selector.db.programs) == {"c000", "c001", "c002"}
 
-    action = policy.propose(view)
+    action = PolicyLoop(policy).propose(view)
     assert action.operator == "improve"
     assert action.target_id in {"c000", "c001", "c002"}
     assert action.target_id not in action.inspiration_ids
@@ -125,11 +126,11 @@ def test_proposals_are_replay_deterministic_and_rng_isolated(config, tmp_path):
     before = random.random()
     random.seed(7)
     p1, v1 = replayed(Journal(tmp_path / "j.jsonl"), config)
-    a1 = p1.propose(v1)
+    a1 = PolicyLoop(p1).propose(v1)
     after = random.random()
     assert after == before  # global RNG state untouched by the policy
     p2, v2 = replayed(Journal(tmp_path / "j.jsonl"), config)
-    a2 = p2.propose(v2)
+    a2 = PolicyLoop(p2).propose(v2)
     assert (a1.target_id, a1.inspiration_ids, a1.climber_meta) == (
         a2.target_id, a2.inspiration_ids, a2.climber_meta
     )
@@ -167,7 +168,7 @@ def test_buggy_and_code_less_floor_are_not_programs(config, tmp_path):
                                        candidate_dir=str(tmp_path)))
     policy, view = replayed(journal, config, {**PARAMS, "num_drafts": 1})
     assert policy.selector.db.programs == {}
-    assert policy.propose(view).operator == "debug"  # hillclimb's debug rule survives
+    assert PolicyLoop(policy).propose(view).operator == "debug"  # hillclimb's debug rule survives
 
 
 def test_openevolve_policy_drives_search_end_to_end(task, config):
@@ -240,7 +241,7 @@ def _db_state(policy) -> dict:
 
 
 def _next(policy, journal: Journal, config):
-    action = policy.propose(make_view(journal, config))
+    action = PolicyLoop(policy).propose(make_view(journal, config))
     return action.operator, action.target_id, action.inspiration_ids, action.climber_meta
 
 

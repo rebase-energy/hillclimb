@@ -2,7 +2,7 @@
 
 `solution_kind: climber` in problem.yaml selects the climber contract and
 makes a search on it run its climber in the improver role; the verifier is
-`hillclimb meta evaluate`, which runs inner searches with the candidate as
+`hillclimb grade`, which runs inner searches with the candidate as
 their climber and scores the gap they closed. Nothing here is documented
 yet (a later launch) — these tests are the contract until then.
 """
@@ -141,13 +141,83 @@ def test_aggregate_is_median_over_repeats_then_mean_over_problems():
     assert meta.aggregate({}) == 0.0
 
 
+def test_aggregate_combines_problems_the_way_the_spec_names():
+    per_problem = {"a": [0.0, 1.0, 0.2], "b": [0.6], "c": [4.0]}
+    assert meta.aggregate(per_problem, meta.AGGREGATES["median"]) == pytest.approx(0.6)
+    assert meta.aggregate(per_problem, meta.AGGREGATES["min"]) == pytest.approx(0.2)
+    assert meta.aggregate(per_problem, meta.AGGREGATES["mean"]) == pytest.approx((0.2 + 0.6 + 4.0) / 3)
+
+
+def test_solved_and_raw_scores():
+    assert meta.solved(1.0, 0.0, 1.0, True) == 1.0 and meta.solved(0.9, 0.0, 1.0, True) == 0.0
+    assert meta.solved(99.0, 120.0, 100.0, False) == 1.0 and meta.solved(101.0, 120.0, 100.0, False) == 0.0
+    assert meta.solved(None, 0.0, 1.0, True) == 0.0
+    assert meta.raw(0.7, 0.1, 1.0, True) == 0.7
+    assert meta.raw(None, 0.1, 1.0, True) == 0.1  # nothing scored: the floor
+
+
+def test_grade_spec_names_its_score_and_aggregate(tmp_path):
+    path = tmp_path / "grade.yaml"
+    path.write_text("problems: [a]\n")
+    spec = meta.load_grade_spec(path)
+    assert (spec.score, spec.aggregate) == ("gap-closed", "mean")  # the defaults
+    assert spec.score_function() is meta.gap_closed
+    path.write_text("problems: [a]\nscore: solved\naggregate: median\n")
+    spec = meta.load_grade_spec(path)
+    assert spec.score_function() is meta.solved and spec.aggregate_function() is meta.AGGREGATES["median"]
+
+
+def test_grade_spec_takes_the_users_own_functions(tmp_path):
+    (tmp_path / "mine.py").write_text(
+        "def halfway(best, floor, target, higher_is_better):\n"
+        "    return 1.0 if best is not None and best >= (floor + target) / 2 else 0.0\n"
+        "def worst_two(scores):\n"
+        "    return sum(sorted(scores)[:2]) / 2\n"
+        "NOT_A_FUNCTION = 3\n"
+    )
+    path = tmp_path / "grade.yaml"
+    path.write_text("problems: [a]\nscore: mine.py:halfway\naggregate: mine.py:worst_two\n")
+    spec = meta.load_grade_spec(path)  # a file ref resolves beside the spec
+    assert spec.score_function()(0.6, 0.0, 1.0, True) == 1.0
+    assert spec.aggregate_function()([1.0, 0.0, 0.5]) == pytest.approx(0.25)
+    assert meta.GradeSpec.model_validate({"problems": ["a"], "aggregate": "statistics:median"}).aggregate_function()(
+        [1.0, 2.0, 9.0]
+    ) == 2.0
+
+    for bad, why in [
+        ("nope", "not one of gap-closed, solved, raw"),
+        ("mine.py:missing", "missing"),
+        ("gone.py:f", "gone.py"),
+        ("mine.py:NOT_A_FUNCTION", "is not a function"),
+    ]:
+        path.write_text(f"problems: [a]\nscore: {bad}\n")
+        with pytest.raises(meta.MetaError, match=why):
+            meta.load_grade_spec(path).score_function()
+
+
+def test_the_holdout_split_grades_on_the_outer_holdout(tmp_path):
+    path = tmp_path / "grade.yaml"
+    path.write_text("problems: [a, b]\nouter_holdout:\n  - c\n  - {problem: d, target: 2.0}\nbudget: 90s\n")
+    spec = meta.load_grade_spec(path)
+    assert [p.problem for p in spec.problems_for("validation")] == ["a", "b"]
+    assert [p.problem for p in spec.problems_for("holdout")] == ["c", "d"]
+    assert spec.outer_holdout[1].target == 2.0
+    assert spec.required_exec_s() == 2 * (90 + 60) and spec.required_exec_s("holdout") == 2 * (90 + 60)
+
+    bare = meta.GradeSpec.model_validate({"problems": ["a"]})
+    with pytest.raises(meta.MetaError, match="outer_holdout"):
+        bare.problems_for("holdout")
+    with pytest.raises(meta.MetaError, match="unknown split"):
+        bare.problems_for("test")
+
+
 # --- the spec ---
 
 
-def test_meta_spec_accepts_bare_names_and_targets(tmp_path):
-    path = tmp_path / "meta.yaml"
+def test_grade_spec_accepts_bare_names_and_targets(tmp_path):
+    path = tmp_path / "grade.yaml"
     path.write_text("problems:\n  - a\n  - {problem: b, target: 2.0, floor: 1.0}\nbudget: 90s\nrepeats: 2\n")
-    spec = meta.load_meta_spec(path)
+    spec = meta.load_grade_spec(path)
     assert [p.problem for p in spec.problems] == ["a", "b"]
     assert spec.problems[1].target == 2.0 and spec.problems[1].floor == 1.0
     assert spec.budget_s == 90
@@ -155,14 +225,14 @@ def test_meta_spec_accepts_bare_names_and_targets(tmp_path):
     assert spec.required_exec_s() == 2 * 2 * (90 + 60)
 
 
-def test_meta_spec_refuses_unknown_keys_and_no_problems(tmp_path):
-    path = tmp_path / "meta.yaml"
+def test_grade_spec_refuses_unknown_keys_and_no_problems(tmp_path):
+    path = tmp_path / "grade.yaml"
     path.write_text("problems: []\n")
     with pytest.raises(meta.MetaError, match="at least one inner problem"):
-        meta.load_meta_spec(path)
+        meta.load_grade_spec(path)
     path.write_text("problems: [a]\nmodel: opus\n")
     with pytest.raises(meta.MetaError, match="model"):
-        meta.load_meta_spec(path)
+        meta.load_grade_spec(path)
 
 
 # --- version-one permissions: what an improver's file may import ---
@@ -201,7 +271,7 @@ def test_reference_meta_problem_loads_and_its_baseline_is_the_bundled_greedy():
     spec = load_problem(str(META_PROBLEM), config)
     assert spec.solution_kind == "climber"
     assert spec.baseline_text == GREEDY_SOURCE.read_text()  # one file, byte-identical to the package's
-    inner = meta.load_meta_spec(META_PROBLEM / "meta.yaml")
+    inner = meta.load_grade_spec(META_PROBLEM / "grade.yaml")
     assert [p.problem for p in inner.problems] == ["heilbronn-11", "heilbronn-14"]
     assert meta.check_climber_source(META_PROBLEM / "greedy.py") == []
 
@@ -241,7 +311,7 @@ def _meta_hillclimb_dir(tmp_path: Path, budget: str = "20s") -> Path:
     shutil.copytree(REPO / "problems" / "heilbronn-11", problems / "heilbronn-11",
                     ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copytree(META_PROBLEM, problems / "meta-heilbronn", ignore=shutil.ignore_patterns("__pycache__"))
-    (problems / "meta-heilbronn" / "meta.yaml").write_text(f"problems: [heilbronn-11]\nbudget: {budget}\n")
+    (problems / "meta-heilbronn" / "grade.yaml").write_text(f"problems: [heilbronn-11]\nbudget: {budget}\n")
     (hc / "hillclimb.yaml").write_text(yaml.safe_dump({
         "agent": "dummy",
         "paths": {"runtime_python": sys.executable},
@@ -276,10 +346,39 @@ def test_a_climber_that_does_not_load_makes_the_meta_verifier_fail(tmp_path, mon
     assert "FAILED" in result.output
 
 
+@pytest.mark.slow
+def test_grade_on_the_holdout_split_runs_the_outer_holdout(tmp_path, monkeypatch):
+    hc = _meta_hillclimb_dir(tmp_path)
+    spec = hc / "problems" / "meta-heilbronn" / "grade.yaml"
+    monkeypatch.setenv("HILLCLIMB_DIR", str(hc))
+    monkeypatch.chdir(hc)
+    args = ["grade", "--climber", str(META_PROBLEM / "greedy.py"), "--spec", str(spec), "--split", "holdout"]
+
+    # no outer holdout in the spec: refused before any inner search starts
+    workdir = tmp_path / "none"
+    workdir.mkdir()
+    result = CliRunner().invoke(app, [*args, "--workdir", str(workdir)])
+    assert result.exit_code == 1 and "outer_holdout" in result.output
+    assert not (workdir / "hillclimb").exists()
+
+    spec.write_text("problems: [no-such-problem]\nouter_holdout: [heilbronn-11]\nbudget: 20s\nscore: solved\n")
+    workdir, out = tmp_path / "held-out", tmp_path / "grade.json"
+    workdir.mkdir()
+    result = CliRunner().invoke(
+        app, [*args, "--workdir", str(workdir), "--result", str(out)], catch_exceptions=False
+    )
+    assert result.exit_code == 0, result.output
+    graded = yaml.safe_load(out.read_text())
+    # only the outer holdout ran (the validation problem does not even exist),
+    # scored by the spec's own choice: the dummy coding agent solves nothing
+    assert list(graded["instances"]) == ["heilbronn-11"]
+    assert graded["score"] == 0.0
+
+
 def test_evaluate_refuses_a_spec_the_exec_timeout_cannot_fit(tmp_path):
     config = Config()
     config.budget.exec_timeout_s = 100
-    spec = meta.MetaSpec.model_validate({"problems": ["a"], "budget": "5m"})
+    spec = meta.GradeSpec.model_validate({"problems": ["a"], "budget": "5m"})
     climber = tmp_path / "solution.py"
     climber.write_text("x = 1\n")
     with pytest.raises(meta.MetaError, match="budget.exec_timeout_s is 100"):
@@ -293,7 +392,7 @@ def test_nested_config_keeps_the_users_agent_and_isolates_the_rest(tmp_path):
     outer.store.backend = "sqlite"
     outer.learning.enabled = True
     outer.budget.stop_margin_s = 300
-    spec = meta.MetaSpec.model_validate({"problems": ["a"], "budget": "60s"})
+    spec = meta.GradeSpec.model_validate({"problems": ["a"], "budget": "60s"})
     data = meta.nested_config(outer, tmp_path / "solution.py", spec, tmp_path / "hillclimb")
     assert (data["agent"], data["model"]) == ("codex", "gpt-5")
     assert data["climber"] == str((tmp_path / "solution.py").resolve())  # a one-file climber, by its file
@@ -306,7 +405,7 @@ def test_nested_config_keeps_the_users_agent_and_isolates_the_rest(tmp_path):
 
 
 def test_inner_command_lays_the_trials_params_over_the_climbers(tmp_path):
-    spec = meta.MetaSpec.model_validate({"problems": ["a"], "budget": "90s"})
+    spec = meta.GradeSpec.model_validate({"problems": ["a"], "budget": "90s"})
     cmd = meta.inner_command("py", "a", spec, tmp_path / "s.py", "a-r0", {"num_drafts": 2, "temp": 0.5, "init": "grid"})
     # --no-detach: the outer verifier waits for the inner search's result
     assert cmd[:6] == ["py", "-m", "hillclimb.cli", "run", "a", "--no-detach"]

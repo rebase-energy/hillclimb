@@ -1,7 +1,7 @@
 """Papers as a knowledge source: distill a PDF into typed claims that ride
 the existing pipeline (claims -> graph -> retrieval -> credit).
 
-`hillclimb paper add <pdf>` runs a one-shot distiller agent over the PDF and
+`hillclimb paper add <pdf>` runs a one-shot distiller coding agent over the PDF and
 writes `knowledge/papers/<slug>.yaml` — git-versioned YAML like the rest of
 the knowledge dir. The graph links each claim to its `paper:<slug>` node the
 way search claims link to their search node, so retrieval ranks and the
@@ -120,10 +120,10 @@ def distill_paper(
     force: bool = False,
     log=print,
 ) -> PaperRecord | None:
-    """Ingest one PDF: a one-shot agent reads it and writes claims, which are
+    """Ingest one PDF: a one-shot coding agent reads it and writes claims, which are
     absorbed into the registries and saved as `papers/<slug>.yaml`. Cached by
     content hash — re-adding the same PDF is a no-op without --force. Returns
-    None when the distill agent failed (nothing is written then)."""
+    None when the distill coding agent failed (nothing is written then)."""
     from hillclimb.modules.memory.claims import _concepts_block, _entities_block, ensure_concepts, load_entities
     from hillclimb.modules.memory.claims import CLAIM_RELATIONS
     from hillclimb.project import machine_cache_dir
@@ -169,7 +169,7 @@ def distill_paper(
         default_model=DEFAULT_PAPER_MODEL,
     )
     if not result.ok:
-        log(f"paper: distill agent failed ({result.error_kind}): {result.error_message}")
+        log(f"paper: distill coding agent failed ({result.error_kind}): {result.error_message}")
         return None
 
     claims_file = work_dir / CLAIMS_FILENAME

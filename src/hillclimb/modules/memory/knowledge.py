@@ -4,11 +4,11 @@ Every completed search writes a compact, human-readable card — what won, what
 failed, what it cost — into the hillclimb dir's `knowledge/` folder
 (git-versionable: the repo accumulates learning). New searches on the same
 problem or problem family retrieve recent cards and inject a "prior
-experience" section into draft prompts, so agents start from what already
+experience" section into draft prompts, so coding agents start from what already
 worked instead of rediscovering it.
 
 Extraction is purely mechanical (journal + notes.md + import scanning) — no
-model calls. The agents themselves wrote the summaries; this module just
+model calls. The coding agents themselves wrote the summaries; this module just
 routes them forward in time.
 
 Live sharing (CORAL-style) routes them sideways as well: a running search
@@ -271,7 +271,7 @@ def load_cards(
 
 
 def render_prior_experience(cards: list[KnowledgeCard], *, max_cards: int = 3) -> str:
-    """The prompt section: what worked, what to avoid, in the agents' own
+    """The prompt section: what worked, what to avoid, in the coding agents' own
     words. Compact by construction — a few hundred tokens, not a memoir."""
     if not cards:
         return ""

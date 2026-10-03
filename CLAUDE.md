@@ -39,7 +39,7 @@ ran and the suite completed with failing tests), and `buggy` (execution/contract
 `ok` journal values load as `passing`. Only passing trials rank or ship, while
 failing and buggy candidates are debug targets. `holdout: true` in
 `problem.yaml` makes the engine run the same script
-with `--holdout` in a directory agents never see. Holdout scoring is the
+with `--holdout` in a directory coding agents never see. Holdout scoring is the
 HOST's, never a search strategy's: `CandidateEvaluator` (`harness/evaluation.py`)
 scores the hidden split as part of `run_trial` — a trial that fails it is
 not-ok, like a verifier crash — and `api.build_evaluator` decides WHEN
@@ -48,17 +48,17 @@ shows holdout live; `holdout.top_k` gates the spend, floors are never gated),
 `after` once `run()` has returned (`api._finish_holdout`, for engines whose
 state must never see a holdout value — the `_ENGINES` entry declares it). Providers (`emflow://`,
 `mlebench://`) supply their own argv for the same contract. Never read a score
-off stdout — agent code shares that stream.
+off stdout — coding agent code shares that stream.
 
 A problem may optionally ship `interface.py` (Gym-spaces-style Python objects
 from `hillclimb.spaces`, picked up by default like `contract.md`): its
 `describe()` renders into the contract prompt, `check()` gives verifiers and
-agents located format violations, `sample()` writes a format-valid artifact,
+coding agents located format violations, `sample()` writes a format-valid artifact,
 and `hillclimb verify` lints the baseline's output against it. The engine
 never runs the check itself — a PYTHONPATH shim
 (`runtime.ensure_interface_shim`, wired always-on in `api.build_executor`)
 just makes `from hillclimb import spaces` importable inside the runtime venvs
-so the verifier or agent can call it voluntarily. `spaces.py` must stay
+so the verifier or coding agent can call it voluntarily. `spaces.py` must stay
 self-contained (stdlib top-level imports only; it is copied verbatim into the
 shim).
 
@@ -74,7 +74,8 @@ enough for `config.py` to import); `hillclimb.tui` is every terminal view and it
 (never imported by the harness or the modules); `hillclimb.cli` is one module per
 command group with `common.py` for what commands share (reached as `common.x()` so
 one patch covers every command) and `__main__.py` for the engine children. The flat
-top level is the public surface only: `api` (incl. `run` / `run_spec`), `config`,
+top level is the public surface only: `api` (incl. `run` / `run_spec` / `start` and the
+`Search` session), `results` (`SearchOutcome`, `open_search`), `config`,
 `problem`, `project`, `benchmark_providers`, `climber`, `experiment`, `connect`,
 `spaces` (byte-copied into runtime venvs, so it stays), the six facades `policies`,
 `selectors`, `operators`, `tuners`, `memory`, `loops` (lazy single modules:
@@ -102,13 +103,13 @@ ref is imported.
   knowledge/graph.json, .env)
 - Directory vocabulary: every level is `<level>_dir` — `run_dir`,
   `search_dir`, `candidate_dir` (`searches/<id>/candidates/<cid>/`, where the
-  agent works), `trial_dir` (`candidates/<cid>/trials/t<i>/`, holds the
+  coding agent works), `trial_dir` (`candidates/<cid>/trials/t<i>/`, holds the
   trial's `params.json`), `replicate_dir` (`…/t<i>/replicates/r<j>/`, the
   verifier's cwd; r0 of the best trial is hoisted to the candidate root).
   The word "workspace" is banned (`tests/test_vocabulary.py`
   enforces it); old journals/status files that still carry a `workspace` key
   are mapped to `candidate_dir` on load.
-  Machine-scoped state (shared venvs, emflow cache, agent slots) lives in
+  Machine-scoped state (shared venvs, emflow cache, coding agent slots) lives in
   `~/.cache/hillclimb/`.
 - Tests: `uv run pytest`
 - New problem: copy a bundled one (`hillclimb problem get <problem>`); check a
@@ -123,19 +124,25 @@ ref is imported.
   are never tuned. `n_trials`/`trial_mode` are accepted as legacy spellings
 - Concurrency: `concurrency.parallel_agents` per search, `concurrency.machine_max_agents`
   across the machine (flock slots in `~/.cache/hillclimb/agent-slots/`, default
-  `min(8, cores-2)`); verifier and agent envs are single-threaded
+  `min(8, cores-2)`); verifier and coding agent envs are single-threaded
   (`executor.SINGLE_THREAD_ENV`, parent values win). CPU accounting:
   `harness/procs.py` (`Reaper`) reaps every child the harness spawns — verifier
-  runs and agent calls — through `os.wait4`, sampling live descendants with `ps`
-  before a group kill; `AgentResult.cpu_s` → `AgentInfo.cpu_s` is the agent
+  runs and coding agent calls — through `os.wait4`, sampling live descendants with `ps`
+  before a group kill; `AgentResult.cpu_s` → `AgentInfo.cpu_s` is the coding agent
   call's local CPU and the chart's cost fold adds it to the trials'. Starter
   verifiers call their scorer plainly, never `exec` it (macOS drops the shell's
   child CPU at an exec; `tests/test_verifier_scripts.py`). `hillclimb ps` lists the
   engine process trees; `stop --all` reaps engines whose hillclimb dir was deleted; `reset` kills only the engines pinned to this folder's hillclimb dir, then deletes the dir
-- Operator agents: `claude-code`, `codex`, `pi` and `dummy`. Pi supports
+- Operator agents: `claude-code`, `codex`, `pi`, `dummy` and `toy` (`agents/toy.py`:
+  scripted moves by attempt KIND on `fitness-landscape`, deterministic per
+  `(seed, candidate, kind)`, a `toy: step=<float>` prompt line sets the stride,
+  two declared params so tune jobs run, refuses non-operator calls such as
+  `distill`). `agents.register_agent(name, factory)` (`hc.register_agent`) adds
+  one for THIS process only: `run_fleet` refuses a registered agent, like a
+  non-portable climber. Pi supports
   `routing.<op>.sampling` (numeric provider fields), with action → operator →
   default precedence and candidate-journal persistence. Sampling on other
-  agents fails validation. `pi.models_file` adds custom/local providers;
+  coding agents fails validation. `pi.models_file` adds custom/local providers;
   copied configs live under isolated `~/.cache/hillclimb/pi-home/<auth>/`
   (content-hashed subdir for custom models). Pi startup is offline, search
   startup preflights each model/sampling route, and provider errors are read
@@ -158,19 +165,19 @@ ref is imported.
   `allow_internet_during_solution` (`allow_network` is the legacy key), now
   enforced. `allow_internet_for_agents: false` → `AgentRequest.
   allow_internet=False` → network `proxy`: `AllowlistProxy` (a thread of the
-  engine, CONNECT only) lets the agent's `MODEL_HOSTS` through; on Linux the
+  engine, CONNECT only) lets the coding agent's `MODEL_HOSTS` through; on Linux the
   netns reaches it through `sandbox.py bridge` (localhost:3128 → unix socket).
   It needs the sandbox; the draft drops its research cue
   (`OperatorContext.agent_internet`). Claude Code's own `sandbox` setting is
   NOT used: under bypassPermissions it let curl through. `hillclimb sandbox
   check` (`harness/sandbox_check.py` + the stdlib-only `sandbox_probe.py` it
-  runs INSIDE the verifier and the no-internet agent policy) is the proof a
+  runs INSIDE the verifier and the no-internet coding agent policy) is the proof a
   user can run; the docs site's Sandbox page shows its output
 - Model per agent: `config.model` (default `sonnet`) is Claude's vocabulary; the
-  codex agent's `native_model` omits `--model` for a Claude alias/id so the Codex
+  codex coding agent's `native_model` omits `--model` for a Claude alias/id so the Codex
   CLI's own default answers (journaled as `codex-default`; the connect ping says
   so too) — OpenRouter routes always pass the id
-- Agent billing: `agent_auth` picks who pays — `subscription` (the Claude or
+- Coding agent billing: `agent_auth` picks who pays — `subscription` (the Claude or
   ChatGPT login), `api-key`, or `openrouter`, which points codex or pi at
   OpenRouter (`wire_api: responses`; the key comes from the environment or a
   `.env` beside hillclimb.yaml) and bills OpenRouter credits instead. Every codex
@@ -180,16 +187,16 @@ ref is imported.
   the search as `out_of_credits`, and `harness/pricing.py` fills `cost_usd` from
   OpenRouter's catalogue so `budget.max_cost_usd` applies. `hillclimb connect`
   (`connect.py`) is where a credential is checked on purpose instead of at the
-  first spawn: every probe runs through the SAME env builders the agents use
+  first spawn: every probe runs through the SAME env builders the coding agents use
   (`subscription_env`/`codex_env`/`pi_env`), so an inherited `ANTHROPIC_API_KEY`
   shadowing a subscription shows up in the table; a bare `connect` is the
-  status of all four targets (`claude`/`codex`/`pi` are agents and own their
+  status of all four targets (`claude`/`codex`/`pi` are coding agents and own their
   login, `openrouter` is a billing route), `connect <target>` runs that login,
   materializes the isolated home, pings the route with one tool-free call
   (`connect.ping`) and pins `agent`/`agent_auth` with a line-level edit of
   a config.yaml that keeps its comments — the USER level
   (`~/.config/hillclimb/config.yaml`, so `connect` precedes `init`; a folder's
-  hillclimb.yaml overrides it, `--local` writes there) and only when no agent is
+  hillclimb.yaml overrides it, `--local` writes there) and only when no coding agent is
   pinned yet, unless `--default`. Keys live in a `.env` (user-level beside the
   user config, read under the folder's own by `Config.load`), never in `Config`.
   Connection states: `logged-out` / `logged-in` / `ready` (`no-key` /
@@ -199,21 +206,21 @@ ref is imported.
   is the login, `Status.connected` the `ready` state.
   `hillclimb disconnect <target>` is the mirror on hillclimb's side only:
   `unpin_config_defaults` comments the pin out in place, `remove_staged` drops the
-  cache homes, `remove_env_key` the key. hillclimb may START an agent's login it
-  needs, it NEVER logs an agent out — the account is the person's
+  cache homes, `remove_env_key` the key. hillclimb may START a coding agent's login it
+  needs, it NEVER logs a coding agent out — the account is the person's
 - DataStore (`harness/store.py`): the one read/write path for a search's records —
   run/search metadata, the append-only journal (`Journal(store.journal(key))`,
   append order is the replay contract), the status record, and the stop/prune
-  command queue. Agents: `FileDataStore` (default; `runs/` as today) and
+  command queue. Backends: `FileDataStore` (default; `runs/` as today) and
   `SqliteDataStore` (`store.backend: sqlite` → `store.sqlite`, WAL,
   multi-process, writes no yaml). `open_store(config)` picks it; `resolve_search`/
   `latest_search`/`running_searches` replace dir walking; `SearchRecord.state`
   is derived at read time (`status.derive_state`, pid + heartbeat). `key_for(search_dir)`
   is `(run_id, search_id)`; `SearchMeta.search_uid` is the global id. Views and
   commands never open `journal.jsonl`/`status.json` directly — only the file
-  agent does. `hillclimb store sync` imports the folder into another agent
+  backend does. `hillclimb store sync` imports the folder into another backend
 - Tunable parameters (`spaces.py` contract + `harness/params.py` engine view +
-  `modules/tuners/`): an agent may declare numeric knobs in
+  `modules/tuners/`): a coding agent may declare numeric knobs in
   `params.json` next to `solution.py` (flat `name -> {type: float|int|
   categorical, low/high|choices, log, step, default}`; the runtime reads
   values through `spaces.params()`, which follows `$HILLCLIMB_PARAMS` to the
@@ -225,7 +232,7 @@ ref is imported.
   greedy proposes `Action(operator="tune", target_id=cid)` (params
   `tune_budget`/`tune_gate`/`tune_parallel`/`tune_burst`, all derived from
   the journal + in-flight refs) and the harness runs a *tune job* — no
-  agent, no machine slot, one new Trial on the EXISTING candidate on a deep
+  coding agent, no machine slot, one new Trial on the EXISTING candidate on a deep
   copy, merged in `_commit_tune` under the state lock, re-journaled (replay
   keeps the last record; `tune_started`/`tune_discarded` audit lines), holdout
   only for a trial that became the candidate's best. WHICH values come from
@@ -234,7 +241,7 @@ ref is imported.
   is a pure function of the candidate's trials + pending sets, so no study
   state survives a call and resume is free. Children of a tunable parent
   inherit its best trial's values as their defaults (`prompts/params_cue.md`
-  tells the agent); `best/params.json` ships the selected candidate's best
+  tells the coding agent); `best/params.json` ships the selected candidate's best
   trial values. Seeds are never tuned.
 - Similarity scores (`modules/similarity/`): pluggable "how alike are two
   solutions" measures. A `SimilarityScore` subclass implements
@@ -258,9 +265,15 @@ ref is imported.
   **Harness** = the fixed core, **Climber** = the block of exchangeable
   modules, **Policy** = the pure what-next decision, **Selector** = which
   candidate it expands, **Loop** = control flow, plus **Operator**, **Tuner**,
-  **Memory**, **SimilarityScore**. `SearchState` is what a policy reads,
+  **Memory**, **SimilarityScore**. A **coding agent** is the CLI an operator
+  calls (Claude Code, Codex, pi): the climber is itself an agent, so prose
+  (docs, help text) says "coding agent" in headings, definitions and a
+  section's first mention, while identifiers keep the short form (`agent:`,
+  `--agent`, `AgentRequest`, `hillclimb.agents`). An operator has a `kind`
+  (`create | repair | refine | combine`); `role` is only what a climber
+  plays in a search (`solver | improver`). `SearchState` is what a policy reads,
   `JournalView` its journal, `Attempt` what an operator returns,
-  `AgentRequest`/`AgentResult` an agent call, `climber_meta` a policy's note
+  `AgentRequest`/`AgentResult` a coding agent call, `climber_meta` a policy's note
   on a candidate (journal key `policy_meta` mapped by
   `Candidate._legacy_policy_meta_key`). `hillclimb.sdk` is the contracts
   import a climber's file needs (a lazy facade; it raises an ImportError
@@ -309,8 +322,10 @@ ref is imported.
   form for people (`Greedy(num_drafts=3)`) and never takes what the loader
   offers
 - `Climber` (`hillclimb/climber.py`): `resolve_climber(block, base_dir)` /
-  `Climber.from_spec` — or composed in Python, `Climber(policy=…, select=…,
-  operators=[…], tuner=…, memory=…)` from names, classes or instances (an
+  `Climber.from_spec` — or composed in Python, `Climber(select=…, policy=…,
+  operators=[…], tuner=…, memory=…)` (keywords in the order a step runs
+  them; the positional first argument is a preset name or a policy) from
+  names, classes or instances (an
   instance = its class + `.params`; written the most portable way:
   registry name > `module:Class` > `its_file.py:Class` > `live:Name`, the
   last making it not `portable`: `to_spec()`/resume/fleets raise
@@ -347,7 +362,7 @@ ref is imported.
   engine gets a block as `--set climber=<json>` ahead of the other pairs
   (`api.climber_argv`), a name as `--climber`
 - Harness + loop (`harness/core.py`, `harness/loop.py`): `Harness` is the fixed core
-  (candidate dirs, agent calls, trials, the journal's single writer, `best/`,
+  (candidate dirs, coding agent calls, trials, the journal's single writer, `best/`,
   accept band, budgets, control queue, crash recovery, holdout) and knows no
   policy. A `Loop.run(harness)` reaches it only through
   `view()`/`capacity`/`inflight`/`open`/`closed_reason` (pure reads) and
@@ -372,16 +387,36 @@ ref is imported.
   loop (fill free slots with `policy.propose`, `observe` every outcome,
   `catch_up` replays the journal once per candidate — the resume contract).
   EVERY climber runs as `Harness.execute(loop)` (`api.execute_search`):
+  `api.Search` holds what the engine sets up around a harness (`open()`:
+  memory, store, journal, status + heartbeat, agents, preflights, evaluator,
+  loop, harness; ONE SIGTERM handler, the previous restored) and settles a
+  search exactly once (`_end` / `_settle`: holdout, final status, official
+  verify, `memory.record`; a failing setup ends `failed`, nothing left
+  running). `execute_search` = `Search(...).open() or search.finish()`.
+  Stepping (`api.start` → `Search`; `Climber.start/propose/run/step/finish/
+  close` forward to it, `Climber._search` never touches spec or identity):
+  `begin()` = `Harness.start()` (baseline + seed, idempotent, what `execute`
+  runs first) then `budget.pause()` — the clock runs only inside a step;
+  `propose()` ticks, `catch_up`s and asks the policy; `run(action)` =
+  `clear_strikes()` + `harness.run` + `loop.observe` (a closed harness or an
+  unknown id is a `rejected` Outcome, never a raise); `close()` reads
+  `raise_latched()`: park → `parked`, stop → `stopped`, a spent budget →
+  `done` with the full tail, closed by hand with budget left → `stopped`
+  (resumable). Serial, policy climbers only (a loop climber can only
+  `finish()`), one open stepped search per process (`api._STEPPING`: status
+  carries the pid). `tests/test_stepping.py` steps the golden scenarios to
+  the recorded sequences. `Harness.run` abandons its own job on an
+  interrupt.
   `harness.glue.build_loop(config)` returns `PolicyLoop(policy)` or, for
   `gepa`, its own `GepaLoop` — there is no engine tier, no `_ENGINES`, no
   `SearchStrategy`. `holdout_timing(config)` is the user's `holdout.timing`
   (`inline | after`), tightened to `after` for gepa. Harness-native,
-  agent-free actions: `tune` and `inject` (`Action(INJECT_ACTION,
+  coding-agent-free actions: `tune` and `inject` (`Action(INJECT_ACTION,
   args={"source": text}, target_id=parent)` scores a text the loop already
   has; `--seed-from` runs through the same path as operator `seed`; the text
   is never journaled, its `Candidate.solution_sha256` — `candidate.source_hash`,
   newline-normalized — is, on every scored candidate). `Attempt.texts`
-  writes extra files from text; `Attempt.require_change` turns an agent
+  writes extra files from text; `Attempt.require_change` turns a coding agent
   that hands the parent back into Outcome `unchanged` (abandoned, never
   scored, no evaluation spent). `Outcome.result` is an `EvalResult` projected
   from the holdout-blind copy. `Harness.request_stop(reason)` closes it from a
@@ -406,33 +441,53 @@ ref is imported.
   cap any more (the old `max_candidates=50` default was unreachable from
   config); `Harness(max_candidates=…)` survives only as a test knob
 - Operators (`modules/operators/`): HOW one attempt is made. An `Operator` subclass
-  sets `name` + `role` (`create | repair | refine | combine`) and implements
+  sets `name` + `kind` (`create | repair | refine | combine`) and implements
   `prepare(ctx) -> Attempt(prompt, copy_parent, inherit_params,
   copy_inspirations, fork_session, files)`; it never touches disk, journal or
-  agent. The harness (`search._prepare` → `_prepare_attempt`, pure, so a
+  coding agent. The harness (`search._prepare` → `_prepare_attempt`, pure, so a
   refusal leaves no dir/journal/spend) checks `valid_target`, executes the
   preparation, and fills `{{contract}}` itself — appending the contract when
   a prompt has no token, so an operator cannot drop it (`search._contract` is
   harness-owned). `OperatorContext` is holdout-blind (masked target,
   inspirations, journal); harness-side answers (`render`, `live_experience`,
-  `failure_reason`, `report_section`) take candidate ids. `Candidate.role` is
+  `failure_reason`, `report_section`) take candidate ids. `Candidate.kind` is
   journaled (backfilled from the operator on load, None for an unknown
-  operator) and `journal.drafts()`/`debug_chain()`, `debug_depth` and the
-  dummy agent key on ROLE, never on the operator's name; the registry
-  (`operators.get_operator/operator_names/role_of/register_operator`) is the
+  operator; `role` up to 0.6 — the journal key and an `Operator` subclass's
+  attribute still load, `Candidate._legacy_role_key` /
+  `Operator.__init_subclass__`) and `journal.drafts()`/`debug_chain()`,
+  `debug_depth` and the dummy coding agent key on KIND, never on the operator's
+  name; the registry
+  (`operators.get_operator/operator_names/operator_kind/register_operator`) is the
   vocabulary `climber check` and the pi route preflight derive from.
   `baseline`/`seed`/`tune` stay harness-native (no prompt). Inspiration files
   are named by `sdk.inspiration_filename(i)`, never a literal
-- Policies and selectors (`modules/policies/`, `modules/selectors/`):
-  `Policy` is a base class (`DEFAULTS` merged over the MRO, `param()`,
-  `resolved_params()`, `self.selector`, `debuggable_tip`,
-  `prospective_branches`, `draft_complexity`, `top_distinct`; a duck-typed
-  class with `propose`+`observe` still runs). `Greedy` is the one bundled
-  schedule (debug > ensemble window > draft to `num_drafts` > tune > EXPAND
-  what the selector picks); `greedy.py` must stay byte-identical to
+- Policies and selectors (`modules/policies/`, `modules/selectors/`): ONE
+  STEP IS TWO DECISIONS IN A FIXED ORDER (the RSI framework's π_sel then
+  π_op; `PolicyLoop.propose(view)` = `selector.select(view, busy)` then
+  `policy.propose(view, selection)`; `api.Search.select()/propose()` the
+  same for stepping). The `Selector` base OWNS THE SCHEDULE: `select` =
+  failing tip (`debuggable_tip`) → combine window (`should_combine`,
+  `combine_candidates` = `top_distinct(..., skip_kind="combine")`,
+  `Selection(combine=True)`) → None while `prospective_branches <
+  num_drafts` (a root step) → `pick(state, busy)`, the ONE method a subclass
+  writes (`Best.pick`, `MapElites.pick`); its knobs (`num_drafts`, `debug`,
+  `max_debug_depth`, `ensemble*`) are `select_params`, `DEFAULTS` merged over
+  the MRO, params held live like a policy's. `spec.SCHEDULE_KNOBS` +
+  `schedule_to_selector` move them out of `params` wherever a block is read
+  (`ClimberSpec` before-validator, `block()`/`canonical()` for identity,
+  `Climber.build_loop` for overlays, `config.current_setting` for `--set
+  climber.params.<knob>`, v2 records). `Policy` is π_op: `propose(state,
+  selection) -> Action | None` (None = hold; `selection` None = root step),
+  the base is the plain mapping (draft / debug / ensemble with a drain hold /
+  improve via `draft_action` + `expand_action(state, selection, operator=)`),
+  `DEFAULTS` merged over the MRO, `param()`, `resolved_params()`,
+  `self.selector`, `draft_complexity`; a schedule knob passed to a policy is a
+  TypeError naming the selector. `Greedy` adds TUNE of the CHOSEN candidate
+  (`tune_now(state, candidate)`: budget, gate vs best, headroom, parallel,
+  burst) ahead of improve; `greedy.py` must stay byte-identical to
   `problems/meta-heilbronn/greedy.py`. A `Selector` (`sync(state)`,
-  `select(state, busy=) -> Selection(target_id, inspiration_ids,
-  prompt_context, meta)`, `creation_meta`) picks the parent: `best`
+  `pick(state, busy=) -> Selection(target_id, inspiration_ids,
+  prompt_context, meta, combine)`, `creation_meta`) picks the parent: `best`
   (greedy's ranking + busy-target rule) and `map-elites` (OpenEvolve's
   database; its state is a function of the JOURNAL — scored candidates in
   journal order, rebuilt when a result lands out of order or a tune trial
@@ -444,14 +499,14 @@ ref is imported.
   policy expands; it carries NO config (`journal`, `inflight`, `budget`,
   `higher_is_better`, `accept_band`). The exploration process is ONE dict:
   the block's `params`. `hillclimb climber check [SPEC]`
-  (`modules/policies/check.py`, pure: no agent, verifier or writes) resolves
+  (`modules/policies/check.py`, pure: no coding agent, verifier or writes) resolves
   every module, then replays the store's journals plus an empty one and
   reports contract breaches (stall on empty journal, `replay` /
   `idempotent` / `resume` divergence — the last compares a policy that
   watched the journal grow with one shown the finished journal — dangling
   or wrong-status targets, an operator the climber lacks, journal/file
   writes, shared-instance factory, dirty prompts); `--smoke` adds a
-  dummy-agent search; a loop climber is out of scope (exit 2)
+  dummy-coding-agent search; a loop climber is out of scope (exit 2)
 - Memory (`modules/memory/`): a module the block names (`memory: files |
   none | file | module:Class`, `memory_params`). `Memory` (base.py) = five
   no-op-by-default steps — `bind(env)`, `retrieve() -> Retrieved(text,
@@ -514,21 +569,33 @@ ref is imported.
   `SearchMeta.role` (`solver` | `improver`, default solver so every old
   record loads; `watch` labels only improvers). The role is the PROBLEM's
   doing, never a key of the block — the same climber runs at either level. Its
-  verifier is `hillclimb meta evaluate` (hidden group) on
+  verifier is `hillclimb grade` (hidden; `meta evaluate` is its old spelling) on
   `$HILLCLIMB_ENGINE_PYTHON` (new verifier env key: the engine's interpreter;
-  `api.build_executor` also exports `$HILLCLIMB_DIR`): reads `meta.yaml`
-  (inner `problems`, `budget` per inner search, `repeats`, optional
-  `floor`/`target`), writes a nested hillclimb dir under the replicate dir
-  (`meta.nested_config`: the user's agent/model/routing/problems, own runs,
+  `api.build_executor` also exports `$HILLCLIMB_DIR`): reads `grade.yaml`
+  (`meta.GradeSpec`: inner `problems`, `budget` per inner search, `repeats`,
+  optional `floor`/`target`, `score`, `aggregate`, `outer_holdout`), writes a nested hillclimb dir under the replicate dir
+  (`meta.nested_config`: the user's coding agent/model/routing/problems, own runs,
   files store, learning off), measures each inner floor ONCE
   (`score_floor`, like `verify` — a search's files-only c000 is unscored),
   runs one inner `hillclimb run --climber <solution.py>` per problem × repeat
   serially (scrubbing the outer verifier's `HILLCLIMB_*` keys; a trial's
   `$HILLCLIMB_PARAMS` values ride as `--set climber.params.k=v`, so the
-  tuner seam tunes policy knobs), and scores **gap closed** = per problem
+  tuner seam tunes policy knobs), and scores each inner search with the
+  spec's `score:` — default **gap closed** = per problem
   `(best − floor)/(target − floor)` direction-aware, clamped at 0, target =
-  best `chart_baselines` value; median over repeats, mean over problems,
-  each instance on the `instances` key, spend as `inner_*` metrics. An inner
+  best `chart_baselines` value; also `solved`, `raw`, or the user's own
+  `file.py:function` (beside the spec) / `module:function`, called as
+  `f(best, floor, target, higher_is_better)` — then the median over repeats
+  and the spec's `aggregate:` over problems (`mean` default, `median`,
+  `min`, or a function of the list); each instance on the `instances` key,
+  spend as `inner_*` metrics. Both belong to the grade, never to the
+  climber. The OUTER HOLDOUT: on the holdout split (`--split`, default
+  `$HILLCLIMB_SPLIT`; the engine sets it when the meta-problem has `holdout:
+  true`) the grade is measured on the spec's `outer_holdout` problems — the
+  ones the search on the meta-problem never climbs on — and a spec
+  without them is refused. Split vocabulary: validation = what a search
+  climbs, holdout = hidden from that search, outer holdout = hidden from
+  the search on the meta-problem too. An inner
   run that exits non-zero fails the verifier (→ buggy → debug target); a
   spec the outer `budget.exec_timeout_s` cannot fit is refused before
   spending. `hillclimb meta check` = import allow-list (`hillclimb.sdk`,
@@ -549,7 +616,7 @@ ref is imported.
   experiment touches shared state (memory);
   otherwise `schedule: parallel` + `max_concurrent: N` (or
   `--max-concurrent N`) — unbounded parallel starts every search at once and
-  the ones past the machine's agent slots burn their budget in
+  the ones past the machine's coding agent slots burn their budget in
   `waiting-slot`. `--run-id R --first-repeat K` appends repeats to a finished
   run. `SearchMeta.seed_sha256` records the seed each search started from.
   `experiment report --json` (`experiment.summaries_to_dict`) emits the experiments,
@@ -570,7 +637,7 @@ ref is imported.
   study's child (`--run-id`), a study's experiment, and `--no-detach` run in-process;
   the in-terminal log is a clock gutter (`common.engine_log`/`split_engine_line`, clock
   from `BudgetManager.clock_str`)
-- CLI: `uv run hillclimb --help` (engine); live TUIs: `watch` (agents; `watch candidates` jumps to a search),
+- CLI: `uv run hillclimb --help` (engine); live TUIs: `watch` (coding agents; `watch candidates` jumps to a search),
   every screen's way back is `keys.back_binding` (esc or b, footer `esc/b back`), so
   `b` is never anything else — the tree views select the best with `*`;
   `chart` (best score vs time per search; a bare `chart` on a folder with
@@ -647,13 +714,27 @@ ref is imported.
   returns), `graph` (knowledge graph)
 - Bundled problems in `src/hillclimb/demo/` (package data for `problem get`;
   copies of `problems/`, circle-packing with a lean `requirements.txt`); keep
-  the two in sync
+  the two in sync. `fitness-landscape` is bundled beyond the starter set
+  (lean `requirements.txt` in both copies): the terrain the `toy` agent walks
+- Python SDK surface (`hillclimb/__init__.py`, lazy): `hc.run(...,
+  max_evaluations=, learning=)` (both recorded as `set` pairs in the run's
+  spec), `hc.Action`, `hc.register_agent`, `hc.open_search(ref)`.
+  `results.SearchOutcome` reads through the store and never writes (its
+  journal's backend refuses appends): `best`, `candidates`, `history`
+  (`tui.tree.accepted_lineage`), `spend` (`journal_spend` + `Spend.seconds`
+  from the status record), `solution`, `params`, `source(cid)`
+  (`candidate.read_solution`, shared with `Harness.source`), `to_frame()`;
+  a finished search is read once, a `running` one on every access.
+  `examples/` (repo only, not in the wheel) runs on `fitness-landscape` +
+  `toy`; every script keeps its entry under `if __name__ == "__main__":`
+  and `tests/test_examples.py` runs each `main(evaluations=4)` in a fresh
+  hillclimb dir
 - Native Windows (`harness/oscompat.py`, the ONE place POSIX assumptions
   meet Windows; `tests/test_oscompat.py`): msvcrt locks, CREATE_NEW_PROCESS_GROUP
   + `taskkill /T /F` as the group kill, psutil (Windows-only dep) for liveness
   and the `ps` listings — `os.kill(pid, 0)` KILLS on Windows, never call it —
   `Scripts/python.exe` venvs, junctions when symlinks need privileges, `.cmd`
-  agents resolved through PATHEXT, forward-slash `$HILLCLIMB_*` paths, and a
+  coding agents resolved through PATHEXT, forward-slash `$HILLCLIMB_*` paths, and a
   UTF-8-mode relaunch of the CLI (`ensure_utf8_mode`). `problem get` writes the
   verifier for the fetching OS: verifier.py on Windows (the problem's own, else
   `demo/windows_verifier.py`), verifier.sh elsewhere; `problem.windows_edition`
@@ -668,11 +749,11 @@ ref is imported.
 
 The engine process is the **single writer** of search state — the journal,
 status and `best/` of `runs/<run-id>/searches/<search-id>/`, whichever
-DataStore agent holds the records. Never edit those files (or rows)
+DataStore backend holds the records. Never edit those files (or rows)
 directly — control a search through `hillclimb stop|kill|prune|resume`, which
 route through the store's command queue when the engine is live. The journal
 is append-only; replay keeps the last record per candidate. What stays on disk
-in every backend: `candidates/`, `best/`, agent streams/logs, `injected_claims.json`.
+in every backend: `candidates/`, `best/`, coding agent streams/logs, `injected_claims.json`.
 
 `knowledge/graph.json` is a **derived index** (gitignored) rebuilt
 deterministically from the knowledge YAML (cards, entities.yaml,
@@ -685,7 +766,7 @@ them). `knowledge/playbooks/`, `knowledge/consolidated.yaml`, and
 `hillclimb knowledge consolidate` rather than hand-editing (playbook edits
 are legitimate but land as reviewed git diffs). `knowledge/papers/` holds
 paper-derived claims (`hillclimb paper add <pdf> [--problem <target>]`, one
-sonnet agent pass per PDF, content-hash cached); paper claims ride the same
+sonnet coding agent pass per PDF, content-hash cached); paper claims ride the same
 retrieval/credit economy as search claims, wired to `paper:` graph nodes. Schema v2: nodes carry both
 `pos` (2D, consumed by hillclimb-go) and `pos3` (3D, the plotui viewer) —
 keep `pos` byte-stable when touching layout code.

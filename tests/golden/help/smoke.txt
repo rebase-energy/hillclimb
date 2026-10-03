@@ -1,7 +1,7 @@
                                                                                                                         
  Usage: root smoke [OPTIONS] [TARGET]                                                                                   
                                                                                                                         
- One real DRAFT call through the selected agent, end to end.                                                            
+ One real DRAFT call through the selected coding agent, end to end.                                                     
                                                                                                                         
  Executes the result and reports — verifies auth, JSON field names, and                                                 
  the filesystem contract.                                                                                               

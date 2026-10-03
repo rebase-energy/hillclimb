@@ -18,7 +18,7 @@ class OpenEvolvePolicy(Greedy):
     params then, so they are read from there."""
 
     name = "openevolve"
-    DEFAULTS = {"ensemble": False, "tune_budget": 0}
+    DEFAULTS = {"tune_budget": 0}
     default_selector = "map-elites"
     strict_params = False  # MAP-Elites' settings are in here too
 
@@ -28,5 +28,5 @@ class OpenEvolvePolicy(Greedy):
             from hillclimb.modules.selectors import get_selector
             from hillclimb.modules.selectors.map_elites import known_params
 
-            mine = {key: value for key, value in self.params.items() if key in known_params()}
-            self._selector = get_selector("map-elites", mine)
+            mine = {key: value for key, value in self.params.items() if key in known_params()}  # the schedule's too
+            self._selector = get_selector("map-elites", {"ensemble": False, **mine})

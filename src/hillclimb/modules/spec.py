@@ -26,7 +26,7 @@ PRESETS: dict[str, dict[str, Any]] = {
     # selector, without the moves OpenEvolve has no counterpart for
     "openevolve": {
         "name": "openevolve", "policy": "greedy", "select": "map-elites",
-        "params": {"ensemble": False, "tune_budget": 0},
+        "select_params": {"ensemble": False}, "params": {"tune_budget": 0},
     },
     "gepa": {"loop": "gepa"},
 }
@@ -39,13 +39,35 @@ _GONE = {
 }
 
 
+# the schedule — which node, or none — is the SELECTOR's (π_sel) since 0.7;
+# a block from before wrote these knobs under the policy's `params`
+SCHEDULE_KNOBS = (
+    "num_drafts", "max_debug_depth", "debug",
+    "ensemble", "ensemble_reserve_fraction", "ensemble_top_k", "ensemble_max_attempts",
+)
 # what a policy's params could hold in 0.5 that was the schedule's; in an
 # `openevolve` block, anything else was a MAP-Elites setting
 _OPENEVOLVE_SCHEDULE_KNOBS = (
-    "num_drafts", "max_debug_depth", "debug", "complexity_start",
-    "ensemble", "ensemble_reserve_fraction", "ensemble_top_k", "ensemble_max_attempts",
-    "tune_budget", "tune_gate", "tune_parallel", "tune_burst",
+    *SCHEDULE_KNOBS, "complexity_start", "tune_budget", "tune_gate", "tune_parallel", "tune_burst",
 )
+
+
+def schedule_to_selector(data: dict) -> dict:
+    """A block that sets the schedule under `params` (how every block did
+    before 0.7) means the same schedule under `select_params`, where the
+    selector reads it. `select_params` wins where both say something."""
+    params = data.get("params")
+    if not isinstance(params, dict) or not any(key in params for key in SCHEDULE_KNOBS):
+        return data
+    data = dict(data)
+    moved = {key: value for key, value in params.items() if key in SCHEDULE_KNOBS}
+    kept = {key: value for key, value in params.items() if key not in SCHEDULE_KNOBS}
+    if kept:
+        data["params"] = kept
+    else:
+        del data["params"]
+    data["select_params"] = {**moved, **(data.get("select_params") or {})}
+    return data
 
 
 def block_from_05(data: dict) -> dict:
@@ -149,13 +171,13 @@ class ClimberSpec(BaseModel):
             return data
         if "routing" in data:
             raise ValueError(
-                "`routing` is reserved: which agent and model run is the user's "
+                "`routing` is reserved: which coding agent and model run is the user's "
                 "choice (hillclimb.yaml `routing:`), never a climber's"
             )
         for key, advice in _GONE.items():
             if key in data:
                 raise ValueError(f"`{key}`: {advice}")
-        return block_from_05(data)
+        return schedule_to_selector(block_from_05(data))
 
     @model_validator(mode="after")
     def _one_brain(self) -> ClimberSpec:
@@ -244,8 +266,14 @@ class ClimberSpec(BaseModel):
     def block(self) -> dict[str, Any]:
         """The block as it is written down: every module it names (defaults
         included, so it reads whole), without the keys that say nothing — a
-        None, an empty mapping of params."""
-        return {key: value for key, value in self.model_dump(exclude_none=True).items() if value != {}}
+        None, an empty mapping of params — and with the schedule's knobs where
+        the selector reads them, however they were set."""
+        data = schedule_to_selector(self.model_dump(exclude_none=True))
+        return {key: value for key, value in data.items() if value != {}}
+
+    def canonical(self) -> ClimberSpec:
+        """The same block, normalized: what identity and a snapshot are taken of."""
+        return ClimberSpec.model_validate(self.block())
 
 
 def block_error(exc: Exception) -> str:

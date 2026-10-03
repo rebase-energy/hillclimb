@@ -1,12 +1,12 @@
 """Engines whose hillclimb dir is gone.
 
 `hillclimb stop|kill` route through the search's control/ queue, which lives
-under the hillclimb dir — delete that dir and the engines (and their agents
+under the hillclimb dir — delete that dir and the engines (and their coding agents
 and verifiers) keep running with nowhere to receive commands. The launcher
 pins `HILLCLIMB_DIR` in every child engine's environment, so a live engine
 pointing at a path that no longer exists is an orphan; each was started in
 its own session (`start_new_session=True`), so signalling its process group
-takes the agents and verifier children down with it.
+takes the coding agents and verifier children down with it.
 """
 
 from __future__ import annotations
@@ -185,7 +185,7 @@ def process_table(listing: str | None = None) -> dict[int, Proc]:
 
 
 def engine_trees(table: dict[int, Proc] | None = None) -> list[tuple[Engine, list[Proc]]]:
-    """Each live engine with its descendants (agents, verifiers, their
+    """Each live engine with its descendants (coding agents, verifiers, their
     children) in tree order, for `hillclimb ps`."""
     if table is None:
         table = process_table()
@@ -228,7 +228,7 @@ def _signal_tree(engine: Engine, pids: list[int], sig: int) -> None:
 
 
 def kill_engines(engines: list[Engine], grace_s: float = 5.0) -> list[Engine]:
-    """SIGTERM each engine with its whole descendant tree (agents, verifiers,
+    """SIGTERM each engine with its whole descendant tree (coding agents, verifiers,
     their children), then SIGKILL whatever survives `grace_s`. Returns the
     engines whose tree needed SIGKILL."""
     trees = {engine.pid: _descendants(engine.pid) for engine in engines}

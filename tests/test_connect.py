@@ -294,7 +294,7 @@ def test_connect_leaves_a_config_that_already_pins_a_agent(monkeypatch, tmp_path
     result = CliRunner().invoke(cli.app, ["connect", "codex", "--no-probe"])
     assert result.exit_code == 0, result.output
     assert user_config.read_text() == "agent: claude-code\n"
-    assert "already pins a agent" in result.output
+    assert "already pins a coding agent" in result.output
 
     result = CliRunner().invoke(cli.app, ["connect", "codex", "--no-probe", "--default"])
     assert result.exit_code == 0, result.output

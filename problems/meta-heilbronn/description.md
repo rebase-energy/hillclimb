@@ -7,7 +7,7 @@ on the Heilbronn ladder (`heilbronn-11`, `heilbronn-14`: place N points in
 the unit square to maximize the smallest triangle area; see `problem/`'s
 sibling problem folders for their descriptions and verifiers).
 
-The verifier runs one real inner search per problem in `problem/meta.yaml`,
+The verifier runs one real inner search per problem in `problem/grade.yaml`,
 each with its own wall-clock budget and the same coding agent that is
 writing you, and reports **gap closed**: per problem, the fraction of the
 distance from the inner search's floor (its baseline) to the best known

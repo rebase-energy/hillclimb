@@ -272,7 +272,7 @@ def test_create_search_persists_policy_and_routing(task, config, tmp_path):
     search_dir = create_search(config, task, tmp_path / "runs" / "r1", "r1", total_s=600)
     meta = load_search_meta(search_dir)
     assert meta.climber == "greedy" and meta.schema_version == SCHEMA_VERSION
-    assert meta.climber_spec["policy"] == "greedy" and meta.climber_spec["params"] == {"num_drafts": 2}
+    assert meta.climber_spec["policy"] == "greedy" and meta.climber_spec["select_params"] == {"num_drafts": 2}
     assert meta.climber_ref is None  # only a pre-0.6 record names its climber by reference
     assert meta.routing == {"draft": {"model": "opus-4.8"}}
 
@@ -314,7 +314,8 @@ def test_resume_restores_policy_and_routing(config, tmp_path, monkeypatch):
 
     restored = captured["config"]
     assert (restored.climber.label, restored.climber.select) == ("openevolve", "map-elites")
-    assert restored.climber.params == {"ensemble": False, "tune_budget": 0, "num_drafts": 2}
+    assert restored.climber.params == {"tune_budget": 0}
+    assert restored.climber.select_params == {"ensemble": False, "num_drafts": 2}
     assert restored.routing["draft"].model == "opus-4.8"
     assert restored.routing["draft"].agent is None
 
@@ -1178,7 +1179,7 @@ def test_resume_runs_the_snapshot_and_says_when_the_live_climber_changed(task, c
     resume(f"run-1/{search_dir.name}")
     restored = captured["config"].climber
     assert restored.policy == str(search_dir / "climber" / "files" / "drafts_only.py") and restored.loop is None
-    assert (restored.params, restored.operators, restored.memory) == ({"num_drafts": 2}, ["draft", "debug"], "none")
+    assert (restored.select_params, restored.operators, restored.memory) == ({"num_drafts": 2}, ["draft", "debug"], "none")
     assert restored.operator_params == {"draft": {"retrieval": False}} and restored.tuner_params == {"seed": 5}
     assert "changed since" not in capsys.readouterr().err
 

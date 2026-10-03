@@ -14,8 +14,8 @@ command queue. A *DataStore* is the backend that holds all four:
 
 The engine is the single writer of a search's records whatever the backend;
 viewers and control commands go through the same store. Candidate working
-directories, `best/`, agent streams and logs, problems, knowledge YAML and
-agent slots stay on the local filesystem in every backend: agents and
+directories, `best/`, coding agent streams and logs, problems, knowledge YAML and
+coding agent slots stay on the local filesystem in every backend: coding agents and
 verifiers need real files. Search ids are still minted by atomic `mkdir`
 (`dirs.allocate_search_dir`) because the directory must exist regardless.
 

@@ -17,7 +17,7 @@ from hillclimb.config import Config
 connect_app = typer.Typer(
     cls=HillclimbGroup,
     invoke_without_command=True,
-    help="Connect the agents that run operators (claude, codex, pi) and the OpenRouter route that pays for them.",
+    help="Connect the coding agents (claude, codex, pi) and the OpenRouter route that pays for them.",
 )
 
 
@@ -39,14 +39,14 @@ _CONNECT_MODEL = typer.Option(None, "--model", help="Model to ping with (default
 
 
 _CONNECT_PROBE = typer.Option(
-    True, "--probe/--no-probe", help="Make one tool-free agent call to prove the route works"
+    True, "--probe/--no-probe", help="Make one tool-free coding agent call to prove the route works"
 )
 
 
 _CONNECT_DEFAULT = typer.Option(
     None,
     "--default/--no-default",
-    help="Pin this agent as the default. Default: only when none is pinned there yet",
+    help="Pin this coding agent as the default. Default: only when none is pinned there yet",
 )
 
 
@@ -84,7 +84,7 @@ def _write_defaults(
     path: Path | None, updates: dict[str, str], *, wanted: bool | None, config: Config
 ) -> None:
     """Persist `agent`/`agent_auth`, unless the config already pins a
-    agent on purpose — connecting a second agent to try it out must not
+    coding agent on purpose — connecting a second coding agent to try it out must not
     silently repoint an existing setup. A user-level write also says so
     when this folder's hillclimb.yaml pins something else and keeps winning."""
     from hillclimb import connect as connect_mod
@@ -103,7 +103,7 @@ def _write_defaults(
     if wanted is None and connect_mod.pins_agent(text):
         current = f"{updates['agent']}/{updates['agent_auth']}"
         common.say(
-            f"[path]{common._m(path)}[/] already pins a agent — left as is "
+            f"[path]{common._m(path)}[/] already pins a coding agent — left as is "
             f"[note](`hillclimb connect … --default` switches it to {common._m(current)})[/]"
         )
         return
@@ -114,29 +114,29 @@ def _write_defaults(
     folder = config.hillclimb_dir / MARKER_FILE if config.hillclimb_dir else None
     if path == user_config_path() and folder and folder.exists() and connect_mod.pins_agent(folder.read_text()):
         common.say(
-            f"[note]this folder's[/] [path]{common._m(folder)}[/] [note]pins its own agent "
+            f"[note]this folder's[/] [path]{common._m(folder)}[/] [note]pins its own coding agent "
             "and keeps overriding the user default here (`--local` changes that one)[/]"
         )
 
 
 def _sandbox_line(config) -> str:
-    """Whether agents and verifiers will run confined on this machine."""
+    """Whether coding agents and verifiers will run confined on this machine."""
     from hillclimb.harness import sandbox
 
     try:
         if not sandbox.enabled(config):
-            return "[head]sandbox[/]: [warn]off[/] [note]— agents and solutions run with your full user rights[/]"
+            return "[head]sandbox[/]: [warn]off[/] [note]— coding agents and solutions run with your full user rights[/]"
         kind = sandbox.backend()
     except sandbox.SandboxUnavailable as exc:
         return f"[head]sandbox[/]: [bad]cannot start[/] [note]— {common._m(exc)}[/]"
     if kind is None:
         return (
             "[head]sandbox[/]: [warn]none exists for this operating system[/] "
-            "[note]— agents and solutions run with your full user rights[/]"
+            "[note]— coding agents and solutions run with your full user rights[/]"
         )
     tool = {"seatbelt": "sandbox-exec", "bwrap": "bubblewrap"}[kind]
     return (
-        f"[head]sandbox[/]: [ok]on[/] [note]({tool}) — agents and solutions write only to "
+        f"[head]sandbox[/]: [ok]on[/] [note]({tool}) — coding agents and solutions write only to "
         "their candidate's folder and cannot read your keys[/]"
     )
 
@@ -166,17 +166,17 @@ def _run_probe(agent: str, auth: str, model: str, config: Config) -> str | None:
     from hillclimb import connect as connect_mod
 
     label = f"model [path]{common._m(model)}[/]"
-    answered = model  # what to report when the agent does not name the model
+    answered = model  # what to report when the coding agent does not name the model
     if agent == "codex":
         from hillclimb.agents.codex_cli import CODEX_DEFAULT_LABEL, native_model
 
         if native_model(model, auth) is None:
-            # hillclimb's `model` is a Claude alias: the agent omits it and
+            # hillclimb's `model` is a Claude alias: the coding agent omits it and
             # the Codex CLI's own default model answers instead of refusing
             label = "the Codex CLI's default model"
             answered = CODEX_DEFAULT_LABEL
     common.say(f"pinging [path]{common._m(agent)}[/] with {label} …")
-    # the configured model goes through as is: the agent decides what to
+    # the configured model goes through as is: the coding agent decides what to
     # do with it, exactly as it will inside a search
     result = connect_mod.ping(agent, auth, model, models_file=config.pi.models_file)
     if not result.ok:
@@ -271,15 +271,15 @@ def connect(
     ctx: typer.Context,
     as_json: bool = typer.Option(False, "--json", help="The same rows as data"),
 ):
-    """Which agents this machine can run operators with, and who pays.
+    """Which coding agents this machine can run operators with, and who pays.
 
     A bare `hillclimb connect` checks every target — the credential is read
     through the same environment an operator gets, so an inherited
     `ANTHROPIC_API_KEY` shadowing your subscription shows up here instead of
-    on a bill. `●` marks the agent this config runs by default.
+    on a bill. `●` marks the coding agent this config runs by default.
 
     `hillclimb connect <claude|codex|pi|openrouter>` sets one up: it runs the
-    agent's own login, stages the credentials searches will read, pings the
+    coding agent's own login, stages the credentials searches will read, pings the
     route with one tool-free call, and pins the defaults in
     `~/.config/hillclimb/config.yaml` — every folder on this machine, so it
     works before `hillclimb init`; a folder's own hillclimb.yaml overrides them
@@ -341,7 +341,7 @@ def connect_claude(
     default: bool = _CONNECT_DEFAULT,
     local: bool = _CONNECT_LOCAL,
 ):
-    """Claude Code as the operator agent, billed to your Claude subscription.
+    """Claude Code as the coding agent, billed to your Claude subscription.
 
     The login is Claude Code's own (`claude auth login`); hillclimb only
     checks it the way an operator will — with `ANTHROPIC_API_KEY` stripped,
@@ -362,7 +362,7 @@ def connect_codex(
     default: bool = _CONNECT_DEFAULT,
     local: bool = _CONNECT_LOCAL,
 ):
-    """The Codex CLI as the operator agent.
+    """The Codex CLI as the coding agent.
 
     Runs `codex login`, then copies the credential into the isolated
     `CODEX_HOME` searches use, so your personal `~/.codex` settings change
@@ -382,7 +382,7 @@ def connect_pi(
     default: bool = _CONNECT_DEFAULT,
     local: bool = _CONNECT_LOCAL,
 ):
-    """The pi coding agent as the operator agent — the one that can sample.
+    """pi as the coding agent — the one that can sample.
 
     pi logs in inside its own TUI, so this imports what that login wrote
     (`~/.pi/agent/auth.json`) into pi's isolated hillclimb home, together
@@ -396,7 +396,7 @@ def connect_pi(
 @connect_app.command("openrouter")
 def connect_openrouter(
     key: str = typer.Option(None, "--key", help="The API key; omitted, connect asks for it (input hidden)"),
-    agent: str = typer.Option(None, "--agent", help="Also route this agent through OpenRouter: codex | pi"),
+    agent: str = typer.Option(None, "--agent", help="Also route this coding agent through OpenRouter: codex | pi"),
     model: str = typer.Option(None, "--model", help="OpenRouter model id, e.g. qwen/qwen3-coder"),
     probe: bool = _CONNECT_PROBE,
     default: bool = _CONNECT_DEFAULT,
@@ -448,7 +448,7 @@ def connect_openrouter(
 
     if agent is None:
         common.say(
-            "pin it to a agent with: [cmd]hillclimb connect openrouter --agent codex --model <id>[/]"
+            "pin it to a coding agent with: [cmd]hillclimb connect openrouter --agent codex --model <id>[/]"
         )
         return
     if agent not in ("codex", "pi"):
@@ -470,7 +470,7 @@ def disconnect(
     Unpinning edits the same config.yaml `connect` wrote (`~/.config/hillclimb/`,
     or this folder's with `--local`), commenting the lines out in place; the
     isolated homes under `~/.cache/hillclimb/` go; `openrouter` drops the key
-    from the `.env`. The agent's own login is left exactly as it is — hillclimb
+    from the `.env`. The coding agent's own login is left exactly as it is — hillclimb
     never logs you out of claude, codex or pi.
     """
     from hillclimb import connect as connect_mod

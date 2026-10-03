@@ -1,4 +1,4 @@
-# Agents
+# Coding agents
 
 The coding agents that run operators — Claude Code, Codex, pi — how to connect one, who pays, and sampling.
 
@@ -15,28 +15,51 @@ Optional — shell tab-completion for commands, subcommands, and options:
 hillclimb --install-completion   # writes into your shell config; restart the shell
 ```
 
-## Supported agents
+## Supported coding agents
 
 Operators are headless coding-agent processes, one per operator call, behind
-the agent seam in `src/hillclimb/agents/`:
+the coding agent seam in `src/hillclimb/agents/`:
 
-| agent | what it is |
+| coding agent | what it is |
 |---|---|
-| `claude-code` | Claude Code in headless mode — the production agent; bills your Claude subscription |
-| `codex` | Codex CLI in non-interactive mode; uses your Codex login by default. hillclimb's `model` defaults to `sonnet`, a Claude alias codex refuses, so for any Claude alias the agent omits `--model` and the Codex CLI's own default model answers (the journal says `codex-default`); set `model:` to a codex id to pin one |
+| `claude-code` | Claude Code in headless mode — the production coding agent; bills your Claude subscription |
+| `codex` | Codex CLI in non-interactive mode; uses your Codex login by default. hillclimb's `model` defaults to `sonnet`, a Claude alias codex refuses, so for any Claude alias the coding agent omits `--model` and the Codex CLI's own default model answers (the journal says `codex-default`); set `model:` to a codex id to pin one |
 | `codex` + `agent_auth: openrouter` | the same Codex CLI pointed at OpenRouter: cheap open models billed to OpenRouter credits, no subscription touched |
 | `pi` | pi coding agent in JSON mode; subscription login, API keys, OpenRouter or custom local providers, with per-operator sampling |
 | `dummy` | no model calls: a scripted operator for exercising the engine, TUIs and run layout |
+| `toy` | no model calls: scripted moves on the bundled `fitness-landscape` problem, where every solution is one point on a terrain, so scores move and a search takes seconds. What the [examples](../examples/) run on |
 | `fake` | deterministic canned operator for the test suite |
 
-Other agents (OpenCode, …) plug in at the same seam: a agent
+Other coding agents (OpenCode, …) plug in at the same seam: a coding agent
 implements the `Agent` protocol in `agents/base.py` — take a prompt plus a
-working directory, return the agent's JSON result — and is selected with
+working directory, return the coding agent's JSON result — and is selected with
 `--agent <name>`.
 
-## The sandbox, and agents without internet
+A scripted agent of your own needs no change to hillclimb:
 
-Every agent runs confined: it writes only to its candidate's folder and
+```python
+import hillclimb as hc
+from hillclimb.agents import AgentRequest, AgentResult
+
+class Mine:
+    name = "mine"
+
+    def invoke(self, request: AgentRequest) -> AgentResult:
+        (request.candidate_dir / "solution.py").write_text(...)   # request.prompt, .kind, .operator say what is asked
+        return AgentResult(ok=True)
+
+hc.register_agent("mine", Mine)
+hc.run("fitness-landscape", agent="mine", max_evaluations=20)
+```
+
+It exists in the process that registered it: `hc.run` and `climber.start`
+find it, a detached `hillclimb run` does not. It runs inside the engine's
+process, so the sandbox does not confine it (the solutions it writes are
+still verified inside it).
+
+## The sandbox, and coding agents without internet
+
+Every coding agent runs confined: it writes only to its candidate's folder and
 cannot read your keys. `allow_internet_for_agents: false` in `hillclimb.yaml`
 also takes the internet away from it, except for its model provider. Both are
 described in [sandbox.md](sandbox.md).
@@ -45,7 +68,7 @@ Whether the solution may use the internet when the verifier runs it is a
 different setting, the problem's `allow_internet_during_solution`
 ([problems.md](problems.md)).
 
-## Connecting an agent
+## Connecting a coding agent
 
 ```
 $ hillclimb connect
@@ -59,11 +82,11 @@ $ hillclimb connect
 Every credential is read **through the same environment an operator gets**, so
 what the table says is what a search will find — an `ANTHROPIC_API_KEY` left in
 your shell, which would quietly rebill a "subscription" search to the API, shows
-up here rather than on an invoice. `●` is the agent this config runs by
+up here rather than on an invoice. `●` is the coding agent this config runs by
 default.
 
 The state column has three words for an agent: `logged-out` (its own login is
-missing — the fix is that agent's login), `logged-in` (the login works, but
+missing — the fix is that coding agent's login), `logged-in` (the login works, but
 `hillclimb connect <target>` has not completed on this machine — or its cache
 was wiped — so the fix is `connect`), and `ready` (logged in *and* connected:
 the ping passed and what a search reads is staged). The OpenRouter route says
@@ -71,14 +94,14 @@ the ping passed and what a search reads is staged). The OpenRouter route says
 through its first operator call without `connect` first.
 
 `hillclimb connect claude` (or `codex`, `pi`, `openrouter`) sets one up: it runs
-that agent's own login, stages the credential in the isolated per-auth home
+that coding agent's own login, stages the credential in the isolated per-auth home
 searches read (`~/.cache/hillclimb/codex-home/…`, `pi-home/…`), pings the route
-with one tool-free agent call — which is where a model the account cannot use
+with one tool-free coding agent call — which is where a model the account cannot use
 fails, in seconds instead of mid-search — and pins `agent`/`agent_auth` in
 `~/.config/hillclimb/config.yaml`: the user level, every folder on the machine,
 so `connect` works before `hillclimb init`. A folder's own `hillclimb.yaml`
 overrides it, and `--local` writes there instead — the override for that folder
-alone. It leaves a config that already pins a agent alone unless you pass
+alone. It leaves a config that already pins a coding agent alone unless you pass
 `--default`. `--no-probe` skips the ping, `--auth api-key|openrouter` picks a
 different bill.
 
@@ -93,7 +116,7 @@ qwen/qwen3-coder` pins the route in the same command.
 `hillclimb disconnect <target>` undoes it on hillclimb's side: the pin is
 commented out of the same config file (`--local` for the folder's `hillclimb.yaml`), the staged
 homes under `~/.cache/hillclimb/` are removed, an OpenRouter key leaves the
-`.env`. The agent's own login stays: hillclimb may start a login it needs, it
+`.env`. The coding agent's own login stays: hillclimb may start a login it needs, it
 never ends one — your Claude, Codex or pi account is yours, not hillclimb's.
 
 `hillclimb smoke` is the next step up: a whole DRAFT on a real problem.
@@ -123,7 +146,7 @@ whose providers cache prompts: the journaled `cache_read_input_tokens` tells
 you whether the discount is landing. Set `budget.max_cost_usd` — cheap per
 token is not cheap per search, because a weaker model compensates with
 volume: one measured DRAFT burned 3M tokens (~$0.53 at qwen3-coder prices)
-and another spent its whole agent timeout without converging. Running out of
+and another spent its whole coding agent timeout without converging. Running out of
 credits parks the search — top up, then `resume`.
 To compare models head to head, give a study one experiment per model
 (`experiments: {sonnet: {model: …}, opus: {model: …}}`); the chart and
@@ -152,7 +175,7 @@ routing:
 | `pi.models_file` | Optional pi `models.json` for custom providers, including vLLM and llama.cpp |
 
 Sampling follows action → operator → default routing precedence and is
-recorded on each candidate. Unsupported agent combinations fail config
+recorded on each candidate. Unsupported coding agent combinations fail config
 validation. A short, tool-free preflight checks each distinct pi model and
 sampling combination (including every model in a pool) before search work
 starts. Provider rejection fails startup, including errors pi emits with

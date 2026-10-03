@@ -1,7 +1,7 @@
-"""The OS sandbox every agent and every verifier run is started in.
+"""The OS sandbox every coding agent and every verifier run is started in.
 
-Agents run with their permission prompts off and a verifier runs code an
-agent wrote, both as the user. The sandbox is what keeps that from costing
+Coding agents run with their permission prompts off and a verifier runs code a
+coding agent wrote, both as the user. The sandbox is what keeps that from costing
 the user anything: a `SandboxPolicy` says what the process tree may write,
 what it may not read and what network it has, and `launch()` wraps an argv in
 the operating system's own mechanism to enforce it:
@@ -16,7 +16,7 @@ What a policy means, on both:
   deny_read   unreadable, and unix sockets under them unreachable
   network     `open`, `none`, or `proxy`: nothing but the engine's allowlist
               proxy, which tunnels HTTPS to `allow_hosts` and refuses the
-              rest. That is how an agent without internet still reaches its
+              rest. That is how a coding agent without internet still reaches its
               model. With `none`/`proxy` localhost is closed too, except
               `local_ports` (on Linux the sandbox has a loopback of its own).
 
@@ -68,8 +68,8 @@ RUNTIME_SOCKETS = (
 )
 # writable for everyone: what numeric and ML libraries cache under the home folder
 CACHE_PATHS = (".cache/huggingface", ".cache/torch", ".cache/matplotlib", ".matplotlib")
-# each agent's own state and credentials, under the home folder and under
-# hillclimb's machine cache; an agent reads only its own
+# each coding agent's own state and credentials, under the home folder and under
+# hillclimb's machine cache; a coding agent reads only its own
 AGENT_HOMES = {
     "claude-code": ((".claude", ".claude.json"), ()),
     "codex": ((".codex",), ("codex-home",)),
@@ -122,7 +122,7 @@ class SandboxPolicy:
     def for_agent(
         self, allow_internet: bool, *, hosts=(), local_ports=()
     ) -> "SandboxPolicy":
-        """An agent's network: all of it, or only its model provider's hosts."""
+        """An coding agent's network: all of it, or only its model provider's hosts."""
         return self if allow_internet else self.through_proxy(hosts, local_ports)
 
     def through_proxy(self, hosts, local_ports=()) -> "SandboxPolicy":
@@ -151,7 +151,7 @@ def enabled(config) -> bool:
 
 
 OPT_OUT = (
-    "To run without a sandbox, set `sandbox: off` in hillclimb.yaml — agents and "
+    "To run without a sandbox, set `sandbox: off` in hillclimb.yaml — coding agents and "
     "solutions then run with your full user rights."
 )
 _BWRAP_PROBE = [
@@ -239,7 +239,7 @@ def _base(config, search_dir: Path | None, agent: str | None) -> SandboxPolicy:
 
 
 def agent_policy(config, search_dir: Path | None, agent: str) -> SandboxPolicy | None:
-    """What an operator agent runs under; None = unsandboxed. The agent adds
+    """What a coding agent runs under; None = unsandboxed. The coding agent adds
     its candidate dir, its own state and — without internet — the proxy."""
     if not active(config):
         return None
@@ -465,7 +465,7 @@ class AllowlistProxy:
             return
         self.refused.add(host)
         if log is not None:
-            log(f"sandbox: no internet for agents, refused {host}")
+            log(f"sandbox: no internet for coding agents, refused {host}")
 
 
 async def _pump(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:

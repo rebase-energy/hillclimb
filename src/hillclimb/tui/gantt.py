@@ -5,7 +5,7 @@ operator was dispatched (`created_at`) to the moment it finished (or "now"
 while it is still in flight). No slot index is journaled, so lanes are
 reconstructed by greedy first-fit interval packing — with `parallel_agents`
 slots and no stalls that converges to exactly one lane per slot, and any
-extra lanes are themselves signal (bursts). The agent→verifier boundary is
+extra lanes are themselves signal (bursts). The coding agent→verifier boundary is
 the first trial's `started_at`; the score moment is the last trial's
 `finished_at`.
 
@@ -35,7 +35,7 @@ class GanttSpan:
     start_min: float         # created_at − origin
     end_min: float           # finished_at − origin; running spans get "now"
     running: bool            # finished_at was None in a live search
-    exec_min: float | None   # trials[0].started_at − origin: agent→verifier boundary
+    exec_min: float | None   # trials[0].started_at − origin: coding agent→verifier boundary
     score_min: float | None  # trials[-1].finished_at − origin, only when scored
     score: float | None
     phase: str | None        # live phase (agent | exec | waiting-slot); None if not in flight

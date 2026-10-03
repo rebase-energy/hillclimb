@@ -5,7 +5,7 @@
                                                                                                                         
  The hillclimb dir is the one found from the current directory (or                                                      
  `HILLCLIMB_DIR`). Only engines pinned to that exact dir are signalled —                                                
- their agents and verifiers go with them — then hillclimb.yaml and the                                                  
+ their coding agents and verifiers go with them — then hillclimb.yaml and the                                           
  folders beside it that hillclimb owns (problems/, runs/, knowledge/,                                                   
  climbers/, experiments/, the sqlite store) are removed. Anything else in                                               
  the folder — your code, .env, .gitignore — stays. Searches of other                                                    

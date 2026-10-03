@@ -3,7 +3,7 @@
                                                                                                                         
  Every process hillclimb is responsible for on this machine.                                                            
                                                                                                                         
- One block per live engine (`hillclimb run`), with its agents, verifiers                                                
+ One block per live engine (`hillclimb run`), with its coding agents, verifiers                                         
  and their children nested underneath. Engines whose hillclimb dir has                                                  
  been deleted are tagged `orphan` — `hillclimb stop --all` reaps those.                                                 
                                                                                                                         

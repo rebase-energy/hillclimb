@@ -1,5 +1,5 @@
 """Process accounting for the children the harness spawns — verifier runs
-and agent calls — so their CPU time is what they actually burned.
+and coding agent calls — so their CPU time is what they actually burned.
 
 CPU is read at reaping: `os.wait4` hands back the child's user+system time
 together with its exit status, and that figure already includes every

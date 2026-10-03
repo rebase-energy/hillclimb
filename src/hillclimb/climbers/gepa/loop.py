@@ -2,7 +2,7 @@
 costs or counts.
 
 gepa owns proposal order, Pareto selection and its own checkpoint; every
-agent call and every verifier run goes through `harness.run(...)`:
+coding agent call and every verifier run goes through `harness.run(...)`:
 
 - a reflective mutation is one `gepa-reflect` attempt (an ordinary journaled,
   scored candidate whose parent is the candidate gepa mutated);
@@ -44,7 +44,7 @@ SEED_ERROR = (
     "GEPA needs an executable seed: pass --seed-from PATH "
     "(or ship an executable baseline solution in the problem)"
 )
-# outcomes that mean "the agent had its turn and produced nothing usable"
+# outcomes that mean "the coding agent had its turn and produced nothing usable"
 FAILED_ROUNDS = ("agent_failed", "no_solution", "unchanged", "crashed")
 SCORED_STATUSES = ("passing", "failing", "buggy")
 
@@ -174,7 +174,7 @@ class GepaLoop(Loop):
 
     def _did_not_propose(self, kind: str, detail: str) -> None:
         """gepa swallows proposer exceptions and keeps looping, so giving up
-        after three empty-handed rounds lives here (agent failures also count
+        after three empty-handed rounds lives here (coding agent failures also count
         in the harness, which parks on its own third)."""
         if kind in FAILED_ROUNDS:
             self._misses += 1

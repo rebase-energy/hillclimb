@@ -2,7 +2,7 @@
 
 A `Loop` decides WHEN to ask for work and how to react to results; it
 does so only through the `Harness` interface below. Everything with a side
-effect — candidate dirs, agents, verifier runs, the journal, `best/`, budgets,
+effect — candidate dirs, coding agents, verifier runs, the journal, `best/`, budgets,
 the control queue, holdout — happens inside the harness, so a loop is small
 enough to edit and cannot reach what judges it.
 
@@ -74,9 +74,9 @@ class Outcome:
     # tuned        a new trial landed on an existing candidate
     # discarded    a tune trial was dropped (its candidate changed or was pruned)
     # cut_off      killed at the budget wall — not shown to be wrong
-    # agent_failed the agent call failed · no_solution it wrote no solution
-    # aborted      stopped mid-attempt · parked the agent hit a limit
-    # unchanged    the agent left the parent's solution as it was (`require_change`)
+    # agent_failed the coding agent call failed · no_solution it wrote no solution
+    # aborted      stopped mid-attempt · parked the coding agent hit a limit
+    # unchanged    the coding agent left the parent's solution as it was (`require_change`)
     # crashed      the harness's own worker failed · rejected nothing was started
     kind: str
     candidate: Candidate | None
@@ -142,15 +142,35 @@ class Loop(ABC):
 
 
 class PolicyLoop(Loop):
-    """Keep every free slot busy with whatever the policy proposes; show it
-    every result. The policy's whole state is re-derivable from the journal,
-    so a resumed search catches up by replaying it through `observe`."""
+    """Keep every free slot busy with one step at a time: the selector
+    (π_sel) picks the node(s) the attempt starts from, then the policy
+    (π_op) names the operator — in that order, always — and the harness
+    runs it; every result is shown to the policy. The climber's whole state
+    is re-derivable from the journal, so a resumed search catches up by
+    replaying it through `observe`."""
 
     name = "policy"
 
     def __init__(self, policy: Policy):
         self.policy = policy
         self._caught_up: set[str] = set()
+
+    @property
+    def selector(self):
+        return getattr(self.policy, "selector", None)
+
+    def select(self, view: SearchState):
+        """π_sel: the node(s) the next attempt starts from, or None (a root
+        step). Candidates an in-flight attempt already builds on are busy."""
+        selector = self.selector
+        if selector is None:
+            return None
+        busy = {ref.parent_id for ref in view.inflight if ref.parent_id and ref.operator != "tune"}
+        return selector.select(view, busy=busy)
+
+    def propose(self, view: SearchState) -> Action | None:
+        """One decision: π_sel, then π_op on what it chose."""
+        return self.policy.propose(view, self.select(view))
 
     def catch_up(self, harness: Harness) -> None:
         """Show the policy every journaled candidate it has not seen yet, in
@@ -170,7 +190,7 @@ class PolicyLoop(Loop):
         self.catch_up(harness)
         while True:
             while harness.capacity:
-                action = self.policy.propose(harness.view())
+                action = self.propose(harness.view())
                 if action is None or harness.submit(action).rejected:
                     break  # a hold: keep the slot empty until something lands
             if not harness.inflight:

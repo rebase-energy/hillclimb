@@ -21,15 +21,16 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
 from hillclimb.agents import get_agent
 from hillclimb.agents.base import AgentRequest
-from hillclimb.harness.budget import BudgetManager
+from hillclimb.harness.budget import Budget, BudgetManager
 from hillclimb.harness.candidate import Candidate
 from hillclimb.config import Config, parse_set_overrides
 from hillclimb.harness.journal import Journal
-from hillclimb.problem import ProblemSpec, load_problem
+from hillclimb.problem import Problem, ProblemSpec, load_problem
+from hillclimb.results import SearchOutcome, open_search  # noqa: F401  (re-exported: the result of a search)
 from hillclimb.harness.run import RunMeta, SearchMeta, new_search_uid
 from hillclimb.harness.glue import (
     ParkedSearch,
@@ -46,20 +47,11 @@ from hillclimb.harness.status import SearchStatus, StatusWriter
 from hillclimb.harness.store import key_for, open_store
 from hillclimb.harness.dirs import allocate_search_dir, create_run_dir
 
+if TYPE_CHECKING:
+    from hillclimb.harness.loop import Outcome
+    from hillclimb.modules.policies.base import Action, SearchState
+
 Log = Callable[[str], None]
-
-
-@dataclass
-class SearchOutcome:
-    run_dir: Path
-    search_dir: Path
-    selected: Candidate | None
-    state: str  # done | parked | stopped
-    error: str | None = None
-
-    @property
-    def ref(self) -> str:
-        return search_ref(self.search_dir)
 
 
 def slug(value: str) -> str:
@@ -191,8 +183,8 @@ def build_executor(
     env_extra = dict(problem.verifier_env)
     if config.hillclimb_dir is not None:
         # the hillclimb dir this verifier runs under: what a meta-problem's
-        # verifier reads to give its inner searches the user's agent,
-        # model and problems (`hillclimb meta evaluate`)
+        # verifier reads to give its inner searches the user's coding agent,
+        # model and problems (`hillclimb grade`)
         env_extra.setdefault("HILLCLIMB_DIR", str(config.hillclimb_dir))
     return CommandExecutor(
         ensure_runtime_venv(
@@ -287,7 +279,7 @@ def build_evaluator(
 
 
 def spent_seconds(journal: Journal) -> float:
-    """Legacy resume accounting: sum of agent + trial work durations. Only a
+    """Legacy resume accounting: sum of coding agent + trial work durations. Only a
     fallback — under parallel workers this overcounts wall-clock; prefer
     resume_spent_seconds."""
     return sum(
@@ -505,7 +497,7 @@ def _raise_stop_requested(signum, frame):
 
 
 def _preflight_sandbox(config: Config, log: Log) -> None:
-    """Start the sandbox once before anything spends: a search whose agents
+    """Start the sandbox once before anything spends: a search whose coding agents
     and verifier cannot be confined does not start (SandboxUnavailable names
     the fix). Where the OS has none, say so and run without."""
     from hillclimb.harness import sandbox
@@ -513,10 +505,10 @@ def _preflight_sandbox(config: Config, log: Log) -> None:
     sandbox.log = log
     names = {config.agent} | {route.agent for route in config.routing.values() if route.agent}
     if not sandbox.enabled(config):
-        log("sandbox: off — agents and solutions run with your full user rights")
+        log("sandbox: off — coding agents and solutions run with your full user rights")
     elif sandbox.backend() is None:
         log(
-            "sandbox: none exists for this operating system — agents and "
+            "sandbox: none exists for this operating system — coding agents and "
             "solutions run with your full user rights"
         )
     else:
@@ -545,7 +537,7 @@ def _preflight_pi_routes(
     # every operator this search's climber may call is routed by its own
     # name (`routing.draft`, `routing.gepa-reflect`, a climber's `crossover`)
     operators = set(build_operators(config, search_dir).names())
-    operators.update(memory_passes)  # the agent calls the memory makes (claim distillation)
+    operators.update(memory_passes)  # the coding agent calls the memory makes (claim distillation)
     operators.update(
         name
         for name in config.routing
@@ -584,7 +576,7 @@ def _preflight_pi_routes(
         agent = agents.get("pi", route.agent_auth)
         preflight = getattr(agent, "preflight", None)
         if preflight is None:
-            raise RuntimeError("pi agent does not implement preflight")
+            raise RuntimeError("pi coding agent does not implement preflight")
         log(
             f"pi preflight: model={model}"
             + (f" sampling={route.sampling}" if route.sampling else "")
@@ -611,6 +603,446 @@ def _preflight_pi_routes(
             )
 
 
+class Search:
+    """One search, open in this process: everything the engine sets up around
+    a `Harness` (memory, store, journal, status + heartbeat, agents, evaluator,
+    the climber's loop), held so the search can be run to the end in one call
+    (`finish`, what `execute_search` does) or driven a step at a time
+    (`begin`, then `propose` / `run` / `step`) and settled exactly once.
+
+        search = hillclimb.api.start("fitness-landscape", climber=climber, agent="toy")
+        action = search.propose()       # what the policy wants next; nothing runs
+        outcome = search.run(action)    # run it, commit it, let the policy observe it
+        outcome = search.step()         # both in one call
+        search.finish()                 # the climber's own loop runs the rest
+        result = search.close()         # the SearchOutcome `run` returns
+
+    `hillclimb.Climber.start` is this, spelled on the climber. Stepping is
+    serial and for a policy climber; a loop climber (gepa) owns its control
+    flow and can only `finish`."""
+
+    def __init__(
+        self,
+        config: Config,
+        problem: ProblemSpec,
+        search_dir: Path,
+        budget: BudgetManager,
+        log: Log = print,
+        seed_from: Path | None = None,
+        knowledge_context: str | None = None,
+        target: str = "",
+    ):
+        self.config = config
+        self.problem = problem
+        self.search_dir = search_dir
+        self.run_dir = search_dir.parents[1]
+        self.budget = budget
+        self.log = log
+        self.seed_from = seed_from
+        self.knowledge_context = knowledge_context
+        self.target = target
+        self.outcome: SearchOutcome | None = None  # set when the search is settled
+        self.harness = None
+        self.loop = None
+        self._stepping = False
+        self._handler = None  # the SIGTERM handler this search installed
+        self._previous_handler = None
+
+    # --- setup ---
+
+    def open(self) -> SearchOutcome | None:
+        """Set the search up, in the order the engine always has. Returns None
+        when it is ready, or the `stopped` outcome when a stop arrived first.
+        A setup that fails settles the search `failed` and raises: nothing is
+        left running behind it (the heartbeat, the store)."""
+        from hillclimb.harness.glue import build_memory
+        from hillclimb.modules.memory.base import MemoryEnv
+
+        log, search_dir = self.log, self.search_dir
+        # the memory this search runs under: its climber's, unless the user
+        # switched learning off
+        memory = build_memory(self.config, search_dir)
+        if self.config.learning.enabled and not memory.enabled:
+            self.config = self.config.model_copy(deep=True)
+            self.config.learning.enabled = False  # this search neither reads nor writes memory
+            log("memory: none (this climber runs without cross-search memory)")
+        memory.bind(MemoryEnv(
+            config=self.config, problem=self.problem, search_dir=search_dir, target=self.target, log=log,
+        ))
+        self.memory = memory
+        self.store = open_store(self.config)
+        self.key = key_for(search_dir)
+        self.store.clear_stale_stops(self.key)
+        self.journal = Journal(self.store.journal(self.key))
+        self.status = StatusWriter(
+            lambda s: self.store.write_status(self.key, s),
+            SearchStatus(
+                search_id=search_dir.name,
+                run_id=self.run_dir.name,
+                state="running",
+                pid=os.getpid(),
+            ),
+            budget=self.budget,
+        )
+        self.status.start_heartbeat()
+        # SIGTERM before the harness exists just raises; once it does, the
+        # handler latches it closed first (installed below)
+        self._install_handler(_raise_stop_requested)
+        try:
+            self._build()
+        except (StopRequested, KeyboardInterrupt) as exc:
+            return self._settle("stopped", exc)
+        except Exception as exc:
+            self._settle("failed", exc)
+            raise
+        self._install_handler(self._stop_on_signal)
+        return None
+
+    def _build(self) -> None:
+        """Agents, preflights, evaluator, the climber's loop, the harness."""
+        import threading
+
+        from hillclimb.harness.slots import MachineSlots
+
+        config, problem, search_dir, log = self.config, self.problem, self.search_dir, self.log
+        memory, store, key, journal, status = self.memory, self.store, self.key, self.journal, self.status
+        abort = threading.Event()
+        # what the search is handed before it starts: prior experience for the
+        # prompts (an externally supplied section stands in for the memory's
+        # own), a reference solution, and what memory learned about how to start
+        retrieved = memory.retrieve(context=self.knowledge_context)
+        agent_obj = get_agent(
+            config.agent,
+            auth=config.agent_auth,
+            pi_models_file=config.pi.models_file,
+        )
+        if hasattr(agent_obj, "abort"):
+            agent_obj.abort = abort
+        from hillclimb.harness.routing import AgentPool, Router
+
+        agents = AgentPool(
+            abort=abort, pi_models_file=config.pi.models_file
+        )
+        agents.seed(config.agent, config.agent_auth, agent_obj)
+        router = Router(config)
+
+        _preflight_sandbox(config, log)
+        _preflight_pi_routes(config, search_dir, router, agents, log, memory_passes=memory.agent_passes())
+        from hillclimb.project import machine_cache_dir
+
+        machine_max = config.concurrency.effective_machine_max_agents()
+        slots = MachineSlots(machine_cache_dir() / "agent-slots", machine_max) if machine_max > 0 else None
+        self.evaluator = evaluator = build_evaluator(config, problem, search_dir, journal, status=status, log=log)
+        from hillclimb.harness.core import Harness
+
+        # validated before anything is scored: a bad climber costs nothing
+        climber = search_climber(config, search_dir)
+        problems = climber.lint_prompts()
+        if problems:
+            raise ValueError(f"climber {climber.name}: prompts do not lint clean: " + "; ".join(problems))
+        # what memory learned about how to start, fixed when the search first
+        # runs: a resume reads the record, never what the knowledge says by now
+        record = store.search(key)
+        priors = record.meta.memory_priors if record is not None else None
+        if priors is None:
+            priors = dict(retrieved.priors)
+            if record is not None:
+                record.meta.memory_priors = priors
+                store.record_search(record.meta)
+        self.loop = build_loop(config, priors=priors, log=log, search_dir=search_dir)
+        self.harness = Harness(
+            problem=problem,
+            config=config,
+            journal=journal,
+            agent=agent_obj,
+            executor=evaluator.executor,
+            budget=self.budget,
+            search_dir=search_dir,
+            log=log,
+            evaluator=evaluator,
+            status=status,
+            slots=slots,
+            abort=abort,
+            seed_solution=self.seed_from,
+            memory=memory,
+            retrieved=retrieved,
+            router=router,
+            agents=agents,
+            drain_commands=lambda: store.drain_commands(key),
+            operators=build_operators(config, search_dir),
+            prompts_dir=climber.prompts_dir,
+            tuner=build_tuner(config, search_dir),
+        )
+
+    # --- SIGTERM: one handler while the search is open, the previous one after ---
+
+    def _install_handler(self, handler) -> None:
+        try:  # signal handlers are main-thread-only; embedded callers skip them
+            previous = signal.signal(signal.SIGTERM, handler)
+        except ValueError:
+            return
+        if self._handler is None:
+            self._previous_handler = previous
+        self._handler = handler
+
+    def _restore_handler(self) -> None:
+        if self._handler is None:
+            return
+        try:
+            if signal.getsignal(signal.SIGTERM) == self._handler:  # not ours any more: leave it
+                signal.signal(signal.SIGTERM, self._previous_handler or signal.SIG_DFL)
+        except ValueError:
+            pass
+        self._handler = None
+
+    def _stop_on_signal(self, signum, frame):
+        reason = f"signal {signal.Signals(signum).name}"
+        self.harness.request_stop(reason)
+        raise StopRequested(reason)
+
+    # --- settling: every way a search ends goes through here, once ---
+
+    def _so_far(self) -> Candidate | None:
+        """What a search that did not finish would ship if it ended here."""
+        return self.journal.selected_candidate(self.problem.higher_is_better, self.config.holdout.selection)
+
+    def _finalize(self, state: str, last_error: str | None = None) -> None:
+        self.status.finalize(state, last_error=last_error)
+        self.store.close()
+
+    def _settle(self, state: str, exc: BaseException) -> SearchOutcome:
+        """End the search as `parked`, `stopped` or `failed` because of `exc`."""
+        if state == "failed":
+            error = f"{type(exc).__name__}: {exc}"
+            self._finalize(state, last_error=error[:500])
+        elif state == "parked":
+            error = str(exc)
+            self._finalize(state, last_error=error[:500])
+        else:
+            error = str(exc) or None
+            self._finalize(state, last_error=str(exc)[:500] or None)
+        self._restore_handler()
+        self.outcome = SearchOutcome(self.run_dir, self.search_dir, self._so_far(), state, error=error, config=self.config)
+        _closed(self)
+        return self.outcome
+
+    def _end(self, body: Callable[[], Candidate | None]) -> SearchOutcome:
+        """Run `body` — whatever is left of the search; it returns what ships
+        — then settle: the host's holdout, the final status, and what a
+        finished search leaves behind."""
+        config, problem, search_dir, journal, log = self.config, self.problem, self.search_dir, self.journal, self.log
+        try:
+            selected = body()
+            selected = _finish_holdout(config, problem, search_dir, journal, self.evaluator, selected, log)
+        except ParkedSearch as exc:
+            return self._settle("parked", exc)
+        except (StopRequested, KeyboardInterrupt) as exc:
+            return self._settle("stopped", exc)
+        except Exception as exc:
+            self._settle("failed", exc)
+            raise
+        self._finalize("done")
+        self.outcome = SearchOutcome(self.run_dir, search_dir, selected, "done", config=config)
+        _closed(self)
+        try:
+            if problem.emflow_problem and selected is not None:
+                _official_verify(config, problem, search_dir, journal, selected, log)
+            if problem.mlebench_comp_id and selected is not None:
+                _mlebench_grade(config, problem, search_dir, selected, log)
+            # what the finished search leaves for the next ones (and its own card,
+            # beside its artifacts, under any memory)
+            self.memory.record(journal, budget_s=self.budget.total_s, cost_usd=self.harness.total_cost_usd())
+        finally:
+            self._restore_handler()
+        return self.outcome
+
+    def finish(self) -> SearchOutcome:
+        """Run the climber's own loop until the search is over, and settle it.
+        After steps taken by hand, the loop carries on from the journal."""
+        if self.outcome is not None:
+            return self.outcome
+        self.budget.resume()
+        return self._end(lambda: self.harness.execute(self.loop))
+
+    def close(self) -> SearchOutcome:
+        """Settle the search where it stands and return its outcome: `done`
+        when a budget ended it, `parked` or `stopped` when a park or a stop
+        did, and `stopped` — resumable with `hillclimb resume` — when it is
+        closed by hand with budget left. Safe to call again."""
+        if self.outcome is not None:
+            return self.outcome
+
+        def body() -> Candidate | None:
+            self.harness.wait(timeout=0)  # a tick: a stop queued since the last step counts
+            self.harness.raise_latched()
+            if self.harness.closed_reason is None:
+                raise StopRequested("closed by hand with budget left")
+            return self._so_far()
+
+        return self._end(body)
+
+    def __enter__(self) -> Search:
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        self.close()
+
+    # --- stepping ---
+
+    def begin(self) -> None:
+        """Make the search ready to be stepped: write its floor (the baseline,
+        the seed), then stop the clock — from here the budget is spent only
+        while a step runs, never while a person reads what one did."""
+        if self.outcome is not None:
+            return
+        self._stepping = True
+        try:
+            self.harness.start()
+        except (StopRequested, KeyboardInterrupt) as exc:
+            self._settle("stopped", exc)
+            return
+        except Exception as exc:
+            self._settle("failed", exc)
+            raise
+        self.budget.pause()
+
+    def _policy_loop(self, what: str):
+        """The loop, when a person may step it: an open search of a policy climber."""
+        from hillclimb.harness.loop import PolicyLoop
+
+        if self.outcome is not None:
+            raise RuntimeError(f"{what}: this search is closed ({self.outcome.state})")
+        if not isinstance(self.loop, PolicyLoop):
+            raise RuntimeError(
+                f"{what}: a {type(self.loop).__name__} owns its control flow and cannot be stepped. "
+                "Call finish() to let it run"
+            )
+        return self.loop
+
+    def select(self):
+        """π_sel alone: the node(s) the selector would start the next attempt
+        from, as a `Selection`; None for a root step (or a closed search)."""
+        loop = self._policy_loop("select()")
+        self.harness.wait(timeout=0)  # a tick: control commands, the cost ceiling
+        if not self.harness.open:
+            return None
+        loop.catch_up(self.harness)
+        return loop.select(self.harness.view())
+
+    def propose(self) -> Action | None:
+        """What the climber would do next, without doing it: the selector
+        picks the node(s), the policy names the operator. None when the
+        policy holds or the search is closed (`closed_reason` says which)."""
+        loop = self._policy_loop("propose()")
+        self.harness.wait(timeout=0)  # a tick: control commands, the cost ceiling
+        if not self.harness.open:
+            return None
+        loop.catch_up(self.harness)
+        return loop.propose(self.harness.view())
+
+    def run(self, action: Action) -> Outcome:
+        """Run one action — the policy's proposal or your own — to its end:
+        the attempt is made, scored, committed, and the policy observes the
+        result. An action the harness cannot take (an unknown target, a
+        closed search) comes back as a `rejected` Outcome saying why."""
+        from hillclimb.harness.loop import HarnessClosed, Outcome, Ticket
+        from hillclimb.modules.policies.base import Action
+
+        if not isinstance(action, Action):
+            raise TypeError(
+                f"run() takes an Action, e.g. Action('improve', target_id='c002'), not {action!r} "
+                "(hillclimb.run(problem, ...) is what runs a whole search)"
+            )
+        loop = self._policy_loop("run()")
+        for candidate_id in (action.target_id, *action.inspiration_ids):
+            if candidate_id and candidate_id not in self.journal.candidates:  # a typo, said plainly
+                reason = f"no candidate {candidate_id} in this search"
+                return Outcome(ticket=Ticket(id="", action=action, rejected=reason), kind="rejected", candidate=None)
+        self.harness.clear_strikes()  # a person trying things is not a policy stuck on the impossible
+        self.budget.resume()
+        try:
+            outcome = self.harness.run(action)
+        except HarnessClosed as exc:
+            return Outcome(ticket=Ticket(id="", action=action, rejected=str(exc)), kind="rejected", candidate=None)
+        except StopRequested:
+            raise  # a signal: the harness is latched closed, close() settles the search `stopped`
+        except Exception as exc:  # the engine broke mid-attempt: the search is over, like any engine crash
+            self._settle("failed", exc)
+            raise
+        finally:
+            if self.outcome is None:
+                self.budget.pause()
+        loop.observe(self.harness, outcome.candidate)
+        return outcome
+
+    def step(self) -> Outcome | None:
+        """One move of the climber: `run(propose())`. None when there was
+        nothing to run — the policy holds, or the search is closed."""
+        action = self.propose()
+        return self.run(action) if action is not None else None
+
+    # --- reading an open search ---
+
+    @property
+    def state(self) -> SearchState:
+        """What the policy sees: the journal (holdout-blind), what is in
+        flight, the budget left, the metric's direction."""
+        return self.harness.view()
+
+    @property
+    def candidates(self) -> list[Candidate]:
+        """Every candidate so far, as the policy sees them."""
+        return list(self.state.journal.candidates.values())
+
+    @property
+    def best(self) -> Candidate | None:
+        """The best scored candidate so far, by validation score."""
+        return self.state.journal.best_candidate(self.problem.higher_is_better)
+
+    def source(self, candidate_id: str) -> str | None:
+        """A candidate's `solution.py`."""
+        return self.harness.source(candidate_id)
+
+    @property
+    def closed_reason(self) -> str | None:
+        """Why no new work can start (a spent budget, a stop, a park, a
+        settled search); None while the search is open."""
+        if self.outcome is not None:
+            return self.outcome.error or self.outcome.state
+        return self.harness.closed_reason
+
+    @property
+    def is_open(self) -> bool:
+        return self.closed_reason is None
+
+    @property
+    def ref(self) -> str:
+        return search_ref(self.search_dir)
+
+    @property
+    def result(self) -> SearchOutcome:
+        """The search as a `SearchOutcome`: its outcome once settled, a live
+        reading of it (state `running`) until then."""
+        if self.outcome is not None:
+            return self.outcome
+        return SearchOutcome(self.run_dir, self.search_dir, self._so_far(), "running", config=self.config)
+
+    def __repr__(self) -> str:
+        where = self.outcome.state if self.outcome is not None else (self.closed_reason or "open")
+        return f"Search({self.ref!r}, {where})"
+
+
+# the search a person is stepping in this process, if any: status records carry
+# the engine's pid, so two open at once would be one engine to every viewer
+_STEPPING: Search | None = None
+
+
+def _closed(search: Search) -> None:
+    global _STEPPING
+    if _STEPPING is search:
+        _STEPPING = None
+
+
 def execute_search(
     config: Config,
     problem: ProblemSpec,
@@ -624,155 +1056,11 @@ def execute_search(
     """Run the engine on an existing search dir. Returns the outcome for
     parked/stopped/done; unexpected engine crashes finalize `failed` and
     re-raise."""
-    run_dir = search_dir.parents[1]
-    from hillclimb.harness.glue import build_memory
-    from hillclimb.modules.memory.base import MemoryEnv
-
-    # the memory this search runs under: its climber's, unless the user
-    # switched learning off
-    memory = build_memory(config, search_dir)
-    if config.learning.enabled and not memory.enabled:
-        config = config.model_copy(deep=True)
-        config.learning.enabled = False  # this search neither reads nor writes memory
-        log("memory: none (this climber runs without cross-search memory)")
-    memory.bind(MemoryEnv(config=config, problem=problem, search_dir=search_dir, target=target, log=log))
-    store = open_store(config)
-    key = key_for(search_dir)
-    store.clear_stale_stops(key)
-    journal = Journal(store.journal(key))
-    status = StatusWriter(
-        lambda s: store.write_status(key, s),
-        SearchStatus(
-            search_id=search_dir.name,
-            run_id=run_dir.name,
-            state="running",
-            pid=os.getpid(),
-        ),
-        budget=budget,
+    search = Search(
+        config, problem, search_dir, budget, log,
+        seed_from=seed_from, knowledge_context=knowledge_context, target=target,
     )
-    status.start_heartbeat()
-    # SIGTERM before the harness exists just raises; once it does, the
-    # handler latches it closed first (installed below)
-    try:  # signal handlers are main-thread-only; embedded callers skip them
-        signal.signal(signal.SIGTERM, _raise_stop_requested)
-    except ValueError:
-        pass
-    import threading
-
-    from hillclimb.harness.slots import MachineSlots
-
-    abort = threading.Event()
-    # what the search is handed before it starts: prior experience for the
-    # prompts (an externally supplied section stands in for the memory's
-    # own), a reference solution, and what memory learned about how to start
-    retrieved = memory.retrieve(context=knowledge_context)
-    agent_obj = get_agent(
-        config.agent,
-        auth=config.agent_auth,
-        pi_models_file=config.pi.models_file,
-    )
-    if hasattr(agent_obj, "abort"):
-        agent_obj.abort = abort
-    from hillclimb.harness.routing import AgentPool, Router
-
-    agents = AgentPool(
-        abort=abort, pi_models_file=config.pi.models_file
-    )
-    agents.seed(config.agent, config.agent_auth, agent_obj)
-    router = Router(config)
-
-    try:
-        _preflight_sandbox(config, log)
-        _preflight_pi_routes(config, search_dir, router, agents, log, memory_passes=memory.agent_passes())
-    except (StopRequested, KeyboardInterrupt) as exc:
-        status.finalize("stopped", last_error=str(exc)[:500] or None)
-        store.close()
-        return SearchOutcome(run_dir, search_dir, None, "stopped", error=str(exc) or None)
-    except Exception as exc:
-        status.finalize("failed", last_error=f"{type(exc).__name__}: {exc}"[:500])
-        store.close()
-        raise
-    from hillclimb.project import machine_cache_dir
-
-    machine_max = config.concurrency.effective_machine_max_agents()
-    slots = MachineSlots(machine_cache_dir() / "agent-slots", machine_max) if machine_max > 0 else None
-    evaluator = build_evaluator(config, problem, search_dir, journal, status=status, log=log)
-    from hillclimb.harness.core import Harness
-
-    # validated before anything is scored: a bad climber costs nothing
-    climber = search_climber(config, search_dir)
-    problems = climber.lint_prompts()
-    if problems:
-        raise ValueError(f"climber {climber.name}: prompts do not lint clean: " + "; ".join(problems))
-    # what memory learned about how to start, fixed when the search first
-    # runs: a resume reads the record, never what the knowledge says by now
-    record = store.search(key)
-    priors = record.meta.memory_priors if record is not None else None
-    if priors is None:
-        priors = dict(retrieved.priors)
-        if record is not None:
-            record.meta.memory_priors = priors
-            store.record_search(record.meta)
-    loop = build_loop(config, priors=priors, log=log, search_dir=search_dir)
-    harness = Harness(
-        problem=problem,
-        config=config,
-        journal=journal,
-        agent=agent_obj,
-        executor=evaluator.executor,
-        budget=budget,
-        search_dir=search_dir,
-        log=log,
-        evaluator=evaluator,
-        status=status,
-        slots=slots,
-        abort=abort,
-        seed_solution=seed_from,
-        memory=memory,
-        retrieved=retrieved,
-        router=router,
-        agents=agents,
-        drain_commands=lambda: store.drain_commands(key),
-        operators=build_operators(config, search_dir),
-        prompts_dir=climber.prompts_dir,
-        tuner=build_tuner(config, search_dir),
-    )
-
-    def _stop_on_signal(signum, frame):
-        reason = f"signal {signal.Signals(signum).name}"
-        harness.request_stop(reason)
-        raise StopRequested(reason)
-
-    try:
-        signal.signal(signal.SIGTERM, _stop_on_signal)
-    except ValueError:
-        pass
-
-    def finalize(state: str, last_error: str | None = None) -> None:
-        status.finalize(state, last_error=last_error)
-        store.close()
-
-    try:
-        selected = harness.execute(loop)
-        selected = _finish_holdout(config, problem, search_dir, journal, evaluator, selected, log)
-    except ParkedSearch as exc:
-        finalize("parked", last_error=str(exc)[:500])
-        return SearchOutcome(run_dir, search_dir, None, "parked", error=str(exc))
-    except (StopRequested, KeyboardInterrupt) as exc:
-        finalize("stopped", last_error=str(exc)[:500] or None)
-        return SearchOutcome(run_dir, search_dir, None, "stopped", error=str(exc) or None)
-    except Exception as exc:
-        finalize("failed", last_error=f"{type(exc).__name__}: {exc}"[:500])
-        raise
-    finalize("done")
-    if problem.emflow_problem and selected is not None:
-        _official_verify(config, problem, search_dir, journal, selected, log)
-    if problem.mlebench_comp_id and selected is not None:
-        _mlebench_grade(config, problem, search_dir, selected, log)
-    # what the finished search leaves for the next ones (and its own card,
-    # beside its artifacts, under any memory)
-    memory.record(journal, budget_s=budget.total_s, cost_usd=harness.total_cost_usd())
-    return SearchOutcome(run_dir, search_dir, selected, "done")
+    return search.open() or search.finish()
 
 
 def _finish_holdout(
@@ -876,12 +1164,39 @@ def run_search(
     holdout: bool = True,
     seed_from: Path | str | None = None,
     knowledge_context: str | None = None,
+    spec_set: Sequence[str] = (),
     log: Log = print,
 ) -> SearchOutcome:
     """Resolve a single-problem target, create the Run/Search dirs, and run
     the engine to completion. Suites are a CLI concern (parallel processes);
     this API runs exactly one search. `seed_from` scores an incumbent
     solution as the floor candidate a re-search must beat."""
+    search = _new_search(
+        target, budget_s=budget_s, name=name, run_id=run_id, run_name=run_name, config=config,
+        agent=agent, model=model, holdout=holdout, seed_from=seed_from,
+        knowledge_context=knowledge_context, spec_set=spec_set, log=log,
+    )
+    return search.open() or search.finish()
+
+
+def _new_search(
+    target: str,
+    *,
+    budget_s: int | None = None,
+    name: str | None = None,
+    run_id: str | None = None,
+    run_name: str | None = None,
+    config: Config | None = None,
+    agent: str | None = None,
+    model: str | None = None,
+    holdout: bool = True,
+    seed_from: Path | str | None = None,
+    knowledge_context: str | None = None,
+    spec_set: Sequence[str] = (),
+    log: Log = print,
+) -> Search:
+    """A new search on `target`, created (run dir, spec, search dir, climber
+    snapshot) and not yet opened."""
     config = config or Config.load(agent=agent, model=model)
     if agent:
         config.agent = agent
@@ -912,14 +1227,14 @@ def run_search(
         write_run_spec(run_dir, [spec_entry(
             target, budget=total_s, agent=config.agent, model=config.model,
             climber=config.climber_block(), parallel_agents=config.concurrency.parallel_agents,
-            n_replicates=config.evaluation.n_replicates, seed_from=seed_path,
+            n_replicates=config.evaluation.n_replicates, seed_from=seed_path, set=spec_set,
         )])
     search_dir = create_search(config, problem, run_dir, run_id, total_s, seed_from=seed_path)
     log(
         f"Search {search_ref(search_dir)} (problem={problem.problem_id}, "
         f"agent={config.agent}, model={config.model}, budget={total_s}s)"
     )
-    return execute_search(
+    return Search(
         config,
         problem,
         search_dir,
@@ -968,15 +1283,25 @@ def _with_climber(config: Config, climber: Any) -> None:
         config._live_climber = None
 
 
+def _target(problem: Any, config: Config) -> str:
+    """What `load_problem` takes: a `Problem` is made to exist first (saved
+    when defined here, copied in when bundled), a string is passed on."""
+    from hillclimb.problem import Problem
+
+    return problem.resolve(config) if isinstance(problem, Problem) else str(problem)
+
+
 def run(
-    problem: str,
+    problem: str | Problem,
     *,
     climber: Any = None,
-    budget: str | int | None = None,
+    budget: Budget | str | int | None = None,
     agent: str | None = None,
     model: str | None = None,
     config: Config | None = None,
     holdout: bool = True,
+    learning: bool = True,
+    max_evaluations: int | None = None,
     seed_from: Path | str | None = None,
     name: str | None = None,
     log: Log = print,
@@ -990,22 +1315,91 @@ def run(
                          budget="10m")
         outcome.selected.val_score
 
+    `problem` is a problem id, a path, a provider target or a `Problem`.
     `climber` is a preset's name, a block, or a composed `hillclimb.Climber`
-    (None: the folder's `climber:` block). `budget` is `"10m"` / `"2h"` or
-    seconds (None: the problem's own). The folder's hillclimb.yaml supplies
+    (None: the folder's `climber:` block). `budget` is a `Budget` — time,
+    evaluations, tokens, cost — or just `"10m"` / `"2h"` / seconds for the
+    clock (None: the problem's own); `max_evaluations=N` is short for
+    `Budget(evaluations=N)`. `learning=False` keeps the search out of the
+    folder's knowledge, both ways. The folder's hillclimb.yaml supplies
     everything else unless a `config` is given."""
-    from hillclimb.harness.budget import parse_budget
-
     _not_while_importing("run")
     config = config.model_copy(deep=True) if config is not None else Config.load(agent=agent, model=model)
     if climber is not None:
         _with_climber(config, climber)
+    limits = _limits(budget, max_evaluations)
     return run_search(
-        problem,
-        budget_s=parse_budget(budget) if budget is not None else None,
+        _target(problem, config),
+        budget_s=limits.seconds,
         name=name, config=config, agent=agent, model=model, holdout=holdout,
-        seed_from=seed_from, log=log,
+        seed_from=seed_from, spec_set=_front_door_set(config, learning, limits), log=log,
     )
+
+
+def _limits(budget: Any, max_evaluations: int | None) -> Budget:
+    """The Budget a front-door call means: `budget=` as given, with the
+    `max_evaluations=` shorthand laid over it."""
+    from dataclasses import replace
+
+    from hillclimb.harness.budget import Budget
+
+    limits = Budget.of(budget)
+    return replace(limits, evaluations=max_evaluations) if max_evaluations is not None else limits
+
+
+def start(
+    problem: str | Problem,
+    *,
+    climber: Any = None,
+    budget: Budget | str | int | None = None,
+    agent: str | None = None,
+    model: str | None = None,
+    config: Config | None = None,
+    holdout: bool = True,
+    learning: bool = True,
+    max_evaluations: int | None = None,
+    seed_from: Path | str | None = None,
+    name: str | None = None,
+    log: Log = print,
+) -> Search:
+    """Open one search, here, to drive a step at a time — `run` with the loop
+    in your hands. Takes what `run` takes and returns the open `Search`
+    (`propose` / `run` / `step` / `finish` / `close`). It is an ordinary
+    search: `hillclimb watch` shows it, and one closed with budget left can
+    be resumed with `hillclimb resume`. One at a time per process.
+
+        search = hc.Climber(policy="greedy").start("fitness-landscape", agent="toy")
+    """
+    global _STEPPING
+    _not_while_importing("start")
+    if _STEPPING is not None and _STEPPING.outcome is None:
+        raise RuntimeError(
+            f"search {_STEPPING.ref} is still open in this process: close() it before starting another"
+        )
+    config = config.model_copy(deep=True) if config is not None else Config.load(agent=agent, model=model)
+    if climber is not None:
+        _with_climber(config, climber)
+    limits = _limits(budget, max_evaluations)
+    search = _new_search(
+        _target(problem, config),
+        budget_s=limits.seconds,
+        name=name, config=config, agent=agent, model=model, holdout=holdout,
+        seed_from=seed_from, spec_set=_front_door_set(config, learning, limits), log=log,
+    )
+    _STEPPING = search
+    if search.open() is None:
+        search.begin()
+    return search
+
+
+def _front_door_set(config: Config, learning: bool, limits: Budget) -> list[str]:
+    """Apply what `run` takes beside the config, and return it as the `set`
+    pairs the run's spec records, so the spec reruns the same search."""
+    pairs = []
+    if not learning:
+        config.learning.enabled = False
+        pairs.append("learning.enabled=false")
+    return pairs + limits.apply(config)
 
 
 def run_spec(path: Path | str, *, config: Config | None = None, log: Log = print) -> list[SearchOutcome]:
@@ -1300,6 +1694,14 @@ def run_fleet(
         raise ValueError("engines must hold at least one FleetEngine")
     if engines is None and parallel_searches < 1:
         raise ValueError("parallel_searches must be >= 1")
+    from hillclimb.agents import agent_names, is_builtin
+
+    fleet_agent = agent or config.agent
+    if fleet_agent in agent_names() and not is_builtin(fleet_agent):
+        raise ValueError(
+            f"agent {fleet_agent!r} was registered in this process (register_agent); a detached "
+            "engine cannot know it. Run it here with hillclimb.run(...) instead"
+        )
     problem = load_problem(target, config)
     ensure_runtime_venv(config, problem.runtime, log=log, requirements=problem.requirements_file)
     name = run_name or problem.problem_id

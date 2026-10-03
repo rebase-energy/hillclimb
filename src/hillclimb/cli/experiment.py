@@ -71,7 +71,7 @@ def experiment_run(
     child exits, then prints the report — run it under nohup or in tmux.
     Unlike sequential it runs the whole matrix rather than stopping at the
     first failure; its exit code is 1 if any child failed, else 2 if any
-    parked, else 0. Real agent runs — the repeat count is your cost dial.
+    parked, else 0. Real coding agent runs — the repeat count is your cost dial.
     """
     from hillclimb.experiment import (
         expand,

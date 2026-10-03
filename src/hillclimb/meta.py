@@ -10,22 +10,33 @@ unchanged: a climber that fails to load is a buggy candidate and a debug
 target, a verifier cut off at the budget wall is abandoned, `best/` ships
 the best climber found.
 
-This module is what such a verifier calls (`hillclimb meta evaluate`, from
+This module is what such a verifier calls (`hillclimb grade`, from
 `verifier.sh`, on `$HILLCLIMB_ENGINE_PYTHON`):
 
-- `MetaSpec` (`meta.yaml` beside the meta-problem's verifier): the inner
-  problems, the budget of each inner search, repeats, and per problem an
-  optional `floor`/`target` that override what the inner run measures.
+- `GradeSpec` (`grade.yaml` beside the meta-problem's verifier): the inner
+  problems, the budget of each inner search, repeats, per problem an
+  optional `floor`/`target` that override what the inner run measures,
+  how a result is scored (`score:`) and combined (`aggregate:`), and the
+  `outer_holdout` problems the grade is measured on for the holdout split.
 - `evaluate()`: a nested hillclimb dir under the verifier's cwd (the outer
-  config's agent, model, routing and problems; its own runs; learning
+  config's coding agent, model, routing and problems; its own runs; learning
   off so every candidate is measured against the same world), one inner
   `hillclimb run` per problem × repeat, and the score.
-- The score is **gap closed**: per inner problem, the fraction of the
+- The default score is **gap closed**: per inner problem, the fraction of the
   distance from the inner search's floor (its baseline/seed) to the best
   known value (`chart_baselines`, or the spec's `target`) that the climber
   covered — direction-aware, 0 when it never beat the floor, above 1 when
   it beat the literature. Per problem the median over repeats, then the
   mean over problems; each instance rides the verifier's `instances` key.
+  Both halves are the spec's to choose: `score:` is `gap-closed`, `solved`,
+  `raw` or a function of your own, `aggregate:` is `mean`, `median`, `min`
+  or a function of your own (`file.py:function` beside the spec, or
+  `module:function`). They belong to the grade, never to the climber.
+- The outer holdout: a search on a meta-problem climbs the grade, so the
+  inner searches' results are its validation. With `holdout: true` on the
+  meta-problem the engine runs the verifier once more on the holdout split,
+  and the grade is then measured on `outer_holdout`: problems the search
+  on the meta-problem never climbed on.
 - `check_climber_source()`: the version-one permissions rule for an improver's
   candidate — the file may import `hillclimb.sdk`, `hillclimb.spaces` and
   the standard library, nothing else (the rule `tests/test_sdk_imports.py`
@@ -37,6 +48,8 @@ The harness never imports this module; only the CLI does.
 from __future__ import annotations
 
 import ast
+import importlib
+import importlib.util
 import json
 import os
 import statistics
@@ -48,12 +61,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 from hillclimb.config import Config
 from hillclimb.project import MARKER_FILE
 
-DEFAULT_SPEC = "meta.yaml"
+DEFAULT_SPEC = "grade.yaml"
+SPLITS = ("validation", "holdout")  # the verifier contract's `$HILLCLIMB_SPLIT`
 NESTED_DIRNAME = "hillclimb"  # the inner searches' hillclimb dir, under the verifier's cwd
 # what an improver's candidate may import from hillclimb
 ALLOWED_HILLCLIMB_IMPORTS = (
@@ -85,33 +99,45 @@ class InnerProblem(BaseModel):
     target: float | None = None  # default: the best `chart_baselines` value in the metric's direction
 
 
-class MetaSpec(BaseModel):
-    """`meta.yaml`: what the inner searches are."""
+class GradeSpec(BaseModel):
+    """`grade.yaml`: what the inner searches are, and how their results
+    become one grade."""
 
     model_config = ConfigDict(extra="forbid")
 
     problems: list[InnerProblem]
+    # the OUTER HOLDOUT: problems the search on the meta-problem never climbs
+    # on. The grade is measured on them for the holdout split only
+    outer_holdout: list[InnerProblem] = Field(default_factory=list)
     budget: str = "5m"  # wall clock per inner search (2h / 30m / 90s)
     repeats: int = Field(default=1, ge=1)
     # the inner searches' stop margin; default: the outer's, capped at a
     # fifth of the budget so a short inner search still does work
     stop_margin_s: int | None = None
+    # how one inner search's result is put on a scale every problem shares:
+    # `gap-closed` | `solved` | `raw`, or `file.py:function` / `module:function`
+    score: str = "gap-closed"
+    # how the per-problem scores become the grade: `mean` | `median` | `min`,
+    # or a function named the same way
+    aggregate: str = "mean"
+    # the folder of the file the spec was read from: where a `file.py` ref resolves
+    _base_dir: Path | None = PrivateAttr(default=None)
 
     @model_validator(mode="before")
     @classmethod
     def _bare_names(cls, data):
-        if isinstance(data, dict) and isinstance(data.get("problems"), list):
+        if isinstance(data, dict):
             data = dict(data)
-            data["problems"] = [
-                {"problem": item} if isinstance(item, str) else item for item in data["problems"]
-            ]
+            for key in ("problems", "outer_holdout"):
+                if isinstance(data.get(key), list):
+                    data[key] = [{"problem": item} if isinstance(item, str) else item for item in data[key]]
         return data
 
     @field_validator("problems")
     @classmethod
     def _at_least_one(cls, value):
         if not value:
-            raise ValueError("meta.yaml: `problems` names at least one inner problem")
+            raise ValueError("grade.yaml: `problems` names at least one inner problem")
         return value
 
     @property
@@ -121,22 +147,44 @@ class MetaSpec(BaseModel):
     def instance_key(self, problem_id: str, repeat: int) -> str:
         return problem_id if self.repeats == 1 else f"{problem_id}/r{repeat}"
 
-    def required_exec_s(self) -> int:
+    def problems_for(self, split: str = "validation") -> list[InnerProblem]:
+        """The inner problems one verifier run grades on: `problems` on the
+        validation split, `outer_holdout` on the holdout split."""
+        if split not in SPLITS:
+            raise MetaError(f"unknown split {split!r} (one of {', '.join(SPLITS)})")
+        if split == "validation":
+            return self.problems
+        if not self.outer_holdout:
+            raise MetaError(
+                "grade.yaml: the holdout split needs `outer_holdout:` — problems the search on "
+                "this meta-problem never climbs on (or drop `holdout: true` from its problem.yaml)"
+            )
+        return self.outer_holdout
+
+    def required_exec_s(self, split: str = "validation") -> int:
         """Wall clock the verifier needs for every inner search, serially."""
-        return len(self.problems) * self.repeats * (self.budget_s + _STARTUP_ALLOWANCE_S)
+        return len(self.problems_for(split)) * self.repeats * (self.budget_s + _STARTUP_ALLOWANCE_S)
+
+    def score_function(self) -> ScoreFn:
+        return _resolve_function(self.score, SCORES, "score", self._base_dir)
+
+    def aggregate_function(self) -> AggregateFn:
+        return _resolve_function(self.aggregate, AGGREGATES, "aggregate", self._base_dir)
 
 
 from hillclimb.harness.budget import parse_budget  # noqa: E402,F401 — the one parser (it lived here too)
 
 
-def load_meta_spec(path: Path) -> MetaSpec:
+def load_grade_spec(path: Path) -> GradeSpec:
     path = Path(path)
     if not path.is_file():
-        raise MetaError(f"meta spec not found: {path}")
+        raise MetaError(f"grade spec not found: {path}")
     try:
-        return MetaSpec.model_validate(yaml.safe_load(path.read_text()) or {})
+        spec = GradeSpec.model_validate(yaml.safe_load(path.read_text()) or {})
     except ValueError as exc:
         raise MetaError(f"{path}: {exc}") from exc
+    spec._base_dir = path.resolve().parent
+    return spec
 
 
 # --- the score ---
@@ -157,11 +205,66 @@ def gap_closed(best: float | None, floor: float, target: float, higher_is_better
     return max(0.0, gain / gap)
 
 
-def aggregate(per_problem: dict[str, list[float]]) -> float:
-    """Median over a problem's repeats, mean over problems."""
-    if not per_problem:
+def solved(best: float | None, floor: float, target: float, higher_is_better: bool) -> float:
+    """1 when the search reached the best known value, else 0: the grade is
+    then the share of problems solved."""
+    if best is None:
         return 0.0
-    return statistics.fmean(statistics.median(values) for values in per_problem.values() if values)
+    return 1.0 if (best >= target if higher_is_better else best <= target) else 0.0
+
+
+def raw(best: float | None, floor: float, target: float, higher_is_better: bool) -> float:
+    """The inner search's own score, as it is (the floor when nothing
+    scored). Only for problems that share a scale and a direction."""
+    return floor if best is None else best
+
+
+# `score:` — one inner search's (best, floor, target, higher_is_better) on the shared scale
+ScoreFn = Callable[[float | None, float, float, bool], float]
+# `aggregate:` — the per-problem scores as one number
+AggregateFn = Callable[[list[float]], float]
+SCORES: dict[str, ScoreFn] = {"gap-closed": gap_closed, "solved": solved, "raw": raw}
+AGGREGATES: dict[str, AggregateFn] = {"mean": statistics.fmean, "median": statistics.median, "min": min}
+
+
+def _resolve_function(ref: str, builtins: Mapping[str, Callable], key: str, base_dir: Path | None) -> Callable:
+    """A built-in by name, or the user's own: `file.py:function` (relative to
+    the spec's folder) or `module:function`."""
+    if ref in builtins:
+        return builtins[ref]
+    target, sep, name = ref.rpartition(":")
+    if not sep or not target or not name:
+        raise MetaError(
+            f"grade.yaml `{key}: {ref}`: not one of {', '.join(builtins)}, "
+            "nor `file.py:function` / `module:function`"
+        )
+    try:
+        if target.endswith(".py"):
+            path = Path(target).expanduser()
+            if not path.is_absolute():
+                path = (base_dir or Path.cwd()) / path
+            module_spec = importlib.util.spec_from_file_location(f"_hillclimb_grade_{key}", path)
+            if module_spec is None or module_spec.loader is None:
+                raise ImportError(f"cannot load {path}")
+            module = importlib.util.module_from_spec(module_spec)
+            module_spec.loader.exec_module(module)
+        else:
+            module = importlib.import_module(target)
+        function = getattr(module, name)
+    except (ImportError, AttributeError, OSError, SyntaxError) as exc:
+        raise MetaError(f"grade.yaml `{key}: {ref}`: {exc}") from exc
+    if not callable(function):
+        raise MetaError(f"grade.yaml `{key}: {ref}`: {name} is not a function")
+    return function
+
+
+def aggregate(per_problem: dict[str, list[float]], combine: AggregateFn = statistics.fmean) -> float:
+    """Median over a problem's repeats, then `combine` over problems (the
+    mean unless the spec names another)."""
+    scores = [statistics.median(values) for values in per_problem.values() if values]
+    if not scores:
+        return 0.0
+    return float(combine(scores))
 
 
 # --- version-one permissions: what an improver's file may import ---
@@ -238,8 +341,8 @@ class MetaResult:
         return {"score": self.score, "instances": dict(self.instances), **self.metrics}
 
 
-def nested_config(outer: Config, climber: Path, spec: MetaSpec, nested_dir: Path) -> dict:
-    """The inner searches' hillclimb.yaml: the user's agent, model, routing,
+def nested_config(outer: Config, climber: Path, spec: GradeSpec, nested_dir: Path) -> dict:
+    """The inner searches' hillclimb.yaml: the user's coding agent, model, routing,
     concurrency and problems; the candidate as the climber; its own runs and
     store; learning off (every candidate meets the same world)."""
     data = outer.model_dump(mode="json")
@@ -269,7 +372,7 @@ def _resolve_target(problem: InnerProblem, spec_problem, higher_is_better: bool)
     if not values:
         raise MetaError(
             f"{problem.problem}: no best known value to measure against — the problem has no "
-            "chart_baselines; set `target:` for it in meta.yaml"
+            "chart_baselines; set `target:` for it in grade.yaml"
         )
     return max(values) if higher_is_better else min(values)
 
@@ -302,7 +405,7 @@ def score_floor(problem, config: Config, workdir: Path, log: Log = print) -> flo
 
 
 def inner_command(
-    python: str, problem_id: str, spec: MetaSpec, climber: Path, run_name: str, params: Mapping | None = None,
+    python: str, problem_id: str, spec: GradeSpec, climber: Path, run_name: str, params: Mapping | None = None,
 ) -> list[str]:
     """The inner `hillclimb run`: the candidate as the climber, and the
     trial's parameter values (an improver's params.json, tuned by the outer
@@ -344,17 +447,20 @@ def _read_inner(nested_dir: Path, problem_id: str) -> tuple[float | None, dict, 
 
 
 def evaluate(
-    spec: MetaSpec,
+    spec: GradeSpec,
     climber: Path,
     outer: Config,
     workdir: Path,
     log: Log = print,
     engine_python: str | None = None,
     params: Mapping | None = None,
+    split: str = "validation",
 ) -> MetaResult:
     """Run every inner search and score the climber. `params` are the
     trial's parameter values when the candidate declared a params.json
     (`$HILLCLIMB_PARAMS`); they reach the inner runs as `climber.params`.
+    `split` picks the problems: the spec's `problems`, or its `outer_holdout`
+    on the holdout split.
     Raises MetaError when an inner search fails (the outer candidate is then
     buggy, with the inner log's tail as the reason) or the spec cannot be
     measured."""
@@ -364,24 +470,26 @@ def evaluate(
     if not climber.is_file():
         raise MetaError(f"climber file not found: {climber}")
     workdir = Path(workdir).resolve()
-    needed = spec.required_exec_s()
+    problems = spec.problems_for(split)
+    score_of, combine = spec.score_function(), spec.aggregate_function()
+    needed = spec.required_exec_s(split)
     if outer.budget.exec_timeout_s < needed:
         raise MetaError(
-            f"meta.yaml needs {needed}s of inner search ({len(spec.problems)} problem(s) × "
+            f"grade.yaml needs {needed}s of inner search ({len(problems)} problem(s) × "
             f"{spec.repeats} repeat(s) × {spec.budget_s}s + start-up) but budget.exec_timeout_s "
             f"is {outer.budget.exec_timeout_s} — raise it in hillclimb.yaml or shorten the spec"
         )
     nested_dir = workdir / NESTED_DIRNAME
     nested_dir.mkdir(parents=True, exist_ok=True)
     (nested_dir / MARKER_FILE).write_text(
-        "# written by `hillclimb meta evaluate`: the inner searches' hillclimb dir\n"
+        "# written by `hillclimb grade`: the inner searches' hillclimb dir\n"
         + yaml.safe_dump(nested_config(outer, climber, spec, nested_dir), sort_keys=False)
     )
     inner_config = Config.load(path=nested_dir / MARKER_FILE)
     # measure before spending: every inner problem must load, have a target
     # and a floor (the spec's, else scored here once)
     targets: dict[str, tuple[float, float, bool]] = {}
-    for entry in spec.problems:
+    for entry in problems:
         try:
             spec_problem = load_problem(entry.problem, inner_config)
         except Exception as exc:
@@ -391,14 +499,14 @@ def evaluate(
         if floor is None:
             raise MetaError(
                 f"{entry.problem}: no floor to measure from — the problem ships no scorable "
-                "baseline; set `floor:` for it in meta.yaml"
+                "baseline; set `floor:` for it in grade.yaml"
             )
         log(f"{entry.problem}: floor={floor} target={target}")
         targets[entry.problem] = (floor, target, spec_problem.higher_is_better)
     python = engine_python or sys.executable
     outcomes: list[InnerOutcome] = []
     per_problem: dict[str, list[float]] = {}
-    for entry in spec.problems:
+    for entry in problems:
         problem_id = entry.problem
         floor, target, higher_is_better = targets[problem_id]
         for repeat in range(spec.repeats):
@@ -417,18 +525,18 @@ def evaluate(
                     f"inner search {run_name} exited {proc.returncode} (log: {log_path}):\n{tail}"
                 )
             best, spend, ref = _read_inner(nested_dir, problem_id)
-            gap = gap_closed(best, floor, target, higher_is_better)
+            gap = float(score_of(best, floor, target, higher_is_better))
             outcomes.append(InnerOutcome(
                 problem_id=problem_id, repeat=repeat, best=best, floor=floor, target=target, gap=gap,
                 evaluations=spend.get("evaluations", 0), tokens=spend.get("tokens", 0),
                 cost_usd=spend.get("cost_usd", 0.0), search_ref=ref,
             ))
             per_problem.setdefault(problem_id, []).append(gap)
-            log(f"inner search {run_name}: best={best} floor={floor} target={target} gap closed={gap:.4f}")
+            log(f"inner search {run_name}: best={best} floor={floor} target={target} {spec.score}={gap:.4f}")
     instances = {spec.instance_key(o.problem_id, o.repeat): o.gap for o in outcomes}
     metrics = {
         "inner_evaluations": float(sum(o.evaluations for o in outcomes)),
         "inner_tokens": float(sum(o.tokens for o in outcomes)),
         "inner_cost_usd": float(sum(o.cost_usd for o in outcomes)),
     }
-    return MetaResult(score=aggregate(per_problem), instances=instances, metrics=metrics, outcomes=outcomes)
+    return MetaResult(score=aggregate(per_problem, combine), instances=instances, metrics=metrics, outcomes=outcomes)

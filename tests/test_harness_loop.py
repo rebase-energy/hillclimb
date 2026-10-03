@@ -145,7 +145,7 @@ def test_run_reports_what_happened_to_the_attempt(task, config):
     broken = harness.run(Action(operator="draft"))
     assert broken.kind == "evaluated" and broken.candidate.status == "buggy"
     fixed = harness.run(Action(operator="debug", target_id=broken.candidate.candidate_id))
-    assert fixed.candidate.status == "passing" and fixed.candidate.role == "repair"
+    assert fixed.candidate.status == "passing" and fixed.candidate.kind == "repair"
     assert fixed.ticket.candidate_id == fixed.candidate.candidate_id
     assert harness.source(fixed.candidate.candidate_id) == ok_script(0.6)
     assert harness.source("c999") is None
@@ -228,7 +228,7 @@ def test_inject_scores_a_text_the_loop_already_has(task, config):
     assert not agent.requests  # no agent was ever called
     assert (first.kind, first.candidate.val_score) == ("evaluated", 0.4)
     assert child.candidate.parent_id == first.candidate.candidate_id
-    assert child.candidate.operator == "inject" and child.candidate.role == "inject"
+    assert child.candidate.operator == "inject" and child.candidate.kind == "inject"
     assert child.candidate.climber_meta == {"optimizer": "mine"}
     assert child.candidate.solution_sha256 == source_hash(ok_script(0.6) + marker)
     assert harness.source(child.candidate.candidate_id) == ok_script(0.6) + marker
@@ -248,10 +248,10 @@ def test_inject_refuses_nonsense_before_creating_anything(task, config):
 
 
 class Mutate(Operator):
-    """A refine-role operator that insists on a real change and hands the
+    """A refine-kind operator that insists on a real change and hands the
     agent a feedback file written from text."""
 
-    name, role, needs_target = "mutate", "refine", True
+    name, kind, needs_target = "mutate", "refine", True
 
     def prepare(self, ctx):
         return Attempt(
