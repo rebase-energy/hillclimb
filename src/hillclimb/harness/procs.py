@@ -51,31 +51,66 @@ def parse_ps_time(text: str) -> float:
     return days * 86400 + seconds
 
 
-def descendant_cpu_s(pid: int) -> float:
-    """CPU seconds of every live descendant of `pid`, read from `ps` — what
-    a process-group kill is about to throw away. Zero when `ps` is missing
-    or says nothing (Windows: no `ps`, so the orphans' CPU goes uncounted)."""
-    if IS_WINDOWS:
-        return 0.0
+def _proc_table() -> list[tuple[int, int, float]]:
+    """(pid, ppid, CPU seconds) of every process, from Linux's /proc: tick
+    resolution, where procps `ps -o time` rounds down to whole seconds (a
+    descendant's 0.4 s would read as 0). Empty where there is no /proc."""
+    proc = Path("/proc")
+    if not (proc / "self" / "stat").exists():
+        return []
+    try:
+        ticks = os.sysconf("SC_CLK_TCK")
+    except (ValueError, OSError, AttributeError):
+        return []
+    table = []
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            stat = (entry / "stat").read_text()
+        except OSError:
+            continue  # gone since the listing
+        # "pid (comm) state ppid ... utime stime ...": comm may hold spaces
+        fields = stat[stat.rfind(")") + 2 :].split()
+        try:
+            table.append((int(entry.name), int(fields[1]), (int(fields[11]) + int(fields[12])) / ticks))
+        except (IndexError, ValueError):
+            continue
+    return table
+
+
+def _ps_table() -> list[tuple[int, int, float]]:
+    """(pid, ppid, CPU seconds) of every process, from `ps` (macOS, BSD)."""
     try:
         listing = subprocess.run(
             ["ps", "-A", "-o", "pid=,ppid=,time="],
             capture_output=True, text=True, timeout=5, check=False,
         ).stdout
     except (OSError, subprocess.SubprocessError):
-        return 0.0
-    children: dict[int, list[int]] = {}
-    cpu: dict[int, float] = {}
+        return []
+    table = []
     for line in listing.splitlines():
         fields = line.split()
         if len(fields) < 3:
             continue
         try:
-            child, parent = int(fields[0]), int(fields[1])
+            table.append((int(fields[0]), int(fields[1]), parse_ps_time(fields[2])))
         except ValueError:
             continue
+    return table
+
+
+def descendant_cpu_s(pid: int) -> float:
+    """CPU seconds of every live descendant of `pid`, read from `ps` — what
+    a process-group kill is about to throw away. Zero when `ps` is missing
+    or says nothing (Windows: no `ps`, so the orphans' CPU goes uncounted)."""
+    if IS_WINDOWS:
+        return 0.0
+    children: dict[int, list[int]] = {}
+    cpu: dict[int, float] = {}
+    for child, parent, seconds in _proc_table() or _ps_table():
         children.setdefault(parent, []).append(child)
-        cpu[child] = parse_ps_time(fields[2])
+        cpu[child] = seconds
     total = 0.0
     stack = list(children.get(pid, []))
     while stack:

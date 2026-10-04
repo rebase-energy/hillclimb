@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
+
+# typer forces colour at import when it sees these (GitHub Actions sets the
+# first): the help and command-list tests read plain text, so clear them
+# before anything imports typer
+for _name in ("GITHUB_ACTIONS", "FORCE_COLOR", "PY_COLORS"):
+    os.environ.pop(_name, None)
 
 import pytest
 
