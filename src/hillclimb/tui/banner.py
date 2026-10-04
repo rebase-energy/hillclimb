@@ -8,11 +8,13 @@ from __future__ import annotations
 
 from itertools import zip_longest
 
+from hillclimb.tui.palette import CYAN
+
 # Ridge-line mark + ANSI-shadow "HILLCLIMB", printed above the command list on a bare `hillclimb`
 # and on `--help`, the way `rebase` fronts the toolkit CLI. Same bold cyan as
 # the command and option columns below it, so the whole help screen reads as
 # one palette.
-BANNER_STYLE = "bold cyan"
+BANNER_STYLE = f"bold {CYAN}"
 # Rising-trend arrow to the right of the wordmark, in the same ANSI-shadow
 # style as the letters: a climb, a small dip, then a climb into the arrowhead.
 # Diagonals step one column per row so adjacent cells share an edge, not just

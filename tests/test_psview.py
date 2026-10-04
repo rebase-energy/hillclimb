@@ -11,6 +11,7 @@ from rich.console import Console
 
 from hillclimb.harness.orphans import process_table
 from hillclimb.tui.machine import SearchReader, scan, short_command
+from hillclimb.terms import ENGINE as TERM  # the word the screens use for a search's process
 from hillclimb.tui.psview import render_ps
 
 
@@ -61,7 +62,7 @@ def test_one_box_one_table_compute_only():
     assert sum(line.startswith("╭") for line in lines) == 1  # one box
     assert text.count("   pid ") == 1  # one table header
     # each engine heads its own tree, its problem and folder on its row
-    assert text.count(" engine ") == 2 and text.count("heilbronn-11  ·  ") == 2
+    assert text.count(f" {TERM} ") == 2 and text.count("heilbronn-11  ·  ") == 2
     assert text.count("orphan, dir deleted  ·  /nowhere") == 2  # /nowhere does not exist
     assert "└─ claude · sonnet" in text
     # search progress belongs to `watch`
@@ -83,7 +84,7 @@ def test_watch_frame_stays_on_one_screen(height):
     text = "\n".join(lines)
     # every engine keeps its own row and its coding agent; what did not fit
     # is counted, not dropped silently
-    assert text.count(" engine ") == 3
+    assert text.count(f" {TERM} ") == 3
     assert text.count("claude · sonnet") == 3
     assert "MCP server processes" in text or "more · hillclimb top" in text
 
@@ -189,6 +190,6 @@ def test_ps_lists_a_verify_running_in_a_terminal():
     console = Console(width=110, file=StringIO(), color_system=None)
     console.print(render_ps(machine, rows, 110))
     text = console.file.getvalue()
-    assert "engines 1  ·  verify 1" in text
+    assert f"{TERM.pl} 1  ·  verify 1" in text
     assert " verify " in text and "heilbronn-11  ·  " in text
     assert "python v0/solution.py" in text  # the temp candidate path, shortened

@@ -299,3 +299,24 @@ class TestRunMap:
     def test_no_searches(self):
         view = build_run_map([], True, problem_key="p")
         assert view.unavailable == "no searches for p in the run"
+
+
+def test_a_baseline_without_code_gives_way_to_the_earliest_that_has_some(tmp_path):
+    """A `baseline_files` problem's baseline (heilbronn) is a sample
+    submission with no solution.py: the views anchor on the earliest
+    candidate that can be compared instead of refusing to draw."""
+    (tmp_path / "candidates" / "c000").mkdir(parents=True)
+    (tmp_path / "candidates" / "c000" / "submission.csv").write_text(sub_csv([0.0, 0.0, 0.0]))
+    write_candidate(tmp_path, "c001", solution="x = 1\n", submission=sub_csv([1.0, 2.0, 3.0]))
+    write_candidate(tmp_path, "c002", solution="y = 2\n", submission=sub_csv([2.0, 3.0, 4.0]))
+    candidates = [
+        cand("c000", "baseline", t=0),
+        cand("c001", "draft", score=0.5, t=1),
+        cand("c002", "draft", score=0.6, t=2),
+    ]
+    view = build_map(candidates, tmp_path, True)
+    assert view.unavailable is None and {n.id for n in view.nodes} == {"c001", "c002"}
+    cube = build_similarity(candidates, tmp_path, True)
+    assert cube.unavailable is None and cube.reference_label == "earliest"
+    # a champion asked for by name is not swapped for another candidate
+    assert build_similarity(candidates, tmp_path, True, reference="champion").unavailable is None

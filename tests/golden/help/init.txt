@@ -6,13 +6,18 @@
  Writes hillclimb.yaml (the config) with problems/ and runs/ beside it,                                                 
  plus the gitignore rules that commit the record of every run and not                                                   
  its bulk. The current folder by default; `hillclimb init hillclimb`                                                    
- keeps it all in a subfolder instead.                                                                                   
+ keeps it all in a subfolder instead. `--datastore sqlite` keeps the                                                    
+ records (runs, searches, journals, status) in one store.sqlite instead                                                 
+ of files under runs/; the candidates and best/ stay in runs/ either way.                                               
                                                                                                                         
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │   [directory]      PATH  Folder to make a hillclimb dir (created if missing) [default: .]                            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ --force            Create one even inside an existing hillclimb dir                                                  │
-│ --help   -h        Show this message and exit.                                                                       │
+│ --force                    Create one even inside an existing hillclimb dir                                          │
+│ --datastore          TEXT  Where the records of runs live: files (yaml/jsonl under runs/) or sqlite (one             │
+│                            store.sqlite)                                                                             │
+│                            [default: files]                                                                          │
+│ --help       -h            Show this message and exit.                                                               │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 

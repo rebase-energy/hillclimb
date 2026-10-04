@@ -47,6 +47,12 @@ from hillclimb.tui.similarityview import (
     START_CAMERA,
     UNSCORED_RGB,
     UNSCORED_SIZE,
+    fate_shape,
+    legend_markup,
+    legend_rows,
+    apply_legend,
+    ramp_spans,
+    PLOT_LEGEND,
     RunScopeMixin,
     SimilarityBase,
     experiment_colour,
@@ -56,7 +62,7 @@ from hillclimb.tui.similarityview import (
     run_state,
 )
 from hillclimb.harness.store import SearchRecord
-from hillclimb.tui.theme import themed_plot
+from hillclimb.tui.theme import themed_plot, boxed_plot
 from hillclimb.tui.treeview import FATE_SHAPE, dim_rgb
 from hillclimb.tui.watch import STATE_STYLE
 
@@ -100,7 +106,7 @@ def node_shape(node: MapNode) -> str:
         return "diamond"
     if node.origin:
         return "diamond-open"
-    return FATE_SHAPE.get(node.fate, "disc")
+    return fate_shape(node.fate, node.bin is not None)
 
 
 def node_styles(view: MapView) -> tuple[list[RGB], list[float], list[str]]:
@@ -214,7 +220,7 @@ def build_map_plot(view: MapView, selected: int | None = None) -> tuple[Plot, in
     """The plot and the graph trace's handle (None when there is nothing
     to draw). Node index i of `view.nodes` is flat node index i of the
     plot: the graph is its only pickable trace, and the trail is a line."""
-    plot = themed_plot()
+    plot = boxed_plot()
     if not view.nodes:
         return plot, None
     colours, sizes, shapes = node_styles(view)
@@ -231,6 +237,9 @@ def build_map_plot(view: MapView, selected: int | None = None) -> tuple[Plot, in
             [n.x for n in trail], [n.y for n in trail], [n.z for n in trail],
             color=TRAIL_RGB, width=2.0, name="best-so-far",
         )
+    # the legend is the plot's own box at the top left, like the reference
+    # cube's; the trail's name stays for the hover readout
+    apply_legend(plot, legend_rows(origin="origin", line=(TRAIL_RGB, "best so far")))
     if selected is not None:
         plot.set_selected(selected)
     extent = nice_extent(view)
@@ -302,7 +311,20 @@ class MapPlotWidget(PlotWidget):
         plot.set_camera_state(*camera)
         self._plot = plot
         self._view = view
+        self._sync_ramp()
         self.invalidate()
+
+    def _sync_ramp(self) -> None:
+        """The score ramp at the top right, as on the reference cube — a
+        search's map only: a run's is coloured by experiment."""
+        from rich.style import Style
+
+        shown = PLOT_LEGEND and self._view is not None and self._view.scope != "run"
+        spans = ramp_spans(self.size.width) if shown else []
+        self.set_overlay([(r, c, t, Style.parse(st)) for r, c, t, st in spans])
+
+    def on_resize(self) -> None:
+        self._sync_ramp()
 
     def clear_view(self) -> None:
         if self._view is None:
@@ -370,6 +392,8 @@ class MapScreen(SimilarityBase):
         yield HillclimbHeader()
         yield Label(id="similarityline")
         yield MapPlotWidget(id="similarity-canvas")
+        if not PLOT_LEGEND:  # an older plotui: the legend is a row under the plot
+            yield Label(legend_markup(origin="origin", line=(TRAIL_RGB, "best so far")), id="similarity-legend")
         yield Footer()
 
     def on_mount(self) -> None:

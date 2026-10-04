@@ -10,6 +10,8 @@ from hillclimb.cli import common
 from hillclimb.cli._app import app
 from hillclimb.cli.common import _m, fail, say, warn
 from hillclimb.config import Config
+from hillclimb import terms
+from hillclimb.terms import ENGINE
 from hillclimb.harness.control import request_prune, request_stop
 from hillclimb.harness.store import (
     DataStore,
@@ -35,14 +37,14 @@ def _load_config_or_reap_orphans(all_: bool) -> Config:
         orphans = orphan_engines()
         if not orphans:
             common.say_no_hillclimb_dir(exc)
-            say("No orphaned engines running either.")
+            say(f"No orphaned {ENGINE.pl} running either.")
             raise typer.Exit(1)
-        say("[head]No hillclimb.yaml found[/], but engines whose hillclimb dir was deleted are still running:")
+        say(f"[head]No hillclimb.yaml found[/], but {ENGINE.pl} whose hillclimb dir was deleted are still running:")
         for engine in orphans:
             say(f"  pid [path]{engine.pid}[/]  [note](was {_m(engine.hillclimb_dir)})[/]")
         forced = kill_engines(orphans)
         say(
-            f"[head]Terminated[/] {len(orphans)} engine process group(s) with their coding agents and verifiers"
+            f"[head]Terminated[/] {len(orphans)} {ENGINE} process group(s) with their coding agents and verifiers"
             + (f"; {len(forced)} needed SIGKILL." if forced else ".")
         )
         raise typer.Exit(0)
@@ -60,7 +62,7 @@ def _stop_orphaned_children(records) -> int:
         stopped = stop_orphaned_children(record.search_dir)
         if stopped:
             names = ", ".join(sorted({entry.get("program") or "?" for entry in stopped}))
-            say(f"[head]Stopped[/] {len(stopped)} process(es) the dead engine of [path]{_m(record.ref)}[/] left running [note]({_m(names)})[/]")
+            say(f"[head]Stopped[/] {len(stopped)} process(es) left running after [path]{_m(record.ref)}[/] died [note]({_m(names)})[/]")
             total += len(stopped)
     return total
 
@@ -121,21 +123,22 @@ def _watch_ps(interval: float) -> None:
 
 
 @app.command()
+@terms.doc
 def ps(
     watch: bool = typer.Option(False, "--watch", "-w", help="Keep redrawing it in place until ctrl+c"),
     interval: float = typer.Option(1.0, "--interval", "-n", help="Seconds between redraws with --watch"),
 ):
     """Every process hillclimb is responsible for on this machine — compute only.
 
-    One box, sized to the terminal: the machine at a glance (engines, coding
+    One box, sized to the terminal: the machine at a glance ({engines}, coding
     agents against the machine's slot cap, cpu, memory) above one
-    process table — each engine on a row of its own (its problem and
+    process table — each {engine} on a row of its own (its problem and
     hillclimb dir), its processes nested under it. A hillclimb command
     computing in a terminal (`verify`, `grade`, `run --no-detach`) gets a
     block of its own the same way. Roles: agent (a coding
     agent), tool (a command the coding agent runs itself, e.g. trying its
     solution), mcp (a server it loaded from your own Claude config),
-    verifier (a scored run) and solution (what the verifier runs). Engines
+    verifier (a scored run) and solution (what the verifier runs). {Engines}
     whose hillclimb dir has been deleted are marked orphan — `hillclimb stop
     --all` reaps those. `--watch` redraws it every second; search progress
     is `hillclimb watch`, and `hillclimb top` sorts, stops and opens them.
@@ -151,17 +154,18 @@ def ps(
 
 
 @app.command()
+@terms.doc
 def top():
     """The control pane for every hillclimb process on this machine.
 
     `hillclimb ps`, live and with controls: the machine at a glance
-    (engines, coding agents against the machine's slot cap, cpu, memory)
-    above one table where each engine heads its own process tree — coding
+    ({engines}, coding agents against the machine's slot cap, cpu, memory)
+    above one table where each {engine} heads its own process tree — coding
     agents, their tool shells and MCP servers, verifiers and the solution
     they score. Works from any folder. Keys act on the highlighted row:
-    s=stop its engine (resumable), g=stop gracefully, k=kill that process
-    and what it started (on an engine row: the whole engine), o=change the
-    order of the engines, r=reverse it, q=quit. Search progress is
+    s=stop its {engine} (resumable), g=stop gracefully, k=kill that process
+    and what it started (on {an_engine} row: the whole {engine}), o=change the
+    order of the {engines}, r=reverse it, q=quit. Search progress is
     `hillclimb watch`.
     """
     try:
@@ -176,6 +180,7 @@ def top():
 
 
 @app.command()
+@terms.doc
 def stop(
     search: str = typer.Argument("latest"),
     all_: bool = typer.Option(False, "--all", help="Stop every running search"),
@@ -183,14 +188,14 @@ def stop(
         False, "--graceful", "-g", help="Let the operators in flight finish and be scored first"
     ),
 ):
-    """Stop a running engine now; it can be resumed.
+    """Stop a running {engine} now; it can be resumed.
 
     The operators in flight are aborted within about a second — their coding agents
     and verifiers are killed and their candidates journaled as abandoned (the
     tokens they spent are not recovered). `--graceful` instead starts no new
     work and parks once the operators in flight have finished and been
     scored. Resume later with `hillclimb resume`. `--all` stops every running
-    search (e.g. a parallel run). An engine that does not respond: `hillclimb kill`.
+    search (e.g. a parallel run). One that does not respond: `hillclimb kill`.
     """
     config = _load_config_or_reap_orphans(all_)
     store, targets = _search_targets(config, search, all_)
@@ -210,6 +215,7 @@ def stop(
 
 
 @app.command()
+@terms.doc
 def prune(
     search: str,
     candidate_id: str,
@@ -217,7 +223,7 @@ def prune(
 ):
     """Prune a candidate and its whole subtree.
 
-    The engine stops building on this lineage and it is excluded from
+    The {engine} stops building on this lineage and it is excluded from
     selection. Statuses and scores stay visible in status/tree output.
     """
     config = common.load_config()
@@ -240,14 +246,15 @@ def prune(
 
 
 @app.command()
+@terms.doc
 def kill(
     search: str = typer.Argument("latest"),
     all_: bool = typer.Option(False, "--all", help="Kill every running search"),
     grace: float = typer.Option(5.0, "--grace", help="Seconds between SIGTERM and SIGKILL"),
 ):
-    """Last resort for an engine that does not respond to `hillclimb stop`.
+    """Last resort for {an_engine} that does not respond to `hillclimb stop`.
 
-    SIGTERMs the engine with its coding agents and verifiers, then SIGKILLs whatever
+    SIGTERMs its process with its coding agents and verifiers, then SIGKILLs whatever
     is still alive after `--grace` seconds. The search stays resumable: a
     candidate left pending is recovered as abandoned on resume. `--all` kills
     every running search.
@@ -278,20 +285,26 @@ def kill(
         engines[pid] = engine
     forced = kill_engines(list(engines.values()), grace_s=grace)
     for record in targets:
-        say(f"[head]Killed[/] engine of [path]{_m(record.ref)}[/].")
+        say(f"[head]Killed[/] [path]{_m(record.ref)}[/].")
     if forced:
-        say(f"[note]{len(forced)} engine(s) ignored SIGTERM and needed SIGKILL.[/]")
+        say(f"[note]{ENGINE.n(len(forced))} ignored SIGTERM and needed SIGKILL.[/]")
     say(f"Resume with: [cmd]hillclimb resume {_m(targets[0].ref if len(targets) == 1 else '--all')}[/]")
 
 
 @app.command()
+@terms.doc
 def reset(
     yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask for confirmation"),
+    runs: bool = typer.Option(
+        False, "--runs",
+        help="Delete only what searches produced (runs/, the sqlite store, knowledge/) and keep the "
+        "hillclimb dir: hillclimb.yaml, problems/ and climbers/ stay",
+    ),
 ):
-    """Kill every engine of THIS hillclimb dir and delete what hillclimb made in it.
+    """Kill every {engine} of THIS hillclimb dir and delete what hillclimb made in it.
 
     The hillclimb dir is the one found from the current directory (or
-    `HILLCLIMB_DIR`). Only engines pinned to that exact dir are signalled —
+    `HILLCLIMB_DIR`). Only {engines} pinned to that exact dir are signalled —
     their coding agents and verifiers go with them — then hillclimb.yaml, the
     sqlite store and the folders hillclimb created beside it (each carries a
     hidden `.hillclimb` file: problems/, runs/, knowledge/, climbers/) are
@@ -300,6 +313,11 @@ def reset(
     Without --yes it lists what goes and what stays first. Searches of other
     folders on the machine are untouched. `runs_dir` or `problems_dir`
     configured outside the hillclimb dir are left in place and reported.
+
+    `--runs` starts the folder's searches over without setting it up again:
+    the {engines} are killed and runs/, the sqlite store and knowledge/ (what
+    the searches learned, and any papers distilled into it) are removed,
+    while hillclimb.yaml, problems/ and climbers/ stay.
     """
     import shutil
 
@@ -314,7 +332,7 @@ def reset(
     mine = engines_for(root, engines)
     unknown = [e for e in engines if e.hillclimb_dir is None]
 
-    owned, kept = common.owned_paths(root, config)
+    owned, kept = common.owned_paths(root, config, runs_only=runs)
     say(f"[head]Will delete[/] from [path]{_m(root)}[/] [note](what hillclimb created)[/]:")
     for path in owned:
         say(f"  [path]{_m(path.relative_to(root))}{'/' if path.is_dir() else ''}[/]")
@@ -323,14 +341,14 @@ def reset(
         for path in kept:
             say(f"  [path]{_m(path.relative_to(root))}/[/]")
     if mine:
-        say(f"and terminate {len(mine)} engine(s) running against it [note](with their coding agents and verifiers)[/]:")
+        say(f"and terminate {ENGINE.n(len(mine))} running against it [note](with their coding agents and verifiers)[/]:")
         for engine in mine:
             say(f"  pid [path]{engine.pid}[/]")
     else:
-        say("No engines are running against it.")
+        say(f"No {ENGINE.pl} are running against it.")
     if unknown:
         say(
-            f"[note]Note: {len(unknown)} engine(s) whose hillclimb dir could not be read will be left alone: "
+            f"[note]Note: {ENGINE.n(len(unknown))} whose hillclimb dir could not be read will be left alone: "
             + ", ".join(f"pid {e.pid}" for e in unknown)
             + "[/]"
         )
@@ -347,7 +365,7 @@ def reset(
     if mine:
         forced = kill_engines(mine)
         say(
-            f"[head]Terminated[/] {len(mine)} engine process tree(s)"
+            f"[head]Terminated[/] {len(mine)} {ENGINE} process tree(s)"
             + (f"; {len(forced)} needed SIGKILL." if forced else ".")
         )
     for path in owned:
@@ -355,8 +373,13 @@ def reset(
             shutil.rmtree(path)
         else:
             path.unlink(missing_ok=True)
-    from hillclimb.project import OWNED_MARKER, is_owned_dir
+    from hillclimb.project import OWNED_MARKER, ensure_owned_dir, is_owned_dir
 
+    if runs:
+        if config.paths.runs_dir in owned:
+            ensure_owned_dir(config.paths.runs_dir)  # as `hillclimb init` left it
+        say(f"[head]Reset the runs[/] of [path]{_m(root)}[/] [note](problems and config kept)[/]")
+        return
     left = [p.name for p in root.iterdir() if p.name not in (OWNED_MARKER, ".gitignore")] if root.is_dir() else []
     if is_owned_dir(root) and not left:
         shutil.rmtree(root)  # a hillclimb/ subfolder hillclimb made, now empty of anything else

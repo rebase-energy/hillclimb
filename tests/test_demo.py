@@ -171,6 +171,10 @@ def test_run_parallel_searches_spawns_detached_engines(tmp_path, monkeypatch):
 
     class FakeProc:
         pid = 4242
+        returncode = 0
+
+        def poll(self):  # the launch's startup check: it exited cleanly
+            return 0
 
     monkeypatch.setattr("subprocess.Popen", lambda cmd, **kw: launched.append(cmd) or FakeProc())
     # the fleet pre-builds the problem's venv; a cold cache must not make this test build one

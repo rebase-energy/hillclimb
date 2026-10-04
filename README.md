@@ -43,18 +43,18 @@ compared on the same problem under the same budget.
 
 ```bash
 pip install hillclimb
-hillclimb connect claude               # or codex, pi; add --agent dummy to any run for no LLM at all
+hillclimb connect claude                   # or codex, pi; add --agent dummy to any run for no LLM at all
 
-hillclimb init                         # hillclimb.yaml, problems/, runs/ in this folder
-hillclimb problem get heilbronn-11     # the verifier is the problem; description.md is the brief
-hillclimb verify heilbronn-11          # score the floor solution
+hillclimb init                             # hillclimb.yaml, problems/, runs/ in this folder
+hillclimb problem get heilbronn-convex-13  # the verifier is the problem; description.md is the brief
+hillclimb verify heilbronn-convex-13       # score the floor solution
 
-hillclimb run heilbronn-11 --budget 10m
-hillclimb watch                        # live coding agents and scores (also: chart, tree)
+hillclimb run heilbronn-convex-13 --budget 10m
+hillclimb watch                            # live coding agents and scores (also: chart, tree)
 hillclimb stop --all
 ```
 
-The best solution lands in `runs/<run-id>/searches/heilbronn-11/best/`.
+The best solution lands in `runs/<run-id>/searches/heilbronn-convex-13/best/`.
 The [walkthrough](https://docs.hillclimb.sh/walkthrough) goes through each step.
 
 ## Climbers
@@ -80,13 +80,16 @@ from hillclimb import Budget, Climber, Problem
 from hillclimb.policies import Greedy
 from hillclimb.selectors import MapElites
 
-problem = Problem("heilbronn-11")
+problem = Problem("heilbronn-convex-13")
 budget = Budget(wall_clock="10m", evaluations=40)
 climber = Climber(selector_policy=MapElites(num_drafts=5), operator_policy=Greedy())
 
 climber.search(problem, budget=budget)
 climber.best, climber.history, climber.to_frame()
 ```
+
+`MapElites` and the `openevolve` preset need `pip install 'hillclimb[openevolve]'`,
+`tuner: optuna` needs `'hillclimb[optuna]'` and `gepa` needs `'hillclimb[gepa]'`.
 
 `climber.start(...)` opens the same search to drive by hand, one `climber.step()` at a
 time, and `Problem(name, score=my_function, ...)` defines a problem from a scoring function.
@@ -95,7 +98,7 @@ Runnable scripts are in [`examples/`](examples/).
 Compare two head to head:
 
 ```bash
-hillclimb run heilbronn-11 --climber greedy --climber openevolve --parallel-searches 2
+hillclimb run heilbronn-convex-13 --climber greedy --climber openevolve   # one search each; --parallel-searches 3 runs three of each
 hillclimb experiment report <run-id>
 ```
 

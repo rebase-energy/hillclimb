@@ -750,6 +750,33 @@ def test_worker_crash_does_not_hang_the_scheduler(task, config):
         budget=BudgetManager(3600, stop_margin_s=1),
         search_dir=search_dir, max_candidates=3, log=lambda *_: None,
     )
-    searcher.run()  # terminates instead of deadlocking
+    searcher.run()  # terminates instead of deadlocking (three crashes in a row would fail it)
     assert all(c.status != "pending" for c in journal.candidates.values())
-    assert any("orchestrator error" in (c.summary or "") for c in journal.candidates.values())
+    assert any("operator crashed: RuntimeError('executor blew up')" in (c.summary or "") for c in journal.candidates.values())
+
+
+def test_a_detached_launch_tells_an_engine_that_died_while_starting(tmp_path):
+    """C1: a detached run must not report an engine running in the
+    background when it died in its first second (a bad budget, an unknown
+    agent, a missing seed). A live engine counts as started once its log
+    shows its first operator."""
+    import subprocess
+    import sys
+    import time
+
+    from hillclimb.api import FleetHandle
+
+    dead_log, live_log = tmp_path / "dead.log", tmp_path / "live.log"
+    dead_log.write_text("ValueError: Unknown agent: nonsense\n")
+    live_log.write_text("Search r/s (problem=p)\n")
+    dead = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(1)"])
+    live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        live_log.write_text("Search r/s (problem=p)\n[1:00 left] draft (c001)\n")
+        started = time.monotonic()
+        failed = FleetHandle(tmp_path, [dead, live], [dead_log, live_log]).startup_failures(wait_s=10)
+        assert failed == [(dead_log, 1)]
+        assert time.monotonic() - started < 5  # the live one showed its first operator: no need to wait
+    finally:
+        live.kill()
+        live.wait()

@@ -10,6 +10,7 @@ from pathlib import Path
 import typer
 
 from hillclimb.config import Config
+from hillclimb.tui.palette import CYAN, GREEN, RED, YELLOW
 from hillclimb.harness.store import DataStore, SearchRecord, open_store, resolve_search
 
 _CONSOLE = None
@@ -27,13 +28,16 @@ _ERR_CONSOLE = None
 #   [note]   the explanation beside it, in dim ink
 #   [ok] [warn] [bad]   verdicts: green, yellow, bold red
 #
+# The colours are the palette's hex, not ANSI names: a named colour is drawn
+# in the terminal's own palette, which is pastel in a stock Ghostty.
+#
 # Every dynamic value is wrapped in `_m()` so a `[` in a path or an id is
 # not read as markup. Data the reader pipes elsewhere — `--json` output,
 # diffs, file bodies, a candidate's stdout tail — is NOT the voice: it
 # stays on `typer.echo`, byte-exact, with no styling.
 THEME = {
-    "cmd": "bold cyan", "path": "cyan", "note": "dim", "head": "bold",
-    "ok": "green", "warn": "yellow", "bad": "bold red",
+    "cmd": f"bold {CYAN}", "path": CYAN, "note": "dim", "head": "bold",
+    "ok": GREEN, "warn": YELLOW, "bad": f"bold {RED}",
 }
 
 
@@ -155,16 +159,18 @@ def table(columns, rows, *, err: bool = False) -> None:
     borders, cells in whatever markup the caller gives (already escaped
     with `_m`). `columns` are `(heading, style | None)` pairs — the style
     colours a whole column, e.g. `("problem", "path")`; a heading may be
-    `""` for a marker column. One helper so `connect`, `problem list` and
+    `""` for a marker column, and a third item aligns it (`("best", None,
+    "right")`). One helper so `connect`, `problem list` and
     every later listing look like one tool."""
     from rich import box
     from rich.table import Table
 
     grid = Table(box=box.SIMPLE_HEAD, pad_edge=False, header_style="head", show_edge=False)
-    for heading, style in columns:
+    for heading, style, *justify in columns:
         # a cell wraps inside its own column, and a long word (a path, an
-        # id) folds rather than being cut with an ellipsis
-        grid.add_column(heading, style=style, overflow="fold")
+        # id) folds rather than being cut with an ellipsis; a third item
+        # aligns the column ("right" for numbers)
+        grid.add_column(heading, style=style, overflow="fold", justify=justify[0] if justify else "left")
     for row in rows:
         grid.add_row(*row)
     console = _err_console() if err else _console()
@@ -180,6 +186,25 @@ def table(columns, rows, *, err: bool = False) -> None:
         if natural > console.width:
             console = _make_console(err, width=natural)
     console.print(grid)
+
+
+def markdown(text: str) -> None:
+    """A Markdown report: rendered in the theme on a terminal (headings,
+    tables), the Markdown itself when piped — so it pastes into notes."""
+    console = _console()
+    if not console.is_terminal:
+        typer.echo(text)
+        return
+    from rich.markdown import Markdown
+
+    console.print(Markdown(text))
+
+
+def short_path(path) -> str:
+    """A path as a person reads it: the home folder as `~`."""
+    text = str(path)
+    home = str(Path.home())
+    return "~" + text[len(home):] if text == home or text.startswith(home + "/") else text
 
 
 def legend(rows, indent: int = 2) -> None:
@@ -224,7 +249,7 @@ def require_sandbox(config: Config, overrides: dict | None = None) -> None:
         if not sandbox.enabled(config):
             reason = "off"
         elif sandbox.backend() is None:
-            reason = "none exists for this operating system"
+            reason = sandbox.no_sandbox_reason()
         else:
             return
     except sandbox.SandboxUnavailable as exc:
@@ -248,153 +273,23 @@ def say_no_hillclimb_dir(exc) -> None:
     )
 
 
-INIT_CONFIG = """\
-# hillclimb config — this file marks the hillclimb dir (problems/ and runs/
-# sit beside it); commands work from any subdirectory below it. Precedence: CLI flags > this file >
-# ~/.config/hillclimb/config.yaml > built-in defaults.
-
-model: sonnet
-# agent: claude-code
-
-# climber: greedy          # HOW to climb, this folder's default. A preset: greedy | openevolve | gepa,
-#                          # or one .py file. A run spec's own `climber:` replaces it
-# climber:                 # ...or the whole block (`hillclimb climber show greedy` prints one to edit)
-#   selector_policy: best  # which candidate to build on next: best | map-elites, or a file / package.module:Class
-#   selector_params: {num_drafts: 3}
-#   operator_policy: greedy  # which operator to use on it: a name, a file (mine.py or mine.py:Class) or package.module:Class
-#   operators: [draft, debug, improve, ensemble]
-#   tuner: random          # random | optuna (parameter tuning of candidates that declare params.json)
-#   memory: files          # files | none
-
-# budget:
-#   total_s: 7200
-#   deadline: graceful     # `hard` aborts in-flight operators when total_s runs out
-#   max_evaluations: 0     # verifier trials the climber may spend (0 = unlimited)
-
-# evaluation:
-#   n_replicates: 1        # seeded runs per trial (median is the trial's score)
-#   replicate_mode: parallel # `serial` when the metric measures the machine (time!)
-#   noise_k: 0             # require gains > k x the measured noise floor
-#   min_improvement: 0     # ...or an absolute floor, in metric units
-
-# concurrency:
-#   parallel_agents: 1   # >1 runs concurrent coding agents
-#   machine_max_agents: 8  # cap across every search on this machine (default min(8, cores-2))
-
-# holdout:
-#   enabled: true
-#   top_k: 5             # holdout scored only for top-k-by-val candidates
-
-# similarity:            # `hillclimb similarity scores`: name (or my_score.py) -> params
-#   scores:
-#     solution-card: {card_model: anthropic/claude-haiku-4.5, embedding_model: voyageai/voyage-4}
-#     api-calls: {}
-
-# learning:
-#   enabled: true        # knowledge cards in knowledge/ inform new searches
-#   max_cards: 3
-#   complexity_prior: false
-#   live: true           # concurrent searches in one run share discoveries mid-flight
-
-# report:
-#   enabled: true        # inject eval breakdowns (per-zone/horizon/quantile) into improve prompts
-"""
-
-
-# What `hillclimb init` adds to the hillclimb dir's .gitignore. The RECORD
-# of every run is committed — run.yaml, spec.yaml, each search's search.yaml,
-# journal, status, knowledge card, climber snapshot, and the best solution —
-# so `git log` explains every run and `hillclimb chart` works on a fresh
-# clone. The BULK is not: candidates (coding agent streams, replicate outputs,
-# runtime data), engine logs, the control queue, the rest of best/ (a
-# submission can be large), the sqlite store and the derived knowledge graph.
-# Keys never are. Leading slashes anchor each rule at the hillclimb dir.
-INIT_GITIGNORE = (
-    "# hillclimb: the record of every run is committed, its bulk is not",
-    "/.env",
-    "/runs/*/logs/",
-    "/runs/*/searches/*/candidates/",
-    "/runs/*/searches/*/control/",
-    "/runs/*/searches/*/best/*",
-    "!/runs/*/searches/*/best/solution.py",
-    "!/runs/*/searches/*/best/params.json",
-    "/store.sqlite*",
-    "/knowledge/graph.json",
+# What `hillclimb init` writes lives in hillclimb.project (the Python API makes
+# a fresh folder a hillclimb dir too); the CLI reaches it as common.<name>.
+from hillclimb.project import (  # noqa: E402,F401
+    INIT_CONFIG, INIT_GITIGNORE, SCAFFOLD_DIRS, OWNED_DIR_NAMES, DATASTORES, init_config, scaffold_blockers, scaffold_target, scaffold_hillclimb_dir,
 )
 
-# The folders `init` creates beside hillclimb.yaml.
-SCAFFOLD_DIRS = ("problems", "runs")
-# what hillclimb writes into beside hillclimb.yaml: a folder of one of these
-# names that is not hillclimb's means hillclimb goes in a subfolder instead
-OWNED_DIR_NAMES = ("problems", "runs", "knowledge", "climbers")
 
-
-def scaffold_blockers(folder: Path) -> list[Path]:
-    """What stops `folder` from becoming a hillclimb dir: a folder of one of
-    hillclimb's names (problems/, runs/, knowledge/, climbers/) that is
-    already there and not hillclimb's (a project's own). Empty when the
-    folder is free or already a hillclimb dir."""
-    from hillclimb.project import MARKER_FILE, is_owned_dir
-
-    if (folder / MARKER_FILE).exists():
-        return []
-    return [folder / sub for sub in OWNED_DIR_NAMES if (folder / sub).exists() and not is_owned_dir(folder / sub)]
-
-
-def scaffold_target(folder: Path) -> tuple[Path, list[Path]]:
-    """Where a hillclimb dir for `folder` goes: the folder itself, or its
-    `hillclimb/` subfolder when the folder already has folders of hillclimb's
-    names of its own (returned as the second item, for the message)."""
-    from hillclimb.project import SUBFOLDER
-
-    blockers = scaffold_blockers(folder)
-    return (folder / SUBFOLDER, blockers) if blockers else (folder, [])
-
-
-def scaffold_hillclimb_dir(folder: Path) -> Path:
-    """Make `folder` (created if missing) a hillclimb dir: hillclimb.yaml,
-    empty problems/ and runs/ beside it, and the gitignore rules that keep
-    run artifacts and keys out of git while the record of every run goes in
-    (`INIT_GITIGNORE`). No problem is added: picking one (`hillclimb problem
-    get`) is the user's first real choice. Idempotent on the folder layout;
-    never overwrites an existing config, only adds ignore rules that are
-    missing. Callers check `scaffold_blockers` first."""
-    from hillclimb.project import MARKER_FILE
-
-    from hillclimb.project import SUBFOLDER, ensure_owned_dir
-
-    if folder.name == SUBFOLDER and not folder.exists():
-        ensure_owned_dir(folder)  # a hillclimb/ subfolder of hillclimb's: `reset` removes it whole
-    folder.mkdir(parents=True, exist_ok=True)
-    for sub in SCAFFOLD_DIRS:
-        ensure_owned_dir(folder / sub)  # marked: `reset` may delete it
-        (folder / sub / ".gitkeep").touch()
-    if not (folder / MARKER_FILE).exists():
-        (folder / MARKER_FILE).write_text(INIT_CONFIG)
-    gitignore = folder / ".gitignore"
-    existing_ignore = gitignore.read_text() if gitignore.exists() else ""
-    present = existing_ignore.splitlines()
-    missing = [line for line in INIT_GITIGNORE if line not in present]
-    if missing == [INIT_GITIGNORE[0]]:  # every rule is there, only the heading is not
-        missing = []
-    if missing:
-        gitignore.write_text(
-            existing_ignore.rstrip("\n")
-            + ("\n" if existing_ignore else "")
-            + "\n".join(missing)
-            + "\n"
-        )
-    return folder
-
-
-def owned_paths(root: Path, config) -> tuple[list[Path], list[Path]]:
+def owned_paths(root: Path, config, *, runs_only: bool = False) -> tuple[list[Path], list[Path]]:
     """What `hillclimb reset` does with the hillclimb dir `root`, as
     (deleted, kept). Deleted: the config, the sqlite store, and every folder
     hillclimb created there (it carries a `.hillclimb` marker). Kept: a
     folder of one of hillclimb's names without the marker — the user's own,
     or one from before markers existed. A hillclimb dir may be a code repo's
     root; nothing else in it is touched, and a configured runs_dir or
-    problems_dir counts only when it lies inside `root`."""
+    problems_dir counts only when it lies inside `root`. `runs_only` is
+    `reset --runs`: just what searches produced (runs/, the store, knowledge/),
+    so the config, problems/ and climbers/ are not candidates at all."""
     from hillclimb.experiment import EXPERIMENTS_DIRNAME
     from hillclimb.project import MARKER_FILE, is_owned_dir
 
@@ -406,6 +301,9 @@ def owned_paths(root: Path, config) -> tuple[list[Path], list[Path]]:
         root / "climbers",  # cli/climber.py's LOCAL_CLIMBERS_DIRNAME (common imports no command module)
         root / EXPERIMENTS_DIRNAME,
     ]
+    if runs_only:
+        files = files[1:]
+        folders = [config.paths.runs_dir, root / "knowledge"]
     deleted: list[Path] = []
     kept: list[Path] = []
     resolved_root = root.resolve()
@@ -594,3 +492,36 @@ def show_solution_plot(
     say(f"  wrote [path]{_m(out)}[/]")
     if open_it:
         open_file(out)
+
+
+def ensure_agents_ready(config: Config, agent: str | None = None, model: str | None = None) -> None:
+    """Before a command uses coding agents: every one it would call — the
+    default and any per-operator route — has a live login, or, at a
+    terminal, is offered a fresh one ("Log in again now?"). Declined, or no
+    terminal to ask at, the command stops here with the fix, before anything
+    is spent (`connect.ensure_agent_ready`)."""
+    import sys
+
+    from hillclimb import connect
+
+    default = (agent or config.agent, config.agent_auth, model or config.model)
+    routes = [
+        (route.agent or default[0], route.agent_auth or default[1], route.model or default[2])
+        for route in config.routing.values()
+    ]
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+
+    def ask(question: str) -> bool:
+        warn(question.split(". Log in again now?")[0] + ".")
+        return typer.confirm("Log in again now?", default=True)
+
+    for name, auth, chosen in dict.fromkeys([default, *routes]):
+        try:
+            connect.ensure_agent_ready(
+                name, auth, chosen, ask=ask if interactive else None,
+                say=lambda line: say(f"[note]{_m(line)}[/]"),
+                models_file=config.pi.models_file,
+            )
+        except connect.AgentLoginError as exc:
+            fail(str(exc))
+            raise typer.Exit(1) from exc

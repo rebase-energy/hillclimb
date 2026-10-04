@@ -48,7 +48,7 @@ def sandbox_check(
         typer.echo(json.dumps({"sandbox": kind, "attempts": as_dicts(attempts)}, indent=2))
         raise typer.Exit(0 if attempts and all(a.holds for a in attempts) else 1)
     if not attempts:
-        reason = "off" if not sandbox.enabled(config) else "none exists for this operating system"
+        reason = "off" if not sandbox.enabled(config) else sandbox.no_sandbox_reason()
         warn(f"sandbox: {reason} — coding agents and solutions run with your full user rights")
         raise typer.Exit(1)
     tool = {"seatbelt": "sandbox-exec", "bwrap": "bubblewrap"}[kind]
@@ -76,5 +76,5 @@ def sandbox_check(
         raise typer.Exit(1)
     stopped = sum(a.outcome == "blocked" for a in attempts)
     say(f"  [ok]The sandbox holds:[/] {stopped} attempts blocked, and its own folder stays writable.")
-    say("  [note]What it does not cover:[/] [path]https://docs.hillclimb.sh/docs/sandbox[/]")
+    say("  [note]What it does not cover:[/] [path]https://docs.hillclimb.sh/security-and-sandboxes[/]")
     say()

@@ -239,3 +239,15 @@ async def test_map_screen_mounts_swaps_and_replays(config):
         await pilot.press("n")  # the next search in the store
         await pilot.pause()
         assert app.screen.search == "r1/p-2"
+
+
+def test_the_app_can_actually_be_run():
+    """`SimilarityApp(..., run=...)` once stored its run scope as `self.run`,
+    shadowing App.run(): every `hillclimb similarity` died with "'NoneType'
+    object is not callable" while the screens, driven by tests, were fine."""
+    from hillclimb.config import Config
+    from hillclimb.tui.similarityview import SimilarityApp
+
+    for scope in (None, ("run-1", "heilbronn-11")):
+        app = SimilarityApp(Config(), "run-1/s", run=scope, view="map")
+        assert callable(app.run) and app.run_scope == scope

@@ -193,16 +193,25 @@ PROBLEM_FILES = (
 def init(
     directory: Path = typer.Argument(Path("."), help="Folder to make a hillclimb dir (created if missing)"),
     force: bool = typer.Option(False, "--force", help="Create one even inside an existing hillclimb dir"),
+    datastore: str = typer.Option(
+        "files", "--datastore",
+        help="Where the records of runs live: files (yaml/jsonl under runs/) or sqlite (one store.sqlite)",
+    ),
 ):
     """Make a folder a hillclimb dir.
 
     Writes hillclimb.yaml (the config) with problems/ and runs/ beside it,
     plus the gitignore rules that commit the record of every run and not
     its bulk. The current folder by default; `hillclimb init hillclimb`
-    keeps it all in a subfolder instead.
+    keeps it all in a subfolder instead. `--datastore sqlite` keeps the
+    records (runs, searches, journals, status) in one store.sqlite instead
+    of files under runs/; the candidates and best/ stay in runs/ either way.
     """
     from hillclimb.project import MARKER_FILE, find_hillclimb_dir
 
+    if datastore not in common.DATASTORES:
+        fail(f"--datastore is one of {', '.join(common.DATASTORES)}, not {_m(repr(datastore))}")
+        raise typer.Exit(2)
     folder = directory.resolve()
     existing = find_hillclimb_dir(folder)
     if existing is not None and not force:
@@ -214,12 +223,19 @@ def init(
         ])
         raise typer.Exit(1)
     folder = _scaffold_target_or_exit(folder)
-    common.scaffold_hillclimb_dir(folder)
+    common.scaffold_hillclimb_dir(folder, datastore)
     say(f"[head]Initialized hillclimb dir[/] at [path]{_m(folder)}[/]")
     legend([
-        (MARKER_FILE, "config (edit defaults here)"),
+        (MARKER_FILE, "config (edit defaults here)" + (" — store: sqlite" if datastore == "sqlite" else "")),
         ("problems/", "problem definitions (empty until you pick one)"),
-        ("runs/", "one folder per run (records committed, artifacts gitignored)"),
+        *(
+            [
+                ("runs/", "one folder per run: its candidates and best/ (artifacts gitignored)"),
+                ("store.sqlite", "the records of runs, created by the first run (gitignored)"),
+            ]
+            if datastore == "sqlite"
+            else [("runs/", "one folder per run (records committed, artifacts gitignored)")]
+        ),
     ])
     next_steps([
         *([(f"cd {_m(directory)}", "run hillclimb from there")] if folder != Path.cwd().resolve() else []),
@@ -311,8 +327,9 @@ def verify(
         from hillclimb.harness.unit_tests import freeze_for_run
 
         problem.unit_tests = freeze_for_run(problem, root)
-        executor = build_executor(config, problem)
-        test_runner = build_unit_test_runner(config, problem)
+        # their setup lines ("Creating csv runtime venv …") in the CLI's voice
+        executor = build_executor(config, problem, log=common.engine_log)
+        test_runner = build_unit_test_runner(config, problem, log=common.engine_log)
         steps = ' '.join(problem.score_cmd) if problem.score_cmd else ' '.join(problem.verifier_cmd)
         if problem.score_cmd:
             # two steps, two sandboxes: the solution (or the problem's runner for it), then the scorer
@@ -338,8 +355,8 @@ def verify(
             )
             if not result.ok:
                 reason = "timed out" if result.timed_out else f"exit {result.returncode}"
-                if result.val_score is None and not result.timed_out:
-                    reason += "; no score written to $HILLCLIMB_RESULT"
+                if result.val_score is None and not result.timed_out and result.returncode == 0:
+                    reason += f"; {result.result_error or 'no score written to $HILLCLIMB_RESULT'}"
                 fail(f"  run {index}: FAILED ({_m(reason)})")
                 # the run's folder is a temp dir deleted on the way out, so
                 # its output is shown here rather than pointed at

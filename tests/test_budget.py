@@ -26,3 +26,12 @@ def test_clock_str_is_fixed_shape_for_the_log_gutter():
     assert format_clock(3900) == "1:05:00"
     assert format_clock(0) == "0:00" and format_clock(-3) == "0:00"
     assert BudgetManager(total_s=600, stop_margin_s=0).clock_str().startswith(("10:00", "9:5"))
+
+
+def test_a_short_budget_stops_once_spent():
+    """A budget under 10 s has a stop margin of 0; once it is spent the
+    search must stop, not idle at 0:00 forever (remaining() is clamped at 0,
+    so a strict `<` never fired)."""
+    budget = BudgetManager(total_s=5, stop_margin_s=300, spent_s=6)
+    assert budget.stop_margin_s == 0 and budget.remaining() == 0
+    assert budget.should_stop()

@@ -1010,6 +1010,41 @@ def _hide_plot_legend(plot: Plot, show_legend: bool) -> None:
         plot.legend_visible = False
 
 
+Unfit = frozenset[str] | set[str] | None
+
+
+def _left_out(label: str, hidden, unfit: Unfit) -> bool:
+    """Is a legend series left out of the plot altogether? `unfit` is None
+    for a caller that wants the old rule (a hidden series is not drawn and
+    the axes refit to the rest). Otherwise the view holds still when a
+    legend entry is toggled: a hidden series is still added — switched off,
+    but counting toward the axes — and only one that was hidden when the
+    reader last recentred (`unfit`) is really gone."""
+    if unfit is None:
+        return label in hidden
+    return label in hidden and label in unfit
+
+
+def _placed(plot: Plot, handle, label: str, hidden, unfit: Unfit) -> None:
+    """After adding a series under the hold-still rule: switch a hidden one
+    off, and keep one the last recentre left out from moving the axes."""
+    if unfit is None or handle is None:
+        return
+    if label in hidden:
+        plot.set_visible(handle, False)
+    if label in unfit:
+        plot.set_fit(handle, False)
+
+
+def _hold_view(plot: Plot, unfit: Unfit) -> bool:
+    """Switch the plot to the hold-still rule when the caller asked for it
+    and this plotui has it; False sends the builders back to the old rule."""
+    if unfit is None or not hasattr(plot, "set_fit"):
+        return False
+    plot.autofit = False
+    return True
+
+
 def _add_chart_baselines(
     plot: Plot,
     baselines: Mapping[str, float],
@@ -1018,6 +1053,7 @@ def _add_chart_baselines(
     origin: float = 1.0,
     show_legend: bool = True,
     hidden: frozenset[str] | set[str] = frozenset(),
+    unfit: Unfit = None,
 ) -> None:
     """Add arbitrary named horizontal score references behind the data,
     from `origin` (the axis's left edge: 0 with a scored floor, else 1) to
@@ -1033,9 +1069,9 @@ def _add_chart_baselines(
     # (hillclimb.sh draws them the same way); solid on an older plotui
     dash = {"dash": BENCHMARK_DASH} if _plot_supports("dash") else {}
     for index, (label, value) in enumerate(baselines.items()):
-        if label in hidden:
+        if _left_out(label, hidden, unfit):
             continue
-        plot.add_line(
+        handle = plot.add_line(
             xs,
             [value] * len(xs),
             color=CHART_BASELINE_PALETTE[index % len(CHART_BASELINE_PALETTE)],
@@ -1043,6 +1079,7 @@ def _add_chart_baselines(
             name=label,
             **dash,
         )
+        _placed(plot, handle, label, hidden, unfit)
 
 
 def build_plot(
@@ -1055,6 +1092,7 @@ def build_plot(
     y_title: str | None = None,
     focus_run: str | None = None,
     end_dots: bool = False,
+    unfit: Unfit = None,
 ) -> Plot:
     """One step line per curve — the study view, where each experiment is a
     series of its own, the runs' compare view, and the base of the detail
@@ -1062,12 +1100,14 @@ def build_plot(
     out of the plot. `focus_run` keeps that run's curve in its colour and
     fades the rest; `end_dots` marks where each curve ends (its best)."""
     plot = themed_plot()
+    if not _hold_view(plot, unfit):
+        unfit = None
     _hide_plot_legend(plot, show_legend)
     extent = max((max(c.xs, default=0.0) for c in curves), default=0.0)
     origin = curves_origin([x for c in curves for x in c.xs[:1]])
     _pin_x_extent(plot, origin, extent, higher_is_better=higher_is_better, y_title=y_title)
     _add_chart_baselines(
-        plot, baselines or {}, extent, origin=origin, show_legend=show_legend, hidden=hidden,
+        plot, baselines or {}, extent, origin=origin, show_legend=show_legend, hidden=hidden, unfit=unfit,
     )
     trace_index = len(baselines or {})
     for curve, color in zip(curves, curve_colors(curves)):
@@ -1077,22 +1117,24 @@ def build_plot(
         # trace must not let plotui's next-palette-slot drift under the rest.
         rgb = color or EXPERIMENT_PALETTE[trace_index % len(EXPERIMENT_PALETTE)]
         trace_index += 1
-        if curve.label in hidden:
+        if _left_out(curve.label, hidden, unfit):
             continue
         if focus_run is not None and curve.run_id != focus_run:
             rgb = FAINT_RGB
         if end_dots and len(curve.xs) > 1:
-            plot.add_scatter(curve.xs[-1:], curve.ys[-1:], color=rgb, size=3.0, name=curve.label)
+            dot = plot.add_scatter(curve.xs[-1:], curve.ys[-1:], color=rgb, size=3.0, name=curve.label)
+            _placed(plot, dot, curve.label, hidden, unfit)
         if len(curve.xs) == 1:
             # Keep the domain in whole candidate counts; a one-point line is
             # invisible, so render that first evaluation as a dot.
-            plot.add_scatter(
+            handle = plot.add_scatter(
                 curve.xs, curve.ys, color=rgb, size=3.0,
                 name=curve.label,
             )
         else:
             xs, ys = step_points(curve.xs, curve.ys)
-            plot.add_line(xs, ys, color=rgb, name=curve.label)
+            handle = plot.add_line(xs, ys, color=rgb, name=curve.label)
+        _placed(plot, handle, curve.label, hidden, unfit)
     return plot
 
 
@@ -1147,6 +1189,7 @@ def add_cost_overlay(
     *,
     show_legend: bool = True,
     hidden: frozenset[str] | set[str] = frozenset(),
+    unfit: Unfit = None,
 ) -> None:
     """Draw the cumulative cost lines on their own right-hand axes: tokens on
     y2 — in millions, with `M` on its tick labels and readout values, so
@@ -1159,25 +1202,28 @@ def add_cost_overlay(
     `axis=` support."""
     if cost is None or not cost.xs or not _plot_supports_axis():
         return
-    if COST_TOKENS_LABEL not in hidden and cost.total_tokens > 0:
-        plot.add_line(
+    if not _left_out(COST_TOKENS_LABEL, hidden, unfit) and cost.total_tokens > 0:
+        handle = plot.add_line(
             cost.xs, [tokens / 1e6 for tokens in cost.tokens], color=COST_TOKENS_RGB, width=1.0,
             name=COST_TOKENS_LABEL, axis="y2",
         )
+        _placed(plot, handle, COST_TOKENS_LABEL, hidden, unfit)
         if hasattr(plot, "set_axis_unit"):
             plot.set_axis_unit("y2", "M")
     minutes = False
-    if COST_CPU_LABEL not in hidden and cost.total_cpu_min > 0:
-        plot.add_line(
+    if not _left_out(COST_CPU_LABEL, hidden, unfit) and cost.total_cpu_min > 0:
+        handle = plot.add_line(
             cost.xs, cost.cpu_min, color=COST_CPU_RGB, width=1.0,
             name=COST_CPU_LABEL, axis="y3",
         )
+        _placed(plot, handle, COST_CPU_LABEL, hidden, unfit)
         minutes = True
-    if COST_WALL_LABEL not in hidden and cost.total_wall_min > 0:
-        plot.add_line(
+    if not _left_out(COST_WALL_LABEL, hidden, unfit) and cost.total_wall_min > 0:
+        handle = plot.add_line(
             cost.xs, cost.wall_min, color=COST_WALL_RGB, width=1.0,
             name=COST_WALL_LABEL, axis="y3",
         )
+        _placed(plot, handle, COST_WALL_LABEL, hidden, unfit)
         minutes = True
     if minutes and hasattr(plot, "set_axis_unit"):
         plot.set_axis_unit("y3", " min")
@@ -1211,6 +1257,7 @@ def build_climb_plot(
     run_colors: Mapping[str, tuple[int, int, int]] | None = None,
     run_labels_: Mapping[str, str] | None = None,
     focus_run: str | None = None,
+    unfit: Unfit = None,
 ) -> Plot:
     """The website's figure: the staircase in cyan, a bright dot where a
     candidate set a new best, a dim one where it scored but did not.
@@ -1224,20 +1271,22 @@ def build_climb_plot(
     `focus_run`, the other runs' dots fade to grey. The staircase stays
     cyan: it is the problem's climb, whichever run moved it."""
     plot = themed_plot()
+    if not _hold_view(plot, unfit):
+        unfit = None
     _hide_plot_legend(plot, show_legend)
     _pin_x_extent(
         plot, climb.origin, climb.extent, higher_is_better=higher_is_better, y_title=y_title,
     )
     _add_chart_baselines(
         plot, baselines or {}, climb.extent, origin=climb.origin,
-        show_legend=show_legend, hidden=hidden,
+        show_legend=show_legend, hidden=hidden, unfit=unfit,
     )
     xs, ys = climb.staircase()
     if run_colors:
         names = run_labels_ or {}
         # faded runs first, so the coloured ones sit on top of them
         order = sorted(run_colors, key=lambda run: focus_run is None or run == focus_run)
-        shown = [run for run in order if names.get(run, run) not in hidden]
+        shown = [run for run in order if not _left_out(names.get(run, run), hidden, unfit)]
 
         def color_of(run: str) -> tuple[int, int, int]:
             return run_colors[run] if focus_run in (None, run) else FAINT_RGB
@@ -1246,38 +1295,44 @@ def build_climb_plot(
         for run in shown:
             misses = [e for e in climb.events if e.run == run and not e.best]
             if misses:
-                plot.add_scatter(
+                handle = plot.add_scatter(
                     [e.x for e in misses], [e.y for e in misses],
                     color=_mix(PLOT_BG, color_of(run), 0.6), size=2.4, name=names.get(run, run),
                 )
-        if len(xs) > 1 and "best so far" not in hidden:
-            plot.add_line(xs, ys, color=CYAN, width=2.0, name="best so far")
+                _placed(plot, handle, names.get(run, run), hidden, unfit)
+        if len(xs) > 1 and not _left_out("best so far", hidden, unfit):
+            handle = plot.add_line(xs, ys, color=CYAN, width=2.0, name="best so far")
+            _placed(plot, handle, "best so far", hidden, unfit)
         for run in shown:
             hits = [e for e in climb.events if e.run == run and e.best]
             if hits:
-                plot.add_scatter(
+                handle = plot.add_scatter(
                     [e.x for e in hits], [e.y for e in hits],
                     color=color_of(run), size=3.2, name=names.get(run, run),
                 )
+                _placed(plot, handle, names.get(run, run), hidden, unfit)
     else:
         misses = [e for e in climb.events if not e.best]
-        if misses and "attempt" not in hidden:
-            plot.add_scatter(
+        if misses and not _left_out("attempt", hidden, unfit):
+            handle = plot.add_scatter(
                 [e.x for e in misses], [e.y for e in misses], color=MISS_RGB, size=2.4,
                 name="attempt",
             )
-        if len(xs) > 1 and "best so far" not in hidden:
-            plot.add_line(
+            _placed(plot, handle, "attempt", hidden, unfit)
+        if len(xs) > 1 and not _left_out("best so far", hidden, unfit):
+            handle = plot.add_line(
                 xs, ys, color=CYAN, width=2.0,
                 name="best so far",
             )
+            _placed(plot, handle, "best so far", hidden, unfit)
         hits = [e for e in climb.events if e.best]
-        if hits and "new best" not in hidden:
-            plot.add_scatter(
+        if hits and not _left_out("new best", hidden, unfit):
+            handle = plot.add_scatter(
                 [e.x for e in hits], [e.y for e in hits], color=CYAN, size=3.0,
                 name="new best",
             )
-    add_cost_overlay(plot, cost, show_legend=show_legend, hidden=hidden)
+            _placed(plot, handle, "new best", hidden, unfit)
+    add_cost_overlay(plot, cost, show_legend=show_legend, hidden=hidden, unfit=unfit)
     return plot
 
 
@@ -1290,6 +1345,7 @@ def build_detail_plot(
     cost: CostSeries | None = None,
     higher_is_better: bool = True,
     y_title: str | None = None,
+    unfit: Unfit = None,
 ) -> Plot:
     """The curve as in build_plot, then the tree: one thin line per edge
     (dim, the child's operator colour; bold on the accepted lineage) and a
@@ -1300,36 +1356,41 @@ def build_detail_plot(
 
     plot = build_plot(
         [layout.curve], baselines, show_legend=show_legend, hidden=hidden,
-        higher_is_better=higher_is_better, y_title=y_title,
+        higher_is_better=higher_is_better, y_title=y_title, unfit=unfit,
     )
+    if unfit is not None and not hasattr(plot, "set_fit"):
+        unfit = None
     for edge in layout.edges:
-        if edge.operator in hidden:
+        if _left_out(edge.operator, hidden, unfit):
             continue
         rgb = OPERATOR_RGB.get(edge.operator, (160, 160, 160))
-        plot.add_line(
+        handle = plot.add_line(
             [edge.x0, edge.x1], [edge.y0, edge.y1],
             color=rgb if edge.on_path else dim_rgb(rgb, 0.45),
             width=2.0 if edge.on_path else 1.0,
         )
+        _placed(plot, handle, edge.operator, hidden, unfit)
     by_operator: dict[str, list[DetailMark]] = {}
     for mark in layout.marks:
         by_operator.setdefault(mark.operator, []).append(mark)
     for operator, marks in by_operator.items():
-        if operator in hidden:
+        if _left_out(operator, hidden, unfit):
             continue
-        plot.add_scatter(
+        handle = plot.add_scatter(
             [m.x for m in marks], [m.y for m in marks],
             color=OPERATOR_RGB.get(operator, (160, 160, 160)), size=2.5,
             name=operator,
         )
+        _placed(plot, handle, operator, hidden, unfit)
     accepted = [m for m in layout.marks if m.on_path]
-    if accepted and "accepted" not in hidden:
-        plot.add_scatter(
+    if accepted and not _left_out("accepted", hidden, unfit):
+        handle = plot.add_scatter(
             [m.x for m in accepted], [m.y for m in accepted],
             color=(255, 255, 255), size=4.0,
             name="accepted",
         )
-    add_cost_overlay(plot, cost, show_legend=show_legend, hidden=hidden)
+        _placed(plot, handle, "accepted", hidden, unfit)
+    add_cost_overlay(plot, cost, show_legend=show_legend, hidden=hidden, unfit=unfit)
     return plot
 
 
@@ -1482,12 +1543,18 @@ def improvement_annotations(climb: Climb) -> list[ImprovementAnnotation]:
 def climb_plot_bounds(
     climb: Climb,
     baselines: Mapping[str, float],
+    unfit: frozenset[str] | set[str] = frozenset(),
 ) -> tuple[float, float, float, float]:
     """The data bounds as plotui draws them: x pinned by `x_extent` (flush
-    with the origin, 5% past the last slot), y the 5%-padded autoscale."""
-    ys = [event.y for event in climb.events]
+    with the origin, 5% past the last slot), y the 5%-padded autoscale.
+    `unfit` names the legend series the last recentre left out of the fit."""
+    best_fits = not {"best so far", "new best"} <= set(unfit)  # the staircase passes through every new best
+    ys = [
+        event.y for event in climb.events
+        if (best_fits if event.best else "attempt" not in unfit)
+    ]
     if baselines:
-        ys.extend(float(value) for value in baselines.values())
+        ys.extend(float(value) for label, value in baselines.items() if label not in unfit)
     if not climb.events and not ys:
         return (-1.0, 1.0, -1.0, 1.0)
     xlo, xhi = x_extent(climb.origin, climb.extent)
@@ -1701,6 +1768,7 @@ class ChartScreen(LiveScreen):
             tooltip="switch to the next problem in this folder",
         ),
         Binding("r", "refresh", "refresh", show=False),
+        Binding("f", "recenter", "fit", tooltip="fit the axes to the series that are shown"),
         # only live when a list (the chart picker, the watch tables) pushed
         # this screen — see check_action
         back_binding("back"),
@@ -1745,6 +1813,10 @@ class ChartScreen(LiveScreen):
         self.show_cost = cost  # `c` overlays cumulative tokens/cpu on y2/y3
         self.show_annotations = False  # `t` reveals the improvement labels
         self.hidden_series: set[str] = set()  # legend entries toggled off by click
+        # the entries that were hidden when the reader last recentred (`f`):
+        # the axes fit everything else. Toggling an entry never moves the
+        # view; only a recentre does.
+        self.unfit_series: frozenset[str] = frozenset()
         self._legend_entries: list[LegendEntry] = []  # what 1-9 index into
         self._anchor: SearchMeta | None = None  # resolved once; `r` re-resolves
         # a plain problem's runs, oldest first, and the one `[`/`]` put in
@@ -1843,8 +1915,16 @@ class ChartScreen(LiveScreen):
         self.refresh_data()
 
     def action_toggle_series(self, label: str) -> None:
-        """Show or hide one series — reached by clicking its legend entry."""
+        """Show or hide one series — reached by clicking its legend entry.
+        The view holds still, so what went and what stayed is plain to see;
+        `f` refits it."""
         self.hidden_series.symmetric_difference_update({label})
+        self._key = None
+        self.refresh_data()
+
+    def action_recenter(self) -> None:
+        """Fit the axes to the series that are shown now."""
+        self.unfit_series = frozenset(self.hidden_series)
         self._key = None
         self.refresh_data()
 
@@ -1863,7 +1943,8 @@ class ChartScreen(LiveScreen):
         cycle: list[str | None] = [None, *self._runs]
         index = cycle.index(self.run_focus) if self.run_focus in cycle else 0
         self.run_focus = cycle[(index + step) % len(cycle)]
-        self.hidden_series.clear()  # the legend changes between the two views
+        self.hidden_series.clear()
+        self.unfit_series = frozenset()  # the legend changes between the two views
         self._key = None
         self.refresh_data()
 
@@ -1872,7 +1953,8 @@ class ChartScreen(LiveScreen):
         self.view = views[(views.index(self.view) + 1) % len(views)]
         if self.view == "climb":
             self.run_focus = None  # the plain climb has no run to focus
-        self.hidden_series.clear()  # the two views have different legends
+        self.hidden_series.clear()
+        self.unfit_series = frozenset()  # the two views have different legends
         self._key = None
         self.refresh_data()
 
@@ -1902,7 +1984,8 @@ class ChartScreen(LiveScreen):
         # `r` re-resolves the anchor from self.search — pin it to the chosen
         # problem so a refresh does not snap back to the folder's latest
         self.search = newest.ref
-        self.hidden_series.clear()  # legend toggles are per-problem
+        self.hidden_series.clear()
+        self.unfit_series = frozenset()  # legend toggles are per-problem
         self.holdout = None  # re-decide the fair split for the new problem
         self.run_focus = None  # runs are per-problem too
         self._key = None
@@ -2060,6 +2143,7 @@ class ChartScreen(LiveScreen):
             self.show_annotations,
             self.show_cost,
             tuple(sorted(self.hidden_series)),
+            tuple(sorted(self.unfit_series)),
             tuple((c.label, tuple(c.xs), tuple(c.ys)) for c in curves),
         )
         key += (tuple(baselines.items()),)
@@ -2083,6 +2167,7 @@ class ChartScreen(LiveScreen):
                 plot = build_detail_plot(
                     layout, baselines, show_legend=False, hidden=hidden, cost=overlay,
                     higher_is_better=bool(anchor.higher_is_better), y_title=y_title,
+                    unfit=self.unfit_series,
                 )
                 entries = detail_legend(layout, baselines, overlay)
             elif climb is not None:
@@ -2090,23 +2175,29 @@ class ChartScreen(LiveScreen):
                     climb, baselines, show_legend=False, hidden=hidden, cost=overlay,
                     higher_is_better=bool(anchor.higher_is_better), y_title=y_title,
                     run_colors=run_colors, run_labels_=labels, focus_run=self.run_focus,
+                    unfit=self.unfit_series,
                 )
                 entries = climb_legend(climb, baselines, overlay, run_colors, labels, self.run_focus)
                 # The labels annotate the new-best dots; they hide with them.
                 if self.show_annotations and "new best" not in hidden:
                     annotations = improvement_annotations(climb)
-                    annotation_bounds = climb_plot_bounds(climb, baselines)
+                    annotation_bounds = climb_plot_bounds(climb, baselines, self.unfit_series)
             else:
                 comparing = len(self._runs) > 1
                 plot = build_plot(
                     curves, baselines, show_legend=False, hidden=hidden,
                     higher_is_better=bool(anchor.higher_is_better), y_title=y_title,
                     focus_run=self.run_focus if comparing else None, end_dots=comparing,
+                    unfit=self.unfit_series,
                 )
                 entries = plot_legend(curves, baselines, self.run_focus if comparing else None)
             # each visible cost series adds a tick-label column (~7 cells) on
             # the right, shifting the true plot rect the annotations map into
-            visible_cost = sum(1 for entry in _cost_legend(overlay) if entry[0] not in hidden)
+            # (a hidden series keeps its column until the next recentre)
+            visible_cost = sum(
+                1 for entry in _cost_legend(overlay)
+                if not (entry[0] in hidden and entry[0] in self.unfit_series)
+            )
             annotation_margin = 2 + 7 * visible_cost
             self._legend_entries = entries
             legend.set_entries(entries, hidden)

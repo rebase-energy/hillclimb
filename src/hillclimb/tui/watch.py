@@ -30,6 +30,7 @@ from hillclimb.harness.run import RunMeta, SearchMeta, run_display_name
 from hillclimb.harness.run import search_ref as _search_ref
 from hillclimb.harness.status import SearchStatus, live_remaining_s, live_spent_s
 from hillclimb.harness.store import DataStore, FileDataStore, SearchRecord, key_for, open_store
+from hillclimb.terms import ENGINE
 from hillclimb.tui.theme import HILLCLIMB_CSS, apply_theme
 
 STATE_STYLE = {
@@ -51,6 +52,38 @@ STATUS_STYLE = {
     "running": "italic",
     "stale": "dim italic",
 }
+
+
+# What an in-flight candidate is doing, in the reader's words. The journal
+# calls every such candidate `pending` (shown as `running`), but "the agent
+# is still writing" and "the agent is done, its solution is being scored"
+# are different waits — status.json's phase tells them apart.
+PHASE_LABEL = {
+    "waiting-slot": "waiting",
+    "agent": "writing",
+    "exec": "scoring",
+    "tests": "testing",
+    "holdout": "holdout",
+}
+PHASE_NOTE = {
+    "waiting-slot": "waiting for a free agent slot",
+    "agent": "the agent is writing solution.py",
+    "exec": "agent done; the verifier is running solution.py",
+    "tests": "the unit tests are running on solution.py",
+    "holdout": "solution.py is being scored on the holdout split",
+}
+
+
+def phase_label(phase: str) -> str:
+    return PHASE_LABEL.get(phase, phase)
+
+
+def own_phases(status) -> dict[str, str]:
+    """candidate id -> the phase of its own operator. A candidate can also
+    have tune trials in flight; its own operator's phase wins over theirs."""
+    if status is None:
+        return {}
+    return {c.candidate_id: c.phase for c in sorted(status.current, key=lambda c: c.trial_index is None)}
 
 
 def display_status(status: str, live: bool) -> str:
@@ -606,13 +639,16 @@ BEST_STAR = " ★"  # after the id of the search's current selection
 
 
 def candidate_rows(
-    journal: Journal, live: bool = True, higher_is_better: bool | None = None
+    journal: Journal, live: bool = True, higher_is_better: bool | None = None,
+    phases: dict[str, str] | None = None,
 ) -> list[CandidateRow]:
     """One row per candidate in tree order. With `higher_is_better` the
     search's CURRENT selection (`journal.selected_candidate`) wears a star
     after its id and is the only row marked SELECTED — a journal record's
     `is_selected` says a candidate was selected when it landed and stays
-    on it, so several would otherwise claim the mark."""
+    on it, so several would otherwise claim the mark. With `phases`
+    (candidate id -> status.json phase) a running candidate's status names
+    what it is doing: `writing`, `scoring`."""
     current = (
         journal.selected_candidate(higher_is_better) if higher_is_better is not None else None
     )
@@ -631,6 +667,8 @@ def candidate_rows(
         style = "dim strike" if candidate.pruned else STATUS_STYLE.get(shown, "")
         if selected and not candidate.pruned:
             style = "bold gold1"
+        if shown == "running" and phases and phases.get(candidate.candidate_id):
+            shown = phase_label(phases[candidate.candidate_id])
         rows.append(
             CandidateRow(
                 candidate_id=candidate.candidate_id,
@@ -1055,6 +1093,34 @@ def _render_to_text(renderables: list[object], width: int) -> str:
     return buffer.getvalue()
 
 
+def _phase_started_at(current, candidate_dir: Path) -> str | None:
+    """When the candidate's current phase began. An engine from before
+    `phase_started_at` leaves it out: the scoring run then dates from its
+    newest trial folder, any other phase from the operator's start."""
+    if current.phase_started_at:
+        return current.phase_started_at
+    if current.phase == "exec":
+        try:
+            newest = max(p.stat().st_mtime for p in (candidate_dir / "trials").iterdir())
+        except (OSError, ValueError):
+            return None
+        return datetime.fromtimestamp(newest, timezone.utc).isoformat()
+    return current.started_at if current.phase in ("agent", "waiting-slot") else None
+
+
+def _phase_clock(current, candidate_dir: Path):
+    """How long the current phase has run: `2m 10s of up to 15m 00s`."""
+    from rich.text import Text
+
+    started = _phase_started_at(current, candidate_dir)
+    if not started:
+        return Text("-", style="dim")
+    clock = _elapsed_since(started)
+    if current.phase_limit_s:
+        clock += f" of up to {_format_budget_left(current.phase_limit_s)}"
+    return Text(clock, style="cyan")
+
+
 def candidate_in_flight(candidate: Candidate, live: bool) -> bool:
     """Whether an operator is working on the candidate right now: the journal
     keeps it `pending` from creation until its result lands (the table shows
@@ -1068,9 +1134,12 @@ def candidate_detail_renderables(
     candidate_id: str,
     live: bool | None = None,
     console: bool = False,
+    current=None,
 ) -> list[object]:
     """The detail panel's sections. ``console=True`` leaves out the stream,
-    stdout and stderr tails: the screen shows them in its live console."""
+    stdout and stderr tails: the screen shows them in its live console.
+    ``current`` is the candidate's own status.json entry while an operator is
+    on it: the panel then says which phase it is in, and for how long."""
     from rich.console import Group
     from rich.panel import Panel
     from rich.table import Table
@@ -1108,9 +1177,16 @@ def candidate_detail_renderables(
         "operator",
         Text(operator, style="bold"),
     )
-    overview.add_row(
-        "status", _status_text(candidate.status, live), "marks", Text(_candidate_marks(candidate), style="gold1")
-    )
+    in_flight = candidate_in_flight(candidate, live)
+    phase = current.phase if current is not None and in_flight else ""
+    status_text = _status_text(candidate.status, live)
+    if phase:
+        status_text = Text(phase_label(phase), style=STATUS_STYLE["running"])
+    overview.add_row("status", status_text, "marks", Text(_candidate_marks(candidate), style="gold1"))
+    if phase:
+        overview.add_row(
+            "phase", Text(PHASE_NOTE.get(phase, phase)), "in this phase", _phase_clock(current, candidate_dir)
+        )
     overview.add_row("metric", Text(f"{metric} ({direction})"), "parent", Text(parent, style="cyan"))
     overview.add_row(
         "val",
@@ -1157,8 +1233,10 @@ def candidate_detail_renderables(
                 "test duration",
                 Text(f"{tests.duration_s:.5g}s", style="cyan"),
             )
+    elif phase == "exec":
+        overview.add_row("trial", Text("executing now, no score yet", style="italic"), "", "")
     else:
-        overview.add_row("trial", Text("(not executed)", style="dim"), "", "")
+        overview.add_row("trial", Text("(not executed yet)" if in_flight else "(not executed)", style="dim"), "", "")
     agent = candidate.agent
     if candidate_in_flight(candidate, live):
         # in flight: what is known now, refreshed every tick — the coding agent
@@ -2016,7 +2094,7 @@ class CandidateScreen(ResizableDetail, LiveScreen):
             line += f"  budget left: {_format_budget_left(live_remaining_s(status, state))}"
             if status.current:
                 active = " · ".join(
-                    f"{c.candidate_id}({c.operator}/{c.phase}"
+                    f"{c.candidate_id}({c.operator}/{phase_label(c.phase)}"
                     + (f"/t{c.trial_index}" if c.trial_index is not None else "") + ")"
                     for c in status.current[:3]
                 )
@@ -2031,7 +2109,8 @@ class CandidateScreen(ResizableDetail, LiveScreen):
         snapshot = _snapshot_table(table)
         table.clear()
         for row in candidate_rows(
-            journal, live=state == "running", higher_is_better=bool(record.meta.higher_is_better)
+            journal, live=state == "running", higher_is_better=bool(record.meta.higher_is_better),
+            phases=own_phases(status),
         ):
             table.add_row(*_styled_candidate_cells(row, holdout), key=row.candidate_id)
         _restore_table(table, snapshot)
@@ -2057,8 +2136,14 @@ class CandidateScreen(ResizableDetail, LiveScreen):
         candidate = journal.candidates[self._detail_candidate_id]
         in_flight = candidate_in_flight(candidate, record.state == "running")
         self._sync_console(record, candidate, in_flight)
+        status = self.store.read_status(self.key)
+        current = next(
+            (c for c in (status.current if status else [])
+             if c.candidate_id == candidate.candidate_id and c.trial_index is None),
+            None,
+        )
         renderables = candidate_detail_renderables(
-            record, journal, self._detail_candidate_id, console=in_flight
+            record, journal, self._detail_candidate_id, console=in_flight, current=current
         )
         # Only rewrite the log when the rendered content changed. A clear +
         # rewrite every live tick flashes the log's tail for a frame before
@@ -2214,7 +2299,7 @@ class CandidateScreen(ResizableDetail, LiveScreen):
         def go(confirmed: bool | None) -> None:
             if confirmed:
                 outcome = request_stop(self.store, self.key, source="tui")
-                self.notify(outcome or "engine is not running", severity="information")
+                self.notify(outcome or f"{ENGINE} is not running", severity="information")
 
         self.app.push_screen(
             ConfirmScreen(
@@ -2738,7 +2823,7 @@ class SearchesScreen(ResizableDetail, LiveScreen):
         def go(confirmed: bool | None) -> None:
             if confirmed:
                 outcome = request_stop(self.store, key_for(search_dir), source="tui")
-                self.notify(outcome or "engine is not running", severity="information")
+                self.notify(outcome or f"{ENGINE} is not running", severity="information")
 
         self.app.push_screen(
             ConfirmScreen(f"Stop search {_search_ref(search_dir)}? (aborts the operators in flight, then parks)"),

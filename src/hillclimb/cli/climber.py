@@ -53,6 +53,20 @@ def _is_legacy_dir(path: Path) -> bool:
     return (path / "climber.yaml").is_file()
 
 
+def _say_check_report(report) -> None:
+    """`climber check`'s verdict and findings in the CLI's voice: a green
+    `ok` or a red `FAIL` per check, the journal it was replayed on dimmed."""
+    verdict = (
+        "[ok]conforms[/]" if report.ok
+        else f"[bad]{len(report.failures)} contract breach{'' if len(report.failures) == 1 else 'es'}[/]"
+    )
+    say(f"[head]policy {_m(report.policy)}[/] [note]{_m(report.params or '{}')}[/]: {verdict}")
+    for finding in report.findings:
+        mark = "[ok]ok  [/]" if finding.ok else "[bad]FAIL[/]"
+        where = f" [note]{_m('[' + finding.journal + ']')}[/]" if finding.journal else ""
+        say(f"  {mark} [head]{_m(finding.check)}[/]{where}: {_m(finding.detail)}")
+
+
 @climber_app.command("list")
 def climber_list(as_json: bool = typer.Option(False, "--json", help="Machine-readable output")):
     """The climbers a bare name stands for: the presets, and every one-file
@@ -398,7 +412,7 @@ def _check_climber(config: Config, *, problem, limit, smoke, smoke_budget, as_js
         if smoke_result is not None:
             payload["smoke"] = smoke_result
     else:
-        typer.echo(report.render())
+        _say_check_report(report)
         say(f"[head]resolved params:[/] {_m(json.dumps(resolved_params, default=str))}")
         say(f"[head]replayed[/] {len(cases)} recorded journal(s)")
         if smoke_result is not None:

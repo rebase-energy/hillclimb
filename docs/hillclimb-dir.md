@@ -171,6 +171,9 @@ store:
   # sqlite_path: store.sqlite
 ```
 
+`hillclimb init --datastore sqlite` writes that block for a new folder, so the
+database holds its records from the first run on.
+
 With `sqlite`, a search dir holds only what has to be files (`candidates/`,
 `best/`, logs) and everything else lives in the database — cross-run views
 (the chart, `store searches`, experiments) query it instead of walking run dirs,

@@ -275,3 +275,27 @@ def test_ctrl_c_stops_a_python_script_instead_of_moving_on(registry, config, lea
     assert read_status(search_dir).state == "stopped"
     assert any("Resume with: hillclimb resume" in line for line in lines)
     assert Journal(search_dir / "journal.jsonl").candidates  # the record is kept
+
+
+def test_an_agent_that_keeps_crashing_fails_the_search_instead_of_looping(registry, config, lean_runtime):
+    """E36: a worker that dies (here an agent raising KeyboardInterrupt in its
+    thread) used to abandon its candidate and let the search try again until
+    the budget ran out; three crashes in a row now fail it, with the error."""
+    import time
+
+    from hillclimb.harness.status import read_status
+
+    class Crashing:
+        name = "crashing"
+
+        def invoke(self, request):
+            raise KeyboardInterrupt
+
+    register_agent("crashing", Crashing)
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match="3 operators crashed in a row; last: KeyboardInterrupt"):
+        hc.run("fitness-landscape", agent="crashing", budget="5m", learning=False,
+               holdout=False, config=config, log=lambda *_: None)
+    assert time.monotonic() - started < 60
+    [search_dir] = list(config.paths.runs_dir.glob("*/searches/*"))
+    assert read_status(search_dir).state == "failed"

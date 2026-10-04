@@ -62,7 +62,12 @@ def ensure_owned_dir(path: Path) -> Path:
     it. A folder that exists already is left as it is, never claimed."""
     path = Path(path)
     if not path.exists():
-        path.mkdir(parents=True)
+        try:
+            path.mkdir(parents=True)
+        except FileExistsError:
+            # another engine of the same run made it between the check and
+            # the mkdir (--parallel-searches in a fresh dir): it is theirs
+            return path
         (path / OWNED_MARKER).write_text(_OWNED_NOTE)
     return path
 
@@ -102,3 +107,155 @@ def user_env_path() -> Path:
     """The user-level `.env` beside the user config: provider keys that
     apply to every folder, read under a folder's own `.env`."""
     return user_config_path().with_name(".env")
+
+
+INIT_CONFIG = """\
+# hillclimb config — this file marks the hillclimb dir (problems/ and runs/
+# sit beside it); run hillclimb from this folder. Precedence: CLI flags > this file >
+# ~/.config/hillclimb/config.yaml > built-in defaults.
+
+model: sonnet
+# agent: claude-code
+__STORE__
+# climber: greedy          # HOW to climb, this folder's default. A preset: greedy | openevolve | gepa,
+#                          # or one .py file. A run spec's own `climber:` replaces it
+# climber:                 # ...or the whole block (`hillclimb climber show greedy` prints one to edit)
+#   selector_policy: best  # which candidate to build on next: best | map-elites, or a file / package.module:Class
+#   selector_params: {num_drafts: 3}
+#   operator_policy: greedy  # which operator to use on it: a name, a file (mine.py or mine.py:Class) or package.module:Class
+#   operators: [draft, debug, improve, ensemble]
+#   tuner: random          # random | optuna (parameter tuning of candidates that declare params.json)
+#   memory: files          # files | none
+
+# budget:
+#   total_s: 7200
+#   deadline: graceful     # `hard` aborts in-flight operators when total_s runs out
+#   max_evaluations: 0     # verifier trials the climber may spend (0 = unlimited)
+
+# evaluation:
+#   n_replicates: 1        # seeded runs per trial (median is the trial's score)
+#   replicate_mode: parallel # `serial` when the metric measures the machine (time!)
+#   noise_k: 0             # require gains > k x the measured noise floor
+#   min_improvement: 0     # ...or an absolute floor, in metric units
+
+# concurrency:
+#   parallel_agents: 1   # >1 runs concurrent coding agents
+#   machine_max_agents: 8  # cap across every search on this machine (default min(8, cores-2))
+
+# holdout:
+#   enabled: true
+#   top_k: 5             # holdout scored only for top-k-by-val candidates
+
+# similarity:            # `hillclimb similarity scores`: name (or my_score.py) -> params
+#   scores:
+#     solution-card: {card_model: anthropic/claude-haiku-4.5, embedding_model: voyageai/voyage-4}
+#     api-calls: {}
+
+# learning:
+#   enabled: true        # knowledge cards in knowledge/ inform new searches
+#   max_cards: 3
+#   complexity_prior: false
+#   live: true           # concurrent searches in one run share discoveries mid-flight
+
+# report:
+#   enabled: true        # inject eval breakdowns (per-zone/horizon/quantile) into improve prompts
+"""
+
+
+# What `hillclimb init` adds to the hillclimb dir's .gitignore. The RECORD
+# of every run is committed — run.yaml, spec.yaml, each search's search.yaml,
+# journal, status, knowledge card, climber snapshot, and the best solution —
+# so `git log` explains every run and `hillclimb chart` works on a fresh
+# clone. The BULK is not: candidates (coding agent streams, replicate outputs,
+# runtime data), engine logs, the control queue, the rest of best/ (a
+# submission can be large), the sqlite store and the derived knowledge graph.
+# Keys never are. Leading slashes anchor each rule at the hillclimb dir.
+INIT_GITIGNORE = (
+    "# hillclimb: the record of every run is committed, its bulk is not",
+    "/.env",
+    "/runs/*/logs/",
+    "/runs/*/searches/*/candidates/",
+    "/runs/*/searches/*/control/",
+    "/runs/*/searches/*/best/*",
+    "!/runs/*/searches/*/best/solution.py",
+    "!/runs/*/searches/*/best/params.json",
+    "/store.sqlite*",
+    "/knowledge/graph.json",
+)
+
+# The folders `init` creates beside hillclimb.yaml.
+SCAFFOLD_DIRS = ("problems", "runs")
+# what hillclimb writes into beside hillclimb.yaml: a folder of one of these
+# names that is not hillclimb's means hillclimb goes in a subfolder instead
+OWNED_DIR_NAMES = ("problems", "runs", "knowledge", "climbers")
+
+
+def scaffold_blockers(folder: Path) -> list[Path]:
+    """What stops `folder` from becoming a hillclimb dir: a folder of one of
+    hillclimb's names (problems/, runs/, knowledge/, climbers/) that is
+    already there and not hillclimb's (a project's own). Empty when the
+    folder is free or already a hillclimb dir."""
+    if (folder / MARKER_FILE).exists():
+        return []
+    return [folder / sub for sub in OWNED_DIR_NAMES if (folder / sub).exists() and not is_owned_dir(folder / sub)]
+
+
+def scaffold_target(folder: Path) -> tuple[Path, list[Path]]:
+    """Where a hillclimb dir for `folder` goes: the folder itself, or its
+    `hillclimb/` subfolder when the folder already has folders of hillclimb's
+    names of its own (returned as the second item, for the message)."""
+    blockers = scaffold_blockers(folder)
+    return (folder / SUBFOLDER, blockers) if blockers else (folder, [])
+
+
+DATASTORES = ("files", "sqlite")
+
+# the store block INIT_CONFIG carries: commented out for the default, live
+# when `hillclimb init --datastore sqlite` chose the database
+_STORE_BLOCK = {
+    "files": (
+        "\n# store:                   # where the records of runs live (candidates/ and best/ stay in runs/):\n"
+        "#   backend: files         # files: yaml/jsonl under runs/ (default) | sqlite: one store.sqlite\n"
+    ),
+    "sqlite": (
+        "\nstore:                     # where the records of runs live (candidates/ and best/ stay in runs/):\n"
+        "  backend: sqlite          # one store.sqlite beside this file | files: yaml/jsonl under runs/\n"
+    ),
+}
+
+
+def init_config(datastore: str = "files") -> str:
+    """The hillclimb.yaml `init` writes, with the record store it was asked for."""
+    return INIT_CONFIG.replace("__STORE__", _STORE_BLOCK[datastore])
+
+
+def scaffold_hillclimb_dir(folder: Path, datastore: str = "files") -> Path:
+    """Make `folder` (created if missing) a hillclimb dir: hillclimb.yaml,
+    empty problems/ and runs/ beside it, and the gitignore rules that keep
+    run artifacts and keys out of git while the record of every run goes in
+    (`INIT_GITIGNORE`). No problem is added: picking one (`hillclimb problem
+    get`) is the user's first real choice. Idempotent on the folder layout;
+    never overwrites an existing config, only adds ignore rules that are
+    missing. Callers check `scaffold_blockers` first."""
+    if folder.name == SUBFOLDER and not folder.exists():
+        ensure_owned_dir(folder)  # a hillclimb/ subfolder of hillclimb's: `reset` removes it whole
+    folder.mkdir(parents=True, exist_ok=True)
+    for sub in SCAFFOLD_DIRS:
+        ensure_owned_dir(folder / sub)  # marked: `reset` may delete it
+        (folder / sub / ".gitkeep").touch()
+    if not (folder / MARKER_FILE).exists():
+        (folder / MARKER_FILE).write_text(init_config(datastore))
+    gitignore = folder / ".gitignore"
+    existing_ignore = gitignore.read_text() if gitignore.exists() else ""
+    present = existing_ignore.splitlines()
+    missing = [line for line in INIT_GITIGNORE if line not in present]
+    if missing == [INIT_GITIGNORE[0]]:  # every rule is there, only the heading is not
+        missing = []
+    if missing:
+        gitignore.write_text(
+            existing_ignore.rstrip("\n")
+            + ("\n" if existing_ignore else "")
+            + "\n".join(missing)
+            + "\n"
+        )
+    return folder

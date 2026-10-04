@@ -44,6 +44,14 @@ def _sandbox_off(monkeypatch):
     monkeypatch.setenv("HILLCLIMB_SANDBOX", "off")
 
 
+@pytest.fixture(autouse=True)
+def _agent_login_checked(monkeypatch):
+    """Commands check the coding agent's login with a real ping before they
+    run (`connect.ensure_agent_ready`); the suite must never reach Claude or
+    Codex for it. tests/test_agent_login.py drives the check itself."""
+    monkeypatch.setenv("HILLCLIMB_AGENT_CHECKED", "1")
+
+
 def executor_for(problem) -> CommandExecutor:
     """The problem's own verifier command, run by the dev interpreter."""
     return CommandExecutor(Path(sys.executable), problem.verifier_cmd, problem.verifier_env)

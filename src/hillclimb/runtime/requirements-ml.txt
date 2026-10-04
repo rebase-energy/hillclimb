@@ -1,0 +1,12 @@
+# The machine-learning runtime: what Kaggle-style (MLE-bench) solutions reach
+# for. Opt-in: a problem asks for it with its own requirements file.
+pandas
+numpy
+scipy
+scikit-learn
+requests
+xgboost
+lightgbm
+torch
+torchvision
+pillow

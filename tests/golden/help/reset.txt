@@ -1,10 +1,10 @@
                                                                                                                         
  Usage: root reset [OPTIONS]                                                                                            
                                                                                                                         
- Kill every engine of THIS hillclimb dir and delete what hillclimb made in it.                                          
+ Kill every search of THIS hillclimb dir and delete what hillclimb made in it.                                          
                                                                                                                         
  The hillclimb dir is the one found from the current directory (or                                                      
- `HILLCLIMB_DIR`). Only engines pinned to that exact dir are signalled —                                                
+ `HILLCLIMB_DIR`). Only searches pinned to that exact dir are signalled —                                               
  their coding agents and verifiers go with them — then hillclimb.yaml, the                                              
  sqlite store and the folders hillclimb created beside it (each carries a                                               
  hidden `.hillclimb` file: problems/, runs/, knowledge/, climbers/) are                                                 
@@ -14,8 +14,15 @@
  folders on the machine are untouched. `runs_dir` or `problems_dir`                                                     
  configured outside the hillclimb dir are left in place and reported.                                                   
                                                                                                                         
+ `--runs` starts the folder's searches over without setting it up again:                                                
+ the searches are killed and runs/, the sqlite store and knowledge/ (what                                               
+ the searches learned, and any papers distilled into it) are removed,                                                   
+ while hillclimb.yaml, problems/ and climbers/ stay.                                                                    
+                                                                                                                        
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --yes   -y        Do not ask for confirmation                                                                        │
+│ --runs            Delete only what searches produced (runs/, the sqlite store, knowledge/) and keep the hillclimb    │
+│                   dir: hillclimb.yaml, problems/ and climbers/ stay                                                  │
 │ --help  -h        Show this message and exit.                                                                        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 

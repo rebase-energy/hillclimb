@@ -211,6 +211,16 @@ def test_read_result_forms(tmp_path):
     path.write_text('{"score": NaN}')  # nothing was graded: not a worst score
     assert read_result(path)[0] is None
 
+    # E19: an infinite score would win every comparison and is not JSON
+    for text in ('{"score": Infinity}', '{"score": -Infinity}', "1e999", "-inf"):
+        path.write_text(text)
+        assert read_result(path)[0] is None, text
+    from hillclimb.harness.executor import result_metrics, result_problem
+
+    path.write_text('{"score": Infinity}')
+    assert "finite" in result_problem(path)
+    assert result_metrics({"score": 1.0, "runtime_s": float("inf"), "n": 3}) == {"n": 3.0}
+
     path.write_text('{"report": {}}')
     assert read_result(path)[0] is None
 

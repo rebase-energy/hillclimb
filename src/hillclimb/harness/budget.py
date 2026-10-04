@@ -170,7 +170,9 @@ class BudgetManager:
         return max(0.0, self.total_s - self.elapsed())
 
     def should_stop(self) -> bool:
-        return self.remaining() < self.stop_margin_s
+        # `<=`, not `<`: remaining() never goes below 0, and a budget under
+        # 10 s has a margin of 0, so `0 < 0` kept a spent search running
+        return self.remaining() <= self.stop_margin_s
 
     def remaining_str(self) -> str:
         return format_remaining(self.remaining())

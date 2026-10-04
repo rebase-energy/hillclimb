@@ -82,6 +82,7 @@ def experiment_run(
 
     config = common.load_config()
     common.require_sandbox(config)
+    common.ensure_agents_ready(config)
     try:
         spec_path = resolve_study_path(spec, config.hillclimb_dir)
         study = load_study(spec_path)
@@ -328,4 +329,4 @@ def _experiment_report_impl(
     if as_json:
         typer.echo(json.dumps(summaries_to_dict(summaries), indent=2))
     else:
-        typer.echo(render_report(summaries))
+        common.markdown(render_report(summaries))

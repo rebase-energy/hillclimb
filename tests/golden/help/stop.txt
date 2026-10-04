@@ -1,14 +1,14 @@
                                                                                                                         
  Usage: root stop [OPTIONS] [SEARCH]                                                                                    
                                                                                                                         
- Stop a running engine now; it can be resumed.                                                                          
+ Stop a running search now; it can be resumed.                                                                          
                                                                                                                         
  The operators in flight are aborted within about a second — their coding agents                                        
  and verifiers are killed and their candidates journaled as abandoned (the                                              
  tokens they spent are not recovered). `--graceful` instead starts no new                                               
  work and parks once the operators in flight have finished and been                                                     
  scored. Resume later with `hillclimb resume`. `--all` stops every running                                              
- search (e.g. a parallel run). An engine that does not respond: `hillclimb kill`.                                       
+ search (e.g. a parallel run). One that does not respond: `hillclimb kill`.                                             
                                                                                                                         
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │   [search]      TEXT  [default: latest]                                                                              │

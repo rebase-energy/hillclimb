@@ -1,5 +1,96 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- **`hillclimb similarity` opens again.** Its app stored the run scope as `self.run`,
+  shadowing Textual's `App.run()`, so every launch from the CLI died with "'NoneType' object
+  is not callable" (tests drove the screens directly and never noticed).
+- **`hillclimb similarity` draws a problem whose baseline is a sample file.** heilbronn's
+  baseline is a `sample_submission.csv` with no `solution.py`, and both views refused with
+  "baseline c000 has no readable solution.py". They now anchor on the earliest candidate
+  that can be compared (a champion asked for with `c` is still never swapped).
+- **A run without a score says why.** `verify` and the run log name the problem instead of
+  "no score" or a bare exit code: "the score is not a number: 'great'", "the score is NaN",
+  "no score written to $HILLCLIMB_RESULT", and for a verifier that failed, the last line it
+  wrote to stderr (`c004 buggy — verifier exited 1: FileNotFoundError: answer.json`). Each
+  replicate journals it as `error`.
+- **The Python API works in a fresh folder.** `Problem(...)`, `climber.search(...)` and
+  `hc.run(...)` outside a hillclimb dir make the current folder one (as `hillclimb problem
+  get` does) and say so, instead of raising `HillclimbDirNotFound`.
+- **Bundled problem files no longer say "edit the template in problems/make_….py"**, a
+  generator that is in the repository, not in your copy.
+- **`hillclimb verify` works on every bundled problem.** `circle-packing` and
+  `fitness-landscape` declare their floor as a number, so `verify` had no solution to run
+  and exited 1 ("ships no baseline"); both now name their `sample_submission.csv` as
+  `baseline_files`, which `verify` scores (0.5 and 2.94927, the declared values).
+- **An expired Claude login is said plainly and fixed by `connect`.** When hillclimb's
+  operator login (its own Claude Code home) had an OAuth session that expired or was
+  revoked, a search failed three coding agent calls and parked with a summary cut off at
+  "Failed to authenticate: OA…", and `hillclimb connect claude` reported the ping failure
+  without logging in again (it only did so when logged out). Now the first such call parks
+  the search with "Claude login expired — run `hillclimb connect claude`, then `hillclimb
+  resume`", and `connect claude` recognises the dead session and logs in again (`claude
+  auth logout`, then the login, in the operator home only) as `connect codex` already did.
+- **A search stops when a short budget is spent.** A budget under 10 s has a stop margin
+  of 0, and the remaining time never goes below 0, so `0 < 0` never fired: a `--budget 5s`
+  run kept starting candidates at "0:00 left" (644 of them in one test) when the budget ran
+  out before the first verify finished.
+- **A mistake in a problem folder is one line, not a traceback**: a missing `metric:` or
+  `higher_is_better:`, a missing description, a verifier that is not executable, and
+  `run`/`verify` on a problem not fetched yet, which now names `hillclimb problem get <id>`
+  (or `problem new` for a name that is not bundled).
+- **`higher_is_better` must be a real `true`/`false`.** A quoted `"false"` loaded as `True`
+  and climbed the wrong way; it is now an error. A key problem.yaml does not know (a typo
+  like `higher_is_beter`) is warned about, with the key it most likely meant.
+- **A search whose numeric baseline (`baseline: 0`) is never beaten says so**, instead of
+  pointing at a `best/solution.py` that does not exist.
+- **A missing coding agent CLI is found before the search detaches**: `hillclimb run` with
+  no `claude` on PATH stops with the install command, rather than parking three failed
+  operator calls later.
+
+### Added
+- **A dead Claude or Codex login is renewed before a command runs into it.** `run`,
+  `resume`, `experiment run` and `paper add` check each coding agent they will use with
+  one tiny ping (skipped when one passed within the hour); an expired or revoked
+  subscription login asks "Log in again now?" at the terminal, logs in again in the
+  operator home and carries on — no `hillclimb connect` by hand. Without a terminal, or
+  answered no, the command stops before anything is spent, with the fix.
+- **`hillclimb init --datastore sqlite`** writes the `store:` block that keeps a folder's
+  records of runs (runs, searches, journals, status) in one `store.sqlite` from the first
+  run on; the default (`files`) carries the choice commented out in `hillclimb.yaml`.
+
+### Changed
+- **`hillclimb similarity` opens the reference cube**, the figure hillclimb.sh and the docs
+  show, with its axes named in the plot: `behaviour →`, `code →`, `lineage →`. It opened
+  the map before, whose three directions are a layout rather than metrics and so carry no
+  names; the map is `v` away, or `hillclimb similarity map`.
+- **The similarity views look like the figure on hillclimb.sh, and turn smoothly.** Small
+  marks whose shape is the candidate's fate (● built on, ○ left, · failed) and whose
+  colour is its score on the site's ramp; the best a gold diamond, the origin an open
+  diamond in its corner; in `similarity reference` the best's lineage is a white line
+  from the corner out and the axes are named (`behaviour →`, `code →`, `lineage →`); a
+  legend row sits under the plot. The cube's three back walls are quietly gridded with
+  the front open and its frame is brighter where it is nearer; a drag turns it at a steady
+  60 frames a second, following the pointer at any zoom. (plotui: `set_box_grid`,
+  `set_axis_titles3d`, the `circle` mark, glide and grab — needs the plotui release after
+  0.6.0.)
+- **Every human-facing listing speaks the CLI's theme.** `knowledge graph --stats` (and
+  `knowledge rebuild`) show the graph as a headline and a node/edge table, largest first;
+  `store searches` is a table with the state coloured; `climber check` marks each check
+  `ok`/`FAIL`; `experiment report` renders its Markdown tables on a terminal (still plain
+  Markdown when piped); `similarity scores` prints its matrix as a table, the closer a pair
+  the brighter; `verify`'s runtime-setup lines are themed too. JSON, YAML, diffs and the
+  prompt texts the knowledge commands preview stay plain, for scripts and coding agents.
+- **`hillclimb resume` detaches, like `hillclimb run`**: the search continues in a background
+  engine and the terminal comes back with where its log is and how to follow it.
+  `--no-detach` keeps it in the terminal (what `resume` did by default before).
+- **The default runtime is lean: numpy, scipy, pandas, scikit-learn.** The first verify of
+  a bundled problem (or a `problem new` one) built a 790 MB venv with torch, xgboost and
+  lightgbm, which no example uses. A problem that needs them ships its own
+  `requirements.txt`; MLE-bench competitions get them through `runtime/requirements-ml.txt`.
+  Building the runtime prints one line, not uv's download log (its tail on failure).
+
 ## 0.7.0 — 2026-10-03
 
 ### Fixed

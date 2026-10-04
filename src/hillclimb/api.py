@@ -119,20 +119,22 @@ def ensure_runtime_venv(
         lock_file(lock)
         if python.exists():
             return python
-        log(f"Creating {kind} runtime venv at {venv_dir} ...")
+        log(f"Preparing the {kind} runtime (first use on this machine; cached in {venv_dir}) ...")
+
+        def uv(*args: str) -> None:
+            # uv's download log stays out of the user's output unless it fails
+            done = subprocess.run(["uv", *args], capture_output=True, text=True)
+            if done.returncode != 0:
+                tail = "\n".join((done.stderr or done.stdout).strip().splitlines()[-15:])
+                raise subprocess.CalledProcessError(done.returncode, ["uv", *args], output=done.stdout, stderr=tail)
+
         try:
-            subprocess.run(["uv", "venv", "--python", "3.12", str(venv_dir)], check=True)
+            uv("venv", "--python", "3.12", str(venv_dir))
             if requirements is not None:
-                subprocess.run(
-                    ["uv", "pip", "install", "-r", str(requirements), "--python", str(python)],
-                    check=True,
-                )
+                uv("pip", "install", "-r", str(requirements), "--python", str(python))
             else:
                 with resources.as_file(requirements_resource(kind)) as req:
-                    subprocess.run(
-                        ["uv", "pip", "install", "-r", str(req), "--python", str(python)],
-                        check=True,
-                    )
+                    uv("pip", "install", "-r", str(req), "--python", str(python))
             if requirements is None and kind == "emflow":
                 # flag forms ("-e ../emflow") split into args; requirement
                 # specs ("emflow @ git+…", "/src/emflow") are ONE argument —
@@ -140,20 +142,21 @@ def ensure_runtime_venv(
                 source = config.emflow.source.strip()
                 source_args = shlex.split(source) if source.startswith("-") else [source]
                 try:
-                    subprocess.run(
-                        ["uv", "pip", "install", *source_args, "--python", str(python)],
-                        check=True,
-                    )
+                    uv("pip", "install", *source_args, "--python", str(python))
                 except subprocess.CalledProcessError as exc:
                     raise RuntimeError(
                         f"Installing emflow from {config.emflow.source!r} failed — first use "
                         "needs network (or set `emflow.source` to a local checkout, e.g. '-e ../emflow')"
                     ) from exc
-        except BaseException:
+        except BaseException as exc:
             # a partial venv would pass the exists() check forever
             import shutil
 
             shutil.rmtree(venv_dir, ignore_errors=True)
+            if isinstance(exc, subprocess.CalledProcessError):
+                raise RuntimeError(
+                    f"Building the {kind} runtime failed ({' '.join(map(str, exc.cmd[:3]))} …):\n{exc.stderr}"
+                ) from exc
             raise
     return python
 
@@ -518,7 +521,7 @@ def _preflight_sandbox(config: Config, log: Log) -> None:
         log("sandbox: off — coding agents and solutions run with your full user rights")
     elif sandbox.backend() is None:
         log(
-            "sandbox: none exists for this operating system — coding agents and "
+            f"sandbox: {sandbox.no_sandbox_reason()} — coding agents and "
             "solutions run with your full user rights"
         )
     else:
@@ -1227,6 +1230,23 @@ def run_search(
     return search.open() or search.finish()
 
 
+def sdk_config(**overrides: Any) -> Config:
+    """The config a Python entry point runs with. A folder that is not a
+    hillclimb dir yet is made one, as `hillclimb problem get` does, so a
+    notebook or script works in a fresh folder; the CLI asks first instead."""
+    from hillclimb.project import HillclimbDirNotFound
+
+    try:
+        return Config.load(**overrides)
+    except HillclimbDirNotFound:
+        from hillclimb.project import scaffold_hillclimb_dir, scaffold_target
+
+        # beside a project's own problems/ or runs/, it goes in hillclimb/
+        folder = scaffold_hillclimb_dir(scaffold_target(Path.cwd())[0])
+        print(f"hillclimb: made {folder} a hillclimb dir (hillclimb.yaml, problems/, runs/)")
+        return Config.load(**overrides)
+
+
 def _new_search(
     target: str,
     *,
@@ -1247,7 +1267,7 @@ def _new_search(
 ) -> Search:
     """A new search on `target`, created (run dir, spec, search dir, climber
     snapshot) and not yet opened."""
-    config = config or Config.load(agent=agent, model=model)
+    config = config or sdk_config(agent=agent, model=model)
     if agent:
         config.agent = agent
     if model:
@@ -1378,7 +1398,7 @@ def run(
     folder's knowledge, both ways. The folder's hillclimb.yaml supplies
     everything else unless a `config` is given."""
     _not_while_importing("run")
-    config = config.model_copy(deep=True) if config is not None else Config.load(agent=agent, model=model)
+    config = config.model_copy(deep=True) if config is not None else sdk_config(agent=agent, model=model)
     if climber is not None:
         _with_climber(config, climber)
     limits = _limits(budget, max_evaluations)
@@ -1432,7 +1452,7 @@ def start(
         raise RuntimeError(
             f"search {_STEPPING.ref} is still open in this process: close() it before starting another"
         )
-    config = config.model_copy(deep=True) if config is not None else Config.load(agent=agent, model=model)
+    config = config.model_copy(deep=True) if config is not None else sdk_config(agent=agent, model=model)
     if climber is not None:
         _with_climber(config, climber)
     limits = _limits(budget, max_evaluations)
@@ -1468,7 +1488,7 @@ def run_spec(path: Path | str, *, config: Config | None = None, log: Log = print
     from hillclimb.problem import load_suite, suite_problem_targets
 
     _not_while_importing("run_spec")
-    base = config if config is not None else Config.load()
+    base = config if config is not None else sdk_config()
     suite = load_suite(path, base)
     targets = suite_problem_targets(suite, base)
     run_id = new_run_id(suite.suite_id)
@@ -1514,7 +1534,11 @@ def child_launch_context(config: Config) -> tuple[Path, dict[str, str]]:
     """(cwd, env) for a child `hillclimb run`: rooted at the hillclimb dir
     with HILLCLIMB_DIR pinned, so the child never has to search."""
     root = config.hillclimb_dir or Path.cwd()
-    return root, {**os.environ, "HILLCLIMB_DIR": str(root)}
+    # the command launching it checked the coding agents' logins already
+    # (`connect.ensure_agent_ready`): a detached engine has no terminal to ask at
+    from hillclimb.connect import CHECKED_ENV
+
+    return root, {**os.environ, "HILLCLIMB_DIR": str(root), CHECKED_ENV: "1"}
 
 
 def spawn_search_proc(
@@ -1685,6 +1709,40 @@ class FleetHandle:
     def alive(self) -> list[subprocess.Popen]:
         return [proc for proc in self.procs if proc.poll() is None]
 
+    # what an engine's log shows once its search is really under way: its
+    # first operator started (`[m:ss left] draft …`). The floor and an
+    # incumbent seed come before it, and either can still fail
+    STARTED_MARKERS = (" left] ",)
+
+    def startup_failures(self, *, wait_s: float = 10.0) -> list[tuple[Path, int]]:
+        """Engines that died while starting, as (log path, exit code). Waits
+        until every engine has either got its search going (its log shows it)
+        or exited, at most `wait_s`. A detached launch must not report an
+        engine running in the background when it died at once — a budget
+        that does not parse, an unknown agent, a missing extra, a seed file
+        that is not there all end the engine in its first second."""
+        deadline = time.monotonic() + wait_s
+        pending = list(zip(self.procs, self.log_paths))
+        while pending and time.monotonic() < deadline:
+            still = []
+            for proc, log_path in pending:
+                if proc.poll() is not None:
+                    continue
+                try:
+                    text = log_path.read_text(errors="replace")
+                except OSError:
+                    text = ""
+                if not any(marker in text for marker in self.STARTED_MARKERS):
+                    still.append((proc, log_path))
+            pending = still
+            if pending:
+                time.sleep(0.2)
+        return [
+            (log_path, proc.returncode)
+            for proc, log_path in zip(self.procs, self.log_paths)
+            if proc.poll() is not None and proc.returncode not in (0,)
+        ]
+
     def wait(self, *, poll_s: float = 5.0, deadline_s: float | None = None) -> dict[int, int | None]:
         """Block until every engine has exited, or `deadline_s` seconds have
         passed. Returns pid -> exit code (None for engines still running)."""
@@ -1759,6 +1817,11 @@ def run_fleet(
             f"agent {fleet_agent!r} was registered in this process (register_agent); a detached "
             "engine cannot know it. Run it here with hillclimb.run(...) instead"
         )
+    from hillclimb.agents import require_agent_clis
+
+    # every coding agent the engines will call, checked here: a detached
+    # engine would only find a missing CLI after its first operator calls
+    require_agent_clis([fleet_agent, *(route.agent for route in config.routing.values() if route.agent)])
     problem = load_problem(target, config)
     ensure_runtime_venv(config, problem.runtime, log=log, requirements=problem.requirements_file)
     name = run_name or problem.problem_id

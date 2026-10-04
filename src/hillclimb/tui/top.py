@@ -36,6 +36,7 @@ from hillclimb.tui.machine import (
     sort_rows,
 )
 from hillclimb.tui.psview import HEAD_ROLES, ROLE_STYLE, Line, counts, engine_lines, summary_line
+from hillclimb.terms import ENGINE, role_label
 from hillclimb.tui.theme import HILLCLIMB_CSS, apply_theme
 from hillclimb.tui.watch import ConfirmScreen, LiveScreen, _restore_table, _snapshot_table
 
@@ -52,7 +53,7 @@ class TopScreen(LiveScreen):
     """One table: each engine's row, its processes nested under it."""
 
     BINDINGS = [
-        Binding("s", "stop", "stop engine"),
+        Binding("s", "stop", f"stop {ENGINE}"),
         Binding("g", "stop_graceful", "stop gracefully", show=False),
         Binding("k", "kill", "kill"),
         Binding("o", "cycle_sort", "order"),
@@ -115,7 +116,7 @@ class TopScreen(LiveScreen):
                 command = line.command if len(line.command) <= width else line.command[: width - 1] + "…"
                 table.add_row(
                     Text(line.pid, style="bold" if line.role in HEAD_ROLES else ""),
-                    Text(line.role, style=ROLE_STYLE.get(line.role, "")),
+                    Text(role_label(line.role), style=ROLE_STYLE.get(line.role, "")),
                     Text(f"{line.cpu:5.1f}%", style=_cpu_style(line.cpu)),
                     format_mem(line.rss_mb),
                     line.up,
@@ -128,7 +129,7 @@ class TopScreen(LiveScreen):
                     key=line.pid,
                 )
         if not engines:
-            table.add_row("", "", "", "", "", Text("no hillclimb engines running", style="dim"), key="none")
+            table.add_row("", "", "", "", "", Text(f"no hillclimb {ENGINE.pl} running", style="dim"), key="none")
         _restore_table(table, snapshot)
 
     def _selected(self) -> tuple[EngineRow, Line] | None:
@@ -157,7 +158,7 @@ class TopScreen(LiveScreen):
             self.notify("its hillclimb dir is gone, so nothing receives a stop — k kills it", severity="warning")
             return
         if not engine.searches:
-            self.notify("no search recorded for this engine yet — k kills it", severity="warning")
+            self.notify("no search recorded for this process yet — k kills it", severity="warning")
             return
         pair = self.reader.config_store(engine.hillclimb_dir)
         if pair is None:
@@ -175,7 +176,7 @@ class TopScreen(LiveScreen):
 
             for search in engine.searches:
                 outcome = request_stop(store, key_for(search.search_dir), source="tui", graceful=graceful)
-                self.notify(outcome or f"{search.ref}: engine is not running", severity="information")
+                self.notify(outcome or f"{search.ref}: {ENGINE} is not running", severity="information")
 
         self.app.push_screen(ConfirmScreen(f"Stop engine {engine.pid} ({refs})? {how}; resumable."), go)
 
@@ -192,7 +193,7 @@ class TopScreen(LiveScreen):
         engine, line = selected
         whole_engine = line.role == "engine"
         if line.role in HEAD_ROLES and not whole_engine:
-            question = f"End {line.role} {line.pid} and what it started? (SIGTERM, then SIGKILL)"
+            question = f"End {role_label(line.role)} {line.pid} and what it started? (SIGTERM, then SIGKILL)"
         elif whole_engine:
             question = (
                 f"Kill engine {engine.pid} and its {len(engine.procs)} processes? "
@@ -200,8 +201,8 @@ class TopScreen(LiveScreen):
             )
         else:
             question = (
-                f"Kill {line.role} {line.pid} and what it started? "
-                "The engine sees it fail like any other crash and carries on."
+                f"Kill {role_label(line.role)} {line.pid} and what it started? "
+                f"The {ENGINE} sees it fail like any other crash and carries on."
             )
 
         def go(confirmed: bool | None) -> None:
@@ -216,7 +217,7 @@ class TopScreen(LiveScreen):
                 else:
                     forced = kill_process_tree(int(line.pid))
                 self.app.call_from_thread(
-                    self.notify, f"{line.role} {line.pid} killed" + (" (needed SIGKILL)" if forced else "")
+                    self.notify, f"{role_label(line.role)} {line.pid} killed" + (" (needed SIGKILL)" if forced else "")
                 )
 
             self.run_worker(work, thread=True, exclusive=False)
@@ -227,7 +228,7 @@ class TopScreen(LiveScreen):
 
     def action_cycle_sort(self) -> None:
         self.sort = (self.sort + 1) % len(TOP_SORTS)
-        self.notify(f"engines ordered by {TOP_SORTS[self.sort][0]}", timeout=1.5)
+        self.notify(f"{ENGINE.pl} ordered by {TOP_SORTS[self.sort][0]}", timeout=1.5)
         self.refresh_data()
 
     def action_reverse_sort(self) -> None:

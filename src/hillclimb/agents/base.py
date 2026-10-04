@@ -65,3 +65,35 @@ class Agent(Protocol):
     name: str
 
     def invoke(self, request: AgentRequest) -> AgentResult: ...
+
+
+# what a coding agent says when the login on disk can no longer be used: the
+# token was revoked, expired, or (codex) its single-use refresh token was
+# already spent by another copy of the same credential; Claude Code says
+# "OAuth token revoked" / "OAuth session expired and could not be refreshed"
+LOGIN_EXPIRED_MARKERS = (
+    "refresh token",
+    "log out and sign in again",
+    "sign in again",
+    "please log in again",
+    "token has expired",
+    "token is expired",
+    "token revoked",
+    "session expired",
+    "could not be refreshed",
+    "invalid_grant",
+    "401 unauthorized",
+    "authentication_failed",
+    # an operator home that never logged in (Claude Code: "Not logged in ·
+    # Please run /login"): the same fix, `hillclimb connect <agent>`
+    "not logged in",
+    "please run /login",
+)
+
+
+def login_expired(message: str | None) -> bool:
+    """Does a failure say the login itself is dead, rather than the model or
+    the route? `login status` cannot tell: it only sees that a credential
+    file exists, so a dead login reads as logged in until a call is made."""
+    text = (message or "").lower()
+    return any(marker in text for marker in LOGIN_EXPIRED_MARKERS)

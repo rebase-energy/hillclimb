@@ -5,7 +5,7 @@ the problem's own `verify.py` accepts, with where it came from.
 
 This folder is reference material for people. It is not part of a
 problem: `hillclimb problem get <id>` copies `src/hillclimb/demo/<id>/`
-into a workspace and never this, so a search cannot read the answer.
+into your `problems/` and never this, so a search cannot read the answer.
 The website's playgrounds show these behind their **optimal** /
 **best known** button, and the chart's reference lines in each
 `problem.yaml` (`chart_baselines`) should agree with the values here.

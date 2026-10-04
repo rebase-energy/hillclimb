@@ -17,7 +17,7 @@
 │ problem     Problems: copy a bundled one, or start your own.                                                         │
 │ resume      Resume a parked or interrupted search.                                                                   │
 │ run         Start a run on a problem or a run-spec YAML.                                                             │
-│ stop        Stop a running engine now; it can be resumed.                                                            │
+│ stop        Stop a running search now; it can be resumed.                                                            │
 │ summit      Copy the best solution found so far into your hillclimb dir.                                             │
 │ top         The control pane for every hillclimb process on this machine.                                            │
 │ tree        Live tree of one search, drawn like the Darwin Gödel Machine's archive.                                  │

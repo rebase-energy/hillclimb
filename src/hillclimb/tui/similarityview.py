@@ -50,7 +50,7 @@ from hillclimb.tui.similarity import (
     clear_caches,
 )
 from hillclimb.harness.store import DataStore, SearchRecord, open_store, resolve_search
-from hillclimb.tui.theme import HILLCLIMB_CSS, apply_theme, themed_plot
+from hillclimb.tui.theme import HILLCLIMB_CSS, apply_theme, themed_plot, boxed_plot
 from hillclimb.tui.watch import STATE_STYLE, LiveScreen
 
 from plotui.textual import PlotWidget
@@ -58,20 +58,133 @@ from plotui.textual import PlotWidget
 # Rank-bin ramp, worst → best: cold purple through hot orange to pale
 # yellow — reads as temperature on the dark theme and stays clear of both
 # the cyan chrome and the champion's gold.
-SCORE_RGB = [
-    (58, 44, 92), (110, 50, 122), (176, 62, 100),
-    (222, 92, 68), (246, 152, 58), (250, 222, 134),
-]
-assert len(SCORE_RGB) == N_BINS
+# hillclimb.sh's score ramp (indigo → cyan → green → gold → orange), sampled
+# at the N_BINS rank bins — the terminal figure reads like the one on the site
+_SITE_RAMP = [(59, 63, 153), (43, 123, 186), (34, 184, 201), (46, 230, 230), (155, 225, 93), (253, 195, 40), (255, 122, 44)]
+
+
+def _ramp(t: float) -> tuple[int, int, int]:
+    x = t * (len(_SITE_RAMP) - 1)
+    lo = min(int(x), len(_SITE_RAMP) - 2)
+    a, b, f = _SITE_RAMP[lo], _SITE_RAMP[lo + 1], x - lo
+    return tuple(round(a[k] + (b[k] - a[k]) * f) for k in range(3))  # type: ignore[return-value]
+
+
+SCORE_RGB = [_ramp(i / (N_BINS - 1)) for i in range(N_BINS)]
 BEST_RGB = (255, 200, 40)       # the champion — same gold as tree/surface
-REFERENCE_RGB = (255, 255, 255)  # the anchor — white, like surface's summit
-UNSCORED_RGB = (90, 90, 90)
-NODE_SIZE = 5.0
-BEST_SIZE = 7.0
-UNSCORED_SIZE = 3.5
-# From above (negative pitch, as in surfaceview) but zoomed out enough that
-# the unit cube's corners — where extreme candidates pin — stay in frame.
-START_CAMERA = (0.9, -0.8, 0.75, 0.0, 0.0)
+REFERENCE_RGB = (235, 238, 240)  # the origin, an open diamond in its corner
+UNSCORED_RGB = (228, 55, 48)    # never scored: failed, a small red dot
+LINEAGE_RGB = (255, 255, 255)   # the best's lineage, like the tree figure's
+# marks are small, as on the site: the cloud's shape is the picture
+NODE_SIZE = 3.0
+BEST_SIZE = 4.6
+UNSCORED_SIZE = 2.0
+AXIS_NAMES = ("behaviour", "code", "lineage")  # x, y, z of the reference cube
+
+
+def fate_shape(fate: str, scored: bool = True) -> str:
+    """The site's marks: built on = a filled disc, left = an open circle,
+    failed = a small dot (pending keeps the tree's triangle)."""
+    if not scored or fate in ("failed", "pruned"):
+        return "dot"
+    return {"expanded": "disc", "pending": "triangle"}.get(fate, "circle")
+
+
+def legend_markup(
+    scope: str = "search", origin: str = "origin, the corner",
+    line: tuple[tuple[int, int, int], str] = (LINEAGE_RGB, "the best's lineage"),
+) -> str:
+    """The row under the plot, the site's legend in the terminal's glyphs.
+    `line` is the view's path: its colour and what it is."""
+    def rgb(c):
+        return f"rgb({c[0]},{c[1]},{c[2]})"
+
+    cyan = rgb(SCORE_RGB[3])
+    items = [
+        f"[{rgb(REFERENCE_RGB)}]◇[/] {origin}",
+        f"[{rgb(BEST_RGB)}]◆[/] best",
+        f"[{cyan}]●[/] built on",
+        f"[{cyan}]○[/] left",
+        f"[{rgb(UNSCORED_RGB)}]·[/] failed",
+        f"[{rgb(line[0])}]━[/] {line[1]}",
+    ]
+    if scope != "run":
+        items.append("".join(f"[{rgb(c)}]▬[/]" for c in SCORE_RGB) + " score, low → high")
+    return "   ".join(items)
+
+
+# --- the legend in the plot ---------------------------------------------------
+# The same two legends as the tree figure, so the views read as one tool: the
+# marks in plotui's own legend box at the top left (rows this module declares,
+# drawn in the image as miniatures of the marks), and the score ramp as a
+# column of terminal cells at the top right. `legend_markup` is the row under
+# the plot a plotui without those rows falls back to.
+
+# plotui legend rows: (label, swatch, colour, border, visible)
+LegendRow = tuple[str, str, tuple[int, int, int], tuple[int, int, int] | None, bool]
+
+
+def legend_rows(
+    origin: str = "origin, the corner",
+    line: tuple[tuple[int, int, int], str] = (LINEAGE_RGB, "the best's lineage"),
+) -> list[LegendRow]:
+    """The marks as plotui legend rows, each with the swatch the plot draws
+    that mark with. `line` is the view's path: its colour and what it is."""
+    cyan = SCORE_RGB[3]
+    return [
+        (origin, "diamond-open", REFERENCE_RGB, None, True),
+        ("best", "diamond", BEST_RGB, None, True),
+        ("built on", "disc", cyan, None, True),
+        ("left", "ring", cyan, None, True),
+        ("failed", "dot", UNSCORED_RGB, None, True),
+        (line[1], "line", line[0], None, True),
+    ]
+
+
+def apply_legend(plot, rows: list[LegendRow]) -> bool:
+    """Put `rows` on `plot` as its top-left legend, like the tree's. False
+    on a plotui that cannot draw them (no host rows, or no diamond and dot
+    swatches): the caller keeps the text row under the plot instead."""
+    try:
+        plot.set_legend_entries(list(rows))
+        plot.set_legend_corner("top-left")
+    except (AttributeError, ValueError):
+        if hasattr(type(plot), "legend_visible"):
+            plot.legend_visible = False
+        return False
+    plot.legend_visible = True
+    return True
+
+
+def plot_hosts_legend() -> bool:
+    """Can this plotui draw the legend in the plot?"""
+    return apply_legend(themed_plot(), legend_rows())
+
+
+RAMP_ROW = 1     # the ramp's caption row — the tree's, so the two figures line up
+RAMP_MARGIN = 1
+
+
+def ramp_spans(cols: int) -> list[tuple[int, int, str, str]]:
+    """`(row, col, text, style)` spans of the score ramp at the top right:
+    one cell per colour bin, best at the top, its two ends named. Colour is
+    the score's rank, so the ends are `high` and `low`, not values."""
+    bar_col = cols - RAMP_MARGIN - 1
+    labels = {0: "high", len(SCORE_RGB) - 1: "low"}
+    width = max(len(v) for v in labels.values())
+    spans = [(RAMP_ROW, max(0, bar_col + 1 - len("score")), "score", "bold white")]
+    for i, (r, g, b) in enumerate(reversed(SCORE_RGB)):
+        row = RAMP_ROW + 1 + i
+        spans.append((row, bar_col, "█", f"rgb({r},{g},{b})"))
+        if i in labels:
+            spans.append((row, bar_col - 1 - width, labels[i].rjust(width), "white"))
+    return spans
+
+
+# The site's composition: the origin at the bottom left, lineage rising from
+# it, behaviour and code running off to the right; seen slightly from above
+# (negative pitch) and zoomed out so the whole cube and its axis names fit.
+START_CAMERA = (1.2, -0.3, 0.62, 0.0, 0.0)
 # The axes are normalized to [0, 1], so pin the frame with a small margin:
 # dots keep their pixels across rebuilds and corner points aren't flush
 # against the wireframe.
@@ -95,26 +208,48 @@ def rank_size(bin_index: int | None) -> float:
 
 
 def build_similarity_plot(view: SimilarityView) -> Plot:
-    plot = themed_plot()
-    groups: dict[tuple[tuple[int, int, int], float], list] = {}
+    """The reference cube as hillclimb.sh draws it: small marks whose shape
+    is the candidate's fate and whose colour its score, the origin an open
+    diamond in its corner, the best a gold one, the best's lineage a white
+    line from the corner out, and the three axes named."""
+    plot = boxed_plot()
+    if hasattr(plot, "set_axis_titles3d"):
+        plot.set_axis_titles3d(*AXIS_NAMES)
+    colours, sizes, shapes = [], [], []
     for node in view.nodes:
+        scored = node.bin is not None
         if node.id in view.reference_ids:
-            key = (REFERENCE_RGB, BEST_SIZE)
+            style = (REFERENCE_RGB, BEST_SIZE, "diamond-open")
         elif node.best:
-            key = (BEST_RGB, BEST_SIZE)
+            style = (BEST_RGB, BEST_SIZE, "diamond")
         elif view.scope == "run":
-            key = (experiment_colour(view, node.experiment), rank_size(node.bin))
-        elif node.bin is None:
-            key = (UNSCORED_RGB, UNSCORED_SIZE)
+            style = (experiment_colour(view, node.experiment), rank_size(node.bin), fate_shape(node.fate, scored))
+        elif not scored:
+            style = (UNSCORED_RGB, UNSCORED_SIZE, "dot")
         else:
-            key = (SCORE_RGB[node.bin], NODE_SIZE)
-        groups.setdefault(key, []).append(node)
-    for (rgb, size), nodes in groups.items():
-        plot.add_scatter3d(
-            [n.x for n in nodes], [n.y for n in nodes], [n.z for n in nodes],
-            color=rgb, size=size,
+            style = (SCORE_RGB[node.bin], NODE_SIZE, fate_shape(node.fate))
+        colours.append(style[0])
+        sizes.append(style[1])
+        shapes.append(style[2])
+    if view.nodes:
+        # far to near is the renderer's business; the origin and then the
+        # best go last, so at equal depth no ordinary mark covers them
+        order = sorted(range(len(view.nodes)), key=lambda i: (view.nodes[i].best, view.nodes[i].id in view.reference_ids))
+        nodes = [view.nodes[i] for i in order]
+        plot.add_graph3d(
+            [n.x for n in nodes], [n.y for n in nodes], [n.z for n in nodes], edges=[],
+            node_colors=[colours[i] for i in order], size=NODE_SIZE,
+            node_sizes=[sizes[i] for i in order], node_shapes=[shapes[i] for i in order],
         )
+    if view.scope == "search" and view.reference != "champion":
+        # the best's lineage, from the corner out: its accepted ancestors in
+        # the order they left the origin (the lineage axis is exactly that)
+        path = sorted((n for n in view.nodes if n.on_path and n.id not in view.reference_ids), key=lambda n: n.z)
+        if path:
+            xs, ys, zs = [0.0, *(n.x for n in path)], [0.0, *(n.y for n in path)], [0.0, *(n.z for n in path)]
+            plot.add_line3d(xs, ys, zs, color=LINEAGE_RGB, width=1.6)
     plot.set_bounds(*BOUNDS)
+    apply_legend(plot, legend_rows())
     return plot
 
 
@@ -179,6 +314,9 @@ def run_state(records: list[SearchRecord]) -> str:
     return states.pop() if len(states) == 1 else "mixed"
 
 
+PLOT_LEGEND = plot_hosts_legend()
+
+
 class SimilarityPlotWidget(PlotWidget):
     """Free-orbit scatter that survives data refreshes: the camera the user
     set carries across rebuilds; only the first plot gets START_CAMERA."""
@@ -186,6 +324,7 @@ class SimilarityPlotWidget(PlotWidget):
     def __init__(self, **kwargs):
         super().__init__(themed_plot(), **kwargs)
         self._has_view = False
+        self._ramp = False  # the score ramp is drawn (a search's cube; a run's is coloured by experiment)
 
     def set_view(self, view: SimilarityView) -> None:
         camera = self._plot.camera_state() if self._has_view else START_CAMERA
@@ -193,7 +332,18 @@ class SimilarityPlotWidget(PlotWidget):
         plot.set_camera_state(*camera)
         self._plot = plot
         self._has_view = True
+        self._ramp = view.scope != "run"
+        self._sync_ramp()
         self.invalidate()
+
+    def _sync_ramp(self) -> None:
+        from rich.style import Style
+
+        spans = ramp_spans(self.size.width) if self._ramp and self._has_view and PLOT_LEGEND else []
+        self.set_overlay([(r, c, t, Style.parse(st)) for r, c, t, st in spans])
+
+    def on_resize(self) -> None:
+        self._sync_ramp()
 
     def clear_view(self) -> None:
         if not self._has_view:
@@ -219,6 +369,9 @@ class SimilarityBase(LiveScreen):
     DEFAULT_CSS = """
     SimilarityBase #similarityline { height: 1; padding: 0 1; background: $surface; }
     SimilarityBase #similarity-canvas { width: 1fr; height: 1fr; }
+    SimilarityBase #similarity-legend {
+        height: auto; padding: 0 2; text-align: center; color: $text-muted; background: #0e1113;
+    }
     """
 
     def __init__(self, config: Config, search: str | None = None, reference: str = "baseline"):
@@ -314,6 +467,8 @@ class SimilarityScreen(SimilarityBase):
         yield HillclimbHeader()
         yield Label(id="similarityline")
         yield SimilarityPlotWidget(id="similarity-canvas")
+        if not PLOT_LEGEND:  # an older plotui: the legend is a row under the plot
+            yield Label(legend_markup(), id="similarity-legend")
         yield Footer()
 
     def _canvas(self) -> SimilarityPlotWidget:
@@ -481,7 +636,9 @@ class SimilarityApp(TimezoneMixin, App):
         self.config = config or Config.load()
         self.search = search
         self.reference = reference
-        self.run = run  # (run_id, problem_key) -> run scope
+        # (run_id, problem_key) -> run scope. Never `self.run`: that would
+        # shadow App.run() and leave `SimilarityApp(...).run()` calling None
+        self.run_scope = run
         self.view = view  # "reference" (the cube) | "map"
         self.metric = metric  # the map's opening metric
 
@@ -494,10 +651,10 @@ class SimilarityApp(TimezoneMixin, App):
         if self.view == "map":
             from hillclimb.tui.similarity_mapview import MapScreen, RunMapScreen
 
-            if self.run is not None:
-                return RunMapScreen(self.config, *self.run, metric=self.metric)
+            if self.run_scope is not None:
+                return RunMapScreen(self.config, *self.run_scope, metric=self.metric)
             return MapScreen(self.config, self.search, metric=self.metric)
-        if self.run is not None:
-            run_id, problem_key = self.run
+        if self.run_scope is not None:
+            run_id, problem_key = self.run_scope
             return RunSimilarityScreen(self.config, run_id, problem_key, reference=self.reference)
         return SimilarityScreen(self.config, self.search, reference=self.reference)

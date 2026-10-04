@@ -12,6 +12,7 @@ from hillclimb.tui.banner import (  # noqa: F401 — re-exported
     WORDMARK_LINES,
     print_banner,
 )
+from hillclimb.tui.palette import pinned
 
 # Typer's default rich theme paints "Usage:" and every `<...>` metavar yellow,
 # which clashes with the cyan command/option column. Repaint both in the same
@@ -22,6 +23,12 @@ typer.rich_utils.STYLE_USAGE = "bold cyan"
 
 
 typer.rich_utils.STYLE_TYPES = "cyan"
+
+# ...and pin every named colour Typer uses to the palette's hex, so the help
+# screen is the same in every terminal (see tui/palette.py).
+for _name, _style in vars(typer.rich_utils).items():
+    if _name.startswith("STYLE_") and isinstance(_style, str):
+        setattr(typer.rich_utils, _name, pinned(_style))
 
 
 # The top-level commands `hillclimb --help` lists: the README's get-started

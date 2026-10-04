@@ -194,3 +194,40 @@ async def test_cost_toggle_puts_the_overlay_on_its_own_legend_row(config):
         assert COST_TOKENS_LABEL in cost_rows
         band = str(app.screen.query_one("#chart-legend", ChartLegend).render())
         assert f"{COST_GROUP}: " in band
+
+
+def test_hiding_a_legend_series_holds_the_view_until_a_recentre():
+    """Toggling a legend entry must not rescale the axes — the reader could
+    not tell what went from what stayed. With `unfit` (the hold-still rule)
+    a hidden series still counts toward the axes; only the entries hidden at
+    the last recentre (`f`) are left out of the fit."""
+    from hillclimb.tui.chart import Climb, ClimbEvent, build_climb_plot
+    from hillclimb.tui.theme import CYAN
+
+    climb = Climb(
+        events=[ClimbEvent(1.0, 0.50, True, "r", "draft"), ClimbEvent(2.0, 0.52, False, "r", "improve"),
+                ClimbEvent(3.0, 0.60, True, "r", "improve")],
+        extent=3.0,
+    )
+    baselines = {"far above": 5.0}  # a reference well outside the climb's own range
+
+    def cyan_rows(plot) -> set[int]:
+        """The pixel rows the staircase is drawn on: where it sits on the y axis."""
+        w, h = 320, 200
+        rgba = plot.render_rgba(w, h)
+        return {
+            y for y in range(h) for x in range(w)
+            if tuple(rgba[(y * w + x) * 4:(y * w + x) * 4 + 3]) == CYAN
+        }
+
+    shown = cyan_rows(build_climb_plot(climb, baselines, show_legend=False, unfit=frozenset()))
+    assert shown
+    hidden = {"far above"}
+    held = cyan_rows(build_climb_plot(climb, baselines, show_legend=False, hidden=hidden, unfit=frozenset()))
+    assert held == shown  # the reference is gone, the staircase has not moved
+    refit = cyan_rows(build_climb_plot(climb, baselines, show_legend=False, hidden=hidden, unfit=frozenset(hidden)))
+    assert refit != shown  # after a recentre the axes fit what is shown
+    assert refit == cyan_rows(build_climb_plot(climb, baselines, show_legend=False, hidden=hidden))  # the old rule, for other callers
+    # shown again after the recentre: drawn, but it does not move the view either
+    back = cyan_rows(build_climb_plot(climb, baselines, show_legend=False, unfit=frozenset(hidden)))
+    assert back == refit

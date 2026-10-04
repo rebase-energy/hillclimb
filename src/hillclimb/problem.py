@@ -18,6 +18,38 @@ SOLUTION_KINDS = ("program", "climber")
 CONTRACT_TEMPLATES = {"program": "contract_verifier", "climber": "contract_climber"}
 
 
+class ProblemError(Exception):
+    """A problem folder the user has to fix (a missing file, a bad key in
+    problem.yaml). The CLI prints it as one line, not a traceback; the
+    subclasses keep the built-in types, so callers that catch those still do."""
+
+
+class ProblemValueError(ProblemError, ValueError):
+    pass
+
+
+class ProblemFileNotFound(ProblemError, FileNotFoundError):
+    pass
+
+
+class ProblemPermissionError(ProblemError, PermissionError):
+    pass
+
+
+# Every key load_problem (or a view) reads from problem.yaml, plus the ones
+# hillclimb.Problem writes. Anything else is most likely a typo, and is
+# warned about once: a misspelt `higher_is_beter` must not pass silently.
+KNOWN_PROBLEM_KEYS = frozenset({
+    "problem_id", "metric", "higher_is_better", "lower_is_better", "description", "contract",  # legacy-key
+    "verifier", "score", "run", "private", "holdout", "holdout_inputs", "time_limit_s",
+    "baseline", "baseline_files", "chart_baselines", "output_artifacts", "time_budget_s",
+    "requirements", "unit_tests", "data_dir", "allow_internet_during_solution", "allow_network",
+    "solution_kind", "interface", "landscape", "surface_metrics", "fingerprint", "plot",
+    "written_by", "score_function", "kind",
+})
+_WARNED_KEYS: set[tuple[str, str]] = set()
+
+
 class UnitTestSpec(BaseModel):
     """Optional, framework-neutral correctness gate for a problem.
 
@@ -330,7 +362,7 @@ def provider_chart_baselines(target: str) -> dict[str, float]:
 def _read_yaml(path: Path) -> dict:
     data = yaml.safe_load(path.read_text()) or {}
     if not isinstance(data, dict):
-        raise ValueError(f"{path} must contain a YAML mapping")
+        raise ProblemValueError(f"{path} must contain a YAML mapping")
     return data
 
 
@@ -357,7 +389,17 @@ def resolve_problem_yaml(target: str | Path, config: Config) -> Path:
             return (candidate / "problem.yaml").resolve()
         if candidate.is_file() and candidate.name == "problem.yaml":
             return candidate.resolve()
-    raise FileNotFoundError(f"No problem found for target {target!r}")
+    raise ProblemFileNotFound(f"No problem {str(target)!r} in {config.paths.problems_dir}. {_how_to_get(str(target))}")
+
+
+def _how_to_get(target: str) -> str:
+    """The command that would give the user the problem they named."""
+    from hillclimb.demo import BUNDLED_PROBLEM_IDS
+
+    name = Path(target).name
+    if name in BUNDLED_PROBLEM_IDS:
+        return f"It is a bundled problem: fetch it with `hillclimb problem get {name}`."
+    return f"See `hillclimb problem list`, or start your own with `hillclimb problem new {name}`."
 
 
 def _optional_file(problem_dir: Path, meta: dict, key: str, default: str | None = None) -> Path | None:
@@ -370,7 +412,7 @@ def _optional_file(problem_dir: Path, meta: dict, key: str, default: str | None 
     if not path.exists():
         if key not in meta:
             return None
-        raise FileNotFoundError(f"{key} file not found: {path}")
+        raise ProblemFileNotFound(f"{key} file not found: {path}")
     return path
 
 
@@ -388,7 +430,7 @@ def load_interface_fields(problem_dir: Path, meta: dict) -> tuple[Path | None, s
     try:
         module = spaces.load_interface(interface_path)
     except spaces.InterfaceError as exc:
-        raise ValueError(f"invalid interface file {interface_path}: {exc}") from exc
+        raise ProblemValueError(f"invalid interface file {interface_path}: {exc}") from exc
     return interface_path, spaces.describe_interface(module)
 
 
@@ -412,12 +454,12 @@ def _verifier_argv(problem_yaml: Path, problem_dir: Path, meta: dict) -> list[st
     name = str(meta.get("verifier", "verifier.sh"))
     path = windows_edition((problem_dir / name).resolve())
     if not path.exists():
-        raise FileNotFoundError(
+        raise ProblemFileNotFound(
             f"{problem_yaml}: verifier not found: {path} — a problem needs a verifier, or "
             "`score:` (a scorer) in problem.yaml; `hillclimb problem new <id>` writes one that runs"
         )
     if not os.access(path, os.X_OK):
-        raise PermissionError(f"{problem_yaml}: verifier is not executable: chmod +x {path}")
+        raise ProblemPermissionError(f"{problem_yaml}: verifier is not executable: chmod +x {path}")
     return [str(path)]
 
 
@@ -428,7 +470,7 @@ def _scorer_argv(problem_yaml: Path, problem_dir: Path, raw) -> list[str]:
     script must not be found relative to anything the solution can write."""
     tokens = [raw] if isinstance(raw, str) else list(raw) if isinstance(raw, list) else None
     if not tokens or not all(isinstance(token, str) and token for token in tokens):
-        raise ValueError(f"{problem_yaml}: score must be a script (score: verify.py) or an argv list")
+        raise ProblemValueError(f"{problem_yaml}: score must be a script (score: verify.py) or an argv list")
     if len(tokens) == 1 and tokens[0].endswith(".py"):
         tokens = ["{python}", tokens[0]]
     argv = []
@@ -438,7 +480,7 @@ def _scorer_argv(problem_yaml: Path, problem_dir: Path, raw) -> list[str]:
     named = [token for token in tokens if token.endswith((".py", ".sh")) and "{" not in token]
     for token in named:
         if not (problem_dir / token).is_file():
-            raise FileNotFoundError(f"{problem_yaml}: scorer not found: {problem_dir / token}")
+            raise ProblemFileNotFound(f"{problem_yaml}: scorer not found: {problem_dir / token}")
     return argv
 
 
@@ -448,15 +490,43 @@ def _private_paths(problem_yaml: Path, problem_dir: Path, raw, key: str = "priva
         return []
     items = [raw] if isinstance(raw, str) else raw
     if not isinstance(items, list) or not all(isinstance(item, str) and item for item in items):
-        raise ValueError(f"{problem_yaml}: {key} must be a path or a list of paths")
+        raise ProblemValueError(f"{problem_yaml}: {key} must be a path or a list of paths")
     paths = []
     for item in items:
         path = Path(item).expanduser()
         path = (path if path.is_absolute() else problem_dir / path).resolve()
         if not path.exists():
-            raise FileNotFoundError(f"{problem_yaml}: {key} path not found: {path}")
+            raise ProblemFileNotFound(f"{problem_yaml}: {key} path not found: {path}")
         paths.append(path)
     return paths
+
+
+def _check_meta(problem_yaml: Path, meta: dict) -> None:
+    """The keys every problem needs, and the one that decides which way the
+    search climbs, which must be a real YAML boolean: `bool("false")` is
+    True, so a quoted "false" would silently climb the wrong way."""
+    import difflib
+
+    for key in sorted(set(meta) - KNOWN_PROBLEM_KEYS):
+        if (str(problem_yaml), key) not in _WARNED_KEYS:
+            _WARNED_KEYS.add((str(problem_yaml), key))
+            close = difflib.get_close_matches(key, KNOWN_PROBLEM_KEYS, n=1)
+            hint = f"did you mean `{close[0]}:`?" if close else "a typo?"
+            print(f"warning: {problem_yaml}: unknown key `{key}:` is ignored ({hint})", file=sys.stderr)
+    if not meta.get("metric"):
+        raise ProblemValueError(f"{problem_yaml}: `metric:` is required (a name for the score, e.g. `metric: accuracy`)")
+    direction = legacy_direction_key(meta).get("higher_is_better")
+    if direction is None:
+        raise ProblemValueError(f"{problem_yaml}: `higher_is_better:` is required (true or false)")
+    if not isinstance(direction, bool):
+        key = "higher_is_better" if "higher_is_better" in meta else "lower_is_better"  # legacy-key
+        raise ProblemValueError(f"{problem_yaml}: `{key}:` must be true or false, unquoted (not {direction!r})")
+
+
+def _sdk_config() -> Config:
+    from hillclimb.api import sdk_config  # makes a fresh folder a hillclimb dir
+
+    return sdk_config()
 
 
 def load_problem(target: str | Path, config: Config) -> ProblemSpec:
@@ -468,15 +538,16 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
     problem_dir = problem_yaml.parent
     meta = _read_yaml(problem_yaml)
 
+    _check_meta(problem_yaml, meta)
     if "kind" in meta:
-        raise ValueError(
+        raise ProblemValueError(
             f"{problem_yaml}: `kind:` is gone — every problem is now defined by a "
             "verifier command (`verifier: verifier.sh`, the default)"
         )
     problem_id = meta.get("problem_id") or problem_dir.name
     description_path = problem_dir / meta.get("description", "description.md")
     if not description_path.exists():
-        raise FileNotFoundError(f"Description not found: {description_path}")
+        raise ProblemFileNotFound(f"Description not found: {description_path}")
 
     if meta.get("data_dir"):
         data_dir = (problem_dir / meta["data_dir"]).resolve()
@@ -485,11 +556,11 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
     else:
         data_dir = problem_dir.resolve()
     if not data_dir.exists():
-        raise FileNotFoundError(f"Problem data directory not found: {data_dir}")
+        raise ProblemFileNotFound(f"Problem data directory not found: {data_dir}")
 
     solution_kind = meta.get("solution_kind", "program")
     if solution_kind not in SOLUTION_KINDS:
-        raise ValueError(
+        raise ProblemValueError(
             f"{problem_yaml}: solution_kind must be one of {', '.join(SOLUTION_KINDS)}, not {solution_kind!r}"
         )
     common = dict(
@@ -512,13 +583,13 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
     private_paths = _private_paths(problem_yaml, problem_dir, meta.get("private"))
     holdout_inputs = _private_paths(problem_yaml, problem_dir, meta.get("holdout_inputs"), "holdout_inputs")
     if (private_paths or holdout_inputs or meta.get("run")) and score_cmd is None:
-        raise ValueError(
+        raise ProblemValueError(
             f"{problem_yaml}: private data needs a scorer of its own (`score: verify.py`): a "
             "verifier.sh runs the solution inside its own sandbox, so anything it can read, the "
             "solution can read too"
         )
     if holdout_inputs and not meta.get("holdout"):
-        raise ValueError(f"{problem_yaml}: holdout_inputs need `holdout: true`")
+        raise ProblemValueError(f"{problem_yaml}: holdout_inputs need `holdout: true`")
     # two steps: the engine runs the solution, or the problem's own runner
     # for it (`run:`, which imports or drives solution.py and runs in the
     # solution's sandbox), then the scorer
@@ -530,7 +601,7 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
         verifier_cmd = _verifier_argv(problem_yaml, problem_dir, meta)
     time_limit = meta.get("time_limit_s")
     if time_limit is not None and (isinstance(time_limit, bool) or not isinstance(time_limit, (int, float)) or time_limit <= 0):
-        raise ValueError(f"{problem_yaml}: time_limit_s must be a positive number of seconds")
+        raise ProblemValueError(f"{problem_yaml}: time_limit_s must be a positive number of seconds")
     contract_path = _optional_file(problem_dir, meta, "contract", default="contract.md")
     interface_path, interface_text = load_interface_fields(problem_dir, meta)
     baseline_raw = meta.get("baseline")
@@ -549,18 +620,18 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
     if meta.get("unit_tests") is not None:
         raw_tests = meta["unit_tests"]
         if not isinstance(raw_tests, dict):
-            raise ValueError(f"{problem_yaml}: unit_tests must be a mapping")
+            raise ProblemValueError(f"{problem_yaml}: unit_tests must be a mapping")
         root_value = raw_tests.get("root")
         command = raw_tests.get("command")
         if not isinstance(root_value, str) or not root_value:
-            raise ValueError(f"{problem_yaml}: unit_tests.root must be a relative directory")
+            raise ProblemValueError(f"{problem_yaml}: unit_tests.root must be a relative directory")
         test_root = (problem_dir / root_value).resolve()
         try:
             test_root.relative_to(problem_dir.resolve())
         except ValueError as exc:
-            raise ValueError(f"{problem_yaml}: unit_tests.root must stay inside the problem dir") from exc
+            raise ProblemValueError(f"{problem_yaml}: unit_tests.root must stay inside the problem dir") from exc
         if not test_root.is_dir():
-            raise FileNotFoundError(f"unit test directory not found: {test_root}")
+            raise ProblemFileNotFound(f"unit test directory not found: {test_root}")
         unit_tests = UnitTestSpec(root=test_root, command=command)
     if baseline_score is not None:
         baseline_summary = f"baseline: {baseline_score:g} (declared)"
@@ -895,7 +966,7 @@ class Problem:
         the hillclimb dir's."""
         if not self.defined:
             raise ValueError(f"Problem({self.name!r}) exists already; only a problem defined in Python is saved")
-        root = Path(problems_dir) if problems_dir is not None else Config.load().paths.problems_dir
+        root = Path(problems_dir) if problems_dir is not None else _sdk_config().paths.problems_dir
         folder = root / self.name
         marker = folder / "problem.yaml"
         if marker.exists() and not (_read_yaml(marker).get("written_by") == "hillclimb.Problem"):
@@ -973,7 +1044,7 @@ class Problem:
 
     def spec(self, config: Config | None = None) -> ProblemSpec:
         """What the engine loads for it."""
-        config = config if config is not None else Config.load()
+        config = config if config is not None else _sdk_config()
         return load_problem(self.resolve(config), config)
 
     @property

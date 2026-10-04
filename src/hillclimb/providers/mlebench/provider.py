@@ -89,7 +89,7 @@ def load_mlebench_problem(comp_id: str, config: Config) -> ProblemSpec:
             f"run `mlebench prepare -c {comp_id}` in the mle-bench venv first"
         )
 
-    from hillclimb.runtime import RUN_SOLUTION
+    from hillclimb.runtime import ML_REQUIREMENTS, RUN_SOLUTION
 
     return ProblemSpec(
         problem_id=comp_id,
@@ -110,6 +110,7 @@ def load_mlebench_problem(comp_id: str, config: Config) -> ProblemSpec:
         # candidate ever succeeds
         baseline_files={"submission.csv": sample_submission},
         mlebench_comp_id=comp_id,
+        requirements_file=ML_REQUIREMENTS,  # Kaggle solutions reach for torch, xgboost, …
     )
 
 

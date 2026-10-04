@@ -330,4 +330,4 @@ def test_cli_scores_reports_unavailable_and_continues(tmp_path, monkeypatch):
     ])
     assert result.exit_code == 0, result.output
     assert "solution-card: unavailable" in result.output
-    assert "== api-calls" in result.output
+    assert "api-calls  (similarity, 1.0 = same)" in result.output

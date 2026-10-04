@@ -32,6 +32,7 @@ from hillclimb.cli import common
 from hillclimb.cli._app import app
 from hillclimb.cli.common import _m, fail, next_steps, say, warn
 from hillclimb.config import Config, RouteConfig
+from hillclimb.terms import ENGINE
 from hillclimb.harness.budget import BudgetManager
 from hillclimb.harness.core import Harness
 from hillclimb.harness.journal import Journal
@@ -95,6 +96,17 @@ def _execute(
         say(f"Resume with: [cmd]hillclimb resume {_m(ref)}[/]")
         raise typer.Exit(2)
     selected = outcome.selected
+    best = search_dir / "best" / "solution.py"
+    if not best.is_file():
+        # a declared numeric baseline (`baseline: 0`) is a score with no
+        # solution behind it: when it stays the best, there is nothing to ship
+        floor = f" ({problem.baseline_score:g})" if problem.baseline_score is not None else ""
+        say(
+            f"\n[head]Done.[/] [warn]No candidate beat the baseline{_m(floor)}, so best/ holds no solution.[/] "
+            f"[note]({_m(problem.metric_name)}, {'higher' if problem.higher_is_better else 'lower'} is better)[/]"
+        )
+        say(f"See what was tried: [cmd]hillclimb status {_m(ref)}[/]")
+        return
     if selected is not None:
         scores = f"val_score={selected.val_score}"
         if selected.holdout_score is not None:
@@ -309,11 +321,11 @@ def run(
     ),
     parallel_searches: int = typer.Option(
         1, "--parallel-searches", min=1,
-        help="Independent searches on the problem at once, each its own detached engine",
+        help="Independent searches on the problem at once, each in the background",
     ),
     detach: bool = typer.Option(
         True, "--detach/--no-detach",
-        help="Run as a detached engine (the default; `hillclimb watch` follows it) or in this terminal (Ctrl-C stops it)",
+        help="Run in the background (the default; `hillclimb watch` follows it) or in this terminal (Ctrl-C stops it)",
     ),
     n_replicates: int = typer.Option(
         None, "--n-replicates", "--n-trials",
@@ -348,7 +360,7 @@ def run(
 ):
     """Start a run on a problem or a run-spec YAML.
 
-    The search runs as a detached engine and the terminal comes straight
+    The search runs in the background and the terminal comes straight
     back: `hillclimb watch` follows it, `hillclimb stop --all` ends it.
     `--no-detach` keeps it in this terminal instead (Ctrl-C stops it).
     """
@@ -376,6 +388,7 @@ def run(
         config.evaluation.n_replicates = n_replicates
     overrides = common._parse_set(set_ or [])
     common.require_sandbox(config, overrides)
+    common.ensure_agents_ready(config, agent, model)
     if mixed:
         if experiment or run_id:
             raise typer.BadParameter("a mixed fleet names its experiments itself; --experiment/--run-id do not apply")
@@ -470,6 +483,22 @@ def _run_problem_fleet(
         log=common.engine_log,
     )
     agents = parallel_agents if parallel_agents is not None else config.concurrency.parallel_agents
+    failed = fleet.startup_failures()
+    if failed:
+        # an engine that died while starting is not running in the background
+        for log_path, code in failed:
+            fail(f"The {ENGINE} stopped while starting (exit {code}). The end of [path]{_m(log_path)}[/]:")
+            try:
+                lines = log_path.read_text(errors="replace").strip().splitlines()
+            except OSError:
+                lines = []
+            errors = [line for line in lines if line.strip()][-12:]
+            for line in errors:
+                say(f"  [note]{_m(line)}[/]", err=True)
+        if len(failed) < len(fleet.procs):
+            warn(f"{len(fleet.procs) - len(failed)} other {ENGINE.form(len(fleet.procs) - len(failed))} of run {fleet.run_id} still running: "
+                 "hillclimb stop --all ends them")
+        raise typer.Exit(1)
     if engines:
         experiments = ", ".join(dict.fromkeys(engine.experiment for engine in engines))
         say(
@@ -482,7 +511,7 @@ def _run_problem_fleet(
             f"[head]Run {_m(fleet.run_id)}[/]: {searches} x {agents} coding agent{'' if agents == 1 else 's'} "
             f"running in the background"
         )
-    say(f"Engine logs in [path]{_m(fleet.run_dir / 'logs')}[/]")
+    say(f"{ENGINE.cap} logs in [path]{_m(fleet.run_dir / 'logs')}[/]")
     steps = [
         ("hillclimb watch", "follow the search: every coding agent, what it is doing, its candidate's score"),
         ("hillclimb chart", "best score so far against time"),
@@ -578,7 +607,7 @@ def _stop_what_the_dead_engine_left(record: SearchRecord) -> None:
     stopped = stop_orphaned_children(record.search_dir)
     if stopped:
         names = ", ".join(sorted({entry.get("program") or "?" for entry in stopped}))
-        warn(f"stopped {len(stopped)} process(es) the dead engine of {record.ref} left running ({names})")
+        warn(f"stopped {len(stopped)} process(es) left running after {record.ref} died ({names})")
 
 
 def _refuse_unless_resumable(store, record: SearchRecord) -> None:
@@ -586,7 +615,7 @@ def _refuse_unless_resumable(store, record: SearchRecord) -> None:
     an engine is still on it, or it already finished."""
     pid = _live_engine_pid(store, record)
     if pid is not None:
-        fail(f"{record.ref} is still running (engine pid {pid}); a second engine would duplicate its work")
+        fail(f"{record.ref} is still running (pid {pid}); a second {ENGINE} would duplicate its work")
         next_steps([
             (f"hillclimb stop {record.ref}", "stop it, then resume"),
             ("hillclimb watch", "follow it instead"),
@@ -605,7 +634,8 @@ def _spawn_resume(config: Config, record: SearchRecord) -> tuple[int, Path]:
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"resume-{record.meta.search_id}.log"
     cwd, env = _child_launch_context(config)
-    cmd = [sys.executable, "-m", "hillclimb.cli", "resume", record.ref]
+    # --no-detach: the engine IS the detached process (resume detaches by default)
+    cmd = [sys.executable, "-m", "hillclimb.cli", "resume", record.ref, "--no-detach"]
     with log_path.open("a") as out:
         proc = subprocess.Popen(
             cmd, cwd=cwd, env=env,
@@ -623,17 +653,21 @@ def resume(
     ] = False,
     detach: Annotated[
         bool,
-        typer.Option("--detach", help="Resume in a detached background engine instead of the foreground"),
-    ] = False,
+        typer.Option(
+            "--detach/--no-detach",
+            help="Resume in the background (the default, like `run`); "
+            "--no-detach keeps it in this terminal",
+        ),
+    ] = True,
 ):
     """Resume a parked or interrupted search.
 
     SEARCH is `<run-id>/<search-id>`, `<run-id>`, or `latest`. `--all` resumes
     everything resumable (the counterpart of `hillclimb stop --all`), each as
-    its own detached engine — the pause/resume flow for changing code or env
+    its own background process — the pause/resume flow for changing code or env
     under a live project. The search continues with the settings it was
     launched with (its `--set` caps, agents and replicates). A search whose
-    engine is still running, or one that is done, is not resumed.
+    process is still running, or one that is done, is not resumed.
     """
     config = common.load_config()
     common.require_sandbox(config)
@@ -646,16 +680,24 @@ def resume(
         if not targets:
             say("[head]No parked, stopped, or crashed searches to resume.[/]")
             raise typer.Exit(1)
+        for agent, model in dict.fromkeys((r.meta.agent, r.meta.model) for r in targets):
+            common.ensure_agents_ready(config, agent, model)
         for record in targets:
             pid, log_path = _spawn_resume(config, record)
             say(f"[head]Resuming {_m(record.ref)}[/] ({_m(record.state)}) detached: pid {pid}, log [path]{_m(log_path)}[/]")
         return
     store, record = common.open_search(config, search)
     _refuse_unless_resumable(store, record)
+    common.ensure_agents_ready(config, record.meta.agent, record.meta.model)
     _stop_what_the_dead_engine_left(record)
     if detach:
         pid, log_path = _spawn_resume(config, record)
-        say(f"[head]Resuming {_m(record.ref)}[/] ({_m(record.state)}) detached: pid {pid}, log [path]{_m(log_path)}[/]")
+        say(f"[head]Resuming {_m(record.ref)}[/] ({_m(record.state)}) in the background: pid {pid}")
+        say(f"{ENGINE.cap} log in [path]{_m(log_path)}[/]")
+        next_steps([
+            ("hillclimb watch", "follow the search: every coding agent, what it is doing, its candidate's score"),
+            (f"hillclimb stop {record.ref}", "park it again (resumable)"),
+        ])
         return
     meta, search_dir = record.meta, record.search_dir
     config = common.load_config(agent=meta.agent, model=meta.model)
@@ -764,6 +806,12 @@ def smoke(
     the filesystem contract.
     """
     config = common.load_config(agent=agent, model=model)
+    from hillclimb.demo import BUNDLED_PROBLEM_IDS, install_demo_problem
+
+    if target in BUNDLED_PROBLEM_IDS and not (config.paths.problems_dir / target / "problem.yaml").exists():
+        # a check of the agent, not of the folder: fetch the bundled problem it uses
+        problem_dir, _ = install_demo_problem(config.paths.problems_dir, target)
+        say(f"fetched {_m(target)} for the check: [path]{_m(problem_dir)}[/]")
     problem = load_problem(target, config)
     _agent_preflight(config.agent)
     version_cmd = {

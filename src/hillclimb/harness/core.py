@@ -88,9 +88,10 @@ def _failure_reason(candidate: Candidate) -> str | None:
             if replicate.returncode == 124:
                 return "ran past its time limit"  # a two-step problem's own limit (and timeout(1)'s code)
             if replicate.returncode:
-                return f"verifier exited {replicate.returncode}"
+                exited = f"verifier exited {replicate.returncode}"
+                return f"{exited}: {replicate.error}" if replicate.error else exited
             if not replicate.submission_ok:
-                return "no valid output"
+                return replicate.error or "no valid output"
     first = candidate.summary.splitlines()[0][:160] if candidate.summary else ""
     return first or None
 
@@ -249,6 +250,7 @@ class Harness:
         self.router = router  # None: everything routes to `agent` + config.model
         self.agents = agents
         self._consecutive_failures = 0
+        self._consecutive_crashes = 0  # operators whose worker died: a code error, not a flaky call
         # Concurrency contract: the Journal and everything below is touched
         # only by the scheduler (the thread running run()/run_operator),
         # belt-and-braces guarded by _state_lock; workers report through
@@ -671,7 +673,7 @@ class Harness:
                 # a worker that dies without reporting would leave the
                 # candidate in flight and the scheduler waiting forever
                 self.log(f"  worker for {job.candidate.candidate_id} crashed: {exc!r}")
-                outcome = OutcomeMsg(job=job, kind="worker_crashed")
+                outcome = OutcomeMsg(job=job, kind="worker_crashed", error=exc)
             self._done_q.put(outcome)
 
         pool.submit(work)
@@ -1170,7 +1172,9 @@ class Harness:
 
         # out_of_credits parks like a rate limit: every later call fails the
         # same way until the account is topped up, and a parked search resumes.
-        if result.error_kind in ("rate_limited", "out_of_credits"):
+        # So does a dead login (login_expired): retrying it three times only
+        # buries the one thing to do — log in again — under three failures.
+        if result.error_kind in ("rate_limited", "out_of_credits", "login_expired"):
             return OutcomeMsg(job=job, kind="parked", result=result)
         if result.error_kind == "aborted":
             return OutcomeMsg(job=job, kind="aborted", result=result)
@@ -1200,7 +1204,7 @@ class Harness:
             self.config.budget.exec_timeout_s, max(60, int(self.budget.remaining() - 30))
         )
         budget_clamped = exec_timeout < self.config.budget.exec_timeout_s
-        self._set_phase(candidate.candidate_id, "exec")
+        self._set_phase(candidate.candidate_id, "exec", phase_limit_s=exec_timeout)
         # the defaults trial: a declared params.json makes t0 self-describing
         # (values journaled, $HILLCLIMB_PARAMS pointing at the trial's copy);
         # a malformed one is scored on the solution's own defaults instead
@@ -1240,10 +1244,18 @@ class Harness:
 
                 if msg.kind == "worker_crashed":
                     candidate.status = "abandoned"
-                    candidate.summary = "orchestrator error mid-operator (see log)"
+                    candidate.summary = f"operator crashed: {msg.error!r}"[:200]
                     candidate.finished_at = utcnow()
                     self._record_result(candidate)
+                    # a crash (in a custom agent, an operator, a module) is a
+                    # code error: retrying it only burns the budget, and a
+                    # paid agent's tokens with it, so a run of them fails the
+                    # search with the error instead
+                    self._consecutive_crashes += 1
+                    if self._consecutive_crashes >= 3:
+                        raise RuntimeError(f"3 operators crashed in a row; last: {msg.error!r}") from msg.error
                     return candidate
+                self._consecutive_crashes = 0
 
                 if msg.kind == "aborted":
                     candidate.status = "abandoned"
@@ -1293,7 +1305,9 @@ class Harness:
                         previous_best = self.journal.best_candidate(self.problem.higher_is_better)
                         if previous_best is None:
                             candidate.is_best = True
-                        elif self._improves(candidate.val_score, previous_best.val_score):
+                        elif self._improves(
+                            candidate.val_score, previous_best.val_score, band=self.accept_band(candidate)
+                        ):
                             candidate.is_best = True
                         elif self._improves(
                             candidate.val_score, previous_best.val_score, band=0.0
@@ -1304,7 +1318,7 @@ class Harness:
                                 f"  {candidate.candidate_id} val={candidate.val_score:.5g} beats "
                                 f"{previous_best.candidate_id} "
                                 f"({previous_best.val_score:.5g}) by less than the accept band "
-                                f"({self.accept_band():.3g}): within noise, not promoted"
+                                f"({self.accept_band(candidate):.3g}): within noise, not promoted"
                             )
                 elif self.abort.is_set() and any(
                     r.timed_out for t in candidate.trials for r in t.replicates
@@ -1480,7 +1494,7 @@ class Harness:
                 trial = job.candidate.trials[-1]
                 live.trials.append(trial)
                 live.trials.sort(key=lambda t: t.index)  # parallel tune commits land in any order
-                live.stamp_best_trial(self.problem.higher_is_better)
+                live.stamp_best_trial(self.problem.higher_is_better, band=self.accept_band(live))
                 score = trial.val_score
                 self.log(
                     f"  tune {live.candidate_id} t{trial.index}: val="
@@ -1541,9 +1555,9 @@ class Harness:
         if reward is not None:
             self.router.observe(candidate.operator, candidate.agent.model, reward)
 
-    def _set_phase(self, candidate_id: str, phase: str) -> None:
+    def _set_phase(self, candidate_id: str, phase: str, **fields) -> None:
         if self.status is not None:
-            self.status.update_current(candidate_id, phase=phase)
+            self.status.update_current(candidate_id, phase=phase, **fields)
 
     def _sync_selection(self) -> None:
         """Keep best/ pointing at the currently selected candidate. Selection
@@ -1566,10 +1580,11 @@ class Harness:
             scores += f" holdout={selected.holdout_score:.5g}"
         self.log(f"  new selection: {selected.candidate_id} {scores}")
 
-    def accept_band(self) -> float:
+    def accept_band(self, candidate: Candidate | None = None) -> float:
         """Delegate to the shared helper (scheduler-thread only — it reads
-        the journal's noise floor)."""
-        return evaluation.accept_band(self.config, self.journal)
+        the journal's noise floor). `candidate`: one not journaled yet, whose
+        own replicate spreads count as evidence too."""
+        return evaluation.accept_band(self.config, self.journal, candidate)
 
     def _improves(self, score: float, best: float, band: float | None = None) -> bool:
         """Strictly better by more than the accept band. Pass band=0.0 for a

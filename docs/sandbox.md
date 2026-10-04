@@ -12,7 +12,7 @@ It is on by default and needs no container:
 |---|---|---|
 | macOS | `sandbox-exec` (Seatbelt) | nothing, it is part of macOS |
 | Linux | [bubblewrap](https://github.com/containers/bubblewrap) | `sudo apt install bubblewrap` (`dnf`, `pacman` alike) |
-| Windows | none exists | hillclimb runs unsandboxed and says so |
+| Windows | bubblewrap inside WSL2 (a real Linux kernel) | in WSL2's Ubuntu: `sudo apt install bubblewrap`; natively none exists, hillclimb runs unsandboxed and says so, pointing to WSL2. `scripts/wsl2-check.sh` checks a machine |
 
 `hillclimb connect` shows whether the sandbox starts on this machine, and
 `hillclimb sandbox check` shows that it holds: it runs a script that behaves

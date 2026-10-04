@@ -57,6 +57,13 @@ def tail(path: Path, chars: int = TAIL_CHARS) -> str:
     return path.read_text(errors="replace")[-chars:]
 
 
+def last_line(path: Path, chars: int = 160) -> str | None:
+    """The last non-empty line a process wrote (a traceback's last line is
+    its exception), for a one-line reason."""
+    lines = [line.strip() for line in tail(path).splitlines() if line.strip()]
+    return lines[-1][:chars] if lines else None
+
+
 @dataclass
 class CandidateEvaluator:
     """Trial/replicate execution, report reading and holdout scoring for one
@@ -184,7 +191,8 @@ class CandidateEvaluator:
         trial.replicates.extend(r for r, _ in results)
         trial.finished_at = utcnow()
         candidate.trials.append(trial)
-        candidate.stamp_best_trial(self.problem.higher_is_better)
+        band = accept_band(self.config, self.journal, candidate) if self.journal is not None else self.config.evaluation.min_improvement
+        candidate.stamp_best_trial(self.problem.higher_is_better, band=band)
         # r0 of the FIRST trial surfaces at the candidate root right away
         # (the engine re-hoists when a later trial becomes the best one)
         if index == 0:
@@ -302,6 +310,12 @@ class CandidateEvaluator:
             stderr = tail(Path(exec_result.stdout_path).with_name("exec_stderr.log"), 800)
             if stderr.strip():
                 stdout_tail = f"[stderr] {stderr}"
+        error = None
+        if not exec_result.ok and not exec_result.timed_out:
+            if exec_result.returncode:
+                error = last_line(Path(exec_result.stdout_path).with_name("exec_stderr.log")) if exec_result.stdout_path else None
+            else:
+                error = exec_result.result_error
         replicate = Replicate(
             seed=seed,
             returncode=exec_result.returncode,
@@ -314,6 +328,7 @@ class CandidateEvaluator:
             report=self.read_replicate_report(cwd) if exec_result.ok else None,
             metrics=exec_result.metrics if exec_result.ok else {},
             instance_scores=exec_result.instance_scores if exec_result.ok else {},
+            error=error,
             started_at=started,
             finished_at=utcnow(),
         )
@@ -386,15 +401,28 @@ def gate_passes(
 # thread (it takes the journal's lock) — the evaluator gates from workers.
 
 
-def accept_band(config: Config, journal: Journal) -> float:
+def accept_band(config: Config, journal: Journal, candidate=None) -> float:
     """How much better a candidate must be before the engine believes it.
 
     `min_improvement` is the author's own floor in metric units; `noise_k`
     multiples of the measured noise floor is the search's own evidence
-    about itself. Zero (the default) is the strict comparison."""
+    about itself. Zero (the default) is the strict comparison. `candidate`
+    adds its own replicate spreads to that evidence before it is journaled,
+    so the very first replicated candidate is judged against its own noise
+    rather than a band of zero."""
     band = config.evaluation.min_improvement
     if config.evaluation.noise_k > 0:
         floor = journal.noise_floor()
+        if candidate is not None and candidate.replicate_spreads:
+            from statistics import median
+
+            spreads = [
+                spread
+                for other in journal.candidates.values()
+                if other.candidate_id != candidate.candidate_id
+                for spread in other.replicate_spreads
+            ] + list(candidate.replicate_spreads)
+            floor = median(spreads)
         if floor is not None:
             band = max(band, config.evaluation.noise_k * floor)
     return band

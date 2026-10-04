@@ -12,7 +12,7 @@ from hillclimb.harness import quota
 from hillclimb.harness.candidate import utcnow
 from hillclimb.harness.oscompat import new_group_kwargs, runnable
 from hillclimb.harness import sandbox
-from hillclimb.agents.base import AgentRequest, AgentResult
+from hillclimb.agents.base import AgentRequest, AgentResult, login_expired
 
 
 def claude_home(auth: str = "subscription") -> Path:
@@ -404,6 +404,26 @@ class ClaudeCodeAgent:
                 raw_output_path=str(raw_path),
                 error_kind="rate_limited",
                 error_message=str(payload.get("result") or stderr_text)[:500],
+            )
+        failure = str(payload.get("result") or stderr_text or "")
+        if (proc.returncode != 0 or payload.get("is_error")) and (
+            payload.get("api_error_status") == 401 or login_expired(failure)
+        ):
+            # every later call fails the same way: the harness parks on it
+            return AgentResult(
+                ok=False,
+                session_id=payload.get("session_id"),
+                cost_usd=cost,
+                num_turns=payload.get("num_turns"),
+                **burn,
+                duration_s=duration,
+                raw_output_path=str(raw_path),
+                error_kind="login_expired",
+                error_message=(
+                    # a home that never logged in (`connect` skipped) is not "expired"
+                    ("Claude is not logged in" if "not logged in" in failure.lower() else "Claude login expired")
+                    + f" — run `hillclimb connect claude`, then `hillclimb resume` ({failure.strip()[:200]})"
+                ),
             )
         if proc.returncode != 0 or payload.get("is_error"):
             return AgentResult(

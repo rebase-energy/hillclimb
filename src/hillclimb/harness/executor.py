@@ -41,6 +41,7 @@ construction; the hidden holdout dir recreates them here).
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -137,6 +138,8 @@ class ExecResult(BaseModel):
     # per-instance breakdown of `score` from the reserved `instances` key
     # (see result_instances); empty when the verifier does not emit one
     instance_scores: dict[str, float] = {}
+    # why the run has no score when it exited 0 (see result_problem)
+    result_error: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -196,7 +199,9 @@ def read_result(path: Path) -> tuple[float | None, dict | None]:
     may also carry a `report` breakdown) or a bare number, so the simplest
     possible verifier is `echo 12.3 > "$HILLCLIMB_RESULT"`. NaN is not a
     score: an evaluation that silently found nothing to grade must read as a
-    contract violation, not as the worst possible result.
+    contract violation, not as the worst possible result. Nor is infinity: it
+    would win (or lose) every comparison and cannot be journaled as JSON, so
+    a broken verifier must not crown a candidate with it.
     """
     try:
         text = path.read_text().strip()
@@ -211,15 +216,41 @@ def read_result(path: Path) -> tuple[float | None, dict | None]:
             value = float(text)
         except ValueError:
             return None, None
-        return (None if value != value else value), None
+        return (value if math.isfinite(value) else None), None
     if isinstance(payload, dict):
         score = payload.get("score")
-        if isinstance(score, bool) or not isinstance(score, (int, float)) or score != score:
+        if isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(score):
             return None, payload
         return float(score), payload
-    if isinstance(payload, bool) or not isinstance(payload, (int, float)) or payload != payload:
+    if isinstance(payload, bool) or not isinstance(payload, (int, float)) or not math.isfinite(payload):
         return None, None
     return float(payload), None
+
+
+def result_problem(path: Path) -> str:
+    """Why a result file holds no score, in words a verifier's author can act
+    on — `read_result` only says that it does not."""
+    try:
+        text = path.read_text().strip()
+    except OSError:
+        return "no score written to $HILLCLIMB_RESULT"
+    if not text:
+        return "$HILLCLIMB_RESULT is empty"
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        return f"$HILLCLIMB_RESULT is neither JSON nor a number: {text[:60]!r}"
+    if isinstance(payload, dict):
+        if "score" not in payload:
+            return f"the result has no `score` key (keys: {', '.join(map(str, list(payload)[:6])) or 'none'})"
+        payload = payload["score"]
+    if isinstance(payload, bool) or not isinstance(payload, (int, float)):
+        return f"the score is not a number: {payload!r}"[:120]
+    if payload != payload:
+        return "the score is NaN"
+    if not math.isfinite(payload):
+        return f"the score is {payload}: a score must be a finite number"
+    return "no score"
 
 
 RESERVED_RESULT_KEYS = frozenset({"score", "report", "instances"})
@@ -236,7 +267,7 @@ def result_metrics(payload: dict | None) -> dict[str, float]:
     for key, value in payload.items():
         if key in RESERVED_RESULT_KEYS or isinstance(value, bool):
             continue
-        if isinstance(value, (int, float)) and value == value:
+        if isinstance(value, (int, float)) and math.isfinite(value):
             out[str(key)] = float(value)
     return out
 
@@ -256,7 +287,7 @@ def result_instances(payload: dict | None) -> dict[str, float]:
     for key, value in instances.items():
         if isinstance(value, bool):
             continue
-        if isinstance(value, (int, float)) and value == value:
+        if isinstance(value, (int, float)) and math.isfinite(value):
             out[str(key)] = float(value)
     return out
 
@@ -500,6 +531,7 @@ class CommandExecutor:
             submission_ok=score is not None,
             metrics=result_metrics(payload),
             instance_scores=result_instances(payload),
+            result_error=None if timed_out or score is not None else result_problem(result_path),
         )
 
 

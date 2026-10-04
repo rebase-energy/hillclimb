@@ -58,7 +58,7 @@ chart_baselines:                 # optional named horizontal lines in `hillclimb
   previous best: 0.73
 output_artifacts: [submission.csv]  # files of a solution `best/` and `summit` copy beside solution.py
 time_budget_s: 900               # the default `hillclimb run --budget`
-requirements: requirements.txt   # per-problem venv (default: shared csv venv)
+requirements: requirements.txt   # per-problem venv (default: a shared one with numpy, scipy, pandas, scikit-learn)
 unit_tests:                      # optional correctness gate, frozen at run start
   root: tests
   command: ["{python}", "-m", "pytest", "-q", "{tests}"]

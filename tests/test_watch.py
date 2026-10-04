@@ -540,6 +540,37 @@ def test_candidate_rows_show_pending_as_running_or_stale(tmp_path: Path):
     assert display_status("buggy", True) == "buggy"
 
 
+def test_a_running_candidate_says_which_phase_it_is_in(tmp_path: Path):
+    """`running` hid two different waits: the agent still writing, and the
+    agent done with its solution being scored. The row and the detail panel
+    name the phase; the panel also explains it and times it."""
+    from rich.console import Console
+
+    from hillclimb.harness.status import CurrentCandidate
+
+    search_dir = make_run_with_search(tmp_path / "runs", "r")
+    journal = Journal(search_dir / "journal.jsonl")
+    journal.candidate_created(make_candidate("c003", operator="draft", status="pending"))
+    journal.candidate_created(make_candidate("c004", operator="draft", status="pending"))
+    journal = Journal(search_dir / "journal.jsonl")
+    phases = {"c003": "exec", "c004": "agent", "c001": "exec"}  # c001: a tune trial of a scored candidate
+    rows = {r.candidate_id: r.status for r in candidate_rows(journal, live=True, phases=phases)}
+    assert (rows["c003"], rows["c004"], rows["c001"]) == ("scoring", "writing", "passing")
+    assert {r.candidate_id: r.status for r in candidate_rows(journal, live=False, phases=phases)}["c003"] == "stale"
+
+    current = CurrentCandidate(
+        candidate_id="c003", operator="draft", phase="exec", candidate_dir=str(search_dir / "candidates" / "c003"),
+        phase_started_at="2020-01-01T00:00:00+00:00", phase_limit_s=900,
+    )
+    console = Console(record=True, width=160)
+    for renderable in candidate_detail_renderables(_record(search_dir), journal, "c003", live=True, current=current):
+        console.print(renderable)
+    rendered = console.export_text()
+    assert "scoring" in rendered and "the verifier is running solution.py" in rendered and "in this phase" in rendered
+    assert "of up to 15m 00s" in rendered and "executing now" in rendered
+    assert "(not executed)" not in rendered
+
+
 def test_candidate_detail_lines_include_scores_lineage_and_notes(tmp_path: Path):
     search_dir = make_run_with_search(tmp_path / "runs", "r")
     candidate_dir = search_dir / "candidates" / "c001"

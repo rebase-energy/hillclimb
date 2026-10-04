@@ -749,3 +749,58 @@ async def test_chart_detail_toggle(tree_workspace, monkeypatch):
         await pilot.press("1")
         await pilot.pause()
         assert app.screen.hidden_series == set()
+
+
+@pytest.mark.asyncio
+async def test_hiding_a_legend_entry_keeps_the_marks_where_and_as_big_as_they_were(tmp_path):
+    """The DGM tree sizes its circles to the nodes it is fitted to. Fitting
+    them to whatever the legend left visible made every circle jump when an
+    entry was hidden; now only `fit` re-frames and re-sizes the picture."""
+    from textual.app import App
+
+    from hillclimb.tui.tree import TreeEdge, TreeNode, SearchTree
+    from hillclimb.tui.treedrawview import TreeDrawPlotWidget
+
+    def node(i, x, depth, fate, parent=None):
+        return TreeNode(
+            id=f"c{i:03d}", x=float(x), depth=depth, operator="improve", status="passing", fate=fate,
+            score=1.0 + i / 100, n_children=0, summary="", created_at="", finished_at="", parent_id=parent, pruned=False,
+        )
+
+    nodes = [node(0, 0, 0, "expanded")] + [node(i, i - 1, 1, "discontinued", "c000") for i in range(1, 30)]
+    nodes.append(node(30, 14, 2, "best", "c015"))
+    tree = SearchTree(
+        nodes=tuple(nodes),
+        edges=tuple(TreeEdge(src=n.parent_id, dst=n.id, kind="parent", on_path=False) for n in nodes if n.parent_id),
+        accepted=("c000", "c030"),
+    )
+
+    class Harness(App):
+        def compose(self):
+            yield TreeDrawPlotWidget(id="tree-canvas")
+
+    app = Harness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        widget = app.query_one(TreeDrawPlotWidget)
+        widget.set_tree(tree)
+        await pilot.pause()
+
+        def where(node_id):
+            points = widget._plot.project_nodes(*widget._px_dims())
+            return tuple(round(v) for v in points[widget._ids.index(node_id)][:2])
+
+        radius, root, best = widget.radius, where("c000"), where("c030")
+        widget.set_hidden(frozenset({"scored"}))  # the 29 scored-and-left candidates go
+        await pilot.pause()
+        assert len(widget._ids) < len(nodes)
+        assert (widget.radius, where("c000"), where("c030")) == (radius, root, best)
+        widget.fit()  # now the picture is framed and sized for what is left
+        await pilot.pause()
+        assert widget.radius > radius
+        widget.set_hidden(frozenset())  # shown again: drawn, but nothing moves or resizes until the next fit
+        await pilot.pause()
+        fitted = widget.radius
+        assert len(widget._ids) == len(nodes) and widget.radius == fitted
+        widget.fit()
+        await pilot.pause()
+        assert (widget.radius, where("c000"), where("c030")) == (radius, root, best)

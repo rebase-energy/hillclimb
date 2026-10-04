@@ -292,3 +292,35 @@ def test_stamp_best_trial_follows_direction():
     assert [t.is_best for t in candidate.trials] == [False, True, False]
     assert candidate.stamp_best_trial(False).index == 0
     assert candidate.val_score == 0.5
+
+
+def test_the_champion_is_the_last_promoted_candidate_not_the_raw_best(tmp_path: Path):
+    """E20: on a noisy problem the engine promotes only beyond the accept
+    band. A candidate that scored higher within the noise is never the bar
+    or the shipped selection, and a resume rebuilds the same champion."""
+    path = tmp_path / "journal.jsonl"
+    journal = Journal(path)
+    for cid, val, promoted in (("c000", 1.00, True), ("c001", 1.03, False), ("c002", 0.98, False)):
+        candidate = make_candidate(cid, val_score=val, status="passing", is_best=promoted)
+        journal.candidate_created(candidate)
+        journal.candidate_result(candidate)
+    assert journal.best_candidate(higher_is_better=True).candidate_id == "c000"
+    assert journal.selected_candidate(higher_is_better=True).candidate_id == "c000"
+    assert [c.candidate_id for c in journal.ranked_candidates(True)] == ["c000", "c001", "c002"]
+    assert Journal(path).best_candidate(higher_is_better=True).candidate_id == "c000"
+
+    # a real improvement, promoted, takes over; pruning it hands the bar back
+    better = make_candidate("c003", val_score=1.20, status="passing", is_best=True)
+    journal.candidate_result(better)
+    assert journal.best_candidate(True).candidate_id == "c003"
+    better.pruned = True
+    journal.candidate_result(better)
+    assert journal.best_candidate(True).candidate_id == "c000"
+
+
+def test_without_promotions_on_record_the_raw_best_still_wins(tmp_path: Path):
+    journal = Journal(tmp_path / "journal.jsonl")
+    for cid, val in (("c001", 0.4), ("c002", 0.7)):
+        candidate = make_candidate(cid, val_score=val, status="passing")
+        journal.candidate_result(candidate)
+    assert journal.best_candidate(True).candidate_id == "c002"

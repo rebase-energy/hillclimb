@@ -57,8 +57,7 @@ from hillclimb.tui.similarity import (
     _live_paths,
     _load_fingerprinter,
     _prune_caches,
-    _reference_prints,
-    _resolve_reference,
+    _anchor,
     _run_champion,
     candidate_prints,
     shared_seed_references,
@@ -422,14 +421,13 @@ def build_map(
     except FingerprintError as exc:
         return MapView.none(metric, str(exc))
     accepted = accepted_lineage(candidates, higher_is_better)
-    resolved = _resolve_reference(candidates, accepted, "baseline")
-    if resolved is None:
-        return MapView.none(metric, "no baseline candidate")
-    origin_candidate, label = resolved
     search = SearchInput(search_id="", search_dir=search_dir, candidates=candidates)
     artifacts = tuple(output_artifacts) or DEFAULT_ARTIFACTS
     _prune_caches(_live_paths([search], artifacts))
-    origin = _reference_prints(origin_candidate, label, "", search_dir, artifacts, fingerprinter)
+    anchored = _anchor(candidates, accepted, "baseline", search_dir, artifacts, fingerprinter)
+    if anchored is None:
+        return MapView.none(metric, "no baseline candidate")
+    origin_candidate, origin = anchored
     if isinstance(origin, str):
         return MapView.none(metric, origin)
     members, missing = _members(search, origin, fingerprinter, namespaced=False)

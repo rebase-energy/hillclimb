@@ -484,9 +484,10 @@ def plot(
 class DefaultCommandGroup(HillclimbGroup):
     """A group whose bare form and any first token that is not one of its
     commands run `default_command` — `similarity <search>` is
-    `similarity map <search>`, `similarity --help` still lists both."""
+    `similarity reference <search>`, `similarity --help` still lists both."""
 
-    default_command = "map"
+    # the cube with the named axes: the figure hillclimb.sh and the docs show
+    default_command = "reference"
 
     def parse_args(self, ctx, args):
         if not args or (args[0] not in self.commands and args[0] not in ("-h", "--help")):
@@ -497,7 +498,7 @@ class DefaultCommandGroup(HillclimbGroup):
 similarity_app = typer.Typer(
     cls=DefaultCommandGroup,
     invoke_without_command=True,
-    help="Live 3D similarity views of a search's candidates: `map` (pairwise, default) and `reference`.",
+    help="Live 3D similarity views of a search's candidates: `reference` (named axes, default) and `map` (pairwise).",
 )
 
 
@@ -514,9 +515,11 @@ _SIMILARITY_SINGLE = typer.Option(False, "--single", help="One search only, even
 def similarity(ctx: typer.Context):
     """Live 3D similarity views of one search's candidates.
 
-    `map` (the default) embeds every candidate by pairwise distance, so
-    nearby dots are alike; `reference` places each candidate at its
-    distance from one reference candidate. Both derive everything from
+    `reference` (the default) places each candidate at its distance from
+    one reference candidate, one named axis per distance: behaviour, code,
+    lineage. `map` embeds every candidate by pairwise distance, so nearby
+    dots are alike; its directions are a layout, not metrics, so it has no
+    axis names. Both derive everything from
     what candidates already produced (the problem's fingerprint.py if it
     ships one, else submission or evaluator report; solution.py; the
     journal) and store nothing. `v` swaps between them in the TUI.
@@ -552,8 +555,11 @@ def similarity_reference(search: str = _SIMILARITY_SEARCH, single: bool = _SIMIL
 
     Every candidate sits at (behavioral, structural, lineage) distance from
     a reference candidate — the origin the search grew from (its seed, else
-    its baseline) by default, `c` toggles to the current champion — coloured
-    by score rank (cold to hot; the champion is gold, the reference white).
+    its baseline) by default, `c` toggles to the current champion — and the
+    three axes are named in the plot: `behaviour →` (how its output
+    differs), `code →` (how its solution.py differs), `lineage →` (edits
+    away). Colour is score rank (cold to hot; the champion a gold diamond,
+    the reference an open one in the corner), shape the candidate's fate.
     A search that is one experiment of a study opens the whole run instead: every
     search of that problem in one cube, measured from the shared seed,
     coloured by experiment like `chart`, n/p stepping through the run's problems
@@ -645,11 +651,12 @@ def similarity_scores(
         ], indent=2))
         return
     for matrix, explanations in results:
-        typer.echo(_format_similarity_matrix(matrix))
+        _say_similarity_matrix(matrix)
         for sid, text in explanations.items():
             if text:
-                typer.echo(f"\n--- {sid}\n{text}")
-        typer.echo("")
+                say(f"\n[head]{_m(sid)}[/]")
+                typer.echo(text)  # the representation itself: data, as it is
+        say()
 
 
 def _config_or_default() -> Config:
@@ -673,16 +680,27 @@ def _file_ids(paths: list[Path]) -> list[str]:
     return [str(p) for p in paths]
 
 
-def _format_similarity_matrix(matrix) -> str:
-    width = max(8, *(len(i) for i in matrix.ids)) + 1
-    lines = [f"== {matrix.score}  (similarity, 1.0 = same)"]
-    lines.append(" " * width + "".join(i.rjust(width) for i in matrix.ids))
-    for row_id, row in zip(matrix.ids, matrix.values):
-        cells = "".join(("—" if v != v else f"{v:.3f}").rjust(width) for v in row)
-        lines.append(row_id.ljust(width) + cells)
+def _say_similarity_matrix(matrix) -> None:
+    """One score's pairwise matrix in the CLI's voice: the score's name over
+    a table, the more alike a pair the brighter its cell, the diagonal
+    (each solution with itself) dimmed."""
+    say(f"[head]{_m(matrix.score)}[/]  [note](similarity, 1.0 = same)[/]")
+
+    def cell(row: int, col: int, value: float) -> str:
+        if value != value:
+            return "[note]—[/]"
+        if row == col:
+            return f"[note]{value:.3f}[/]"
+        style = "ok" if value >= 0.8 else "head" if value >= 0.5 else None
+        return f"[{style}]{value:.3f}[/]" if style else f"{value:.3f}"
+
+    rows = [
+        (_m(row_id), *(cell(r, c, v) for c, v in enumerate(values)))
+        for r, (row_id, values) in enumerate(zip(matrix.ids, matrix.values))
+    ]
+    common.table([("", "path"), *((_m(i), None, "right") for i in matrix.ids)], rows)
     if matrix.unrepresented:
-        lines.append(f"unrepresented: {', '.join(matrix.unrepresented)}")
-    return "\n".join(lines)
+        say(f"[note]unrepresented: {_m(', '.join(matrix.unrepresented))}[/]")
 
 
 def _open_similarity(search: str | None, single: bool, view: str, metric: str = "behavioral") -> None:

@@ -218,3 +218,28 @@ def test_parallel_trials_run_concurrently(task, config):
 
     assert len(node.trials[0].replicates) == 3
     assert overlaps(Path(node.candidate_dir) / "overlap.log") > 0
+
+
+def test_a_tune_trial_takes_over_only_beyond_the_band():
+    """E20: tuning on a noisy problem must not crown the luckiest draw."""
+    c = Candidate(candidate_id="c001", operator="draft", status="passing",
+                  trials=[mk_trial(val_score=1.00), mk_trial(val_score=1.03), mk_trial(val_score=1.20)])
+    assert c.stamp_best_trial(higher_is_better=True, band=0.05).val_score == 1.20
+    c.trials.pop()
+    assert c.stamp_best_trial(higher_is_better=True, band=0.05).val_score == 1.00
+    assert c.stamp_best_trial(higher_is_better=True).val_score == 1.03  # no band: raw best, as before
+
+
+def test_the_first_replicated_candidate_counts_its_own_noise(task, config, tmp_path):
+    """E20: before anything is journaled the floor is unknown; the band must
+    not be zero for the very first noisy comparison."""
+    from hillclimb.harness.evaluation import accept_band
+    from hillclimb.harness.candidate import Replicate, Trial
+
+    config.evaluation.noise_k = 3
+    journal = Journal(tmp_path / "journal.jsonl")
+    noisy = Candidate(candidate_id="c001", operator="draft", status="passing", trials=[
+        Trial(index=0, verdict="passing", replicates=[Replicate(val_score=v) for v in (1.0, 1.1, 0.9)]),
+    ])
+    assert accept_band(config, journal) == 0.0
+    assert accept_band(config, journal, noisy) == pytest.approx(3 * noisy.replicate_spreads[0])

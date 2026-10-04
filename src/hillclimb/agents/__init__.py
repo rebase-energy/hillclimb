@@ -70,6 +70,32 @@ def is_builtin(name: str) -> bool:
     return name in _BUILTIN
 
 
+# the CLI each built-in coding agent drives, and how to get it
+AGENT_CLIS = {"claude-code": "claude", "codex": "codex", "pi": "pi"}
+
+
+class AgentCLIMissing(RuntimeError):
+    """A coding agent whose CLI is not installed: found before a search
+    detaches, not three failed operator calls into it. The CLI prints it as
+    one line."""
+
+
+def require_agent_clis(names) -> None:
+    """Raise AgentCLIMissing for the first named agent whose CLI is not on PATH."""
+    import shutil
+
+    from hillclimb.connect import INSTALL_HINT
+
+    for name in dict.fromkeys(names):
+        binary = AGENT_CLIS.get(name)
+        if binary and shutil.which(binary) is None:
+            raise AgentCLIMissing(
+                f"the {name} coding agent needs the `{binary}` CLI, which is not on PATH. "
+                f"Install it ({INSTALL_HINT[binary]}), then `hillclimb connect {binary}`; "
+                "or pick another with --agent"
+            )
+
+
 def get_agent(
     name: str,
     auth: str = "subscription",

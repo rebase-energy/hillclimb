@@ -170,8 +170,8 @@ per candidate, since claims are stamped with their evidencing candidate's
 finish), filter and
 color by concept from the sidebar. `?` slides out a panel with every key and
 gesture — the footer carries only the few worth a permanent slot. Node
-positions come from a 3D spring layout cached in graph.json (`pos3`; the 2D
-`pos` stays for hillclimb-go).
+positions come from a 3D spring layout cached in graph.json (`pos3`, beside a 2D
+`pos` for flat views).
 
 ![knowledge graph TUI](graph-tui.png)
 

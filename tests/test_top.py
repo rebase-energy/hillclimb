@@ -10,6 +10,7 @@ import pytest
 from hillclimb.harness.control import read_commands
 from hillclimb.harness.orphans import classify, process_table
 from hillclimb.harness.status import CurrentCandidate, ScoreRef, SearchStatus
+from hillclimb.terms import ENGINE as TERM  # the word the screens use for a search's process
 from hillclimb.tui import top
 from hillclimb.tui import machine
 from hillclimb.tui.machine import (
@@ -166,8 +167,8 @@ async def test_top_is_one_table_with_each_engine_heading_its_tree(live):
         assert app.title == "hillclimb top"
         table = app.screen.query_one("#procs")
         assert table.row_count == 9  # the engine + its 8 processes
-        assert str(table.get_row_at(0)[1]) == "engine"
-        assert "heilbronn-11" in str(table.get_row_at(0)[5])
+        assert str(table.get_row_at(0)[1]) == str(TERM)
+        assert "circle-packing  ·  " in str(table.get_row_at(0)[5])  # named by its search, not its argv
         await pilot.press("enter")  # nothing to open: top does not jump into watch
         await pilot.pause()
         assert type(app.screen).__name__ == "TopScreen"
@@ -218,7 +219,7 @@ async def test_top_app_with_no_engines(monkeypatch):
     app = top.TopApp(agent_slots=8)
     async with app.run_test(size=(120, 20)) as pilot:
         await pilot.pause()
-        assert "engines 0" in str(app.screen.query_one("#machine").render())
+        assert f"{TERM.pl} 0" in str(app.screen.query_one("#machine").render())
         await pilot.press("enter", "s", "K")  # nothing selected: no-ops
         await pilot.pause()
         assert type(app.screen).__name__ == "TopScreen"

@@ -52,6 +52,22 @@ print(json.dumps({{"type": "result", "subtype": "error", "is_error": True,
 sys.exit(1)
 """
 
+# what Claude Code printed when hillclimb's operator login had been revoked
+STUB_LOGIN_EXPIRED = f"""#!{sys.executable}
+import json, sys
+sys.stdin.read()
+print(json.dumps({{"type": "result", "subtype": "success", "is_error": True, "api_error_status": 401,
+                   "session_id": "sess-auth", "terminal_reason": "api_error",
+                   "result": "Failed to authenticate: OAuth token revoked. Please log in again or contact your administrator."}}))
+sys.exit(1)
+"""
+
+# a home that never logged in: what a user who skipped `hillclimb connect` gets
+STUB_NOT_LOGGED_IN = STUB_LOGIN_EXPIRED.replace(
+    "Failed to authenticate: OAuth token revoked. Please log in again or contact your administrator.",
+    "Not logged in \u00b7 Please run /login",
+).replace(', "api_error_status": 401', "")
+
 STUB_SLEEPER = f"""#!{sys.executable}
 import sys, time
 sys.stdin.read()
@@ -117,6 +133,16 @@ def test_rate_limit_detected_in_stream(tmp_path: Path):
     assert result.error_kind == "rate_limited"
     assert "limit" in result.error_message.lower()
     assert result.model_id == "claude-opus-5"  # synthetic error must not replace it
+
+
+def test_a_dead_login_is_its_own_error_with_the_fix_in_it(tmp_path: Path):
+    agent = ClaudeCodeAgent(claude_bin=make_stub(tmp_path, STUB_LOGIN_EXPIRED))
+    result = agent.invoke(make_request(tmp_path))
+
+    assert not result.ok
+    assert result.error_kind == "login_expired"
+    assert result.error_message.startswith("Claude login expired — run `hillclimb connect claude`")
+    assert "OAuth token revoked" in result.error_message  # what Claude Code said, kept
 
 
 def test_timeout_kills_and_cleans_pid(tmp_path: Path):
@@ -289,3 +315,11 @@ def test_agent_cpu_is_reported(tmp_path: Path):
     result = agent.invoke(make_request(tmp_path))
     assert result.ok
     assert result.cpu_s is not None and result.cpu_s >= 0.2
+
+
+def test_a_home_never_logged_in_says_so_and_how_to_connect(tmp_path: Path):
+    agent = ClaudeCodeAgent(claude_bin=make_stub(tmp_path, STUB_NOT_LOGGED_IN))
+    result = agent.invoke(make_request(tmp_path))
+
+    assert result.error_kind == "login_expired"
+    assert result.error_message.startswith("Claude is not logged in — run `hillclimb connect claude`")

@@ -58,7 +58,11 @@ def store_searches(
         if not records:
             say("[head]no searches recorded[/]" + (f" for [path]{_m(problem)}[/]" if problem else ""))
             return
-        say(f"[head]{'search':40} {'problem':24} {'state':8} {'best':>12}  run[/]")
+        # the state in the verdict colours: running is good news, a parked
+        # or stopped search waits on someone, a crash is trouble
+        state_style = {"running": "ok", "done": "head", "parked": "warn", "stopped": "warn",
+                       "crashed": "bad", "failed": "bad"}
+        rows = []
         for record in records:
             best = None
             for cand in Journal(store.journal(record.key)).candidates.values():
@@ -66,10 +70,15 @@ def store_searches(
                     continue
                 if best is None or better(cand.val_score, best, record.meta.higher_is_better):
                     best = cand.val_score
-            shown = f"{best:.6g}" if best is not None else "-"
-            say(
-                f"[path]{_m(record.ref):40}[/] {_m(record.meta.problem_key):24} {_m(record.state):8} "
-                f"{shown:>12}  {_m(record.run_name)}"
-            )
+            style = state_style.get(record.state)
+            state = f"[{style}]{_m(record.state)}[/]" if style else _m(record.state)
+            rows.append((
+                _m(record.ref), _m(record.meta.problem_key), state,
+                f"[head]{best:.6g}[/]" if best is not None else "[note]-[/]", _m(record.run_name),
+            ))
+        common.table(
+            [("search", "path"), ("problem", None), ("state", None), ("best", None, "right"), ("run", "note")],
+            rows,
+        )
     finally:
         store.close()

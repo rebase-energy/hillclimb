@@ -28,6 +28,8 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
+from hillclimb.terms import ENGINE, role_label
+from hillclimb.tui.palette import CYAN, MAGENTA, RED, YELLOW
 from hillclimb.tui.machine import (
     EngineRow,
     MachineRow,
@@ -38,7 +40,7 @@ from hillclimb.tui.machine import (
     short_dir,
 )
 
-BORDER = "cyan"
+BORDER = CYAN
 MAX_WIDTH = 150  # past this, a wider box only spreads the same columns thinner
 
 # the head row of a block: an engine, or a hillclimb command computing in a
@@ -50,11 +52,11 @@ ROLE_STYLE = {
     "verify": "bold",
     "grade": "bold",
     "run": "bold",
-    "agent": "bold cyan",
-    "tool": "cyan",
+    "agent": f"bold {CYAN}",
+    "tool": CYAN,
     "mcp": "dim",
-    "verifier": "bold magenta",
-    "solution": "magenta",
+    "verifier": f"bold {MAGENTA}",
+    "solution": MAGENTA,
     "child": "",
 }
 
@@ -76,7 +78,7 @@ _KEEP_ORDER = {**{role: -1 for role in HEAD_ROLES}, "agent": 0, "verifier": 1, "
 
 
 def _cpu_style(cpu: float) -> str:
-    return "bold red" if cpu >= 90 else "yellow" if cpu >= 40 else ""
+    return f"bold {RED}" if cpu >= 90 else YELLOW if cpu >= 40 else ""
 
 
 def _cell(value: str, style: str = "") -> Text:
@@ -92,7 +94,7 @@ def summary_line(
     than running past `width` (the inside of the box). `jobs` counts the
     hillclimb commands computing in a terminal by kind (`verify 1`)."""
     items: list[list[tuple[str, str]]] = [
-        [("engines ", "dim"), (str(engines), "bold")],
+        [(f"{ENGINE.pl} ", "dim"), (str(engines), "bold")],
         *([(f"{kind} ", "dim"), (str(count), "bold")] for kind, count in (jobs or {}).items() if count),
         [
             ("coding agents ", "dim"),
@@ -162,7 +164,11 @@ def engine_lines(engine: EngineRow, fold_mcp: bool) -> list[Line]:
     where = short_dir(engine.hillclimb_dir) if engine.hillclimb_dir else "?"
     # the orphan mark ahead of the path, so a long path cannot cut it off
     orphan = "orphan, dir deleted  ·  " if engine.orphan else ""
-    head = f"{engine_target(engine.argv)}  ·  {orphan}{where}"
+    # a search's process is named by its search (two parallel searches of
+    # one problem would otherwise read the same); a foreground command, or
+    # a search not recorded yet, by what its command line says
+    name = engine.search.ref.rsplit("/", 1)[-1] if engine.kind == "engine" and engine.search else engine_target(engine.argv)
+    head = f"{name}  ·  {orphan}{where}"
     lines = [Line(str(engine.pid), engine.kind, engine.own_cpu, engine.own_rss_mb, format_seconds(engine.up_s), head)]
     for proc in engine.procs:
         if fold_mcp and proc.role == "mcp":
@@ -243,7 +249,7 @@ def _table(engines: list[EngineRow], width: int, max_rows: int | None) -> Table:
         for line in visible:
             values = {
                 "pid": _cell(line.pid, "bold" if line.role in HEAD_ROLES else ""),
-                "role": _cell(line.role, ROLE_STYLE.get(line.role, "")),
+                "role": _cell(role_label(line.role), ROLE_STYLE.get(line.role, "")),
                 "cpu": _cell(f"{line.cpu:.1f}%", _cpu_style(line.cpu)),
                 "mem": _cell(format_mem(line.rss_mb)),
                 "up": _cell(line.up),
@@ -287,7 +293,7 @@ def render_ps(
         if engines:
             body = Group(summary, Rule(style="dim"), _table(engines, width, max_rows))
         else:
-            body = Group(summary, Rule(style="dim"), _cell("no hillclimb engines running", "dim"))
+            body = Group(summary, Rule(style="dim"), _cell(f"no hillclimb {ENGINE.pl} running", "dim"))
         parts: list[RenderableType] = [
             Panel(
                 body,

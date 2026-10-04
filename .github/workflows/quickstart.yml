@@ -46,3 +46,17 @@ jobs:
         run: |
           mkdir "$RUNNER_TEMP/qs" && cd "$RUNNER_TEMP/qs"
           bash "$GITHUB_WORKSPACE/scripts/quickstart-smoke.sh"
+      - name: The sandbox holds (Linux, macOS)
+        # sandbox check, hidden holdout data, and a hostile solution in a real
+        # search: every attempt must be blocked (the same script a Windows
+        # user runs under WSL2 through scripts/wsl2-check.sh)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir "$RUNNER_TEMP/sandbox" && cd "$RUNNER_TEMP/sandbox"
+          bash "$GITHUB_WORKSPACE/scripts/sandbox-smoke.sh"
+      - name: Native Windows says it is unsandboxed and points to WSL2
+        if: runner.os == 'Windows'
+        run: |
+          out=$(hillclimb sandbox check 2>&1) && { echo "$out"; echo "expected exit 1: no sandbox on native Windows"; exit 1; }
+          echo "$out"
+          grep -q "WSL2" <<<"$out" || { echo "the no-sandbox message does not point to WSL2"; exit 1; }

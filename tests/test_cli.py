@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from hillclimb.cli import BANNER_LINES, LOGO_LINES, WORDMARK_LINES, common
 from hillclimb.cli.common import resolve_search_dir
+from hillclimb.terms import ENGINE as TERM  # the word the CLI uses for a search's process
 from hillclimb.cli.run import _run_problem, _run_suite
 from hillclimb.cli import main as cli_main
 from hillclimb.harness.run import (
@@ -310,7 +311,7 @@ def test_resume_restores_policy_and_routing(config, tmp_path, monkeypatch):
         lambda config_arg, *a, **k: captured.setdefault("config", config_arg),
     )
 
-    resume("run-1/a")
+    resume("run-1/a", detach=False)
 
     restored = captured["config"]
     assert (restored.climber.label, restored.climber.selector_policy) == ("openevolve", "map-elites")
@@ -397,7 +398,7 @@ def test_resume_restores_the_settings_the_search_was_launched_with(config, tmp_p
     captured = {}
     monkeypatch.setattr("hillclimb.cli.run._execute", lambda cfg, *a, **k: captured.setdefault("config", cfg))
 
-    resume("run-1/a")
+    resume("run-1/a", detach=False)
 
     restored = captured["config"]
     assert restored.budget.max_evaluations == 60 and restored.budget.max_cost_usd == 1.5
@@ -760,7 +761,7 @@ def test_stop_all_without_a_dir_reaps_orphaned_engines(tmp_path, monkeypatch, ca
     with pytest.raises(SystemExit) as exc:
         cli_main(["kill", "--all"])
     assert exc.value.code == 1
-    assert "No orphaned engines" in capsys.readouterr().out
+    assert f"No orphaned {TERM.pl}" in capsys.readouterr().out
 
 
 def test_engines_for_matches_only_this_hillclimb_dir(tmp_path, monkeypatch):
@@ -828,6 +829,43 @@ def test_reset_kills_this_dirs_engines_and_deletes_what_hillclimb_made(tmp_path,
     assert "Will keep" in out and "experiments/" in out
 
 
+def test_reset_runs_deletes_what_searches_produced_and_keeps_the_hillclimb_dir(tmp_path, monkeypatch, capsys):
+    """`reset --runs` starts the searches over: runs/, the store and
+    knowledge/ go, the config, problems/ and climbers/ stay, and runs/ is
+    left as `init` made it."""
+    from hillclimb.harness.orphans import Engine
+    from hillclimb.project import ensure_owned_dir, is_owned_dir
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "hillclimb.yaml").write_text("")
+    for owned in ("runs", "problems", "knowledge", "climbers"):
+        ensure_owned_dir(root / owned)
+    (root / "runs" / "r1").mkdir()
+    (root / "knowledge" / "card.yaml").write_text("x")
+    (root / "problems" / "p").mkdir()
+    (root / "problems" / "p" / "problem.yaml").write_text("keep")
+    (root / "climbers" / "mine.py").write_text("keep")
+    (root / "store.sqlite").write_text("x")
+    (root / "store.sqlite-wal").write_text("x")
+    monkeypatch.chdir(root)
+    monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
+    killed = []
+    monkeypatch.setattr("hillclimb.harness.orphans.live_engines", lambda: [Engine(pid=31, pgid=31, hillclimb_dir=root)])
+    monkeypatch.setattr("hillclimb.harness.orphans.kill_engines", lambda engines, grace_s=5.0: killed.extend(engines) or [])
+
+    with pytest.raises(SystemExit) as exc:
+        cli_main(["reset", "--runs", "--yes"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert [e.pid for e in killed] == [31]
+    assert "hillclimb.yaml" not in out.split("Will delete")[1].split("Proceed")[0].split("terminate")[0]
+    assert (root / "hillclimb.yaml").is_file()
+    assert (root / "problems" / "p" / "problem.yaml").is_file() and (root / "climbers" / "mine.py").is_file()
+    assert not (root / "knowledge").exists() and not list(root.glob("store.sqlite*"))
+    assert is_owned_dir(root / "runs") and not (root / "runs" / "r1").exists()
+
+
 def test_reset_keeps_a_folder_of_hillclimbs_name_that_hillclimb_did_not_create(tmp_path, monkeypatch, capsys):
     """The data loss of C0: a project's own knowledge/ or climbers/ (no
     .hillclimb marker) survives `reset --yes`; only marked folders go."""
@@ -872,7 +910,7 @@ def test_ps_draws_the_machine_and_process_boxes(tmp_path, monkeypatch, capsys):
     lines = out.rstrip("\n").splitlines()
     assert lines[0].startswith("╭─ hillclimb ps") and sum(line.startswith("╭") for line in lines) == 1
     assert all(len(line) <= 120 for line in lines)  # boxed: nothing runs past the terminal
-    assert "engines 1" in out and "orphan" in out
+    assert f"{TERM.pl} 1" in out and "orphan" in out
     assert "claude · sonnet" in out  # the coding agent and its model, not its argv
     assert "verifier" in out and "solution" in out
     assert "watch" not in out  # `hillclimb watch` is not an engine
@@ -880,7 +918,7 @@ def test_ps_draws_the_machine_and_process_boxes(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(orphans, "_ps", lambda args: "")
     with pytest.raises(SystemExit):
         cli_main(["ps"])
-    assert "no hillclimb engines running" in capsys.readouterr().out
+    assert f"no hillclimb {TERM.pl} running" in capsys.readouterr().out
 
 
 def test_ps_watch_redraws_until_ctrl_c(tmp_path, monkeypatch, capsys):
@@ -1261,7 +1299,7 @@ def _capture_fleet(monkeypatch, config, tmp_path):
 
     def fake_run_fleet(target, **kwargs):
         calls.append({"target": target, **kwargs})
-        return SimpleNamespace(run_id="20260910-120000-cp", run_dir=tmp_path / "runs" / "20260910-120000-cp")
+        return SimpleNamespace(startup_failures=lambda **_: [], procs=[], run_id="20260910-120000-cp", run_dir=tmp_path / "runs" / "20260910-120000-cp")
 
     monkeypatch.setattr(common, "load_config", lambda agent=None, model=None: config)
     monkeypatch.setattr("hillclimb.cli.run.run_fleet", fake_run_fleet)
@@ -1373,7 +1411,7 @@ def test_resume_runs_the_snapshot_and_says_when_the_live_climber_changed(task, c
     config.apply_overrides({"climber": "gepa"})  # the live config has moved on since
     captured = _resumable(config, tmp_path, monkeypatch)
 
-    resume(f"run-1/{search_dir.name}")
+    resume(f"run-1/{search_dir.name}", detach=False)
     restored = captured["config"].climber
     assert restored.operator_policy == str(search_dir / "climber" / "files" / "drafts_only.py") and restored.loop is None
     assert (restored.selector_params, restored.operators, restored.memory) == ({"num_drafts": 2}, ["draft", "debug"], "none")
@@ -1381,12 +1419,12 @@ def test_resume_runs_the_snapshot_and_says_when_the_live_climber_changed(task, c
     assert "changed since" not in capsys.readouterr().err
 
     policy_file.write_text(FILE_POLICY + "# edited\n")
-    resume(f"run-1/{search_dir.name}")
+    resume(f"run-1/{search_dir.name}", detach=False)
     assert "changed since the search started" in capsys.readouterr().err
     assert captured["config"].climber.operator_policy == restored.operator_policy  # still the version it started with
 
     policy_file.unlink()
-    resume(f"run-1/{search_dir.name}")  # gone: the snapshot is what runs
+    resume(f"run-1/{search_dir.name}", detach=False)  # gone: the snapshot is what runs
     assert captured["config"].climber.operator_policy == restored.operator_policy
 
 
@@ -1413,13 +1451,13 @@ def test_resume_of_a_search_without_a_snapshot_needs_the_live_climber(config, tm
     (search_dir / "journal.jsonl").write_text("")
     captured = _resumable(config, tmp_path, monkeypatch)
 
-    resume("run-1/a")
+    resume("run-1/a", detach=False)
     assert captured["config"].climber.operator_policy == str(policy_file)
     assert "predates climber snapshots" in capsys.readouterr().err
 
     policy_file.unlink()
     with pytest.raises(typer.BadParameter, match="is gone"):
-        resume("run-1/a")
+        resume("run-1/a", detach=False)
 
 
 def test_engine_lines_speak_in_the_cli_voice():
@@ -1465,3 +1503,19 @@ def test_version_flag_prints_the_version(capsys):
             cli_main([flag])
         assert exc.value.code == 0
         assert capsys.readouterr().out.strip() == f"hillclimb {__version__}"
+
+
+def test_smoke_fetches_its_bundled_problem_in_a_fresh_folder(tmp_path, monkeypatch, capsys):
+    """C8: `hillclimb smoke` checks the agent, not the folder: in a folder
+    without circle-packing it fetches the bundled problem instead of failing."""
+    from hillclimb.cli import common as cli_common
+
+    folder = tmp_path / "proj"
+    cli_common.scaffold_hillclimb_dir(folder)
+    monkeypatch.chdir(folder)
+    monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
+    monkeypatch.setattr("hillclimb.cli.run.load_problem", lambda target, config: (_ for _ in ()).throw(SystemExit(0)))
+    with pytest.raises(SystemExit):
+        cli_main(["smoke", "--agent", "dummy"])
+    assert (folder / "problems" / "circle-packing" / "problem.yaml").is_file()
+    assert "fetched circle-packing" in capsys.readouterr().out

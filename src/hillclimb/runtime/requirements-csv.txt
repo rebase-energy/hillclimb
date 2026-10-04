@@ -1,12 +1,9 @@
-# Packages available to generated solution scripts (the runtime venv).
-# Keep in sync with the "Available packages" line in prompts/contract.md.
-pandas
+# Packages available to generated solution scripts (the default runtime venv).
+# The "Available packages" prompt line is rendered from this list. Kept lean
+# so a first verify builds in seconds: a problem that needs more (torch,
+# xgboost, …) ships its own requirements.txt (`requirements:` in problem.yaml);
+# MLE-bench competitions use requirements-ml.txt.
 numpy
 scipy
+pandas
 scikit-learn
-requests
-xgboost
-lightgbm
-torch
-torchvision
-pillow

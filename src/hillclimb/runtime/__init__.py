@@ -8,6 +8,9 @@ from pathlib import Path
 
 # generic verifier for self-reported problems (see run_solution.py)
 RUN_SOLUTION = Path(__file__).parent / "run_solution.py"
+# the opt-in machine-learning stack (torch, xgboost, lightgbm, …): MLE-bench
+# competitions run on it; the default csv runtime stays lean
+ML_REQUIREMENTS = Path(__file__).parent / "requirements-ml.txt"
 
 KINDS = ("csv", "emflow")
 

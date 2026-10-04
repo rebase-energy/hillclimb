@@ -6,7 +6,7 @@ The coding agents that run operators — Claude Code, Codex, pi — how to conne
 
 ```bash
 uv sync
-claude login   # operator calls bill your Claude subscription
+hillclimb connect claude   # once: logs in hillclimb's own Claude Code home; operator calls bill your subscription
 ```
 
 Optional — shell tab-completion for commands, subcommands, and options:
@@ -167,6 +167,17 @@ overrides it, and `--local` writes there instead — the override for that folde
 alone. It leaves a config that already pins a coding agent alone unless you pass
 `--default`. `--no-probe` skips the ping, `--auth api-key|openrouter` picks a
 different bill.
+
+A login can die after `connect` — an OAuth session expires or is revoked
+while its file still looks fine. Every command that is about to use a coding
+agent (`run`, `resume`, `experiment run`, `paper add`) checks first, with the
+same one-call ping (skipped when one passed within the last hour), for the
+default agent and every route. A dead Claude or Codex subscription login is
+offered a fresh one on the spot — "Log in again now? [Y/n]" — in the operator
+home, and the command carries on; answered no, or with no terminal to ask at
+(a script, CI), the command stops before anything is spent, naming
+`hillclimb connect <agent>`. A search already running when its login dies
+parks at once with the same advice, and `hillclimb resume` asks again.
 
 `hillclimb connect openrouter` is the one credential hillclimb stores itself:
 the key is validated against OpenRouter (one unbilled call) and written to a

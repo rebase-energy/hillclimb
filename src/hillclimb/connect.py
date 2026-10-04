@@ -562,32 +562,14 @@ def run_login(target: str, auth: str = "subscription") -> int:
     return code
 
 
-# what a coding agent says when the login on disk can no longer be used: the
-# token was revoked, expired, or (codex) its single-use refresh token was
-# already spent by another copy of the same credential
-LOGIN_EXPIRED_MARKERS = (
-    "refresh token",
-    "log out and sign in again",
-    "sign in again",
-    "token has expired",
-    "token is expired",
-    "invalid_grant",
-    "401 unauthorized",
-)
-
-
-def login_expired(message: str | None) -> bool:
-    """Does a failed ping say the login itself is dead, rather than the model
-    or the route? `login status` cannot tell: it only sees that a credential
-    file exists, so a dead login reads as logged in until a call is made."""
-    text = (message or "").lower()
-    return any(marker in text for marker in LOGIN_EXPIRED_MARKERS)
+# what says a login is dead — shared with the agents, which park a search on it
+from hillclimb.agents.base import LOGIN_EXPIRED_MARKERS, login_expired  # noqa: E402,F401
 
 
 def logout_command(target: str) -> list[str] | None:
     """The coding agent's own logout, for a target whose dead login has to be
     cleared before a fresh one, or None."""
-    return {"codex": ["codex", "logout"]}.get(target)
+    return {"codex": ["codex", "logout"], "claude": ["claude", "auth", "logout"]}.get(target)
 
 
 def run_relogin(target: str) -> int:
@@ -818,3 +800,111 @@ def _tilde(path: Path) -> str:
         return f"~/{path.relative_to(Path.home())}"
     except ValueError:
         return str(path)
+
+
+# --- the login check before a command uses a coding agent ---
+
+# coding agents whose login hillclimb can redo, by agent name
+RELOGIN_TARGET = {"claude-code": "claude", "codex": "codex"}
+AGENT_DISPLAY = {"claude": "Claude", "codex": "Codex"}
+# set by the launcher in the engines it starts: the command that launched
+# them checked the login already, and a detached engine cannot ask
+CHECKED_ENV = "HILLCLIMB_AGENT_CHECKED"
+# a login a real call proved working this recently is not pinged again
+FRESH_S = 3600
+
+
+class AgentLoginError(RuntimeError):
+    """A coding agent's login is dead and was not renewed: the command stops
+    here, before anything is spent, with the fix in the message."""
+
+
+def _confirmed_recently(target: str, auth: str, fresh_s: float) -> bool:
+    import json
+    from datetime import datetime, timezone
+
+    path = record_dir(target, auth) / "connected.json"
+    try:
+        stamp = datetime.fromisoformat(json.loads(path.read_text())["connected_at"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    return (datetime.now(timezone.utc) - stamp).total_seconds() < fresh_s
+
+
+def ensure_agent_ready(
+    agent: str,
+    auth: str,
+    model: str,
+    *,
+    ask=None,
+    say=print,
+    models_file: Path | None = None,
+    fresh_s: float = FRESH_S,
+) -> None:
+    """Before a command uses `agent`: is its login alive? A login file looks
+    fine while the session behind it is dead, so this makes one tiny real
+    call (`ping`) — skipped when one passed within `fresh_s`, and for what
+    hillclimb cannot log in again (keys, pi, custom agents) or an engine its
+    launcher already checked. A dead login asks `ask(question) -> bool`
+    (None: no terminal to ask at) whether to log in again now, does it in
+    the operator home, and carries on; declined or unaskable, it raises
+    AgentLoginError. A ping that fails for any other reason (a rate limit,
+    the network) does not stop the command: the run reports it as before."""
+    import os
+
+    target = RELOGIN_TARGET.get(agent)
+    if target is None or auth != "subscription" or os.environ.get(CHECKED_ENV):
+        return
+    if _confirmed_recently(target, auth, fresh_s):
+        return
+    name = AGENT_DISPLAY[target]
+    # first: is hillclimb's own home logged in at all? A new user is logged
+    # in to Claude Code or codex themselves and has not run `connect` yet:
+    # say that, rather than let every operator call fail with the agent's
+    # own "please run /login", which points the wrong way
+    status = check(target, auth)
+    if status.state == "missing-cli":
+        raise AgentLoginError(f"{status.detail} ({status.fix})" if status.fix else status.detail)
+    if status.state == "logged-out":
+        fix = f"run `hillclimb connect {target}`, then this command again"
+        question = (
+            f"Operators run in hillclimb's own {name} home, which is not logged in yet "
+            f"(separate from your own login, which stays as it is). Log in now?"
+        )
+        if ask is None or not ask(question):
+            raise AgentLoginError(
+                f"hillclimb's own {name} home is not logged in yet (separate from your own {name} "
+                f"login) — {fix}"
+            )
+        say(login_header(target))
+        if run_login(target, auth) != 0 or not check(target, auth).ok:
+            raise AgentLoginError(f"the {name} login did not complete — {fix}")
+        import_credentials(target, auth, models_file)
+    say(f"checking the {name} login …")
+    result = ping(agent, auth, model, models_file=models_file)
+    if result.ok:
+        mark_connected(target, auth, result.model_id or model)
+        return
+    detail = (result.error_message or result.error_kind or "").strip()
+    if not login_expired(detail):
+        return
+    # an agent that already worded it ("Claude login expired — run … (<why>)")
+    # gives its own advice; the question quotes only the <why>
+    if (" login expired —" in detail or " not logged in —" in detail) and detail.endswith(")") and "(" in detail:
+        detail = detail[detail.index("(") + 1 : -1]
+    fix = f"run `hillclimb connect {target}`, then this command again"
+    if ask is None or not ask(f"Your {name} login has expired ({detail[:160]}). Log in again now?"):
+        raise AgentLoginError(f"the {name} login has expired — {fix}")
+    run_relogin(target)
+    status = check(target, auth)
+    if not status.ok:
+        raise AgentLoginError(f"the {name} login did not complete ({status.detail}) — {fix}")
+    import_credentials(target, auth, models_file)
+    again = ping(agent, auth, model, models_file=models_file)
+    if not again.ok:
+        raise AgentLoginError(
+            f"logged in, but the {name} check still fails "
+            f"({(again.error_message or again.error_kind or 'unknown')[:200]}) — {fix}"
+        )
+    mark_connected(target, auth, again.model_id or model)
+    say(f"{name} is logged in again")

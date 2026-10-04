@@ -64,6 +64,11 @@ class CurrentCandidate(BaseModel):
     agent_pid: int | None = None
     trial_index: int | None = None  # set for tune jobs (one candidate, several in flight)
     started_at: str = Field(default_factory=utcnow)
+    # when the current phase began, and the longest it may take (the exec
+    # timeout) — so `watch` can say "scoring for 2m of up to 15m". None on a
+    # status.json written before these existed, and until the first change.
+    phase_started_at: str | None = None
+    phase_limit_s: float | None = None
 
     @property
     def key(self) -> tuple[str, int | None]:
@@ -271,6 +276,9 @@ class StatusWriter:
         with self._lock:
             for entry in self.status.current:
                 if entry.key == (candidate_id, trial_index):
+                    if "phase" in fields and fields["phase"] != entry.phase:
+                        entry.phase_started_at = utcnow()
+                        entry.phase_limit_s = None  # the new phase's, if `fields` brings one
                     for key, value in fields.items():
                         setattr(entry, key, value)
             self._write()

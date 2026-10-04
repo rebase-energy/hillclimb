@@ -666,8 +666,13 @@ class GraphPlotWidget(PlotWidget):
 
     # -- data --
 
-    def set_graph(self, graph: KnowledgeGraph) -> None:
+    def set_graph(self, graph: KnowledgeGraph, extent: KnowledgeGraph | None = None) -> None:
+        """Draw `graph`. `extent` is the graph whose nodes frame the view —
+        the same graph before the legend's hidden types were dropped — so
+        hiding a type takes its nodes away without re-centring what is left;
+        None frames what is drawn."""
         self._graph = graph
+        self._extent_graph = extent
         if self.selected is not None and self.selected not in graph.node_map():
             self.selected = None
             self.post_message(self.NodeSelected(None))
@@ -688,6 +693,14 @@ class GraphPlotWidget(PlotWidget):
                 plot.set_hovered(self._index[self._hover])
             else:
                 self._hover = None
+        extent = getattr(self, "_extent_graph", None)
+        if extent is not None and hasattr(plot, "set_bounds"):
+            framed = apply_lod(extent, self._collapsed).nodes
+            if len(framed) > 1:
+                plot.set_bounds(
+                    tuple(min(getattr(n, axis) for n in framed) for axis in "xyz"),
+                    tuple(max(getattr(n, axis) for n in framed) for axis in "xyz"),
+                )
         plot.set_camera_state(yaw, pitch, zoom, pan_x, pan_y)
         self._plot = plot
         self._refresh_overlay()
@@ -1063,7 +1076,7 @@ class GraphScreen(KeysMixin, Screen):
         Binding("enter", "activate", "open", show=False, priority=True),
         Binding("+,=", "zoom_in", "zoom in", show=False),
         Binding("-", "zoom_out", "zoom out", show=False),
-        Binding("f,0", "fit", "fit", show=False, tooltip="frame the whole graph"),
+        Binding("f,0", "fit", "fit", tooltip="frame the graph for the types the legend shows"),
         Binding("slash", "search", "search"),
         Binding("j", "scrub_back", "back in time", show=False, tooltip="one tick on the timeline"),
         Binding("k", "scrub_forward", "forward", show=False),
@@ -1165,8 +1178,11 @@ class GraphScreen(KeysMixin, Screen):
             t = scrubber.events_list[scrubber.index]
         view = graph_at(self._graph, t)
         view = filter_concepts(view, self._filters)
+        # the frame is the graph as it was at the last fit (`f`): hiding a
+        # type afterwards leaves the view where it is
+        extent = filter_types(view, getattr(self, "_unfit_types", frozenset()))
         view = filter_types(view, self._hidden_types)
-        self.query_one("#graph-canvas", GraphPlotWidget).set_graph(view)
+        self.query_one("#graph-canvas", GraphPlotWidget).set_graph(view, extent)
 
     # -- messages --
 
@@ -1254,6 +1270,9 @@ class GraphScreen(KeysMixin, Screen):
         self._canvas().zoom(1 / ZOOM_FACTOR)
 
     def action_fit(self) -> None:
+        # fit to what is shown: the hidden types stop counting toward the frame
+        self._unfit_types = self._hidden_types
+        self._apply_view()
         self._canvas().fit()
 
     def action_scrub_back(self) -> None:

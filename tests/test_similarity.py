@@ -359,3 +359,92 @@ class TestJsonSubmissions:
             tmp_path, True, output_artifacts=["submission.csv"],
         )
         assert view.mode == "submission"
+
+
+class TestSiteLook:
+    """The reference cube drawn as hillclimb.sh advertises it."""
+
+    def _view(self, tmp_path):
+        write_candidate(tmp_path, "c000", solution="x = 1\n", submission=sub_csv([1.0, 2.0, 3.0]))
+        write_candidate(tmp_path, "c001", solution="x = 1\ny = 2\n", submission=sub_csv([2.0, 3.0, 4.0]))
+        write_candidate(tmp_path, "c002", solution="z = 9\n", submission=sub_csv([5.0, 6.0, 7.0]))
+        write_candidate(tmp_path, "c003", solution="q = 4\nw = 5\n", submission=sub_csv([2.0, 3.5, 4.0]))
+        return build_similarity(
+            [
+                cand("c000", "baseline", score=0.5, t=0),
+                cand("c001", "draft", parent="c000", score=0.6, t=1),   # built on
+                cand("c002", "draft", parent="c000", score=0.4, t=2),   # left
+                cand("c003", "improve", parent="c001", score=0.7, t=3),  # the best
+            ],
+            tmp_path, True,
+        )
+
+    def test_marks_say_what_a_candidate_is(self, tmp_path):
+        from hillclimb.tui import similarityview as sv
+
+        calls = {}
+
+        class Recorder:
+            legend_visible = True
+
+            def __getattr__(self, name):
+                return lambda *a, **k: calls.setdefault(name, []).append((a, k))
+
+        import hillclimb.tui.similarityview as module
+
+        original = module.boxed_plot
+        module.boxed_plot = Recorder
+        try:
+            sv.build_similarity_plot(self._view(tmp_path))
+        finally:
+            module.boxed_plot = original
+        assert calls["set_axis_titles3d"] == [(("behaviour", "code", "lineage"), {})]
+        (_, graph), = calls["add_graph3d"]
+        # built on = disc, left = circle; the origin and then the best are drawn last
+        assert graph["node_shapes"] == ["disc", "circle", "diamond-open", "diamond"]
+        assert graph["node_colors"][-2:] == [sv.REFERENCE_RGB, sv.BEST_RGB]
+        # the best's lineage, from the corner out, in white
+        (args, line), = calls["add_line3d"]
+        assert line["color"] == sv.LINEAGE_RGB and args[0][0] == 0.0 and len(args[0]) == 3
+
+    def test_fates_and_the_legend_row(self):
+        from hillclimb.tui.similarityview import SCORE_RGB, fate_shape, legend_markup
+
+        assert fate_shape("expanded") == "disc" and fate_shape("discontinued") == "circle"
+        assert fate_shape("failed") == "dot" and fate_shape("expanded", scored=False) == "dot"
+        legend = legend_markup()
+        for word in ("origin, the corner", "best", "built on", "left", "failed", "the best's lineage", "score, low → high"):
+            assert word in legend
+        assert SCORE_RGB[0] == (59, 63, 153) and SCORE_RGB[-1] == (255, 122, 44)  # the site's ramp, end to end
+
+    def test_the_legend_is_in_the_plot_like_the_trees(self):
+        """The marks are plotui legend rows at the top left — each with the
+        swatch the plot draws that mark with — and the score ramp a column
+        of cells at the top right; no row under the plot."""
+        import hillclimb.tui.similarityview as sv
+        from hillclimb.tui.theme import themed_plot
+
+        rows = sv.legend_rows()
+        assert [(label, swatch) for label, swatch, *_ in rows] == [
+            ("origin, the corner", "diamond-open"), ("best", "diamond"), ("built on", "disc"),
+            ("left", "ring"), ("failed", "dot"), ("the best's lineage", "line"),
+        ]
+        plot = themed_plot()
+        assert sv.apply_legend(plot, rows) and plot.legend_visible
+        assert [entry[0] for entry in plot.legend_entries()] == [row[0] for row in rows]
+        assert sv.PLOT_LEGEND  # so the screens leave out the text row
+
+        spans = sv.ramp_spans(80)
+        blocks = [(row, col, style) for row, col, text, style in spans if text == "█"]
+        assert len(blocks) == len(sv.SCORE_RGB) and {col for _, col, _ in blocks} == {78}
+        r, g, b = sv.SCORE_RGB[-1]
+        assert blocks[0][2] == f"rgb({r},{g},{b})"  # best at the top
+        assert [text.strip() for _, _, text, _ in spans if text.strip() in ("score", "high", "low")] == ["score", "high", "low"]
+
+    def test_an_older_plotui_keeps_the_text_row(self):
+        import hillclimb.tui.similarityview as sv
+
+        class Old:  # no host legend rows
+            legend_visible = True
+
+        assert sv.apply_legend(Old(), sv.legend_rows()) is False

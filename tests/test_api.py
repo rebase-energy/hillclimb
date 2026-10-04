@@ -290,6 +290,7 @@ def test_run_fleet_mixed_engines_get_their_own_policy_and_overrides(config, monk
     ones, tagged as an experiment of the run so `experiment report` compares them."""
     import hillclimb.api as api
 
+    monkeypatch.setattr("hillclimb.agents.require_agent_clis", lambda names: None)  # no engine runs
     monkeypatch.setattr(api, "ensure_runtime_venv", lambda cfg, kind, log=print, requirements=None: None)
     spawned: list[tuple[int, str, list[str]]] = []
 

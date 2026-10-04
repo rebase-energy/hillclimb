@@ -538,7 +538,7 @@ class TreeScreen(LiveScreen):
         Binding("enter", "activate", "open", show=False, priority=True),
         Binding("+,=", "zoom_in", "zoom in", show=False),
         Binding("-", "zoom_out", "zoom out", show=False),
-        Binding("f,0", "fit", "fit", show=False, tooltip="frame the whole tree"),
+        Binding("f,0", "fit", "fit", tooltip="frame the whole tree"),
         # `*`: the star the best wears in every table (b is back, everywhere)
         Binding("asterisk", "select_best", "best", key_display="*", tooltip="select the current best"),
         Binding("n", "next_search", "next search", tooltip="the next search in the store"),

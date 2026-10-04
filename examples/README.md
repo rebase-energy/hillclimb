@@ -28,7 +28,7 @@ uv run python examples/nano_climb.py            # Claude Code, a few minutes
 uv run python examples/run_and_read.py toy      # the scripted agent, a few seconds
 ```
 
-`nano_climb.py` defines its own problem (digits of pi), so it has no scripted
+`nano_climb.py` defines its own problem (the largest prime in ten seconds), so it has no scripted
 stand-in; the others take `toy`.
 
 Anywhere else, after `pip install hillclimb`, make a folder a hillclimb dir

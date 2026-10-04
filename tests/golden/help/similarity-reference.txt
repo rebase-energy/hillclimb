@@ -5,8 +5,11 @@
                                                                                                                         
  Every candidate sits at (behavioral, structural, lineage) distance from                                                
  a reference candidate — the origin the search grew from (its seed, else                                                
- its baseline) by default, `c` toggles to the current champion — coloured                                               
- by score rank (cold to hot; the champion is gold, the reference white).                                                
+ its baseline) by default, `c` toggles to the current champion — and the                                                
+ three axes are named in the plot: `behaviour →` (how its output                                                        
+ differs), `code →` (how its solution.py differs), `lineage →` (edits                                                   
+ away). Colour is score rank (cold to hot; the champion a gold diamond,                                                 
+ the reference an open one in the corner), shape the candidate's fate.                                                  
  A search that is one experiment of a study opens the whole run instead: every                                          
  search of that problem in one cube, measured from the shared seed,                                                     
  coloured by experiment like `chart`, n/p stepping through the run's problems                                           

@@ -3,7 +3,7 @@
                                                                                                                         
  Prune a candidate and its whole subtree.                                                                               
                                                                                                                         
- The engine stops building on this lineage and it is excluded from                                                      
+ The search stops building on this lineage and it is excluded from                                                      
  selection. Statuses and scores stay visible in status/tree output.                                                     
                                                                                                                         
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮

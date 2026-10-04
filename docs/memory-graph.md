@@ -24,8 +24,8 @@ the design rationale; the shipped surface is:
   and a `?` panel (`GraphKeys`: the plotui pointer gestures, which are not
   Textual bindings, listed above every `GraphScreen` binding — so most
   bindings are `show=False` and the footer stays legible). Positions come from a 3D
-  spring layout cached in graph.json (`pos3`, schema v2; the 2D `pos`
-  stays for hillclimb-go). Screenshot: `graph-tui.png`.
+  spring layout cached in graph.json (`pos3`, schema v2, beside a 2D `pos`
+  for flat views). Screenshot: `graph-tui.png`.
 - Config: the climber's `memory_params` (`claims`, `graph_retrieval`) and the
   user's `learning.claims_timeout_s`; CLI: `knowledge distill|rebuild|graph`.
 
@@ -142,8 +142,8 @@ costs too much here:
 
 - Its only real backends are servers (Neo4j default; embedded Kuzu is
   deprecated, FalkorDB "Lite" needs py3.12+ and Redis). Memory would leave
-  git-versioned YAML for an undiffable DB, and break the hillclimb-go twin
-  consuming a plain `graph.json`.
+  git-versioned YAML for an undiffable DB, and break every reader of the
+  plain `graph.json`.
 - It inverts our "journal is truth, everything else is deterministic replay"
   rule: the graph becomes a second stateful store mutated by non-reproducible
   LLM calls.
@@ -198,8 +198,8 @@ claim. Edges: ran_on, used, improved, failed_with, supports, contradicts,
 derived_from. Much of this needs no LLM (operator stats, libraries, scores
 are already structured). Rebuild lazily on watch startup (mtime check) plus
 `hillclimb knowledge rebuild`. Layout positions are cached in the index so
-the graph is spatially stable across sessions. Plain JSON keeps hillclimb-go
-able to render the same graph.
+the graph is spatially stable across sessions. Plain JSON keeps the graph readable
+by any other tool.
 
 ### 3. Graph-aware retrieval — the measurable win
 

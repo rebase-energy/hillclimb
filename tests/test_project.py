@@ -157,6 +157,23 @@ class TestInit:
         assert self.run_init("--force").exit_code == 0
         assert (tmp_path / ".gitignore").read_text() == before
 
+    def test_datastore_sqlite_writes_the_store_block(self, tmp_path, monkeypatch):
+        """`init --datastore sqlite` is the database from the first run on;
+        the default leaves the files store, with the choice commented in."""
+        sqlite_dir, files_dir = tmp_path / "db", tmp_path / "plain"
+        for folder in (sqlite_dir, files_dir):
+            folder.mkdir()
+        monkeypatch.chdir(sqlite_dir)
+        result = self.run_init("--datastore", "sqlite")
+        assert result.exit_code == 0, result.output
+        assert "store.sqlite" in result.output
+        assert Config.load().store.backend == "sqlite"
+        monkeypatch.chdir(files_dir)
+        assert self.run_init().exit_code == 0
+        assert Config.load().store.backend == "files"
+        assert "# store:" in (files_dir / "hillclimb.yaml").read_text()  # the option, discoverable
+        assert self.run_init("--datastore", "postgres", "--force").exit_code == 2
+
     def test_a_directory_argument_makes_that_folder_the_dir(self, tmp_path, monkeypatch):
         """`hillclimb init hillclimb` is the tucked-away layout: everything
         in a subfolder, created if missing, with its own .gitignore."""

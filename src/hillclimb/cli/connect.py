@@ -131,7 +131,7 @@ def _sandbox_line(config) -> str:
         return f"[head]sandbox[/]: [bad]cannot start[/] [note]— {common._m(exc)}[/]"
     if kind is None:
         return (
-            "[head]sandbox[/]: [warn]none exists for this operating system[/] "
+            f"[head]sandbox[/]: [warn]{common._m(sandbox.no_sandbox_reason())}[/] "
             "[note]— coding agents and solutions run with your full user rights[/]"
         )
     tool = {"seatbelt": "sandbox-exec", "bwrap": "bubblewrap"}[kind]

@@ -1,7 +1,7 @@
                                                                                                                         
  Usage: root similarity [OPTIONS] COMMAND [ARGS]...                                                                     
                                                                                                                         
- Live 3D similarity views of a search's candidates: `map` (pairwise, default) and `reference`.                          
+ Live 3D similarity views of a search's candidates: `reference` (named axes, default) and `map` (pairwise).             
                                                                                                                         
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --help  -h        Show this message and exit.                                                                        │

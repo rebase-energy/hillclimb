@@ -715,3 +715,12 @@ def test_check_command_reports_what_got_through(monkeypatch, sandbox_on):
     report = json.loads(result.stdout)
     assert report["sandbox"] == "seatbelt"
     assert [a["holds"] for a in report["attempts"]] == [True, False]
+
+
+def test_without_a_sandbox_windows_is_pointed_at_wsl2(monkeypatch):
+    """Native Windows has no sandbox; WSL2 has a real Linux kernel, where
+    bubblewrap works. Every message that says there is none says where to go."""
+    monkeypatch.setattr(sandbox.sys, "platform", "win32")
+    assert "WSL2" in sandbox.no_sandbox_reason() and "security-and-sandboxes" in sandbox.no_sandbox_reason()
+    monkeypatch.setattr(sandbox.sys, "platform", "linux")
+    assert sandbox.no_sandbox_reason() == "none exists for this operating system"

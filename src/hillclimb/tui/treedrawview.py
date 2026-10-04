@@ -48,6 +48,10 @@ class TreeDrawPlotWidget(TreePlotWidget):
         self.metric = "score"
         self.radius = DEFAULT_RADIUS  # the last fitted mark radius, plotui units
         self.star = BEST_SIZE_SCALE   # the star's size over the discs', as last fitted
+        # the legend entries that were hidden at the last fit (`f`): the
+        # picture is framed and its marks sized for everything else. Hiding
+        # or showing an entry never moves or resizes what stays; a fit does.
+        self._unfit: frozenset[str] = frozenset()
 
     def _build_plot(self, tree: SearchTree, selected: str | None, frame: SearchTree | None):
         # build once to project at the camera the widget holds now, size
@@ -56,21 +60,48 @@ class TreeDrawPlotWidget(TreePlotWidget):
         # best itself, removes circles, never the path (that is its own toggle)
         lineage = lineage_nodes(self._tree) if self._tree is not None else None
         legend = legend_entries(self._tree, self.hidden)  # counts from the unfiltered tree
+        # What the picture is fitted to — its extent and the size of its
+        # marks — is the tree as it stood at the last fit, not what the
+        # legend shows right now: sizing the marks to the nodes that are
+        # left made every circle jump when an entry was hidden.
+        fitted = self._fitted_tree(frame)
+        if fitted is not None:
+            frame = fitted
+        sizing = frame if frame is not None else tree
 
-        def build(radius: float, star: float):
+        def build(shown: SearchTree, radius: float, star: float):
             return build_treedraw_plot(
-                tree, self.higher_is_better, selected=selected, frame=frame, radius=radius, star=star,
+                shown, self.higher_is_better, selected=selected, frame=frame, radius=radius, star=star,
                 show_lineage="lineage" not in self.hidden, lineage=lineage, legend=legend,
             )
 
-        probe, ids = build(self.radius, self.star)
-        if ids and self.size.width > 0:
+        probe, probe_ids = build(sizing, self.radius, self.star)
+        if probe_ids and self.size.width > 0:
             _yaw, _pitch, zoom, pan_x, pan_y = self._plot.camera_state()
             probe.set_camera_state(0.0, 0.0, zoom, pan_x, pan_y)
-            best = ids.index(tree.best_id) if tree.best_id in ids else None
+            best = probe_ids.index(sizing.best_id) if sizing.best_id in probe_ids else None
             self.radius, self.star = fit_radius(probe, *self._px_dims(), best_index=best)
-            return build(self.radius, self.star)
-        return probe, ids
+        if sizing is tree and not (probe_ids and self.size.width > 0):
+            return probe, probe_ids
+        return build(tree, self.radius, self.star)
+
+    def _fitted_tree(self, frame: SearchTree | None) -> SearchTree | None:
+        """The tree the view is fitted to: the frame (else the whole tree)
+        without the entries that were hidden at the last fit. None while no
+        fit has left anything out and there is no frame — the caller then
+        sizes to the unfiltered tree."""
+        base = frame if frame is not None else self._tree
+        if base is None:
+            return None
+        if not self._unfit:
+            return base
+        fitted = filter_hidden(base, hidden_fates(self._unfit))
+        return fitted if fitted.nodes else base
+
+    def fit(self) -> None:
+        """Frame and size the picture for what the legend shows now."""
+        self._unfit = self.hidden
+        super().fit()
 
     def _label_nodes(self, tree: SearchTree) -> list[VNode]:
         return label_nodes(tree, frame=self._frame)
@@ -137,7 +168,7 @@ class TreeDrawScreen(TreeScreen, inherit_bindings=False):
         Binding("enter", "activate", "open", show=False, priority=True),
         Binding("+,=", "zoom_in", "zoom in", show=False),
         Binding("-", "zoom_out", "zoom out", show=False),
-        Binding("f,0", "fit", "fit", show=False, tooltip="frame the whole tree"),
+        Binding("f,0", "fit", "fit", tooltip="frame and size the tree for what the legend shows"),
         Binding("asterisk", "select_best", "best", key_display="*", tooltip="select the current best"),
         Binding("l", "toggle_lineage", "lineage", tooltip="show / hide the best's lineage"),
         Binding("n", "next_search", "next search", tooltip="the next search in the store"),

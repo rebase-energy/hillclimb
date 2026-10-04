@@ -584,6 +584,20 @@ def _main(argv: list[str]) -> int:
     return bridge(int(argv[1]), argv[2], argv[4:])
 
 
+# where hillclimb runs sandboxed on a Windows machine: WSL2 has a real Linux
+# kernel, so bubblewrap works there exactly as on Linux
+WINDOWS_HINT = (
+    "on Windows, run hillclimb inside WSL2 (Ubuntu), where the Linux sandbox works: "
+    "https://docs.hillclimb.sh/security-and-sandboxes#windows-via-wsl2"
+)
+
+
+def no_sandbox_reason() -> str:
+    """Why there is no sandbox on this machine, and on Windows where to get one."""
+    reason = "none exists for this operating system"
+    return f"{reason} ({WINDOWS_HINT})" if sys.platform == "win32" else reason
+
+
 NEEDS_SANDBOX = (
     "allow_internet_for_agents: false needs the sandbox, and it is off or does not "
     "exist on this operating system"

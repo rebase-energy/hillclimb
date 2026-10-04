@@ -157,3 +157,23 @@ def test_rate_limited_run_can_finalize_parked(task, config):
     loaded = read_status(search_dir)
     assert loaded.state == "parked"
     assert loaded.last_error == "limit"
+
+
+def test_a_phase_change_stamps_when_it_began_and_its_limit():
+    """`watch` times the phase, not the whole operator: entering `exec`
+    restarts the clock and carries the exec timeout."""
+    from hillclimb.harness.status import CurrentCandidate
+
+    writer = StatusWriter(lambda s: None, SearchStatus(search_id="s", run_id="r"))
+    writer.status.current.append(
+        CurrentCandidate(candidate_id="c001", operator="draft", phase="agent", candidate_dir="/x")
+    )
+    assert writer.status.current[0].phase_started_at is None
+    writer.update_current("c001", phase="exec", phase_limit_s=900)
+    entry = writer.status.current[0]
+    assert entry.phase == "exec" and entry.phase_started_at and entry.phase_limit_s == 900
+    stamped = entry.phase_started_at
+    writer.update_current("c001", phase="exec")  # not a change: the clock keeps running
+    assert entry.phase_started_at == stamped and entry.phase_limit_s == 900
+    writer.update_current("c001", phase="holdout")
+    assert entry.phase_limit_s is None

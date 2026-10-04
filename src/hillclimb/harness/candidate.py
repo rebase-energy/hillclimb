@@ -86,6 +86,10 @@ class Replicate(BaseModel):
     # key: same metric/direction as val_score, stable keys across a search;
     # empty when the verifier emits none (old journals replay unchanged)
     instance_scores: dict[str, float] = Field(default_factory=dict)
+    # why a run that did not pass has no score, in one line: the result
+    # file's problem ("the score is not a number: 'great'") or the last line
+    # the verifier wrote to stderr ("FileNotFoundError: answer.json")
+    error: str | None = None
     started_at: str = Field(default_factory=utcnow)
     finished_at: str | None = None
 
@@ -341,11 +345,13 @@ class Candidate(BaseModel):
         last = self.last_trial
         return last.last_replicate if last is not None else None
 
-    def stamp_best_trial(self, higher_is_better: bool) -> Trial | None:
+    def stamp_best_trial(self, higher_is_better: bool, band: float = 0.0) -> Trial | None:
         """Mark the trial the candidate is scored by (max/min median over
-        replicates; ties keep the earliest). Engines call this after every
-        trial lands; the flag is journaled so every reader sees the same
-        aggregate without knowing the direction."""
+        replicates; ties keep the earliest). A later trial takes over only
+        when it is better by more than `band` (the search's accept band): on a
+        noisy problem, tuning must not crown the luckiest draw. Engines call
+        this after every trial lands; the flag is journaled so every reader
+        sees the same aggregate without knowing the direction."""
         scored = [
             t for t in self.trials
             if t.val_score is not None and t.verdict not in ("failing", "buggy")
@@ -356,7 +362,8 @@ class Candidate(BaseModel):
             return None
         best = scored[0]
         for trial in scored[1:]:
-            if (trial.val_score > best.val_score) if higher_is_better else (trial.val_score < best.val_score):
+            gain = (trial.val_score - best.val_score) if higher_is_better else (best.val_score - trial.val_score)
+            if gain > band:
                 best = trial
         best.is_best = True
         return best

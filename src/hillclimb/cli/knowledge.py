@@ -313,7 +313,7 @@ def knowledge_rebuild():
     The graph is a derived index — always safe to rebuild, never hand-edit.
     """
     from hillclimb.api import resolve_knowledge_dir
-    from hillclimb.modules.memory.graph import graph_path, graph_stats, rebuild_graph
+    from hillclimb.modules.memory.graph import graph_path, rebuild_graph
 
     config = common.load_config()
     knowledge_dir = resolve_knowledge_dir(config)
@@ -323,7 +323,49 @@ def knowledge_rebuild():
     module = _graph_module(config)
     graph = rebuild_graph(knowledge_dir, module=module)
     say(f"[head]rebuilt[/] [path]{_m(graph_path(knowledge_dir))}[/] [note]({_m(module.name)})[/]")
-    typer.echo(graph_stats(graph))
+    say_graph_stats(graph, knowledge_dir)
+
+
+def say_graph_stats(graph, knowledge_dir) -> None:
+    """The knowledge graph at a glance, in the CLI's voice: what it holds,
+    then what kinds of node and edge, largest first, side by side."""
+    from collections import Counter
+    from datetime import datetime
+
+    nodes = Counter(n.type for n in graph.nodes)
+    edges = Counter(e.type for e in graph.edges)
+    try:
+        built = datetime.fromisoformat(graph.built_at).astimezone().strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError):
+        built = str(graph.built_at)
+    searches = len(graph.events)
+    say(
+        f"[head]knowledge graph[/]  [path]{_m(common.short_path(knowledge_dir))}[/]  [note]built {_m(built)}[/]"
+    )
+    say(
+        f"  [head]{len(graph.nodes)}[/] nodes  [note]·[/]  [head]{len(graph.edges)}[/] edges  [note]·[/]  "
+        f"[head]{searches}[/] search{'' if searches == 1 else 'es'} learned from"
+    )
+    node_rows = nodes.most_common()
+    edge_rows = edges.most_common()
+    rows = []
+    for index in range(max(len(node_rows), len(edge_rows))):
+        node = node_rows[index] if index < len(node_rows) else ("", "")
+        edge = edge_rows[index] if index < len(edge_rows) else ("", "")
+        rows.append((_m(node[0]), f"[head]{node[1]}[/]", "", _m(edge[0]), f"[head]{edge[1]}[/]"))
+    say()
+    common.table(
+        [("node", "path"), ("", None, "right"), ("", None), ("edge", "path"), ("", None, "right")], rows
+    )
+    superseded = sum(1 for n in graph.nodes if n.superseded_at is not None)
+    tracked = [n for n in graph.nodes if n.type == "claim" and "track" in n.data]
+    if superseded or tracked:
+        say()
+    if superseded:
+        say(f"  [note]{superseded} superseded claim{'' if superseded == 1 else 's'}[/]")
+    if tracked:
+        retired = sum(1 for n in tracked if n.data.get("retired"))
+        say(f"  [note]{len(tracked)} claim(s) with a track record, {retired} retired by record[/]")
 
 
 paper_app = typer.Typer(
@@ -368,6 +410,7 @@ def paper_add(
     from hillclimb.modules.memory.papers import distill_paper
 
     config, knowledge_dir = _paper_knowledge_dir()
+    common.ensure_agents_ready(config)
     ingested = 0
     for pdf in pdfs:
         if not pdf.exists():
@@ -414,7 +457,7 @@ def knowledge_graph(
     `--stats` prints a text summary.
     """
     from hillclimb.api import resolve_knowledge_dir
-    from hillclimb.modules.memory.graph import graph_stats, load_or_build_graph
+    from hillclimb.modules.memory.graph import load_or_build_graph
 
     config = common.load_config()
     knowledge_dir = resolve_knowledge_dir(config)
@@ -423,7 +466,7 @@ def knowledge_graph(
         raise typer.Exit(1)
     if stats:
         module = _graph_module(config)
-        typer.echo(graph_stats(load_or_build_graph(knowledge_dir, module=module)))
+        say_graph_stats(load_or_build_graph(knowledge_dir, module=module), knowledge_dir)
         return
     try:
         from hillclimb.tui.graphview import GraphApp

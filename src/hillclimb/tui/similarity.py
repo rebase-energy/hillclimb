@@ -479,6 +479,31 @@ def _resolve_reference(
     return (earliest, "earliest") if earliest is not None else None
 
 
+def _anchor(
+    candidates: list[Candidate], accepted: Sequence[str], reference: str,
+    search_dir: Path, artifacts: tuple[str, ...], fingerprinter: Fingerprinter | None,
+) -> tuple[Candidate, "Reference | str"] | None:
+    """The reference candidate and its prints (or why it has none). An
+    origin that cannot anchor — the declared baseline of a `baseline_files`
+    problem is a sample submission with no solution.py to compare code
+    against — gives way to the earliest candidate that can, so a problem
+    without a code baseline still gets its view. A champion asked for by
+    name is not swapped: that view is about the champion."""
+    resolved = _resolve_reference(candidates, accepted, reference)
+    if resolved is None:
+        return None
+    candidate, label = resolved
+    ref = _reference_prints(candidate, label, "", search_dir, artifacts, fingerprinter)
+    if isinstance(ref, str) and reference != "champion":
+        for other in sorted(candidates, key=lambda c: c.created_at):
+            if other is candidate:
+                continue
+            fallback = _reference_prints(other, "earliest", "", search_dir, artifacts, fingerprinter)
+            if not isinstance(fallback, str):
+                return other, fallback
+    return candidate, ref
+
+
 def _p95(values: list[float]) -> float:
     return max(float(np.percentile(values, AXIS_P95)), EPS) if values else EPS
 
@@ -699,18 +724,18 @@ def build_similarity(
     except FingerprintError as exc:
         return SimilarityView.none(reference, str(exc))
     accepted = accepted_lineage(candidates, higher_is_better)
-    resolved = _resolve_reference(candidates, accepted, reference)
-    if resolved is None:
+    search = SearchInput(search_id="", search_dir=search_dir, candidates=candidates)
+    artifacts = tuple(output_artifacts) or DEFAULT_ARTIFACTS
+    _prune_caches(_live_paths([search], artifacts))
+    anchored = _anchor(candidates, accepted, reference, search_dir, artifacts, fingerprinter)
+    if anchored is None:
         return SimilarityView.none(
             reference,
             "no champion yet — press c for the baseline" if reference == "champion"
             else "no baseline candidate",
         )
-    ref_candidate, label = resolved
-    search = SearchInput(search_id="", search_dir=search_dir, candidates=candidates)
-    artifacts = tuple(output_artifacts) or DEFAULT_ARTIFACTS
-    _prune_caches(_live_paths([search], artifacts))
-    ref = _reference_prints(ref_candidate, label, "", search_dir, artifacts, fingerprinter)
+    ref_candidate, ref = anchored
+    label = ref.label if not isinstance(ref, str) else reference
     if isinstance(ref, str):
         return SimilarityView.none(
             reference, ref + (" — press c for the champion" if reference == "baseline" else ""),

@@ -56,6 +56,11 @@ class Journal:
     def __init__(self, backend: JournalBackend | Path):
         self.backend: JournalBackend = FileJournal(backend) if isinstance(backend, Path) else backend
         self.candidates: dict[str, Candidate] = {}
+        # every candidate the engine promoted to best, in the order it did
+        # (record order, so a resume rebuilds it): the current champion is the
+        # last one standing. Promotion is where the accept band decides, so
+        # a candidate that beat it only by noise never becomes the bar
+        self._champions: list[str] = []
         # Writes stay single-threaded (the strategy's scheduler); the lock
         # lets the host's evaluator take a consistent read (the holdout
         # top-k gate) from a worker thread while the scheduler appends.
@@ -78,6 +83,13 @@ class Journal:
                 continue
             candidate = Candidate.model_validate(record)
             self.candidates[candidate.candidate_id] = candidate
+            self._note_champion(candidate)
+
+    def _note_champion(self, candidate: Candidate) -> None:
+        if candidate.is_best and candidate.is_scored:
+            if candidate.candidate_id in self._champions:
+                self._champions.remove(candidate.candidate_id)
+            self._champions.append(candidate.candidate_id)
 
     def _append_line(self, record: dict) -> None:
         self.backend.append(record)
@@ -86,6 +98,8 @@ class Journal:
         with self.lock:
             self._append_line({"event": event, **candidate.model_dump()})
             self.candidates[candidate.candidate_id] = candidate.model_copy(deep=True)
+            if event == "candidate_result":
+                self._note_champion(candidate)
 
     def candidate_created(self, candidate: Candidate) -> None:
         self._append("candidate_created", candidate)
@@ -157,6 +171,16 @@ class Journal:
             return [c for c in self.candidates.values() if c.is_scored and not c.pruned]
 
     def best_candidate(self, higher_is_better: bool) -> Candidate | None:
+        """The champion: the last candidate the engine promoted to best (by
+        more than the accept band) that is still scored and not pruned. On a
+        noisy problem a candidate that beat it only within the noise is never
+        the bar or the selection, whatever its raw score. Without any
+        promotion on record (an old journal), the raw best."""
+        with self.lock:
+            for candidate_id in reversed(self._champions):
+                candidate = self.candidates.get(candidate_id)
+                if candidate is not None and candidate.is_best and candidate.is_scored and not candidate.pruned:
+                    return candidate
         scored = self.scored_candidates()
         if not scored:
             return None
@@ -179,7 +203,14 @@ class Journal:
         direction = -1 if higher_is_better else 1
         with_holdout = [c for c in self.scored_candidates() if c.holdout_score is not None]
         if not with_holdout or mode == "val":
-            return sorted(self.scored_candidates(), key=lambda c: direction * c.val_score)
+            ranked = sorted(self.scored_candidates(), key=lambda c: direction * c.val_score)
+            champion = self.best_candidate(higher_is_better)
+            if champion is not None and champion in ranked:
+                # on validation alone the champion ships: a raw-score lead
+                # inside the noise band is not a reason to switch
+                ranked.remove(champion)
+                ranked.insert(0, champion)
+            return ranked
         if mode == "holdout":
             return sorted(with_holdout, key=lambda c: direction * c.holdout_score)
         val_rank = _ranks([c.val_score for c in with_holdout], higher_is_better)
@@ -233,6 +264,7 @@ class JournalView(Journal):
             self.candidates = {
                 cid: candidate.holdout_blind() for cid, candidate in source.candidates.items()
             }
+            self._champions = list(getattr(source, "_champions", []))  # the same bar the engine uses
 
     @property
     def path(self) -> Path | None:

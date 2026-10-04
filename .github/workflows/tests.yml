@@ -1,0 +1,54 @@
+name: tests
+# The whole test suite (minus the slow integration tests) on Linux and macOS,
+# from source the way a contributor installs it. The quickstart workflow
+# covers the published wheel on every OS, Windows included.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: ${{ matrix.os }} / py${{ matrix.python }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, python: "3.12" }
+          - { os: ubuntu-latest, python: "3.14" }
+          - { os: macos-latest, python: "3.14" }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install from source
+        # --no-sources: plotui and emflow from PyPI, not the sibling checkouts
+        # `[tool.uv.sources]` points a developer's machine at. That re-resolves,
+        # so the libraries the help-screen goldens render with are then pinned
+        # to the lockfile's versions: a new rich or typer release must not turn
+        # CI red on its own.
+        run: |
+          uv sync --no-sources
+          uv export --frozen --no-hashes --no-emit-project | grep -E '^(rich|typer|click|textual)==' > "$RUNNER_TEMP/pins.txt"
+          uv pip install -r "$RUNNER_TEMP/pins.txt"
+      - name: The sandbox's own tool (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Test suite
+        env:
+          # a runner has no coding agent login and no terminal to ask at
+          HILLCLIMB_AGENT_CHECKED: "1"
+        run: uv run --no-sync pytest tests -q -m "not slow" -p no:cacheprovider -rs

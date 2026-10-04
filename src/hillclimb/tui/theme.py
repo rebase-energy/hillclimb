@@ -139,6 +139,21 @@ PLOT_INK_BRIGHT = (144, 153, 160)  # #9099a0 — --muted
 CYAN = (46, 230, 230)           # #2ee6e6 — --cyan
 
 
+# divisions of the grid on a 3D plot's back walls (`boxed_plot`)
+BOX_GRID = 4
+
+
+def boxed_plot():
+    """`themed_plot()` for a 3D scatter in a box: the three walls behind the
+    data are filled and gridded (plotui's `set_box_grid`), the front left
+    open, so depth and distance have something to be read against. A plotui
+    without it draws the bare wireframe."""
+    plot = themed_plot()
+    if hasattr(plot, "set_box_grid"):
+        plot.set_box_grid(BOX_GRID)
+    return plot
+
+
 def themed_plot():
     """A plotui Plot with the site's chrome. Falls back to plotui's own
     palette on a build that predates `set_chrome`.

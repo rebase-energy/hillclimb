@@ -82,8 +82,19 @@ def main(argv: list[str] | None = None) -> None:
     if not args or args in (["--help"], ["-h"]):
         print_banner(trailing_blank=False)  # the help screen opens with its own blank line
         args = ["--help"]
+    from hillclimb.agents import AgentCLIMissing
+    from hillclimb.problem import ProblemError
+
     try:
         app(args=args, prog_name="hillclimb")
+    except (ProblemError, AgentCLIMissing) as exc:
+        # a problem folder to fix (a missing file, a bad key) or a coding
+        # agent to install: the message says what and how, so a traceback
+        # would only bury it
+        from hillclimb.cli.common import _m, fail
+
+        fail(f"error: {_m(exc)}")
+        raise SystemExit(1) from None
     finally:
         HillclimbGroup.show_all = False
 

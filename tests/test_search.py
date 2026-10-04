@@ -148,6 +148,20 @@ def test_prompt_contents(task, config):
     assert "{{" not in prompt  # all tokens rendered
 
 
+def test_a_dead_login_parks_at_once_and_says_what_to_do(task, config):
+    """Every later call fails the same way: park on the first, with the fix
+    in the summary, not after three failures cut off mid-message."""
+    agent = FakeAgent()
+    message = "Claude login expired — run `hillclimb connect claude`, then `hillclimb resume` (OAuth token revoked)"
+    agent.queue(script=None, result={"ok": False, "error_kind": "login_expired", "error_message": message})
+    searcher, journal, _ = make_searcher(task, config, agent, max_candidates=5)
+
+    with pytest.raises(ParkedSearch, match="hillclimb connect claude"):
+        searcher.run()
+    parked = [n for n in journal.candidates.values() if n.status == "parked"]
+    assert len(parked) == 1 and parked[0].summary.startswith("parked: Claude login expired")
+
+
 def test_agent_failure_abandons_and_parks_after_three(task, config):
     agent = FakeAgent()
     agent.queue(script=ok_script(0.6), notes="draft\n")

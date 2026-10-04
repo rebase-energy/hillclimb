@@ -167,6 +167,7 @@ def test_a_class_that_exists_only_here_still_runs_but_is_not_portable(runnable, 
         climber.to_spec()
     with pytest.raises(NotPortableError):
         climber.write(tmp_path / "climber.yaml")
+    monkeypatch.setattr("hillclimb.agents.require_agent_clis", lambda names: None)  # not the point here
     with pytest.raises(NotPortableError):  # a detached engine could not rebuild it
         hc.api.run_fleet("anything", config=config, climber=climber)
 
@@ -191,7 +192,7 @@ def test_a_class_that_exists_only_here_still_runs_but_is_not_portable(runnable, 
     # a finished search is refused before its climber is looked at: stop it
     write_status(outcome.search_dir, read_status(outcome.search_dir).model_copy(update={"state": "stopped"}))
     with pytest.raises(typer.BadParameter, match="cannot be rebuilt"):
-        resume(f"{outcome.run_dir.name}/{outcome.search_dir.name}")
+        resume(f"{outcome.run_dir.name}/{outcome.search_dir.name}", detach=False)
 
 
 def test_run_spec_runs_every_entry_here_under_one_run(runnable, config, tmp_path):

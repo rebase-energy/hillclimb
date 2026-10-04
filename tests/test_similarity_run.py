@@ -368,7 +368,8 @@ class TestCliAutoDetect:
         launched = self._capture(monkeypatch)
         result = CliRunner().invoke(app, ["similarity", "r1/p"])
         assert result.exit_code == 0, result.output
-        assert launched == [{"search": None, "reference": "seed", "run": ("r1", "p"), "view": "map"}]
+        # a bare `similarity` is the reference cube: the view with named axes
+        assert launched == [{"search": None, "reference": "seed", "run": ("r1", "p"), "view": "reference"}]
         # a bare run id with several searches anchors on the latest, no "pick one"
         result = CliRunner().invoke(app, ["similarity", "r1"])
         assert result.exit_code == 0, result.output
@@ -392,7 +393,7 @@ class TestCliAutoDetect:
             _experiment_search(config.paths.runs_dir, "r1", search_id, experiment, seed=False)
         monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config)
         launched = self._capture(monkeypatch)
-        for argv in (["similarity", "r1/p-2"], ["similarity", "reference", "r1/p-2"]):
+        for argv in (["similarity", "map", "r1/p-2"], ["similarity", "r1/p-2"]):
             result = CliRunner().invoke(app, argv)
             assert result.exit_code == 0, result.output
             assert "run view unavailable (p has no seed candidate" in result.output

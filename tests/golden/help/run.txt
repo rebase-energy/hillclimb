@@ -3,7 +3,7 @@
                                                                                                                         
  Start a run on a problem or a run-spec YAML.                                                                           
                                                                                                                         
- The search runs as a detached engine and the terminal comes straight                                                   
+ The search runs in the background and the terminal comes straight                                                      
  back: `hillclimb watch` follows it, `hillclimb stop --all` ends it.                                                    
  `--no-detach` keeps it in this terminal instead (Ctrl-C stops it).                                                     
                                                                                                                         
@@ -41,13 +41,11 @@
 │                                                                                  (--parallel-operators is the old    │
 │                                                                                  spelling)                           │
 │ --parallel-searches                                        INTEGER RANGE [x>=1]  Independent searches on the problem │
-│                                                                                  at once, each its own detached      │
-│                                                                                  engine                              │
+│                                                                                  at once, each in the background     │
 │                                                                                  [default: 1]                        │
-│ --detach                                  --no-detach                            Run as a detached engine (the       │
-│                                                                                  default; `hillclimb watch` follows  │
-│                                                                                  it) or in this terminal (Ctrl-C     │
-│                                                                                  stops it)                           │
+│ --detach                                  --no-detach                            Run in the background (the default; │
+│                                                                                  `hillclimb watch` follows it) or in │
+│                                                                                  this terminal (Ctrl-C stops it)     │
 │                                                                                  [default: detach]                   │
 │ --n-replicates,--n-trials                                  INTEGER               Seeded runs per trial (the median   │
 │                                                                                  is the trial's score; --n-trials is │

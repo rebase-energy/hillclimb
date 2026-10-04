@@ -619,8 +619,37 @@ def test_connect_logs_in_again_when_the_ping_finds_a_dead_login(monkeypatch, tmp
     assert relogins == [] and "refresh token" in result.output
 
 
+def test_connect_claude_logs_in_again_when_its_session_expired(monkeypatch, tmp_path):
+    """Claude Code's operator home kept a credential whose OAuth session had
+    expired: `login status` saw a login, the ping failed. `connect claude`
+    replaces it (claude auth logout, then login) and pings again."""
+    from hillclimb.agents.base import AgentResult
+
+    monkeypatch.setenv("HILLCLIMB_DIR", str(_hillclimb_dir(tmp_path)))
+    monkeypatch.setattr(
+        connect, "check", lambda target, auth: connect.Status(target, auth, "ready", "fine")
+    )
+    monkeypatch.setattr(connect, "import_credentials", lambda *a, **k: None)
+    relogins: list[str] = []
+    monkeypatch.setattr(connect, "run_relogin", lambda target: relogins.append(target) or 0)
+    dead = AgentResult(
+        ok=False, error_kind="error",
+        error_message="Failed to authenticate: OAuth session expired and could not be refreshed",
+    )
+    alive = AgentResult(ok=True, model_id="claude-sonnet-5-5", total_tokens=12, duration_s=1.0)
+    answers = iter([dead, alive])
+    monkeypatch.setattr(connect, "ping", lambda *a, **k: next(answers))
+
+    result = CliRunner().invoke(cli.app, ["connect", "claude"])
+    assert result.exit_code == 0, result.output
+    assert relogins == ["claude"]
+    assert "claude auth logout, then claude" in result.output and "ping ok" in result.output
+
+
 def test_login_expired_tells_a_dead_login_from_a_wrong_model():
     assert connect.login_expired("refresh token was already used. Please log out and sign in again.")
+    assert connect.login_expired("Failed to authenticate: OAuth token revoked. Please log in again or contact your administrator.")
+    assert connect.login_expired("Failed to authenticate: OAuth session expired and could not be refreshed")
     assert not connect.login_expired("model not supported")
     assert not connect.login_expired(None)
 
