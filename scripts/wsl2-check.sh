@@ -33,8 +33,7 @@ run_in() {  # label, folder
 }
 
 run_in "project in the Linux filesystem" "$HOME/hc-wsl2-check"
-# The profile folder, not %USERNAME%: on a Microsoft-account login they differ
-# (USERNAME "Marcus", profile folder "macke"). cmd.exe runs from /mnt/c because
+# The profile folder, not %USERNAME%: on a Microsoft-account login they differ. cmd.exe runs from /mnt/c because
 # a Linux working directory is a UNC path it warns about and cannot use.
 winprofile=$(cd /mnt/c 2>/dev/null && cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r')
 winhome=$([ -n "$winprofile" ] && wslpath -u "$winprofile" 2>/dev/null)
