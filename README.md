@@ -13,19 +13,19 @@ Use Claude Code and Codex to autonomously search for python programs that optimi
   <img alt="An ASCII mountain: one climber on the summit under a gold star, another stuck on a lower peak" src="https://raw.githubusercontent.com/rebase-energy/hillclimb/main/docs/assets/hillclimb-mountain-light.png" width="560">
 </picture>
 
-[Website](https://hillclimb.sh) ·
-[Docs](https://docs.hillclimb.sh) ·
-[Quickstart](https://docs.hillclimb.sh/quickstart) ·
-[Python SDK](https://docs.hillclimb.sh/python) ·
-[CLI reference](https://docs.hillclimb.sh/cli) ·
-[Blog](https://docs.hillclimb.sh/blogposts) ·
-[Discord](https://discord.gg/DDKh9UtSH)
+[Website](https://hillclimb.sh?utm_medium=readme) ·
+[Docs](https://docs.hillclimb.sh?utm_medium=readme) ·
+[Quickstart](https://docs.hillclimb.sh/quickstart?utm_medium=readme) ·
+[Python SDK](https://docs.hillclimb.sh/python?utm_medium=readme) ·
+[CLI reference](https://docs.hillclimb.sh/cli?utm_medium=readme) ·
+[Blog](https://docs.hillclimb.sh/blogposts?utm_medium=readme) ·
+[Discord](https://hillclimb.sh/discord?utm_medium=readme)
 
 [![PyPI](https://img.shields.io/pypi/v/hillclimb.svg)](https://pypi.org/project/hillclimb/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB.svg?logo=python&logoColor=white)](https://pypi.org/project/hillclimb/)
 [![Quickstart](https://github.com/rebase-energy/hillclimb/actions/workflows/quickstart.yml/badge.svg)](https://github.com/rebase-energy/hillclimb/actions/workflows/quickstart.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/rebase-energy/hillclimb/blob/main/LICENSE)
-[![Discord](https://img.shields.io/badge/discord-join%20chat-5865F2.svg?logo=discord&logoColor=white)](https://discord.gg/DDKh9UtSH)
+[![Discord](https://img.shields.io/badge/discord-join%20chat-5865F2.svg?logo=discord&logoColor=white)](https://hillclimb.sh/discord?utm_medium=readme)
 
 </div>
 
@@ -37,7 +37,7 @@ autoresearch methods, rather than build a single best autoresearcher.
 
 You provide a verifier script, `verifier.sh`, and (optionally) a starting
 solution, `solution.py`. `hillclimb` then spends a compute budget running a
-search policy — a [climber](https://docs.hillclimb.sh/python/climber) — that
+search policy — a [climber](https://docs.hillclimb.sh/python/climber?utm_medium=readme) — that
 decides which version to build on next and dispatches headless coding agents
 to write, debug and improve it. Each version is scored through your verifier,
 and `hillclimb` keeps the one that scores best.
@@ -63,7 +63,7 @@ hillclimb summit                           # copy the best solution.py into this
 ```
 
 Every search also keeps its best in `runs/<run-id>/searches/<search-id>/best/`.
-The [walkthrough](https://docs.hillclimb.sh/walkthrough) goes through each step.
+The [walkthrough](https://docs.hillclimb.sh/walkthrough?utm_medium=readme) goes through each step.
 
 ## Climbers
 
@@ -128,14 +128,14 @@ hillclimb experiment report <run-id>
 <tr>
 <td width="50%" valign="top">
 
-### [Walkthrough →](https://docs.hillclimb.sh/walkthrough)
+### [Walkthrough →](https://docs.hillclimb.sh/walkthrough?utm_medium=readme)
 
 From first run to following and resuming a search.
 
 </td>
 <td width="50%" valign="top">
 
-### [Problems →](https://docs.hillclimb.sh/problems)
+### [Problems →](https://docs.hillclimb.sh/problems?utm_medium=readme)
 
 Define your own problem and write its verifier.
 
@@ -144,14 +144,14 @@ Define your own problem and write its verifier.
 <tr>
 <td width="50%" valign="top">
 
-### [Climbers →](https://docs.hillclimb.sh/climbers)
+### [Climbers →](https://docs.hillclimb.sh/climbers?utm_medium=readme)
 
 The modules a climber is built from.
 
 </td>
 <td width="50%" valign="top">
 
-### [Experiments →](https://docs.hillclimb.sh/experiments)
+### [Experiments →](https://docs.hillclimb.sh/experiments?utm_medium=readme)
 
 Compare climbers on the same problem.
 
@@ -160,14 +160,14 @@ Compare climbers on the same problem.
 <tr>
 <td width="50%" valign="top">
 
-### [Example problems →](https://docs.hillclimb.sh/examples)
+### [Example problems →](https://docs.hillclimb.sh/examples?utm_medium=readme)
 
 Every example problem and its best known value.
 
 </td>
 <td width="50%" valign="top">
 
-### [CLI reference →](https://docs.hillclimb.sh/cli)
+### [CLI reference →](https://docs.hillclimb.sh/cli?utm_medium=readme)
 
 Every `hillclimb` command and its flags.
 
@@ -176,14 +176,14 @@ Every `hillclimb` command and its flags.
 <tr>
 <td width="50%" valign="top">
 
-### [Python SDK →](https://docs.hillclimb.sh/python)
+### [Python SDK →](https://docs.hillclimb.sh/python?utm_medium=readme)
 
 Build and run searches from Python.
 
 </td>
 <td width="50%" valign="top">
 
-### [Blogposts →](https://docs.hillclimb.sh/blogposts)
+### [Blogposts →](https://docs.hillclimb.sh/blogposts?utm_medium=readme)
 
 Blog posts on hillclimbing.
 
@@ -191,7 +191,7 @@ Blog posts on hillclimbing.
 </tr>
 </table>
 
-Questions, results, ideas: [join the Discord](https://discord.gg/DDKh9UtSH).
+Questions, results, ideas: [join the Discord](https://hillclimb.sh/discord?utm_medium=readme).
 
 ## License
 
