@@ -61,35 +61,8 @@ hillclimb stop --all
 hillclimb summit                           # copy the best solution.py into this folder
 ```
 
-<p align="center">
-  <img alt="hillclimb watch: the candidate tree grows as coding agents draft, improve and ensemble solutions to heilbronn-convex-13" src="docs/assets/hillclimb-watch.gif" width="900">
-</p>
-
 Every search also keeps its best in `runs/<run-id>/searches/<search-id>/best/`.
 The [walkthrough](https://docs.hillclimb.sh/walkthrough) goes through each step.
-
-## What is hillclimb for?
-
-Anything you can phrase as: a program or artifact in, a number out, and a
-verifier that computes a number/score (potentially using data the agents never
-seen). Some problem types that are well suited for `hillclimb`:
-
-| Problem type | What Hillclimb improves |
-| --- | --- |
-| Optimization | Packing, routing and scheduling solutions, scored by solution quality, cost or constraint violations. |
-| Prediction and forecasting | Training and prediction code, evaluated on hidden data using metrics such as MAE, pinball loss or CRPS. |
-| Performance engineering | Code for a fixed workload, scored by runtime, memory use, binary size or another resource constraint. |
-| Parameter fitting | Estimation code that recovers unknown parameters, tested against cases with known ground truth. |
-| Strategies and policies | Dispatch, bidding and cache-eviction strategies, evaluated by replaying historical or simulated scenarios. |
-| Generated artifacts | SQL queries, regular expressions, solver configurations and prompts—anything that can be generated and scored. |
-| Mathematical discovery | Constructions, counterexamples and bounds, scored by a programmatically verifiable mathematical objective. |
-
-**Where it fits poorly.** The search loop needs many candidates per budget so
-verifiers that takes hours to run are not a great match with `hillclimb`.
-Objectives without a scalar score, like UX, prose or "nicer code". Pass/fail
-verifiers with no partial credit, since a 0/1 score gives the search nothing to
-climb. Low-dimensional continuous optimisation, where a numerical optimiser is
-the better tool.
 
 ## Climbers
 
@@ -148,26 +121,6 @@ hillclimb run heilbronn-convex-13 --climber greedy --climber openevolve   # one 
 hillclimb experiment report <run-id>
 ```
 
-## Example problems
-
-Exact, noise-free construction problems, each with its best known value as the
-target line. `hillclimb problem list` shows the full catalog.
-
-| Family | Instances | Score |
-|---|---|---|
-| Circle packing | `circle-packing`, `circle-packing-32` | sum of radii ↑ |
-| Heilbronn triangles | `heilbronn-11`, `-14`, `-17`, `heilbronn-convex-13` | smallest triangle ↑ |
-| Low-autocorrelation sequences | `labs-40`, `labs-60` | sidelobe energy ↓ |
-| Tammes / Thomson | `tammes-30`, `-50`, `thomson-50`, `-100` | min angle ↑ / energy ↓ |
-| Autocorrelation inequalities | `autocorr-1`, `autocorr-3`, `erdos-overlap` | the constant ↓ |
-| Kissing configuration | `kissing-11` | points ↑ |
-| Golomb rulers | `golomb-20`, `golomb-27` | length ↓ |
-| TSP / knapsack | `tsp-200`, `mknap-100-5`, `mknap-250-10` | tour ↓ / value ↑ |
-
-[Define your own](https://docs.hillclimb.sh/problems): `hillclimb problem new
-my-problem` writes a small problem that already runs, for you to edit into yours. Kaggle (MLE-bench) and Einstein Arena
-come in as [benchmark problems](https://docs.hillclimb.sh/benchmarks).
-
 ## Learn more
 
 <table>
@@ -176,16 +129,19 @@ come in as [benchmark problems](https://docs.hillclimb.sh/benchmarks).
 
 ### [Website →](https://hillclimb.sh)
 
-What hillclimb is for, the terminal views you watch a climb in, and the
-modules a climber is built from.
+[What hillclimb is for](https://hillclimb.sh/#what-is-hillclimb-for), the
+[terminal views](https://hillclimb.sh/#features) you watch a climb in, and the
+[modules](https://hillclimb.sh/#modules) a climber is built from.
 
 </td>
 <td width="50%" valign="top">
 
 ### [Problems →](https://docs.hillclimb.sh/examples)
 
-Every example problem with its verifier, its best known value and who found
-it, plus the [verifier contract](https://docs.hillclimb.sh/problems/verifier-contract).
+Every [example problem](https://hillclimb.sh/problems/) with its verifier, its
+best known value and who found it, how to [define your own](https://docs.hillclimb.sh/problems)
+(`hillclimb problem new`), the [verifier contract](https://docs.hillclimb.sh/problems/verifier-contract)
+and [benchmark problems](https://docs.hillclimb.sh/benchmarks) from Kaggle (MLE-bench) and Einstein Arena.
 
 </td>
 </tr>
