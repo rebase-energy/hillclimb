@@ -30,10 +30,16 @@ Use Claude Code and Codex to autonomously search for python programs that optimi
 
 ---
 
-Give hillclimb a **problem** — a folder whose verifier scores a `solution.py` —
-and a budget. It runs Claude Code, Codex or pi as operators that draft, debug
-and improve solutions, scores every candidate through your verifier, and keeps
-the best.
+`hillclimb` provides a modular harness, tooling and testbed for exploring and
+benchmarking program search algorithms. The goal is to help discover better
+autoresearch methods, rather than build a single best autoresearcher.
+
+You provide a verifier script, `verifier.sh`, and (optionally) a starting
+solution, `solution.py`. `hillclimb` then spends a compute budget running a
+search policy — a [climber](https://docs.hillclimb.sh/python/climber) — that
+decides which version to build on next and dispatches headless coding agents
+to write, debug and improve it. Each version is scored through your verifier,
+and `hillclimb` keeps the one that scores best.
 
 The harness is fixed. The **climber** — what to try next and how each attempt
 is prompted — is a block you can swap, edit and share, so two methods can be
@@ -42,8 +48,8 @@ compared on the same problem under the same budget.
 ## Quickstart
 
 ```bash
-pip install hillclimb
-hillclimb connect claude                   # or codex, pi; add --agent dummy to any run for no LLM at all
+pip install hillclimb                      # or: uv tool install hillclimb
+hillclimb connect claude                   # or codex, pi, openrouter; add --agent dummy to any run for no LLM at all
 
 hillclimb init                             # hillclimb.yaml, problems/, runs/ in this folder
 hillclimb problem get heilbronn-convex-13  # the verifier is the problem; description.md is the brief
@@ -52,15 +58,54 @@ hillclimb verify heilbronn-convex-13       # score the floor solution
 hillclimb run heilbronn-convex-13 --budget 10m
 hillclimb watch                            # live coding agents and scores (also: chart, tree)
 hillclimb stop --all
+hillclimb summit                           # copy the best solution.py into this folder
 ```
 
-The best solution lands in `runs/<run-id>/searches/heilbronn-convex-13/best/`.
+<p align="center">
+  <img alt="hillclimb watch: the candidate tree grows as coding agents draft, improve and ensemble solutions to heilbronn-convex-13" src="docs/assets/hillclimb-watch.gif" width="900">
+</p>
+
+Every search also keeps its best in `runs/<run-id>/searches/<search-id>/best/`.
 The [walkthrough](https://docs.hillclimb.sh/walkthrough) goes through each step.
+
+## What is hillclimb for?
+
+Anything you can phrase as: a program or artifact in, a number out, and a
+verifier that computes a number/score (potentially using data the agents never
+seen). Some problem types that are well suited for `hillclimb`:
+
+| Problem type | What Hillclimb improves |
+| --- | --- |
+| Optimization | Packing, routing and scheduling solutions, scored by solution quality, cost or constraint violations. |
+| Prediction and forecasting | Training and prediction code, evaluated on hidden data using metrics such as MAE, pinball loss or CRPS. |
+| Performance engineering | Code for a fixed workload, scored by runtime, memory use, binary size or another resource constraint. |
+| Parameter fitting | Estimation code that recovers unknown parameters, tested against cases with known ground truth. |
+| Strategies and policies | Dispatch, bidding and cache-eviction strategies, evaluated by replaying historical or simulated scenarios. |
+| Generated artifacts | SQL queries, regular expressions, solver configurations and prompts—anything that can be generated and scored. |
+| Mathematical discovery | Constructions, counterexamples and bounds, scored by a programmatically verifiable mathematical objective. |
+
+**Where it fits poorly.** The search loop needs many candidates per budget so
+verifiers that takes hours to run are not a great match with `hillclimb`.
+Objectives without a scalar score, like UX, prose or "nicer code". Pass/fail
+verifiers with no partial credit, since a 0/1 score gives the search nothing to
+climb. Low-dimensional continuous optimisation, where a numerical optimiser is
+the better tool.
 
 ## Climbers
 
-A climber is one block of config, in a run spec or as the folder's default in
-`hillclimb.yaml`:
+A climber is five modules, run in this order at every step of a search. Each
+one is a built-in or a Python file you can edit.
+
+| Module | Decides | Built in |
+| --- | --- | --- |
+| `selector_policy` | which candidate the next attempt builds on | `best`, `map-elites` |
+| `operator_policy` | which operator to apply to it | `greedy` |
+| `operators` | how one attempt is made: the prompt the coding agent gets | `draft`, `debug`, `improve`, `ensemble` |
+| `tuner` | which parameter values to try on a candidate | `random`, `optuna` |
+| `memory` | what carries over from one search to the next | `files`, `none` |
+
+Together they are one block of config, in a run spec or as the folder's default
+in `hillclimb.yaml`:
 
 ```yaml
 climber:
@@ -68,6 +113,7 @@ climber:
   operator_policy: greedy         # which operator to use on it
   operators: [draft, debug, improve, crossover.py:Crossover]
   tuner: optuna
+  memory: files
   params: {num_drafts: 5}
 ```
 
