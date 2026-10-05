@@ -33,11 +33,15 @@ run_in() {  # label, folder
 }
 
 run_in "project in the Linux filesystem" "$HOME/hc-wsl2-check"
-winuser=$(cmd.exe /c 'echo %USERNAME%' 2>/dev/null | tr -d '\r')
-if [ -n "$winuser" ] && [ -d "/mnt/c/Users/$winuser" ]; then
-  run_in "project on the Windows drive" "/mnt/c/Users/$winuser/hc-wsl2-check"
+# The profile folder, not %USERNAME%: on a Microsoft-account login they differ
+# (USERNAME "Marcus", profile folder "macke"). cmd.exe runs from /mnt/c because
+# a Linux working directory is a UNC path it warns about and cannot use.
+winprofile=$(cd /mnt/c 2>/dev/null && cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r')
+winhome=$([ -n "$winprofile" ] && wslpath -u "$winprofile" 2>/dev/null)
+if [ -n "$winhome" ] && [ -d "$winhome" ]; then
+  run_in "project on the Windows drive" "$winhome/hc-wsl2-check"
 else
-  results+=("SKIP  project on the Windows drive (no /mnt/c/Users/<you> found)")
+  results+=("SKIP  project on the Windows drive (no Windows profile folder found; %USERPROFILE%='${winprofile:-<cmd.exe unavailable>}')")
 fi
 
 echo; echo "=================== summary (send this back)"
