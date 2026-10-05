@@ -1,16 +1,16 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hillclimb-logo.svg">
-  <img alt="hillclimb" src="docs/assets/hillclimb-logo-light.svg" width="620">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/rebase-energy/hillclimb/main/docs/assets/hillclimb-logo.svg">
+  <img alt="hillclimb" src="https://raw.githubusercontent.com/rebase-energy/hillclimb/main/docs/assets/hillclimb-logo-light.svg" width="620">
 </picture>
 
 **Hillclimbing on verifiable rewards.**<br>
 Use Claude Code and Codex to autonomously search for python programs that optimize a score you define.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hillclimb-mountain-dark.png">
-  <img alt="An ASCII mountain: one climber on the summit under a gold star, another stuck on a lower peak" src="docs/assets/hillclimb-mountain-light.png" width="560">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/rebase-energy/hillclimb/main/docs/assets/hillclimb-mountain-dark.png">
+  <img alt="An ASCII mountain: one climber on the summit under a gold star, another stuck on a lower peak" src="https://raw.githubusercontent.com/rebase-energy/hillclimb/main/docs/assets/hillclimb-mountain-light.png" width="560">
 </picture>
 
 [Website](https://hillclimb.sh) ·
@@ -24,7 +24,7 @@ Use Claude Code and Codex to autonomously search for python programs that optimi
 [![PyPI](https://img.shields.io/pypi/v/hillclimb.svg)](https://pypi.org/project/hillclimb/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB.svg?logo=python&logoColor=white)](https://pypi.org/project/hillclimb/)
 [![Quickstart](https://github.com/rebase-energy/hillclimb/actions/workflows/quickstart.yml/badge.svg)](https://github.com/rebase-energy/hillclimb/actions/workflows/quickstart.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/rebase-energy/hillclimb/blob/main/LICENSE)
 [![Discord](https://img.shields.io/badge/discord-join%20chat-5865F2.svg?logo=discord&logoColor=white)](https://discord.gg/DDKh9UtSH)
 
 </div>
@@ -113,7 +113,7 @@ climber.best, climber.history, climber.to_frame()
 
 `climber.start(...)` opens the same search to drive by hand, one `climber.step()` at a
 time, and `Problem(name, score=my_function, ...)` defines a problem from a scoring function.
-Runnable scripts are in [`examples/`](examples/).
+Runnable scripts are in [`examples/`](https://github.com/rebase-energy/hillclimb/tree/main/examples).
 
 Compare two head to head:
 
@@ -195,4 +195,4 @@ Questions, results, ideas: [join the Discord](https://discord.gg/DDKh9UtSH).
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/rebase-energy/hillclimb/blob/main/LICENSE)
