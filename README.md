@@ -185,7 +185,7 @@ Every `hillclimb` command and its flags.
 
 ### [Blogposts →](https://docs.hillclimb.sh/blogposts)
 
-From Cauchy's gradient descent to LLMs searching over programs.
+Blog posts on hillclimbing.
 
 </td>
 </tr>
