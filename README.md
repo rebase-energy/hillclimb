@@ -128,7 +128,7 @@ hillclimb experiment report <run-id>
 <tr>
 <td width="50%" valign="top">
 
-### [Guide →](https://docs.hillclimb.sh/walkthrough)
+### [Walkthrough →](https://docs.hillclimb.sh/walkthrough)
 
 From first run to following and resuming a search.
 
@@ -160,25 +160,25 @@ Compare climbers on the same problem.
 <tr>
 <td width="50%" valign="top">
 
-### [Python SDK →](https://docs.hillclimb.sh/python)
+### [Example problems →](https://docs.hillclimb.sh/examples)
 
-Build and run searches from Python.
+Every example problem and its best known value.
 
 </td>
 <td width="50%" valign="top">
 
-### [Example problems →](https://docs.hillclimb.sh/examples)
+### [CLI reference →](https://docs.hillclimb.sh/cli)
 
-Every example problem and its best known value.
+Every `hillclimb` command and its flags.
 
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
 
-### [CLI reference →](https://docs.hillclimb.sh/cli)
+### [Python SDK →](https://docs.hillclimb.sh/python)
 
-Every `hillclimb` command and its flags.
+Build and run searches from Python.
 
 </td>
 <td width="50%" valign="top">
