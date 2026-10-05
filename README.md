@@ -16,6 +16,7 @@ Use Claude Code and Codex to autonomously search for python programs that optimi
 [Website](https://hillclimb.sh) ·
 [Docs](https://docs.hillclimb.sh) ·
 [Quickstart](https://docs.hillclimb.sh/quickstart) ·
+[Python SDK](https://docs.hillclimb.sh/python) ·
 [CLI reference](https://docs.hillclimb.sh/cli) ·
 [Blog](https://docs.hillclimb.sh/blogposts) ·
 [Discord](https://discord.gg/DDKh9UtSH)
@@ -31,7 +32,7 @@ Use Claude Code and Codex to autonomously search for python programs that optimi
 ---
 
 `hillclimb` provides a modular harness, tooling and testbed for exploring and
-benchmarking program search algorithms. The goal is to help discover better
+benchmarking autoresearch algorithms. The aim is to provide a tool to discover better
 autoresearch methods, rather than build a single best autoresearcher.
 
 You provide a verifier script, `verifier.sh`, and (optionally) a starting
@@ -127,21 +128,48 @@ hillclimb experiment report <run-id>
 <tr>
 <td width="50%" valign="top">
 
-### [Website →](https://hillclimb.sh)
+### [Guide →](https://docs.hillclimb.sh/walkthrough)
 
-[What hillclimb is for](https://hillclimb.sh/#what-is-hillclimb-for), the
-[terminal views](https://hillclimb.sh/#features) you watch a climb in, and the
-[modules](https://hillclimb.sh/#modules) a climber is built from.
+From first run to following and resuming a search.
 
 </td>
 <td width="50%" valign="top">
 
-### [Problems →](https://docs.hillclimb.sh/examples)
+### [Problems →](https://docs.hillclimb.sh/problems)
 
-Every [example problem](https://hillclimb.sh/problems/) with its verifier, its
-best known value and who found it, how to [define your own](https://docs.hillclimb.sh/problems)
-(`hillclimb problem new`), the [verifier contract](https://docs.hillclimb.sh/problems/verifier-contract)
-and [benchmark problems](https://docs.hillclimb.sh/benchmarks) from Kaggle (MLE-bench) and Einstein Arena.
+Define your own problem and write its verifier.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### [Climbers →](https://docs.hillclimb.sh/climbers)
+
+The modules a climber is built from.
+
+</td>
+<td width="50%" valign="top">
+
+### [Experiments →](https://docs.hillclimb.sh/experiments)
+
+Compare climbers on the same problem.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### [Python SDK →](https://docs.hillclimb.sh/python)
+
+Build and run searches from Python.
+
+</td>
+<td width="50%" valign="top">
+
+### [Example problems →](https://docs.hillclimb.sh/examples)
+
+Every example problem and its best known value.
 
 </td>
 </tr>
@@ -150,16 +178,14 @@ and [benchmark problems](https://docs.hillclimb.sh/benchmarks) from Kaggle (MLE-
 
 ### [CLI reference →](https://docs.hillclimb.sh/cli)
 
-Every `hillclimb` command and its flags, from `run` and `watch` to
-`experiment` and `climber check`.
+Every `hillclimb` command and its flags.
 
 </td>
 <td width="50%" valign="top">
 
 ### [Blogposts →](https://docs.hillclimb.sh/blogposts)
 
-Starting with [Hillclimbing on verifiable rewards](https://docs.hillclimb.sh/blogposts/hillclimbing-on-verifiable-rewards):
-from Cauchy's gradient descent to LLMs searching over programs.
+From Cauchy's gradient descent to LLMs searching over programs.
 
 </td>
 </tr>
