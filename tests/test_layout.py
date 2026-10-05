@@ -107,7 +107,9 @@ FLAT = {"__init__", "_moved", "api", "benchmark_providers", "climber", "config",
         # the building blocks by name, for composing in Python: lazy windows
         # onto hillclimb.modules (single modules — `_moved.py` owns the
         # `hillclimb.policies.` prefix of pre-move refs)
-        "policies", "selectors", "operators", "tuners", "memory", "loops"}
+        "policies", "selectors", "operators", "tuners", "memory", "loops",
+        # the words help text and screens use for a concept, shared by cli/ and tui/
+        "terms"}
 FACADES = ("policies", "selectors", "operators", "tuners", "memory", "loops")
 
 

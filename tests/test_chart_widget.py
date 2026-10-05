@@ -201,9 +201,13 @@ def test_hiding_a_legend_series_holds_the_view_until_a_recentre():
     not tell what went from what stayed. With `unfit` (the hold-still rule)
     a hidden series still counts toward the axes; only the entries hidden at
     the last recentre (`f`) are left out of the fit."""
+    from plotui import Plot
+
     from hillclimb.tui.chart import Climb, ClimbEvent, build_climb_plot
     from hillclimb.tui.theme import CYAN
 
+    if not hasattr(Plot, "set_fit"):
+        pytest.skip("this plotui cannot leave a trace out of the fit")
     climb = Climb(
         events=[ClimbEvent(1.0, 0.50, True, "r", "draft"), ClimbEvent(2.0, 0.52, False, "r", "improve"),
                 ClimbEvent(3.0, 0.60, True, "r", "improve")],

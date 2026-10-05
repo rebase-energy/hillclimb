@@ -401,16 +401,16 @@ class TestSiteLook:
         assert calls["set_axis_titles3d"] == [(("behaviour", "code", "lineage"), {})]
         (_, graph), = calls["add_graph3d"]
         # built on = disc, left = circle; the origin and then the best are drawn last
-        assert graph["node_shapes"] == ["disc", "circle", "diamond-open", "diamond"]
+        assert graph["node_shapes"] == ["disc", sv.open_circle(), "diamond-open", "diamond"]
         assert graph["node_colors"][-2:] == [sv.REFERENCE_RGB, sv.BEST_RGB]
         # the best's lineage, from the corner out, in white
         (args, line), = calls["add_line3d"]
         assert line["color"] == sv.LINEAGE_RGB and args[0][0] == 0.0 and len(args[0]) == 3
 
     def test_fates_and_the_legend_row(self):
-        from hillclimb.tui.similarityview import SCORE_RGB, fate_shape, legend_markup
+        from hillclimb.tui.similarityview import SCORE_RGB, fate_shape, legend_markup, open_circle
 
-        assert fate_shape("expanded") == "disc" and fate_shape("discontinued") == "circle"
+        assert fate_shape("expanded") == "disc" and fate_shape("discontinued") == open_circle()
         assert fate_shape("failed") == "dot" and fate_shape("expanded", scored=False) == "dot"
         legend = legend_markup()
         for word in ("origin, the corner", "best", "built on", "left", "failed", "the best's lineage", "score, low → high"):
@@ -424,6 +424,8 @@ class TestSiteLook:
         import hillclimb.tui.similarityview as sv
         from hillclimb.tui.theme import themed_plot
 
+        if not sv.plot_hosts_legend():
+            pytest.skip("this plotui cannot host legend rows in the plot")
         rows = sv.legend_rows()
         assert [(label, swatch) for label, swatch, *_ in rows] == [
             ("origin, the corner", "diamond-open"), ("best", "diamond"), ("built on", "disc"),

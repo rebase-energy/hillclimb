@@ -31,6 +31,8 @@ two layouts.
 
 from __future__ import annotations
 
+import functools
+
 from plotui import Plot
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -82,12 +84,23 @@ UNSCORED_SIZE = 2.0
 AXIS_NAMES = ("behaviour", "code", "lineage")  # x, y, z of the reference cube
 
 
+@functools.cache
+def open_circle() -> str:
+    """The open circle's shape name: `circle` where plotui draws one, else
+    its `ring` (a plotui older than the open circle refuses the name)."""
+    try:
+        Plot().add_graph3d([0.0], [0.0], [0.0], edges=[], node_shapes=["circle"])
+    except ValueError:
+        return "ring"
+    return "circle"
+
+
 def fate_shape(fate: str, scored: bool = True) -> str:
     """The site's marks: built on = a filled disc, left = an open circle,
     failed = a small dot (pending keeps the tree's triangle)."""
     if not scored or fate in ("failed", "pruned"):
         return "dot"
-    return {"expanded": "disc", "pending": "triangle"}.get(fate, "circle")
+    return {"expanded": "disc", "pending": "triangle"}.get(fate) or open_circle()
 
 
 def legend_markup(
