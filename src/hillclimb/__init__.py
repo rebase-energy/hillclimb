@@ -23,7 +23,7 @@ The Python front door (lazy — `import hillclimb` stays dependency-light):
     hc.register_agent                   your own scripted agent, in this process
 """
 
-__version__ = "0.7.0"
+__version__ = "0.7.1"
 
 __all__ = [
     "__version__",

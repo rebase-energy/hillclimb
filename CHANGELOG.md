@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.1 — 2026-10-05
 
 ### Fixed
 - **`hillclimb similarity` opens again.** Its app stored the run scope as `self.run`,
@@ -90,6 +90,10 @@
   lightgbm, which no example uses. A problem that needs them ships its own
   `requirements.txt`; MLE-bench competitions get them through `runtime/requirements-ml.txt`.
   Building the runtime prints one line, not uv's download log (its tail on failure).
+- **The README is shorter and renders on PyPI.** It opens with what hillclimb is for (a
+  testbed for autoresearch algorithms), lists the five climber modules, ends `Quickstart`
+  with `hillclimb summit`, and its "Learn more" grid follows the docs. Images and file
+  links are absolute, so the PyPI page shows the logo and mountain instead of broken images.
 
 ## 0.7.0 — 2026-10-03
 
