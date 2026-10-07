@@ -18,6 +18,22 @@ def source_hash(source: str) -> str:
     return hashlib.sha256(normalized.encode()).hexdigest()
 
 
+def notes_summary(notes: str) -> str:
+    """A candidate's one-line summary from its notes.md: the first line that
+    says something. Markdown headings ("# Approach") are section labels, so
+    the first heading's text is only the fallback for notes made of headings."""
+    heading = ""
+    for line in notes.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            heading = heading or line.lstrip("#").strip()
+            continue
+        return line
+    return heading
+
+
 # Trial fields the hidden split produces (Candidate.holdout_blind strips them)
 HOLDOUT_FIELDS = ("holdout_score", "holdout_error", "holdout_cpu_s")
 

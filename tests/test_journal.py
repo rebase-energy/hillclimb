@@ -324,3 +324,14 @@ def test_without_promotions_on_record_the_raw_best_still_wins(tmp_path: Path):
         candidate = make_candidate(cid, val_score=val, status="passing")
         journal.candidate_result(candidate)
     assert journal.best_candidate(True).candidate_id == "c002"
+
+
+def test_notes_summary_skips_markdown_headings():
+    from hillclimb.harness.candidate import notes_summary
+
+    assert notes_summary("# Approach\n\nPolar-coordinate NLP.\nMore.") == "Polar-coordinate NLP."
+    assert notes_summary("Basin hopping on the true objective\n# Detail") == (
+        "Basin hopping on the true objective"
+    )
+    assert notes_summary("## Approach\n### Result\n") == "Approach"
+    assert notes_summary("\n  \n") == ""

@@ -11,7 +11,7 @@ from pathlib import Path
 from hillclimb.agents.base import Agent, AgentRequest, AgentResult
 from hillclimb.harness.baseline import write_baseline
 from hillclimb.harness.budget import BudgetManager, Spend, journal_spend
-from hillclimb.harness.candidate import AgentInfo, Candidate, read_solution, source_hash, utcnow
+from hillclimb.harness.candidate import AgentInfo, Candidate, notes_summary, read_solution, source_hash, utcnow
 from hillclimb.config import Config
 from hillclimb.harness.control import ControlCommand, apply_prune, drain_commands_dir, resync_best
 from hillclimb.harness import evaluation
@@ -1185,8 +1185,7 @@ class Harness:
 
         notes = job.candidate_dir / "notes.md"
         if notes.exists():
-            lines = notes.read_text().strip().splitlines()
-            candidate.summary = lines[0] if lines else ""
+            candidate.summary = notes_summary(notes.read_text())
 
         return self._evaluate_job(job, result)
 
