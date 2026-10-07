@@ -110,10 +110,10 @@ class CandidateEvaluator:
         space with a `value` per entry); both None for an undeclared
         candidate. `index` defaults to the next free slot.
 
-        `search.replicate_mode` decides whether replicates share the machine:
-        parallel for seed variance, serial when the metric is a measurement
-        of the machine itself (time, memory, throughput) and concurrent runs
-        would measure each other."""
+        `concurrency.parallel_replicates` decides how many replicates share
+        the machine at once: all of them for seed variance, one when the
+        metric is a measurement of the machine itself (time, memory,
+        throughput) and concurrent runs would measure each other."""
         from concurrent.futures import ThreadPoolExecutor
 
         from hillclimb.harness.dirs import create_replicate_dir, create_trial_dir, hoist_replicate, replicate_dir
@@ -179,11 +179,13 @@ class CandidateEvaluator:
 
         if trial.verdict == "passing" and n > 1:
             indexes = range(1, n)
-            if self.config.evaluation.replicate_mode == "serial":
+            at_once = self.config.concurrency.replicates_at_once(n)
+            if at_once == 1:
                 results.extend(run(j) for j in indexes)
             else:
+                # r0 has finished, so the rest may fill the whole allowance
                 with ThreadPoolExecutor(
-                    max_workers=n - 1, thread_name_prefix="replicate"
+                    max_workers=min(n - 1, at_once), thread_name_prefix="replicate"
                 ) as pool:
                     results.extend(pool.map(run, indexes))
             if not all(ok for _, ok in results):
@@ -321,6 +323,7 @@ class CandidateEvaluator:
             returncode=exec_result.returncode,
             duration_s=exec_result.duration_s,
             cpu_s=exec_result.cpu_s,
+            cpus=exec_result.cpus,
             timed_out=exec_result.timed_out,
             stdout_tail=stdout_tail,
             submission_ok=exec_result.submission_ok,

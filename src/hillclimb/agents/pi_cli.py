@@ -122,8 +122,11 @@ def pi_home(auth: str, models_file: Path | None = None) -> Path:
     return home
 
 
-def pi_env(auth: str = "subscription", models_file: Path | None = None) -> dict[str, str]:
-    """Build pi's isolated child environment for the selected billing mode."""
+def pi_env(
+    auth: str = "subscription", models_file: Path | None = None, cpus: int = 1
+) -> dict[str, str]:
+    """Build pi's isolated child environment for the selected billing mode,
+    capped at `cpus` cores."""
     from hillclimb.harness.executor import single_threaded
 
     env = os.environ.copy()
@@ -147,7 +150,7 @@ def pi_env(auth: str = "subscription", models_file: Path | None = None) -> dict[
     # its bundled model catalogue) is an explicit setup action.
     env["PI_OFFLINE"] = "1"
     env["PI_TELEMETRY"] = "0"
-    return single_threaded(env)
+    return single_threaded(env, cpus)
 
 
 def _normalized_usage(usage: dict) -> dict[str, int]:
@@ -379,7 +382,7 @@ class PiCliAgent:
         reader: _PiStreamReader | None = None
 
         try:
-            child_env = pi_env(self.auth, self.models_file)
+            child_env = pi_env(self.auth, self.models_file, request.cpus)
             child_env.pop("HILLCLIMB_SAMPLING", None)
             started = self._sandboxed(cmd, request, candidate_dir, child_env)
             cmd = started.argv

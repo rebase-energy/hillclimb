@@ -61,9 +61,10 @@ def has_own_login(auth: str) -> bool:
     return auth != "subscription" or (codex_home(auth) / OWN_LOGIN_MARKER).exists()
 
 
-def codex_env(auth: str = "subscription") -> dict[str, str]:
+def codex_env(auth: str = "subscription", cpus: int = 1) -> dict[str, str]:
     """Build the child environment for ChatGPT-login, API-key or OpenRouter
-    auth. A missing OpenRouter key raises here, before the spawn."""
+    auth, capped at `cpus` cores. A missing OpenRouter key raises here,
+    before the spawn."""
     from hillclimb.harness.executor import single_threaded
 
     env = os.environ.copy()
@@ -81,7 +82,7 @@ def codex_env(auth: str = "subscription") -> dict[str, str]:
     home = codex_home(auth)
     env["CODEX_HOME"] = str(home)
     env["HOME"] = str(home / "home")
-    return single_threaded(env)
+    return single_threaded(env, cpus)
 
 
 def _has_rate_limit_marker(text: str) -> bool:
@@ -347,7 +348,7 @@ class CodexCliAgent:
         reaper: Reaper | None = None
 
         try:
-            child_env = codex_env(self.auth)
+            child_env = codex_env(self.auth, request.cpus)
         except RuntimeError as exc:
             return AgentResult(ok=False, error_kind="error", error_message=str(exc))
 

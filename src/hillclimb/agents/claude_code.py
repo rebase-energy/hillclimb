@@ -27,12 +27,12 @@ def claude_home(auth: str = "subscription") -> Path:
     return home
 
 
-def subscription_env(auth: str = "subscription") -> dict[str, str]:
+def subscription_env(auth: str = "subscription", cpus: int = 1) -> dict[str, str]:
     """Child env for `claude`. auth="subscription" (default) drops
     ANTHROPIC_API_KEY so calls bill the Max subscription (claude.ai login /
     CLAUDE_CODE_OAUTH_TOKEN) — an inherited API key silently takes precedence
     otherwise. auth="api-key" keeps it (headless/hosted runs with no
-    subscription login). Single-threaded (see executor.SINGLE_THREAD_ENV):
+    subscription login). Capped at `cpus` cores (see executor.single_threaded):
     the coding agent's own experiment runs inherit it."""
     from hillclimb.harness.executor import single_threaded
 
@@ -41,7 +41,7 @@ def subscription_env(auth: str = "subscription") -> dict[str, str]:
         env.pop("ANTHROPIC_API_KEY", None)
     env["CLAUDE_CONFIG_DIR"] = str(claude_home(auth))
     env["ENABLE_CLAUDEAI_MCP_SERVERS"] = "false"  # the account's connectors stay out too
-    return single_threaded(env)
+    return single_threaded(env, cpus)
 
 RATE_LIMIT_MARKERS = (
     "rate limit",
@@ -313,7 +313,7 @@ class ClaudeCodeAgent:
                     stderr=stderr_sink,
                     text=True,
                     cwd=request.candidate_dir,
-                    env={**subscription_env(self.auth), **started.env},
+                    env={**subscription_env(self.auth, request.cpus), **started.env},
                     **new_group_kwargs(),  # own process group → killable as a unit
                 )
                 reaper = Reaper(proc)  # reaps through wait4: the call's CPU rides along

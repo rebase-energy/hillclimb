@@ -74,11 +74,13 @@ SECRET_ENV_EXACT = frozenset({
 SECRET_ENV_SUFFIXES = ("_TOKEN", "_API_KEY", "_SECRET", "_SECRET_KEY", "_PASSWORD")
 
 
-# One thread per solution process. Every verifier and coding agent experiment runs a
+# A fixed CPU allotment per solution process (`concurrency.solution_cpus`,
+# default 1). Every verifier and coding agent experiment runs a
 # numpy/scipy/torch workload that would otherwise fan out across all cores;
 # with N of them in flight that is N x cores of demand, the machine stalls,
-# and timing-based metrics measure the contention. Parent values win, so a
-# problem that really wants multithreaded solutions can export its own.
+# and timing-based metrics measure the contention. The math libraries' thread
+# pools are capped at the allotment; parent values win, so a problem that
+# really wants other settings can export its own.
 SINGLE_THREAD_ENV = {
     "OMP_NUM_THREADS": "1",
     "OPENBLAS_NUM_THREADS": "1",
@@ -86,12 +88,19 @@ SINGLE_THREAD_ENV = {
     "VECLIB_MAXIMUM_THREADS": "1",
     "NUMEXPR_NUM_THREADS": "1",
 }
+# The allotment itself, which nothing caps for us: a solution that starts its
+# own processes (multiprocessing, joblib, concurrent.futures) sizes them from
+# this, never from os.cpu_count() — the contract prompt says so, and the
+# journal's cpu_s / duration_s shows who did not (`Replicate.oversubscribed`).
+CPUS_ENV = "HILLCLIMB_CPUS"
 
 
-def single_threaded(env: dict[str, str]) -> dict[str, str]:
-    """`env` with SINGLE_THREAD_ENV filled in where unset."""
-    for key, value in SINGLE_THREAD_ENV.items():
-        env.setdefault(key, value)
+def single_threaded(env: dict[str, str], cpus: int = 1) -> dict[str, str]:
+    """`env` capped at `cpus` cores: the math libraries' thread variables
+    filled in where unset, and `$HILLCLIMB_CPUS` (the harness's, always set)."""
+    for key in SINGLE_THREAD_ENV:
+        env.setdefault(key, str(cpus))
+    env[CPUS_ENV] = str(cpus)
     return env
 
 
@@ -105,8 +114,8 @@ def prepend_pythonpath(env: dict[str, str], path: str | None) -> dict[str, str]:
     return env
 
 
-def scrubbed_env(**extra: str) -> dict[str, str]:
-    """Parent env minus credentials, single-threaded, for running
+def scrubbed_env(cpus: int = 1, **extra: str) -> dict[str, str]:
+    """Parent env minus credentials, capped at `cpus` cores, for running
     coding-agent-authored code."""
     env = {
         k: v
@@ -114,7 +123,7 @@ def scrubbed_env(**extra: str) -> dict[str, str]:
         if k not in SECRET_ENV_EXACT and not k.upper().endswith(SECRET_ENV_SUFFIXES)
     }
     env.update(extra)
-    return single_threaded(env)
+    return single_threaded(env, cpus)
 
 
 class ExecResult(BaseModel):
@@ -124,6 +133,9 @@ class ExecResult(BaseModel):
     # cost signal duration_s only approximates (wall-clock counts I/O waits).
     # None where the platform can't report it (no os.wait4).
     cpu_s: float | None = None
+    # the CPU allotment the run was given ($HILLCLIMB_CPUS); None from an
+    # executor that sets none
+    cpus: int | None = None
     timed_out: bool = False
     stdout_path: str = ""
     stderr_path: str = ""
@@ -450,9 +462,12 @@ class CommandExecutor:
         private: tuple[str, ...] = (),
         holdout_inputs: tuple[str, ...] = (),
         time_limit_s: float | None = None,
+        cpus: int = 1,
     ):
         # what every run is confined to; each run adds its candidate's dir
         self.sandbox = sandbox
+        # cores each run may use (`concurrency.solution_cpus`)
+        self.cpus = cpus
         # a two-step problem: `argv` runs the solution, then `score_argv`
         # scores it. Only the scorer may read `private`; a validation run's
         # output reaches the agents, so neither step reads `holdout_inputs`
@@ -490,7 +505,7 @@ class CommandExecutor:
         # coding-agent-authored code runs inside the verifier process: credentials are
         # scrubbed at run time (not snapshotted at construction) so a change to
         # the orchestrator's environment can never leak into a later run
-        env = scrubbed_env(**self.env_extra)
+        env = scrubbed_env(self.cpus, **self.env_extra)
         params_path = candidate_dir / PARAMS_FILE
         env.update(verifier_env(
             self.python, script, result_path, "validation", seed,
@@ -523,6 +538,7 @@ class CommandExecutor:
             returncode=returncode,
             duration_s=duration,
             cpu_s=cpu_s,
+            cpus=self.cpus,
             timed_out=timed_out,
             stdout_path=str(stdout_path),
             stderr_path=str(stderr_path),
@@ -554,8 +570,10 @@ class CommandHoldoutScorer:
         private: tuple[str, ...] = (),
         holdout_inputs: tuple[str, ...] = (),  # readable here: this is the holdout split
         time_limit_s: float | None = None,
+        cpus: int = 1,
     ):
         self.sandbox = sandbox
+        self.cpus = cpus  # the same allotment as validation runs (CommandExecutor)
         self.python = python.absolute()
         self.argv = list(argv)
         # a two-step problem (see CommandExecutor); its scorer is told `--holdout`
@@ -597,7 +615,7 @@ class CommandHoldoutScorer:
                 link_dir(link, Path(target).resolve())
         result_path = eval_dir / RESULT_FILE
         result_path.unlink(missing_ok=True)
-        env = dict(os.environ)  # full env: credentials flow
+        env = single_threaded(dict(os.environ), self.cpus)  # full env: credentials flow
         env.update(verifier_env(
             self.python, eval_dir / "solution.py", result_path, "holdout",
             params=params_path if params_doc is not None else None,
@@ -610,7 +628,7 @@ class CommandHoldoutScorer:
             if self.score_argv:
                 # the solution gets the scrubbed environment; only the scorer
                 # gets credentials (gated holdout data is the scorer's to fetch)
-                run_env = scrubbed_env()
+                run_env = scrubbed_env(self.cpus)
                 run_env.update({
                     key: value for key, value in env.items() if key.startswith("HILLCLIMB_") or key == "PYTHONPATH"
                 })

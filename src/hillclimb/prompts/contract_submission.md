@@ -16,6 +16,7 @@ Work only inside the current working directory. Before you finish, these two fil
 Rules:
 - Do NOT run long training yourself. Quick sanity checks (imports, loading a few rows, a 1-minute dry run) are fine; the orchestrator executes `solution.py` for real after you finish.
 - When executed by the orchestrator (`python solution.py`, cwd = this directory), the script must finish within {{exec_timeout_min}} minutes.
+- Each run of `solution.py` gets {{solution_cpus}}; `HILLCLIMB_CPUS` holds the number. Size any process or thread pool from it, never from `os.cpu_count()`: other runs share this machine, and a pool past the allotment slows every run, yours included.
 - Available packages: {{runtime_pkgs}}. Nothing else is installed. {{network_note}}
 - Set random seeds for reproducibility.
 {{tools_clause}}

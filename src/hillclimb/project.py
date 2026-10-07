@@ -134,13 +134,14 @@ __STORE__
 
 # evaluation:
 #   n_replicates: 1        # seeded runs per trial (median is the trial's score)
-#   replicate_mode: parallel # `serial` when the metric measures the machine (time!)
 #   noise_k: 0             # require gains > k x the measured noise floor
 #   min_improvement: 0     # ...or an absolute floor, in metric units
 
-# concurrency:
-#   parallel_agents: 1   # >1 runs concurrent coding agents
+# concurrency:              # four levels; see docs.hillclimb.sh/parallelism
+#   parallel_agents: 1     # coding agents (attempts in flight) per search
 #   machine_max_agents: 8  # cap across every search on this machine (default min(8, cores-2))
+#   parallel_replicates: 0 # a trial's seeded runs at once: 0 = all; 1 when the metric measures the machine (time!)
+#   solution_cpus: 1       # cores each run of a solution may use ($HILLCLIMB_CPUS)
 
 # holdout:
 #   enabled: true
@@ -184,7 +185,7 @@ INIT_GITIGNORE = (
 )
 
 # The folders `init` creates beside hillclimb.yaml.
-SCAFFOLD_DIRS = ("problems", "runs")
+SCAFFOLD_DIRS = ("problems", "runs", "climbers")
 # what hillclimb writes into beside hillclimb.yaml: a folder of one of these
 # names that is not hillclimb's means hillclimb goes in a subfolder instead
 OWNED_DIR_NAMES = ("problems", "runs", "knowledge", "climbers")
@@ -231,7 +232,7 @@ def init_config(datastore: str = "files") -> str:
 
 def scaffold_hillclimb_dir(folder: Path, datastore: str = "files") -> Path:
     """Make `folder` (created if missing) a hillclimb dir: hillclimb.yaml,
-    empty problems/ and runs/ beside it, and the gitignore rules that keep
+    empty problems/, runs/ and climbers/ beside it, and the gitignore rules that keep
     run artifacts and keys out of git while the record of every run goes in
     (`INIT_GITIGNORE`). No problem is added: picking one (`hillclimb problem
     get`) is the user's first real choice. Idempotent on the folder layout;

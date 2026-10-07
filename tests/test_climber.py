@@ -119,8 +119,8 @@ def test_a_block_is_a_climber(tmp_path):
     assert anchored.operator_policy == f"{tmp_path / 'mine.py'}:Mine"
     assert anchored.operators == ["draft", {f"{tmp_path / 'ops.py'}:Cross": None}]
     assert [p.name for p in anchored.file_paths()] == ["mine.py", "ops.py"]
-    with pytest.raises(ValueError, match="Unknown climber: climbers/mine .*hillclimb climber show climbers/mine"):
-        ClimberSpec.model_validate("climbers/mine")
+    with pytest.raises(ValueError, match="Unknown climber: climbers/mine .*a folder holding climber.yaml"):
+        ClimberSpec.model_validate("climbers/mine")  # no such folder here
 
 
 def test_a_block_runs_with_its_own_operator_and_prompts(task, config, tmp_path):

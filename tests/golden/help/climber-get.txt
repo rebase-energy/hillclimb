@@ -1,23 +1,23 @@
                                                                                                                         
- Usage: root init [OPTIONS] [DIRECTORY]                                                                                 
+ Usage: root climber get [OPTIONS] [PRESET]                                                                             
                                                                                                                         
- Make a folder a hillclimb dir.                                                                                         
+ Copy a preset into climbers/<name>/: a folder you can read and edit.                                                   
                                                                                                                         
- Writes hillclimb.yaml (the config) with problems/, runs/ and climbers/                                                 
- beside it, plus the gitignore rules that commit the record of every run                                                
- and not its bulk. The current folder by default; `hillclimb init hillclimb`                                            
- keeps it all in a subfolder instead. `--datastore sqlite` keeps the                                                    
- records (runs, searches, journals, status) in one store.sqlite instead                                                 
- of files under runs/; the candidates and best/ stay in runs/ either way.                                               
+ The folder IS the climber: climber.yaml with every default spelled out,                                                
+ policy.py (which operator makes the next attempt), and prompts/ with the                                               
+ templates its operators render — the words the coding agents get — plus                                                
+ a README of what the harness fills into each template's tokens. It                                                     
+ becomes this folder's climber, so edit a template and the next                                                         
+ `hillclimb run` climbs with it. An existing folder is never overwritten.                                               
                                                                                                                         
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│   [directory]      PATH  Folder to make a hillclimb dir (created if missing) [default: .]                            │
+│   [preset]      TEXT  A preset to copy out: greedy | openevolve (see: hillclimb climber list) [default: greedy]      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ --force                    Create one even inside an existing hillclimb dir                                          │
-│ --datastore          TEXT  Where the records of runs live: files (yaml/jsonl under runs/) or sqlite (one             │
-│                            store.sqlite)                                                                             │
-│                            [default: files]                                                                          │
-│ --help       -h            Show this message and exit.                                                               │
+│ --name                         TEXT  The folder's name under climbers/ (default: the preset's)                       │
+│ --default      --no-default          Make the copy this folder's climber (`climber:` in hillclimb.yaml), so          │
+│                                      `hillclimb run` uses it                                                         │
+│                                      [default: default]                                                              │
+│ --help     -h                        Show this message and exit.                                                     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 

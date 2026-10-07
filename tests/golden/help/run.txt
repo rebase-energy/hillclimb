@@ -43,6 +43,11 @@
 │ --parallel-searches                                        INTEGER RANGE [x>=1]  Independent searches on the problem │
 │                                                                                  at once, each in the background     │
 │                                                                                  [default: 1]                        │
+│ --solution-cpus                                            INTEGER RANGE [x>=1]  CPU cores each run of a solution    │
+│                                                                                  may use, given to it as             │
+│                                                                                  $HILLCLIMB_CPUS (default 1; --set   │
+│                                                                                  concurrency.solution_cpus=N is the  │
+│                                                                                  same)                               │
 │ --detach                                  --no-detach                            Run in the background (the default; │
 │                                                                                  `hillclimb watch` follows it) or in │
 │                                                                                  this terminal (Ctrl-C stops it)     │
@@ -50,6 +55,11 @@
 │ --n-replicates,--n-trials                                  INTEGER               Seeded runs per trial (the median   │
 │                                                                                  is the trial's score; --n-trials is │
 │                                                                                  the old spelling)                   │
+│ --parallel-replicates                                      INTEGER RANGE [x>=0]  How many of a trial's replicates    │
+│                                                                                  run at once: 0 = all (default), 1 = │
+│                                                                                  one after another, required when    │
+│                                                                                  the metric measures the machine     │
+│                                                                                  (time, throughput, memory)          │
 │ --seed-from                                                PATH                  Incumbent solution.py scored as the │
 │                                                                                  floor candidate                     │
 │ --set                                                      TEXT                  Any config setting, dotted: --set   │

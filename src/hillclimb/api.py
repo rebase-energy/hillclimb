@@ -201,6 +201,7 @@ def build_executor(
         private=private_paths(problem),
         holdout_inputs=holdout_input_paths(problem),
         time_limit_s=problem.solution_time_limit_s,
+        cpus=config.concurrency.solution_cpus,
     )
 
 
@@ -261,6 +262,7 @@ def build_holdout_scorer(config: Config, problem: ProblemSpec, search_dir: Path,
         private=private_paths(problem),
         holdout_inputs=holdout_input_paths(problem),
         time_limit_s=problem.solution_time_limit_s,
+        cpus=config.concurrency.solution_cpus,
     )
 
 

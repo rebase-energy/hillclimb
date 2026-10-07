@@ -21,7 +21,7 @@ from hillclimb.agents.claude_code import (
     is_concrete_model_id,
     usage_total_tokens,
 )
-from hillclimb.harness.candidate import Candidate
+from hillclimb.harness.candidate import Candidate, Replicate
 from hillclimb.config import Config
 from hillclimb.harness.control import request_prune, request_stop
 from hillclimb.harness.journal import Journal
@@ -638,6 +638,11 @@ def _set_candidate_columns(table, holdout: bool) -> None:
 BEST_STAR = " ★"  # after the id of the search's current selection
 
 
+def cpu_mark(replicate: Replicate) -> str:
+    """`cpu 7.0/1`: cores the run kept busy on average over its allotment."""
+    return f"cpu {replicate.cpu_load:.1f}/{replicate.cpus or 1}"
+
+
 def candidate_rows(
     journal: Journal, live: bool = True, higher_is_better: bool | None = None,
     phases: dict[str, str] | None = None,
@@ -663,6 +668,8 @@ def candidate_rows(
             marks.append("best-val")
         if candidate.pruned:
             marks.append("PRUNED")
+        if candidate.cpu_overuse is not None:
+            marks.append(cpu_mark(candidate.cpu_overuse))
         shown = display_status(candidate.status, live)
         style = "dim strike" if candidate.pruned else STATUS_STYLE.get(shown, "")
         if selected and not candidate.pruned:
@@ -936,6 +943,8 @@ def _candidate_marks(candidate: Candidate) -> str:
         marks.append("best-val")
     if candidate.pruned:
         marks.append("pruned")
+    if candidate.cpu_overuse is not None:
+        marks.append(cpu_mark(candidate.cpu_overuse) + " (oversubscribed)")
     return ", ".join(marks) if marks else "-"
 
 

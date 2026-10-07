@@ -200,9 +200,9 @@ def init(
 ):
     """Make a folder a hillclimb dir.
 
-    Writes hillclimb.yaml (the config) with problems/ and runs/ beside it,
-    plus the gitignore rules that commit the record of every run and not
-    its bulk. The current folder by default; `hillclimb init hillclimb`
+    Writes hillclimb.yaml (the config) with problems/, runs/ and climbers/
+    beside it, plus the gitignore rules that commit the record of every run
+    and not its bulk. The current folder by default; `hillclimb init hillclimb`
     keeps it all in a subfolder instead. `--datastore sqlite` keeps the
     records (runs, searches, journals, status) in one store.sqlite instead
     of files under runs/; the candidates and best/ stay in runs/ either way.
@@ -236,6 +236,7 @@ def init(
             if datastore == "sqlite"
             else [("runs/", "one folder per run (records committed, artifacts gitignored)")]
         ),
+        ("climbers/", "your own climbers (empty until hillclimb climber get)"),
     ])
     next_steps([
         *([(f"cd {_m(directory)}", "run hillclimb from there")] if folder != Path.cwd().resolve() else []),
@@ -425,8 +426,8 @@ def verify(
         )
         say(f"[path]  evaluation:\n    n_replicates: {max(3, repeat)}\n    noise_k: 2[/]")
         say(
-            "[note]  add `replicate_mode: serial` if this metric measures the machine "
-            "(time, throughput, memory) — parallel trials would measure each other[/]"
+            "[note]  add `concurrency: {parallel_replicates: 1}` if this metric measures the machine "
+            "(time, throughput, memory) — replicates running at once would measure each other[/]"
         )
 
 

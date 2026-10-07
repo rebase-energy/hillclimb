@@ -280,7 +280,7 @@ def test_the_0_5_climber_block_still_loads():
     }}).climber.block()
     config.apply_overrides(parse_set_overrides(["climber.ref=gepa"]))  # the 0.5 way to name one
     assert config.climber.loop == "gepa" and config.climber.params == {}
-    with pytest.raises(ValueError, match="hillclimb climber show climbers/mine"):
+    with pytest.raises(ValueError, match="Unknown climber: climbers/mine .*a folder holding climber.yaml"):
         Config.model_validate({"climber": {"ref": "climbers/mine"}})  # a directory: show it as a block
 
 

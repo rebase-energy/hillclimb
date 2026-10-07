@@ -9,6 +9,7 @@
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ check  Conformance check for a climber — the cheap pre-verifier.                                                     │
+│ get    Copy a preset into climbers/<name>/: a folder you can read and edit.                                          │
 │ list   The climbers a bare name stands for: the presets, and every one-file                                          │
 │        climber under climbers/.                                                                                      │
 │ new    Start your own climber from a copy of an existing one.                                                        │

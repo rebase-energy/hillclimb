@@ -12,7 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
 
 from hillclimb.modules import refs
 from hillclimb.modules.memory.base import MemoryKind
@@ -137,18 +137,30 @@ def climber_label(ref: str) -> str:
     as it is, a one-file climber's stem."""
     if refs.is_file_ref(ref):
         return Path(refs.split_file_ref(ref)[0]).stem
-    return ref.rpartition(":")[2] if refs.is_module_ref(ref) else ref
+    if refs.is_module_ref(ref):
+        return ref.rpartition(":")[2]
+    return Path(ref).name if "/" in ref or "\\" in ref else ref  # a climber folder, by its name
 
 
 def presets() -> list[str]:
     return sorted(PRESETS)
 
 
-def expand_name(ref: str) -> dict[str, Any]:
-    """The block a bare string stands for: a preset, a file that puts a whole
-    `Climber(...)` together, or one file / one class (an operator policy)."""
+FOLDER_MANIFEST = "climber.yaml"  # what makes a folder a climber (`hillclimb climber get` writes one)
+
+
+def expand_name(ref: str, base_dir: Path | None = None) -> dict[str, Any]:
+    """The block a bare string stands for: a preset, a climber folder (a
+    directory holding `climber.yaml`: its block, with the folder's files and
+    prompts named relative to where the ref was written), a file that puts a
+    whole `Climber(...)` together, or one file / one class (an operator
+    policy). A relative folder is looked for under `base_dir` when given,
+    else the current directory."""
     if ref in PRESETS:
         return json.loads(json.dumps(PRESETS[ref]))  # a copy nobody can edit the preset through
+    folder = folder_block(ref, base_dir)
+    if folder is not None:
+        return folder
     if refs.is_file_ref(ref):
         composed = composed_block(ref)
         if composed is not None:
@@ -156,10 +168,54 @@ def expand_name(ref: str) -> dict[str, Any]:
     if refs.is_file_ref(ref) or refs.is_module_ref(ref):
         return {"operator_policy": ref}  # a file that defines a Loop is recognised when it is resolved
     raise ValueError(
-        f"Unknown climber: {ref} (presets: {', '.join(presets())}; or one .py file; or a full "
-        "`climber:` block). A directory holding climber.yaml is the pre-0.6 form: "
-        f"`hillclimb climber show {ref}` prints it as a block."
+        f"Unknown climber: {ref} (presets: {', '.join(presets())}; or one .py file; or a folder "
+        f"holding {FOLDER_MANIFEST} — `hillclimb climber get greedy` writes one; or a full `climber:` block)"
     )
+
+
+def folder_block(ref: str, base_dir: Path | None = None) -> dict[str, Any] | None:
+    """The block of a climber folder, or None when `ref` names no folder
+    holding `climber.yaml`. The manifest's file refs and `prompts:` are
+    relative to the folder; they come back prefixed with `ref` itself, so
+    they are relative to whatever the ref was — the same anchoring applies
+    to both. The folder's name is the climber's unless the manifest names it."""
+    if refs.is_file_ref(ref) or refs.is_module_ref(ref):
+        return None
+    path = Path(ref).expanduser()
+    if not path.is_absolute() and base_dir is not None:
+        path = Path(base_dir) / path
+    manifest = path / FOLDER_MANIFEST
+    if not manifest.is_file():
+        return None
+    import yaml
+
+    try:
+        data = yaml.safe_load(manifest.read_text()) or {}
+    except yaml.YAMLError as exc:
+        raise ValueError(f"{manifest}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"{manifest}: a climber folder's manifest is a `climber:` block")
+    if "holdout_timing" in data:
+        raise ValueError(
+            f"{manifest}: a pre-0.6 manifest with `holdout_timing` — "
+            f"`hillclimb climber show {ref}` prints it as a block to paste"
+        )
+    data = {key: value for key, value in data.items() if key not in ("snapshot", "portable", "description", "similarity")}
+    data.setdefault("name", Path(ref).name)
+
+    def inside(module_ref: str) -> str:
+        if not refs.is_file_ref(module_ref):
+            return module_ref
+        file, attr = refs.split_file_ref(module_ref)
+        if Path(file).expanduser().is_absolute():
+            return module_ref
+        joined = (Path(ref) / file).as_posix()
+        return f"{joined}:{attr}" if attr else joined
+
+    spec = ClimberSpec.model_validate(data).map_refs(inside)
+    if spec.prompts and not Path(spec.prompts).expanduser().is_absolute():
+        spec = spec.model_copy(update={"prompts": (Path(ref) / spec.prompts).as_posix()})
+    return spec.block()
 
 
 def composed_block(ref: str, base_dir: Path | None = None) -> dict[str, Any] | None:
@@ -236,9 +292,11 @@ class ClimberSpec(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _shorthand_and_refusals(cls, data):
+    def _shorthand_and_refusals(cls, data, info: ValidationInfo):
         if isinstance(data, str):
-            return expand_name(data)
+            # a relative climber folder is looked for where the string was
+            # written: `ClimberSpec.model_validate(ref, context={"base_dir": dir})`
+            return expand_name(data, (info.context or {}).get("base_dir"))
         if not isinstance(data, dict):
             return data
         if "routing" in data:

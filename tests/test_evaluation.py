@@ -68,7 +68,7 @@ def test_single_trial_scores_the_candidate(tmp_path, task, config):
 
 def test_multi_trial_runs_in_index_order_and_copies_trial0_artifacts(tmp_path, task, config):
     config.evaluation.n_replicates = 3
-    config.evaluation.replicate_mode = "serial"
+    config.concurrency.parallel_replicates = 1
     candidate_dir = fresh_candidate_dir(tmp_path, task)
     (candidate_dir / "solution.py").write_text(ok_script(0.6))
     candidate = Candidate(candidate_id="c001", operator="draft", candidate_dir=str(candidate_dir))
@@ -89,7 +89,7 @@ def test_multi_trial_runs_in_index_order_and_copies_trial0_artifacts(tmp_path, t
 
 def test_parallel_trial_mode_also_scores(tmp_path, task, config):
     config.evaluation.n_replicates = 2
-    config.evaluation.replicate_mode = "parallel"
+    config.concurrency.parallel_replicates = 0
     candidate_dir = fresh_candidate_dir(tmp_path, task)
     (candidate_dir / "solution.py").write_text(ok_script(0.4))
     candidate = Candidate(candidate_id="c001", operator="draft", candidate_dir=str(candidate_dir))

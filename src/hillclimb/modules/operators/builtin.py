@@ -36,6 +36,7 @@ class Draft(Operator):
 
     name = "draft"
     kind = "create"
+    templates = ("draft", "research_cue")
 
     def prepare(self, ctx: OperatorContext) -> Attempt:
         problem = ctx.problem
@@ -83,6 +84,7 @@ class Debug(Operator):
     name = "debug"
     kind = "repair"
     needs_target = True
+    templates = ("debug",)
 
     def valid_target(self, target: Candidate | None) -> str | None:
         reason = super().valid_target(target)
@@ -121,6 +123,7 @@ class Improve(Operator):
     name = "improve"
     kind = "refine"
     needs_target = True
+    templates = ("improve", "ablation_cue")
 
     def valid_target(self, target: Candidate | None) -> str | None:
         reason = super().valid_target(target)
@@ -170,6 +173,7 @@ class Ensemble(Operator):
     name = "ensemble"
     kind = "combine"
     needs_target = True
+    templates = ("ensemble",)
 
     def prepare(self, ctx: OperatorContext) -> Attempt:
         if not ctx.inspirations:
@@ -191,3 +195,52 @@ class Ensemble(Operator):
 
 
 BUILTIN_OPERATORS = (Draft, Debug, Improve, Ensemble)
+
+# Every `{{token}}` the templates above carry and what fills it, as (filled
+# with, empty when). The guide a climber folder's prompts/README.md shows;
+# tests/test_climber_get.py holds it to the templates, both ways.
+TOKEN_GUIDE: dict[str, tuple[str, str]] = {
+    "description": ("the problem's `description.md`", "never"),
+    "metric_name": ("the metric's name, from `problem.yaml`", "never"),
+    "direction": ("`higher is better` / `lower is better`", "never"),
+    "data_listing": ("the files under the problem's `data/`", "the problem ships no data"),
+    "research_cue": (
+        "`research_cue.md`: a web-research step before coding, with `{{network_note}}` — "
+        "whether the solution itself may reach the internet (`allow_internet_during_solution`)",
+        "the operator's `retrieval` param is off, or the coding agent has no internet",
+    ),
+    "network_note": ("whether the solution may reach the internet at execution time", "never"),
+    "starter_cue": (
+        "a pointer to `reference_solution.py`: memory's proven solution from an earlier search, copied in",
+        "memory has none, or an earlier draft of this search already had it",
+    ),
+    "complexity_cue": ("the `minimal` / `moderate` / `advanced` cue the policy picked for this draft", "never"),
+    "prior_experience": (
+        "memory: knowledge cards from earlier searches on this problem, and discoveries of searches running beside this one",
+        "`(no prior searches recorded)`",
+    ),
+    "prior_drafts": ("one line per draft this search already made: id, score, summary", "`(none yet)`"),
+    "parent_summary": ("the failing candidate's own summary of its approach (its `notes.md` first line)", "`(no summary)`"),
+    "failure_reason": ("why the verifier run did not pass, in the harness's words", "never"),
+    "stderr_tail": ("the end of the failing run's stderr (or of its unit-test run)", "it wrote none"),
+    "stdout_tail": ("the end of the parent's run output", "it wrote none"),
+    "debug_history": ("one line per earlier fix attempt in this debug chain", "`(none — this is the first fix attempt)`"),
+    "best_score": ("the parent candidate's validation score", "never"),
+    "evaluation_report": (
+        "the verifier's breakdown of the parent's score, and where it moved against its own parent",
+        "the verifier reports none, or `report.enabled` is off",
+    ),
+    "sibling_summaries": (
+        "one line per attempt already made from this parent, so it is not repeated",
+        "`(nothing tried from this solution yet)`",
+    ),
+    "live_experience": ("what searches running beside this one found so far (polled fresh)", "there are none, or they found nothing yet"),
+    "prior_ablations": ("the `ablation.md` an earlier improve of this parent measured", "none measured one, or `ablation` is off"),
+    "ablation_cue": ("`ablation_cue.md`: measure which components carry the score before changing one", "the operator's `ablation` param is off"),
+    "candidates_table": ("one line per candidate copied in to combine: file name, score, summary", "never"),
+    "contract": (
+        "the harness's contract: how the solution is run and scored, the output interface, "
+        "tunable parameters, the holdout rule — the same for every climber, never a template of yours",
+        "never (appended when a template leaves the token out)",
+    ),
+}

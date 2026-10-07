@@ -11,7 +11,8 @@ init` makes the current folder one:
 my-project/
 ├── hillclimb.yaml      # defaults, and the marker that makes this the hillclimb dir
 ├── problems/           # problem definitions
-└── runs/               # one folder per run: its spec, its records, its artifacts
+├── runs/               # one folder per run: its spec, its records, its artifacts
+└── climbers/           # your own climbers, empty until `hillclimb climber get`
 ```
 
 `hillclimb init DIR` makes `DIR` (created if missing) the hillclimb dir
@@ -26,9 +27,10 @@ Every folder hillclimb creates carries a hidden `.hillclimb` file. That is
 what marks it as hillclimb's: a folder of the same name without one is yours,
 and hillclimb never deletes it.
 
-`hillclimb climber new <name>` adds `climbers/<name>.py` beside them (see
-[climbers.md](climbers.md)); learning writes `knowledge/`, experiments live in
-`experiments/`.
+`hillclimb climber get greedy` adds `climbers/greedy/` beside them — the
+default climber as a folder to read and edit — and `hillclimb climber new
+<name>` a one-file `climbers/<name>.py` (see [climbers.md](climbers.md));
+learning writes `knowledge/`, experiments live in `experiments/`.
 
 Commands run from the hillclimb dir's root: the folder holding
 `hillclimb.yaml`, or a project root whose `hillclimb/` subfolder holds one.

@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.8.0 — 2026-10-07
+
+### Added
+- **`hillclimb climber get greedy`: the default climber as a folder you can read.** Copies a
+  preset out as `climbers/greedy/` — `climber.yaml` with every default spelled out, `policy.py`
+  (which operator makes the next attempt) and `prompts/` with the six templates its operators
+  render, the words the coding agents get — and makes it this folder's climber, so an edited
+  template is what the next `hillclimb run` climbs with. `prompts/README.md` says how a prompt is
+  made: when each template is used (the schedule, numbers filled in) and what the harness fills
+  into every `{{token}}` — the problem, the parent candidate, earlier attempts, memory — and
+  when a token is empty; a test holds that guide to the templates. A folder holding
+  `climber.yaml` is now a first-class way of naming a climber (`climber: climbers/greedy`,
+  `--climber climbers/greedy`), with its own identity; `climber list` shows folders and marks
+  the default by identity, so a preset and a folder copied from it never both wear the star.
+  Built-in operators declare the templates they render (`Operator.templates`).
+  `hillclimb init` now makes an empty `climbers/` beside `problems/` and `runs/`, so the
+  folder `climber get` writes into is there from the start.
+- **A CPU allotment per solution run: `--solution-cpus C` (`concurrency.solution_cpus`,
+  default 1).** Every run of a solution — the verifier's, the holdout's, and the coding
+  agents' own test runs — gets `$HILLCLIMB_CPUS` = C, and the math libraries' thread pools
+  are capped to match (until now they were capped at 1, and holdout runs not at all). The
+  contract prompt tells the coding agent to size any process or thread pool from it, never
+  from `os.cpu_count()`.
+- **Oversubscribed runs are marked.** A replicate journals its allotment as `cpus`; a run
+  whose CPU time outpaces its wall time by more than 1.5 × that allotment is flagged
+  (`Replicate.oversubscribed`), and `hillclimb watch` shows it beside the candidate:
+  `cpu 6.9/1`. A heilbronn solution that starts `multiprocessing.Pool(os.cpu_count())`
+  next to three parallel coding agents was the case: its scores measured the machine's
+  load.
+- **`--parallel-replicates P` (`concurrency.parallel_replicates`) replaces `replicate_mode`.** How
+  many of a trial's `n_replicates` seeded runs execute at once is a count like the other
+  parallelism levels: 0 = all (the default, what `parallel` was), 1 = one after another (what
+  `serial` was; required when the metric measures the machine), 2 = batches of two, which the
+  mode could not say. `replicate_mode: parallel | serial` and the 0.3 `trial_mode` still load, in a
+  config file and in `--set`, as 0 | 1.
+- **`hillclimb run` warns when the parallelism outruns the machine**: searches × agents ×
+  replicates at once × solution CPUs against `os.cpu_count()`.
+- `docs/concepts.md` has a Parallelism section: the four levels and what sets each.
+
 ## 0.7.1 — 2026-10-05
 
 ### Fixed

@@ -204,6 +204,9 @@ class Operator(ABC):
     name: str
     kind: str
     needs_target: bool = False
+    # the prompt templates `prepare` renders, by name (`draft`, `research_cue`,
+    # …): what a climber folder carries under prompts/ for this operator
+    templates: tuple[str, ...] = ()
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)

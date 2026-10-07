@@ -21,6 +21,7 @@ Work only inside the current working directory. Before you finish, these two fil
 Rules:
 - You may run the verifier yourself during development as a sanity check, but do NOT run long training; the orchestrator runs the real evaluation after you finish.
 - The verifier run (including everything it does with `solution.py`) must finish within {{exec_timeout_min}} minutes.
+- Each run of `solution.py` gets {{solution_cpus}}; `HILLCLIMB_CPUS` holds the number. Size any process or thread pool from it, never from `os.cpu_count()`: other runs share this machine, and a pool past the allotment slows every run, yours included.
 - Available packages: {{runtime_pkgs}}. Nothing else is installed. {{network_note}}
 - Set random seeds for reproducibility (the orchestrator sets `HILLCLIMB_REPLICATE_SEED` when it runs repeated replicates).
 {{tools_clause}}

@@ -37,6 +37,13 @@ def notes_summary(notes: str) -> str:
 # Trial fields the hidden split produces (Candidate.holdout_blind strips them)
 HOLDOUT_FIELDS = ("holdout_score", "holdout_error", "holdout_cpu_s")
 
+# A run is oversubscribed when its CPU time outruns its wall time by more than
+# this factor over its allotment ($HILLCLIMB_CPUS): it ran more processes or
+# threads than it was given. Runs shorter than the floor are never flagged —
+# interpreter startup and the reaper's sampling make their ratio noise.
+OVERSUBSCRIBED_FACTOR = 1.5
+OVERSUBSCRIBED_MIN_S = 5.0
+
 
 def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -87,6 +94,10 @@ class Replicate(BaseModel):
     # predating the field or platforms without wait4 — consumers fall back to
     # duration_s there (verifier envs are single-threaded, wall ≈ cpu)
     cpu_s: float | None = None
+    # the CPU allotment the run was given ($HILLCLIMB_CPUS,
+    # `concurrency.solution_cpus`); None on journals predating the field,
+    # whose runs had one core
+    cpus: int | None = None
     timed_out: bool = False
     stdout_tail: str = ""
     submission_ok: bool = False
@@ -108,6 +119,27 @@ class Replicate(BaseModel):
     error: str | None = None
     started_at: str = Field(default_factory=utcnow)
     finished_at: str | None = None
+
+    @property
+    def cpu_load(self) -> float | None:
+        """Cores the run kept busy on average: CPU time over wall time."""
+        if self.cpu_s is None or not self.duration_s:
+            return None
+        return self.cpu_s / self.duration_s
+
+    @property
+    def oversubscribed(self) -> bool:
+        """Did the run use well more cores than it was given? Its own pool
+        (multiprocessing sized from os.cpu_count(), say) on top of the
+        harness's parallel agents and replicates: the machine is
+        oversubscribed, and a solution that searches until a deadline finds
+        less the busier the machine is — its score measures the load."""
+        load = self.cpu_load
+        return (
+            load is not None
+            and (self.duration_s or 0.0) >= OVERSUBSCRIBED_MIN_S
+            and load > (self.cpus or 1) * OVERSUBSCRIBED_FACTOR
+        )
 
 
 class UnitTestResult(BaseModel):
@@ -423,6 +455,13 @@ class Candidate(BaseModel):
     def replicate_spread(self) -> float | None:
         best = self.best_trial
         return best.replicate_spread if best is not None else None
+
+    @property
+    def cpu_overuse(self) -> Replicate | None:
+        """The candidate's most oversubscribed run (`Replicate.oversubscribed`),
+        or None when every run kept to its allotment."""
+        runs = [r for t in self.trials for r in t.replicates if r.oversubscribed]
+        return max(runs, key=lambda r: r.cpu_load or 0.0) if runs else None
 
     @property
     def replicate_spreads(self) -> list[float]:

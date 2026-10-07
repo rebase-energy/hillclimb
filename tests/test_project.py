@@ -142,6 +142,8 @@ class TestInit:
         assert (tmp_path / "problems").is_dir()
         assert not (tmp_path / "problems" / "example").exists()  # picking a problem is the user's step
         assert (tmp_path / "runs").is_dir()
+        # climbers/ is there from the start, empty until `hillclimb climber get`
+        assert sorted(p.name for p in (tmp_path / "climbers").iterdir()) == [".gitkeep", ".hillclimb"]
         assert not (tmp_path / "hillclimb").exists()  # flat: no subfolder
         assert not (tmp_path / "specs").exists()  # a run carries its own spec.yaml
         ignored = (tmp_path / ".gitignore").read_text().splitlines()

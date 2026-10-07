@@ -187,7 +187,7 @@ def _spec_climber(config: Config, named) -> dict:
     if isinstance(named, dict):
         return named
     try:
-        return as_spec(named).anchored(config.hillclimb_dir).block()
+        return as_spec(named, config.hillclimb_dir).anchored(config.hillclimb_dir).block()
     except ClimberLoadError as exc:
         raise typer.BadParameter(str(exc), param_hint="--climber") from exc
 
@@ -290,6 +290,30 @@ def _run_suite(
         say(f"  pid={pid} [path]{_m(problem_target)}[/]  log=[path]{_m(log_path)}[/]")
 
 
+def _warn_oversubscribed(config, overrides: dict, searches: int) -> None:
+    """Say so when the run can keep more cores busy than the machine has:
+    every search evaluates up to `parallel_agents` candidates at once, each
+    with its replicates side by side, each run on `solution_cpus` cores. A
+    solution that searches until a deadline then finds less the busier the
+    machine is, and its score measures the contention."""
+    import os
+
+    cpus = int(overrides.get("concurrency.solution_cpus", config.concurrency.solution_cpus))
+    agents = int(overrides.get("concurrency.parallel_agents", config.concurrency.parallel_agents))
+    replicates = int(overrides.get("evaluation.n_replicates", config.evaluation.n_replicates))
+    at_once = int(overrides.get("concurrency.parallel_replicates", config.concurrency.parallel_replicates))
+    replicates = max(1, replicates) if at_once == 0 else min(max(1, replicates), at_once)
+    runs = max(1, searches) * max(1, agents) * replicates
+    cores = os.cpu_count() or 1
+    if runs * cpus > cores:
+        warn(
+            f"up to {runs} solution runs at once ({searches} searches x {agents} agents x "
+            f"{replicates} replicates at once) at {cpus} CPU core{'s' if cpus != 1 else ''} each want "
+            f"{runs * cpus} cores; this machine has {cores}. Scores of solutions that search "
+            "until a deadline will depend on the load: lower --solution-cpus or the parallelism"
+        )
+
+
 @app.command()
 def run(
     target: str,
@@ -323,6 +347,13 @@ def run(
         1, "--parallel-searches", min=1,
         help="Independent searches on the problem at once, each in the background",
     ),
+    solution_cpus: int = typer.Option(
+        None, "--solution-cpus", min=1,
+        help=(
+            "CPU cores each run of a solution may use, given to it as $HILLCLIMB_CPUS "
+            "(default 1; --set concurrency.solution_cpus=N is the same)"
+        ),
+    ),
     detach: bool = typer.Option(
         True, "--detach/--no-detach",
         help="Run in the background (the default; `hillclimb watch` follows it) or in this terminal (Ctrl-C stops it)",
@@ -330,6 +361,13 @@ def run(
     n_replicates: int = typer.Option(
         None, "--n-replicates", "--n-trials",
         help="Seeded runs per trial (the median is the trial's score; --n-trials is the old spelling)",
+    ),
+    parallel_replicates: int = typer.Option(
+        None, "--parallel-replicates", min=0,
+        help=(
+            "How many of a trial's replicates run at once: 0 = all (default), 1 = one after another, "
+            "required when the metric measures the machine (time, throughput, memory)"
+        ),
     ),
     seed_from: Path = typer.Option(
         None, "--seed-from", help="Incumbent solution.py scored as the floor candidate"
@@ -379,14 +417,21 @@ def run(
         from hillclimb.climber import ClimberLoadError, as_spec
 
         try:
-            config.climber = as_spec(single_climber)  # naming a climber replaces the folder's block
+            config.climber = as_spec(single_climber, config.hillclimb_dir)  # naming a climber replaces the folder's block
         except ClimberLoadError as exc:
             raise typer.BadParameter(str(exc), param_hint="--climber") from exc
     if parallel_agents is not None:
         config.concurrency.parallel_agents = parallel_agents
     if n_replicates is not None:
         config.evaluation.n_replicates = n_replicates
+    if parallel_replicates is not None:
+        # a --set, so it reaches every engine the run starts and its spec.yaml
+        set_ = [*(set_ or []), f"concurrency.parallel_replicates={parallel_replicates}"]
+    if solution_cpus is not None:
+        # a --set, so it reaches every engine the run starts and its spec.yaml
+        set_ = [*(set_ or []), f"concurrency.solution_cpus={solution_cpus}"]
     overrides = common._parse_set(set_ or [])
+    _warn_oversubscribed(config, overrides, parallel_searches)
     common.require_sandbox(config, overrides)
     common.ensure_agents_ready(config, agent, model)
     if mixed:

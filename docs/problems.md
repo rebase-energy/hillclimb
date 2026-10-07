@@ -322,9 +322,10 @@ on its own. Three settings decide whether it can:
 ```yaml
 evaluation:
   n_replicates: 5        # run each trial (parameter set) this many times
-  replicate_mode: serial # `parallel` (default) | `serial`
   noise_k: 2             # a gain must beat 2x the measured noise floor
   min_improvement: 0.0   # ...or an absolute floor, in metric units
+concurrency:
+  parallel_replicates: 1 # of those, how many at once: 0 = all (default), 1 = one after another
 ```
 
 Concurrency is bounded machine-wide, not per search: `concurrency.parallel_agents`
@@ -339,10 +340,10 @@ N coding agents cost at most N cores; `hillclimb ps` shows what is actually runn
   unlucky seed does not become the number the search ranks on. With
   `n_replicates: 1` (the default) it is simply that run's score. A candidate
   is scored by its best trial; seeds are never tuned.
-- **`replicate_mode: serial` is required whenever the metric measures the
-  machine** — wall-clock time, throughput, memory. Parallel replicates share
-  a CPU, so they measure each other. For seed variance, parallel is right and
-  three times faster.
+- **`concurrency.parallel_replicates: 1` is required whenever the metric
+  measures the machine** — wall-clock time, throughput, memory. Replicates
+  running at once share a CPU, so they measure each other. For seed
+  variance, all at once (`0`, the default) is right and three times faster.
 - **The accept band** is what stops the climb. A candidate becomes the new
   best only if it beats the incumbent by more than
   `max(min_improvement, noise_k x noise_floor)`, where the noise floor is the

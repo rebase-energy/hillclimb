@@ -123,14 +123,23 @@ ref is imported.
 - Noisy metrics: a trial's score is the MEDIAN of its replicates;
   `evaluation.n_replicates` + `noise_k`/`min_improvement` set an accept band so
   the search cannot climb noise (the floor is the within-trial replicate
-  spread — spread across parameter sets is signal), and `replicate_mode:
-  serial` is mandatory when the metric measures the machine
-  (time/throughput/memory) — parallel replicates measure each other. Seeds
-  are never tuned. `n_trials`/`trial_mode` are accepted as legacy spellings
+  spread — spread across parameter sets is signal), and
+  `concurrency.parallel_replicates: 1` (one at a time) is mandatory when the
+  metric measures the machine (time/throughput/memory) — replicates running
+  at once measure each other; 0 (the default) runs all of a trial's at once.
+  Seeds are never tuned. `n_trials`/`trial_mode` and `replicate_mode:
+  parallel | serial` (= 0 | 1, `config.LEGACY_VALUES`) are accepted as
+  legacy spellings
 - Concurrency: `concurrency.parallel_agents` per search, `concurrency.machine_max_agents`
   across the machine (flock slots in `~/.cache/hillclimb/agent-slots/`, default
-  `min(8, cores-2)`); verifier and coding agent envs are single-threaded
-  (`executor.SINGLE_THREAD_ENV`, parent values win). CPU accounting:
+  `min(8, cores-2)`); verifier, holdout and coding agent envs are capped at
+  `concurrency.solution_cpus` cores (default 1): `$HILLCLIMB_CPUS` plus the
+  `executor.SINGLE_THREAD_ENV` thread variables (`executor.single_threaded`,
+  parent values win for the latter). Nothing enforces it for processes a
+  solution starts itself; `Replicate.cpus` journals the allotment and
+  `Replicate.oversubscribed` (cpu_s / duration_s > 1.5 x it, runs >= 5 s)
+  flags a run that used more (`cpu 6.9/1` in watch); `cli/run.
+  _warn_oversubscribed` warns at launch. CPU accounting:
   `harness/procs.py` (`Reaper`) reaps every child the harness spawns — verifier
   runs and coding agent calls — through `os.wait4`, sampling live descendants with `ps`
   before a group kill; `AgentResult.cpu_s` → `AgentInfo.cpu_s` is the coding agent
@@ -326,6 +335,20 @@ ref is imported.
   `operators` as a mapping, `graph:`, `--set climber.ref=X`, and
   `learning.<behaviour flag>` (→ `memory_params`); an openevolve `ref`'s
   MAP-Elites settings are sorted into `selector_params`
+- Climber folders (`hillclimb climber get <preset>`, `cli/climber.py` + `climber.
+  write_climber_folder`): `climbers/<name>/` = `climber.yaml` (the block, defaults
+  spelled out, paths relative to the folder), `policy.py` (the operator policy's
+  source) and `prompts/` (the templates its operators render — `Operator.templates`
+  declares them — plus `README.md` from `climber.prompts_guide`, whose token table
+  is `operators.builtin.TOKEN_GUIDE`; `tests/test_climber_get.py` holds both to the
+  templates). A folder holding `climber.yaml` is a first-class ref
+  (`spec.folder_block`: its refs come back prefixed with the folder, `load_climber`
+  reads it with the folder as base; a `ClimberSpec` validated from a string looks a
+  relative folder up under `context={"base_dir": …}`, the hillclimb dir for
+  `hillclimb.yaml`, `--set climber=` and `--climber`). `get` pins `climber:
+  climbers/<name>` in hillclimb.yaml (`cli/climber.pin_climber`: a scalar line is
+  replaced, the commented `init` line uncommented, an active block left alone). A
+  loop (`gepa`) is refused; the copy is its own identity
 - Module refs (`modules/refs.py`): every slot is named the same three ways —
   a registry name, `file.py[:Class]` (relative to the file the block is
   written in; anchored absolute by `ClimberSpec.anchored` at each boundary),

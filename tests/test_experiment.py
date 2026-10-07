@@ -612,13 +612,13 @@ class TestLegacyReplicateKeys:
     def test_config_load_maps_old_keys(self):
         config = Config.model_validate({"search": {"n_trials": 2, "trial_mode": "serial"}})
         assert config.evaluation.n_replicates == 2
-        assert config.evaluation.replicate_mode == "serial"
+        assert config.concurrency.parallel_replicates == 1  # `serial` is one at a time
 
     def test_apply_overrides_maps_old_keys(self):
         config = Config()
         config.apply_overrides(parse_set_overrides(["search.n_trials=3", "search.trial_mode=serial"]))
         assert config.evaluation.n_replicates == 3
-        assert config.evaluation.replicate_mode == "serial"
+        assert config.concurrency.parallel_replicates == 1
 
 
 class TestSummaryJson:

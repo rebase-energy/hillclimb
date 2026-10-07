@@ -1,4 +1,4 @@
-"""`hillclimb climber list|new|check`."""
+"""`hillclimb climber list|get|show|new|check`."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import typer
 
 from hillclimb.cli import common
 from hillclimb.cli._app import HillclimbGroup, app
-from hillclimb.cli.common import _m, fail, say, warn
+from hillclimb.cli.common import _m, fail, legend, next_steps, say, warn
 from hillclimb.config import Config
 from hillclimb.harness.journal import Journal
 from hillclimb.harness.store import key_for, open_store
@@ -49,8 +49,20 @@ def _climber_ref(path: Path, base_dir: Path | None) -> str:
     return str(path)
 
 
-def _is_legacy_dir(path: Path) -> bool:
+def _is_climber_dir(path: Path) -> bool:
+    """A climber folder: `hillclimb climber get` wrote it, or a pre-0.6 manifest."""
     return (path / "climber.yaml").is_file()
+
+
+def _is_pre_06_manifest(path: Path) -> bool:
+    """Does the folder's manifest use the 0.4/0.5 keys (`policy`, `holdout_timing`, …)?"""
+    import yaml
+
+    try:
+        data = yaml.safe_load((path / "climber.yaml").read_text()) or {}
+    except (OSError, yaml.YAMLError):
+        return False
+    return isinstance(data, dict) and any(key in data for key in ("policy", "holdout_timing", "description", "similarity"))
 
 
 def _say_check_report(report) -> None:
@@ -71,16 +83,23 @@ def _say_check_report(report) -> None:
 def climber_list(as_json: bool = typer.Option(False, "--json", help="Machine-readable output")):
     """The climbers a bare name stands for: the presets, and every one-file
     climber under climbers/."""
-    from hillclimb.climber import ClimberLoadError, climber_base_dir, climber_label, load_climber, presets
+    from hillclimb.climber import ClimberLoadError, climber_base_dir, load_climber, presets
+
+    from hillclimb.climber import resolve_climber
 
     config = common.load_config()
     base_dir = climber_base_dir(config)
-    default = config.climber.label  # the folder's climber, by what views call it
+    try:  # the folder's climber, by identity: a preset and a folder copied from it are two climbers
+        default = resolve_climber(config.climber, base_dir).sha256
+    except (ClimberLoadError, ValueError):
+        default = None
     refs = [(name, "preset") for name in presets()]
     local = _local_climbers_dir(config)
     if local is not None and local.is_dir():
         for path in sorted(local.iterdir()):
-            if _is_legacy_dir(path) or (path.is_file() and path.suffix == ".py"):
+            if _is_climber_dir(path):
+                refs.append((_climber_ref(path, base_dir), "folder"))
+            elif path.is_file() and path.suffix == ".py":
                 refs.append((_climber_ref(path, base_dir), "local"))
     rows = []
     for ref, origin in refs:
@@ -89,14 +108,14 @@ def climber_list(as_json: bool = typer.Option(False, "--json", help="Machine-rea
             kind, description = ("loop" if climber.is_loop else "operator policy"), climber.description
         except (ClimberLoadError, ValueError) as exc:
             rows.append({"ref": ref, "origin": origin, "kind": "?", "description": f"BROKEN: {exc}",
-                         "sha256": None, "default": climber_label(ref) == default})
+                         "sha256": None, "default": False})
             continue
-        if base_dir is not None and _is_legacy_dir(base_dir / ref):
+        if base_dir is not None and _is_climber_dir(base_dir / ref) and _is_pre_06_manifest(base_dir / ref):
             description = f"pre-0.6 directory: `hillclimb climber show {ref}` prints it as a block"
         rows.append({
             "ref": ref, "origin": origin, "kind": kind,
             "description": description, "sha256": climber.sha256[:12],
-            "default": climber_label(ref) == default,
+            "default": climber.sha256 == default,
         })
     if as_json:
         typer.echo(json.dumps(rows, indent=2))
@@ -119,6 +138,7 @@ def climber_list(as_json: bool = typer.Option(False, "--json", help="Machine-rea
         say(f"  {slot:<16} [path]{_m(', '.join(module_refs.registered_names(kind)))}[/]")
     say("\n[note]* = this folder's default.[/]  Run one:        [cmd]hillclimb run <problem> --climber <name>[/]")
     say("                              See its block:  [cmd]hillclimb climber show <name>[/]")
+    say("                              Read and edit one: [cmd]hillclimb climber get greedy[/]  (its policy and prompts, as a folder)")
     say("                              Start your own: [cmd]hillclimb climber new <name> --from greedy[/]")
 
 
@@ -171,6 +191,114 @@ def climber_show(
         fail(_m(exc))
         raise typer.Exit(2) from exc
     typer.echo(yaml.safe_dump({"climber": _portable_block(climber, base_dir)}, sort_keys=False), nl=False)
+
+
+@climber_app.command("get")
+def climber_get(
+    preset: str = typer.Argument("greedy", help="A preset to copy out: greedy | openevolve (see: hillclimb climber list)"),
+    name: str = typer.Option(None, "--name", help="The folder's name under climbers/ (default: the preset's)"),
+    default: bool = typer.Option(
+        True, "--default/--no-default",
+        help="Make the copy this folder's climber (`climber:` in hillclimb.yaml), so `hillclimb run` uses it",
+    ),
+):
+    """Copy a preset into climbers/<name>/: a folder you can read and edit.
+
+    The folder IS the climber: climber.yaml with every default spelled out,
+    policy.py (which operator makes the next attempt), and prompts/ with the
+    templates its operators render — the words the coding agents get — plus
+    a README of what the harness fills into each template's tokens. It
+    becomes this folder's climber, so edit a template and the next
+    `hillclimb run` climbs with it. An existing folder is never overwritten.
+    """
+    import re as _re
+
+    from hillclimb.cli.problem import _hillclimb_dir_or_offer
+    from hillclimb.climber import ClimberLoadError, climber_base_dir, load_climber, presets, write_climber_folder
+    from hillclimb.project import MARKER_FILE, ensure_owned_dir
+
+    if preset not in presets():
+        fail(f"error: no preset {_m(repr(preset))} [note](presets: {_m(', '.join(presets()))})[/]")
+        raise typer.Exit(1)
+    name = name or preset
+    if not _re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", name):
+        raise typer.BadParameter(f"{name!r}: a climber name is letters, digits, - and _", param_hint="--name")
+    config = _hillclimb_dir_or_offer(preset, f"climber get {preset}")
+    local = _local_climbers_dir(config)
+    base_dir = climber_base_dir(config)
+    target = local / name
+    ref = _climber_ref(target, base_dir)
+    if target.exists():
+        if not _is_climber_dir(target):
+            fail(f"error: [path]{_m(target)}[/] exists and is not a climber folder [note](never overwritten)[/]")
+            raise typer.Exit(1)
+        say(f"[head]Already have {_m(name)}[/] at [path]{_m(target)}[/] [note](never overwritten)[/]")
+        written = sorted(
+            p.relative_to(target).as_posix() for p in target.rglob("*")
+            if p.is_file() and "__pycache__" not in p.parts and not p.name.startswith(".")
+        )
+    else:
+        try:
+            source = load_climber(preset, base_dir)
+            ensure_owned_dir(local)  # marked: `reset` may delete it (an existing one stays the user's)
+            written = write_climber_folder(source, target, name)
+            load_climber(ref, base_dir).operator_set()  # the copy loads, or it is not left behind
+        except (ClimberLoadError, ValueError) as exc:
+            import shutil
+
+            shutil.rmtree(target, ignore_errors=True)
+            fail(f"error: {_m(exc)}")
+            raise typer.Exit(1) from exc
+        say(f"[head]Fetched {_m(preset)}[/] as [path]{_m(ref)}[/]")
+    legend([(path, note) for path, note in _folder_legend(written)])
+    if default and config.hillclimb_dir is not None:
+        marker = config.hillclimb_dir / MARKER_FILE
+        pinned = pin_climber(marker.read_text() if marker.exists() else "", ref)
+        if pinned is None:
+            warn(f"{MARKER_FILE} defines a `climber:` block of its own; set `climber: {ref}` there yourself")
+        else:
+            marker.write_text(pinned)
+            say(f"[head]Default:[/] `climber: {_m(ref)}` in [path]{_m(MARKER_FILE)}[/] [note](every `hillclimb run` here climbs with it)[/]")
+    next_steps([
+        (f"cat {ref}/prompts/README.md", "how a prompt is made, and what fills each template"),
+        (f"hillclimb climber check --climber {ref}", "after editing a template or policy.py"),
+        ("hillclimb run <problem> --budget 10m", "climb with it"),
+    ])
+
+
+def _folder_legend(written: list[str]) -> list[tuple[str, str]]:
+    """One note per file of a climber folder, prompts grouped."""
+    notes = {
+        "climber.yaml": "the block: policy, selector, operators, tuner, memory, prompts",
+        "policy.py": "the operator policy: which operator makes the next attempt",
+        "prompts/README.md": "how a prompt is made; what fills every token",
+    }
+    rows = [(path, notes[path]) for path in notes if path in written]
+    templates = [Path(path).name for path in written if path.startswith("prompts/") and path not in notes]
+    if templates:
+        rows.append(("prompts/*.md", f"the templates the operators render, the coding agents' words: {', '.join(templates)}"))
+    return rows
+
+
+def pin_climber(text: str, ref: str) -> str | None:
+    """`climber: <ref>` set in hillclimb.yaml, comments intact: the
+    commented `# climber: greedy` line `init` leaves is uncommented in
+    place, an active scalar replaced, none at all added. None when the file
+    defines an active `climber:` BLOCK — replacing its first line would
+    leave the block's keys dangling, so that edit is the person's."""
+    import re as _re
+
+    from hillclimb.connect import apply_config_defaults
+
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if _re.match(r"^climber:", line):
+            after = line.split(":", 1)[1].split("#", 1)[0].strip()
+            if after and not after.startswith(("{", "[")):
+                lines[index] = f"climber: {ref}"
+                return "\n".join(lines) + "\n"
+            return None
+    return apply_config_defaults(text, {"climber": ref})
 
 
 @climber_app.command("new")

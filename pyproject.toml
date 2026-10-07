@@ -1,6 +1,6 @@
 [project]
 name = "hillclimb"
-version = "0.7.1"
+version = "0.8.0"
 description = "Hillclimbing on verifiable rewards: coding agents search for Python programs that optimize a score you define"
 readme = "README.md"
 license = "MIT"

@@ -82,8 +82,11 @@ LEGACY_SETTINGS = {
     "backend_auth": "agent_auth",
     "search.n_replicates": "evaluation.n_replicates",
     "search.n_trials": "evaluation.n_replicates",
-    "search.replicate_mode": "evaluation.replicate_mode",
-    "search.trial_mode": "evaluation.replicate_mode",
+    # how many of a trial's replicates run at once was a mode (parallel |
+    # serial) until 0.7.2; it is a count now (`LEGACY_VALUES` maps the words)
+    "search.replicate_mode": "concurrency.parallel_replicates",
+    "search.trial_mode": "concurrency.parallel_replicates",
+    "evaluation.replicate_mode": "concurrency.parallel_replicates",
     "search.noise_k": "evaluation.noise_k",
     "search.min_improvement": "evaluation.min_improvement",
     # 0.5: how memory behaves was the user's `learning:` block, and the graph
@@ -109,6 +112,22 @@ RENAMED_KEYS = {
     "parallel_operators": "parallel_agents",
     "machine_max_operators": "machine_max_agents",
 }
+
+
+# a setting whose VALUES changed spelling along with its key: the old words
+# read as the new numbers (`replicate_mode: serial` is `parallel_replicates: 1`)
+LEGACY_VALUES: dict[str, dict[str, object]] = {
+    "concurrency.parallel_replicates": {"parallel": 0, "serial": 1},
+}
+
+
+def legacy_value(key: str, value):
+    """`value` for the setting `key` (in today's spelling) with an old word
+    read as what it means now; anything else comes back as it is."""
+    words = LEGACY_VALUES.get(key)
+    if words is not None and isinstance(value, str) and value.strip().lower() in words:
+        return words[value.strip().lower()]
+    return value
 
 
 def renamed_keys(data):
@@ -163,11 +182,8 @@ class EvaluationConfig(BaseModel):
 
     # seeded executions per trial (one parameter set); the trial's score is
     # their MEDIAN. Replicate variance is noise, never something to climb.
+    # How many of them run at once is `concurrency.parallel_replicates`.
     n_replicates: int = 1
-    # how replicates run. "parallel" is right for seed variance (and 3x
-    # faster); "serial" is REQUIRED for anything that measures time — runs
-    # sharing a machine contend, and the contention is the measurement.
-    replicate_mode: Literal["parallel", "serial"] = "parallel"
     # Noise guard. A candidate is only better than the incumbent when it beats
     # it by more than the band, so the search cannot climb measurement noise.
     #   min_improvement: absolute floor, in metric units
@@ -187,15 +203,34 @@ class ConcurrencyConfig(BaseModel):
         return renamed_keys(data)
 
     parallel_agents: int = 1  # attempts in flight per search; 1 = serial (default)
+    # how many of a trial's replicates (`evaluation.n_replicates` seeded runs)
+    # execute at once: 0 = all of them (the default, right for seed variance),
+    # 1 = one after another — REQUIRED for a metric that measures the machine
+    # (time, throughput, memory): runs sharing it contend, and the contention
+    # is the measurement. `replicate_mode: parallel | serial` was the pre-0.7.2
+    # spelling of 0 | 1.
+    parallel_replicates: int = Field(default=0, ge=0)
     # Machine-wide cap on concurrent coding agents across every search on this
     # machine (flock slots in ~/.cache/hillclimb/agent-slots/). Operators
     # beyond it wait (`waiting-slot` in watch). 0 = off; None = default_machine_max_agents().
     machine_max_agents: int | None = None
+    # CPU cores each run of a solution may use: verifier and holdout runs and
+    # the coding agents' own test runs get it as $HILLCLIMB_CPUS, with the math
+    # libraries' thread pools capped to match (executor.single_threaded). 1 =
+    # one core per run, so parallel agents and replicates never contend.
+    # Nothing enforces it beyond that; a run whose CPU time exceeds its wall
+    # time well past the allotment is flagged (`Replicate.oversubscribed`).
+    solution_cpus: int = Field(default=1, ge=1)
 
     def effective_machine_max_agents(self) -> int:
         if self.machine_max_agents is None:
             return default_machine_max_agents()
         return self.machine_max_agents
+
+    def replicates_at_once(self, n_replicates: int) -> int:
+        """How many of a trial's `n_replicates` runs execute at once."""
+        n = max(1, n_replicates)
+        return n if self.parallel_replicates == 0 else min(n, self.parallel_replicates)
 
 
 class RouteConfig(BaseModel):
@@ -467,6 +502,34 @@ class Config(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
+    def _replicate_mode(cls, data):
+        """`replicate_mode: parallel | serial` (under `evaluation:`, or a
+        0.3 `search:` block's `replicate_mode`/`trial_mode`) is
+        `concurrency.parallel_replicates: 0 | 1` now. Read wherever the
+        validators' order left it, the words mapped to the numbers; an
+        explicit `parallel_replicates` wins."""
+        if not isinstance(data, dict):
+            return data
+        found = None
+        for block, keys in (("search", ("replicate_mode", "trial_mode")), ("evaluation", ("replicate_mode",))):
+            section = data.get(block)
+            if isinstance(section, dict) and any(k in section for k in keys):
+                data = {**data, block: dict(section)}
+                for k in keys:
+                    if k in data[block]:
+                        found = data[block].pop(k)
+        concurrency = data.get("concurrency")
+        if isinstance(concurrency, dict) and isinstance(concurrency.get("parallel_replicates"), str):
+            data = {**data, "concurrency": {**concurrency, "parallel_replicates": legacy_value(
+                "concurrency.parallel_replicates", concurrency["parallel_replicates"])}}
+        if found is not None:
+            concurrency = dict(data.get("concurrency") or {})
+            concurrency.setdefault("parallel_replicates", legacy_value("concurrency.parallel_replicates", found))
+            data = {**data, "concurrency": concurrency}
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
     def _from_legacy_blocks(cls, data):
         """A config file written for 0.3 (`search:`, `ensemble:`,
         `operators:` blocks) still loads: every setting is moved to where it
@@ -608,8 +671,14 @@ class Config(BaseModel):
                 if "climber" in folder:
                     # a climber is ONE block: the folder's replaces the user
                     # level's whole, never merges into it (its params belong
-                    # to its policy, not to whichever policy ends up chosen)
-                    data["climber"] = folder["climber"]
+                    # to its policy, not to whichever policy ends up chosen).
+                    # A string names a preset, a file or a climber folder
+                    # (looked for under the hillclimb dir); its refs stay
+                    # relative, anchored at the hillclimb dir when used
+                    data["climber"] = (
+                        ClimberSpec.model_validate(folder["climber"], context={"base_dir": found}).block()
+                        if isinstance(folder["climber"], str) else folder["climber"]
+                    )
             config = cls.model_validate(data)
             config.hillclimb_dir = found
             if found is not None and (found / ".env").exists():
@@ -622,9 +691,12 @@ class Config(BaseModel):
         for key, value in overrides.items():
             if value is None:
                 continue
-            *parents, leaf = current_setting(key).split(".")
+            key = current_setting(key)
+            value = legacy_value(key, value)
+            *parents, leaf = key.split(".")
             if not parents and leaf == "climber":
-                value = ClimberSpec.model_validate(value)  # a name, a file or a block
+                # a name, a file, a climber folder (under the hillclimb dir) or a block
+                value = ClimberSpec.model_validate(value, context={"base_dir": config.hillclimb_dir})
             target: object = config
             for part in parents:
                 target = target[part] if isinstance(target, dict) else getattr(target, part)
@@ -649,10 +721,11 @@ class Config(BaseModel):
         working = self.model_copy(deep=True)
         for key, value in overrides.items():
             key = current_setting(key)
+            value = legacy_value(key, value)
             if key == "climber":
-                # naming a climber (a preset, a file, a whole block) replaces
-                # the block; later `climber.<field>` overrides then edit it
-                working.climber = ClimberSpec.model_validate(value)
+                # naming a climber (a preset, a file, a folder, a whole block)
+                # replaces the block; later `climber.<field>` overrides then edit it
+                working.climber = ClimberSpec.model_validate(value, context={"base_dir": self.hillclimb_dir})
                 continue
             if key in ("climber.operator_policy", "climber.loop"):
                 # a climber has one or the other: naming one drops the other

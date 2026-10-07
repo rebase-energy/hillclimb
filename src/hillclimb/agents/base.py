@@ -26,6 +26,10 @@ class AgentRequest(BaseModel):
     # Claude Code plugins to run with (`--plugin-dir`), from the hillclimb
     # dir's `agent_context.claude_plugins`; the user's own never apply
     plugins: list[Path] = Field(default_factory=list)
+    # CPU cores the coding agent's own runs of the solution may use
+    # (`concurrency.solution_cpus`): its env carries $HILLCLIMB_CPUS, as the
+    # verifier's does, so a test run sees the allotment the real one gets
+    cpus: int = Field(default=1, ge=1)
 
 
 class AgentResult(BaseModel):

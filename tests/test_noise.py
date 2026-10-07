@@ -196,7 +196,7 @@ def test_serial_trials_do_not_share_the_machine(task, config):
     """Anything that measures the machine (time, throughput, memory) measures
     its own sibling trials when they run concurrently."""
     config.evaluation.n_replicates = 3
-    config.evaluation.replicate_mode = "serial"
+    config.concurrency.parallel_replicates = 1
     agent = FakeAgent()
     agent.queue(script=TIMED_SOLUTION, notes="timed\n")
     searcher, journal, _ = make_searcher(task, config, agent)
@@ -210,7 +210,7 @@ def test_serial_trials_do_not_share_the_machine(task, config):
 
 def test_parallel_trials_run_concurrently(task, config):
     config.evaluation.n_replicates = 3
-    config.evaluation.replicate_mode = "parallel"  # the default
+    config.concurrency.parallel_replicates = 0  # the default: all at once
     agent = FakeAgent()
     agent.queue(script=TIMED_SOLUTION, notes="timed\n")
     searcher, journal, _ = make_searcher(task, config, agent)

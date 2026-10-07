@@ -54,7 +54,7 @@ def test_problem_rejects_unsafe_artifact_paths(task):
 def test_multi_trial_hoists_declared_json_artifact(tmp_path, task, config):
     problem = json_problem(tmp_path, task)
     config.evaluation.n_replicates = 2
-    config.evaluation.replicate_mode = "serial"
+    config.concurrency.parallel_replicates = 1
     search_dir = create_search_dir(tmp_path / "runs" / "r", "s")
     candidate_dir = create_candidate_dir(
         search_dir, "c001", problem.data_dir, problem.problem_dir

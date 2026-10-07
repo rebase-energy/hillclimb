@@ -41,6 +41,8 @@ the run has a single search), or `latest` (the default).
 | `verify <problem> [--repeat N] [--holdout] [--solution FILE]` | run a problem's verifier once, outside a search; `--repeat` measures the noise floor |
 | `run <target> [--name ...] [--budget 2h] [--agent ...] [--model ...] [--climber REF] [--no-detach]` | start a run for one problem or a suite YAML — in the background, `hillclimb watch` follows it; `--no-detach` keeps it in the terminal |
 | `run <problem> --parallel-searches N --parallel-agents M` | N independent searches (each in the background, one run) each running M coding agents at once |
+| `run <problem> --parallel-replicates P` | of a trial's `--n-replicates` seeded runs, how many execute at once: 0 = all (default), 1 = one after another, required when the metric measures the machine |
+| `run <problem> --solution-cpus C` | each run of a solution may use C cores, given to it as `$HILLCLIMB_CPUS` (default 1); see [Parallelism](concepts.md#parallelism) |
 | `run <problem> --climber A --climber B [--experiment-set EXPERIMENT:KEY=VALUE]` | a mixed fleet: one search per climber, each tagged as an experiment |
 | `resume [search] [--all] [--no-detach]` | continue a parked / stopped / crashed search on its remaining budget — detached, like `run` (`--no-detach` keeps it in the terminal); a dead coding agent login is offered a fresh one first |
 | `status [search]` | search state + candidate tree (text) |
@@ -63,8 +65,9 @@ the run has a single search), or `latest` (the default).
 | `summit [problem] [--to DIR] [--plot]` | copy the best solution found so far across every run of a problem into your hillclimb dir (its `solution.py`, `params.json` and output files); works mid-climb; `--plot` then draws it with the problem's `plot.py` into `solution.png` |
 | `disconnect <claude\|codex\|pi\|openrouter> [--local]` | undo a connect on hillclimb's side: comment the pin out of the same config file, remove the staged homes under `~/.cache/hillclimb/`, drop an OpenRouter key from the `.env`; the coding agent's own login is never touched |
 | `smoke [problem]` | one real coding agent call end-to-end (auth / contract check) |
-| `climber list` | the climbers `run --climber` accepts: the bundled ones and every one under `climbers/` |
-| `climber show [NAME]` | print a climber (a preset, a `.py` file, this folder's, a pre-0.6 directory) as the block a run config takes |
+| `climber list` | the climbers `run --climber` accepts: the presets and every folder or `.py` file under `climbers/` |
+| `climber get [PRESET] [--name NAME] [--no-default]` | copy a preset out as `climbers/<name>/` — `climber.yaml`, `policy.py`, `prompts/` with the templates its operators render and a README of what fills them — and make it this folder's climber |
+| `climber show [NAME]` | print a climber (a preset, a `.py` file, a climber folder, this folder's) as the block a run config takes |
 | `climber new <name> [--from NAME]` | copy a policy's source into `climbers/<name>.py` and print the block that runs it |
 | `climber check [--climber REF] [--set k=v] [--problem P] [--smoke] [--json]` | conformance check for a climber over the store's recorded journals; `--smoke` adds a dummy-coding-agent search |
 | `store searches [--problem KEY]` / `store sync` | list what the record store holds / import the folder's searches into the configured store |

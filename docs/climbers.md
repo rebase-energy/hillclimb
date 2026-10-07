@@ -61,6 +61,10 @@ Every slot names its module the same three ways:
 | a file | `mine.py` (the one class of that kind it defines) or `mine.py:Class` |
 | an importable class | `mypackage.policies:Annealed` |
 
+A whole climber is also named by a **folder** holding `climber.yaml` (what
+`hillclimb climber get` writes, see below): `climber: climbers/greedy`. Its
+file refs and `prompts:` are relative to the folder.
+
 A file is relative to the file the block is written in (the spec, or
 `hillclimb.yaml`). Files may import each other relatively (`from .helpers
 import x`). `hillclimb climber list` shows what is registered.
@@ -75,6 +79,48 @@ A bare name instead of a block is a **preset**, or one `.py` file:
 
 `hillclimb climber show openevolve` prints a preset as the block it stands
 for, ready to paste and edit.
+
+## The default climber as a folder you can read
+
+```bash
+hillclimb climber get greedy        # -> climbers/greedy/, and `climber: climbers/greedy` in hillclimb.yaml
+```
+
+copies a preset out as a folder that **is** a climber:
+
+```text
+climbers/greedy/
+├── climber.yaml        # the block, every default spelled out; paths relative to this folder
+├── policy.py           # the operator policy: which operator makes the next attempt
+└── prompts/
+    ├── README.md       # how a prompt is made: when each template is used, what fills each token
+    ├── draft.md        # the templates its operators render — the words the coding agents get
+    ├── research_cue.md
+    ├── debug.md
+    ├── improve.md
+    ├── ablation_cue.md
+    └── ensemble.md
+```
+
+A template is the climber's words plus `{{tokens}}` the harness fills in for
+one attempt: the problem, the candidate the attempt builds on, what earlier
+attempts tried, what memory knows from other searches. The policy decides
+which operator makes the attempt; the operator renders its template; the
+harness adds the contract (`{{contract}}`: how the solution is run and
+scored, the same for every climber and never a template of yours).
+`prompts/README.md` spells it out for the folder's own templates: the
+schedule with its numbers, one row per token with what fills it and when it
+is empty.
+
+The copy becomes this folder's climber (`--no-default` leaves
+`hillclimb.yaml` alone), so edit `improve.md` and the next `hillclimb run`
+climbs with it; `hillclimb climber check --climber climbers/greedy` lints a
+template's tokens first. A folder is named like any climber — `climber:
+climbers/greedy` in `hillclimb.yaml`, `--climber climbers/greedy`, an entry
+of a run spec — and has its own identity: a search that ran it is not a run
+of the `greedy` preset, as it must not be once a line was changed. `--name`
+copies under another name (`climber get openevolve --name qd`). A loop
+(`gepa`) owns its whole control flow and is not copied out this way.
 
 A `.py` file that builds a whole `Climber(...)` (your own policies next to
 built-in operators, tuner and memory) stands for THAT climber:
@@ -294,7 +340,8 @@ the machine-readable form. Exit 1 on any breach.
 ## Starting your own
 
 ```bash
-hillclimb climber list                       # the presets, your one-file climbers, the building blocks
+hillclimb climber list                       # the presets, your folders and one-file climbers, the building blocks
+hillclimb climber get greedy                 # the default climber as a folder to read and edit (policy, prompts)
 hillclimb climber show greedy                # a preset as a block to paste
 hillclimb climber new mine --from greedy     # copy greedy's source into climbers/mine.py, print its block
 hillclimb climber check --climber climbers/mine.py

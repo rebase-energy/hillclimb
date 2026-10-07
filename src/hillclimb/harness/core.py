@@ -165,6 +165,11 @@ class _OperatorServices:
         return self._searcher._report_section(self._searcher.journal.get(candidate_id))
 
 
+def _cores(n: int) -> str:
+    """`1 CPU core`, `4 CPU cores`: the allotment as the contract states it."""
+    return f"{n} CPU core" + ("" if n == 1 else "s")
+
+
 class Harness:
     """The fixed core of a search: runs whatever a `Loop` submits and
     owns every state invariant — candidate dirs, coding agent calls, verifier trials,
@@ -1022,6 +1027,7 @@ class Harness:
             kind=op.kind,
             allow_internet=self.config.allow_internet_for_agents,
             sandbox=agent_policy(self.config, self.search_dir, route.agent, self.problem),
+            cpus=self.config.concurrency.solution_cpus,
             plugins=[
                 (Path(self.config.hillclimb_dir or ".") / plugin).resolve()
                 for plugin in self.config.agent_context.claude_plugins
@@ -1643,6 +1649,7 @@ class Harness:
             engine_python=_sys.executable,  # the climber contract's cheap check runs on it
             metric_name=self.problem.metric_name,
             exec_timeout_min=self.config.budget.exec_timeout_s // 60,
+            solution_cpus=_cores(self.config.concurrency.solution_cpus),
             runtime_pkgs=self._runtime_pkgs(),
             time_remaining=self.budget.remaining_str(),
             holdout_clause=holdout_clause,
