@@ -177,7 +177,7 @@ def climber_show(
 ):
     """Print a climber as the block a run config takes.
 
-    Paste it under `climber:` in a run spec or in hillclimb.yaml and edit
+    Paste it under `climber:` in a run spec or in runs/config.yaml and edit
     it there: the block IS the climber. A pre-0.6 directory holding
     climber.yaml comes out as its block too — this is how one is migrated.
     """
@@ -202,7 +202,7 @@ def climber_get(
     name: str = typer.Option(None, "--name", help="The folder's name under climbers/ (default: the catalog's)"),
     default: bool = typer.Option(
         True, "--default/--no-default",
-        help="Make the copy this folder's climber (`climber:` in hillclimb.yaml), so `hillclimb run` uses it",
+        help="Make the copy this folder's climber (`climber:` in runs/config.yaml), so `hillclimb run` uses it",
     ),
 ):
     """Copy a catalog climber into climbers/<name>/: the whole climber as Python you can read and edit.
@@ -224,7 +224,7 @@ def climber_get(
     from hillclimb import catalog
     from hillclimb.cli.problem import _hillclimb_dir_or_offer
     from hillclimb.climber import ClimberLoadError, climber_base_dir, load_climber
-    from hillclimb.project import MARKER_FILE, ensure_owned_dir
+    from hillclimb.project import RUNS_CONFIG, ensure_owned_dir
 
     if preset not in catalog.climber_names():
         fail(f"error: no catalog climber {_m(repr(preset))} [note](available: {_m(', '.join(catalog.climber_names()))})[/]")
@@ -265,13 +265,16 @@ def climber_get(
         say(f"[head]Fetched {_m(preset)}[/] as [path]{_m(folder_ref)}[/]")
     legend([(path, note) for path, note in _folder_legend(written)])
     if default and config.hillclimb_dir is not None:
-        marker = config.hillclimb_dir / MARKER_FILE
-        pinned = pin_climber(marker.read_text() if marker.exists() else "", ref)
+        # the climber is a run default: it goes in runs/config.yaml
+        run_defaults = config.paths.runs_dir / RUNS_CONFIG
+        shown = f"runs/{RUNS_CONFIG}"
+        pinned = pin_climber(run_defaults.read_text() if run_defaults.exists() else "", ref)
         if pinned is None:
-            warn(f"{MARKER_FILE} defines a `climber:` block of its own; set `climber: {ref}` there yourself")
+            warn(f"{shown} defines a `climber:` block of its own; set `climber: {ref}` there yourself")
         else:
-            marker.write_text(pinned)
-            say(f"[head]Default:[/] `climber: {_m(ref)}` in [path]{_m(MARKER_FILE)}[/] [note](every `hillclimb run` here climbs with it)[/]")
+            run_defaults.parent.mkdir(parents=True, exist_ok=True)
+            run_defaults.write_text(pinned)
+            say(f"[head]Default:[/] `climber: {_m(ref)}` in [path]{_m(shown)}[/] [note](every `hillclimb run` here climbs with it)[/]")
     next_steps([
         (f"cat {folder_ref}/prompts/README.md", "how a prompt is made, and what fills each template"),
         (f"hillclimb climber check --climber {ref}", "after editing policy.py or a template"),
@@ -296,7 +299,7 @@ def _folder_legend(written: list[str]) -> list[tuple[str, str]]:
 
 
 def pin_climber(text: str, ref: str) -> str | None:
-    """`climber: <ref>` set in hillclimb.yaml, comments intact: the
+    """`climber: <ref>` set in runs/config.yaml, comments intact: the
     commented `# climber: greedy` line `init` leaves is uncommented in
     place, an active scalar replaced, none at all added. None when the file
     defines an active `climber:` BLOCK — replacing its first line would
@@ -376,7 +379,7 @@ def climber_new(
             shutil.rmtree(folder, ignore_errors=True)
             raise typer.BadParameter(f"the copy does not load: {exc}") from exc
         say(f"[head]Created[/] [path]{_m(_climber_ref(folder, base_dir))}[/] from [path]{_m(from_)}[/]")
-        say(f"[head]Run it:[/] `climber: {_m(ref)}` in hillclimb.yaml, or [cmd]--climber {_m(ref)}[/]")
+        say(f"[head]Run it:[/] `climber: {_m(ref)}` in runs/config.yaml, or [cmd]--climber {_m(ref)}[/]")
         say(f"[head]Next:[/] edit [path]{_m(ref)}[/] or a template beside it, then   [cmd]hillclimb climber check --climber {_m(ref)}[/]")
         return
     shutil.copy2(source_file, target)
@@ -398,7 +401,7 @@ def climber_new(
         target.unlink()
         raise typer.BadParameter(f"the copy does not load: {exc}") from exc
     say(f"[head]Created[/] [path]{_m(ref)}[/] from [path]{_m(from_)}[/]")
-    say("[head]Its block[/] [note](paste under `climber:` in a run spec or hillclimb.yaml):[/]")
+    say("[head]Its block[/] [note](paste under `climber:` in a run spec or runs/config.yaml):[/]")
     typer.echo(yaml.safe_dump({"climber": block}, sort_keys=False), nl=False)
     say(f"[head]Next:[/] edit it, then   [cmd]hillclimb climber check --climber {_m(block[brain])}[/]")
     say(f"                       [cmd]hillclimb run <problem> --climber {_m(block[brain])}[/]")

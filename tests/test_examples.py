@@ -15,13 +15,14 @@ from hillclimb.catalog import install_problem
 
 EXAMPLES = sorted(Path("examples").glob("*.py"))
 EVALUATIONS = 4
+from tests.folder_config import write_config
 
 
 @pytest.fixture
 def fresh_dir(tmp_path, monkeypatch) -> Path:
     """What `hillclimb init` + `hillclimb problem get fitness-landscape` leave:
     the examples find it the way a user's script would, through the folder."""
-    (tmp_path / "hillclimb.yaml").write_text("model: sonnet\n")
+    write_config(tmp_path, {"model": "sonnet"})
     install_problem(tmp_path / "problems", "fitness-landscape")
     monkeypatch.setenv("HILLCLIMB_DIR", str(tmp_path))
     # the problem's lean venv is the dev interpreter here: no test builds one

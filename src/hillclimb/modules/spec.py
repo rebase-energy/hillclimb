@@ -47,7 +47,7 @@ def renamed_block_keys(data: dict) -> dict:
 # keys a pre-0.6 manifest carried that a block does not
 _GONE = {
     "description": "a block has no `description`: say it in a YAML comment",
-    "similarity": "similarity scores are a viewer's setting (`similarity.scores` in hillclimb.yaml), not a climber's",
+    "similarity": "similarity scores are a viewer's setting (`similarity.scores` in runs/config.yaml), not a climber's",
     "holdout_timing": "a loop declares it on its class (`holdout_timing = \"after\"`); otherwise it is the user's `holdout.timing`",
 }
 
@@ -278,7 +278,7 @@ def composed_block(ref: str, base_dir: Path | None = None) -> dict[str, Any] | N
 
 
 class ClimberSpec(BaseModel):
-    """The `climber:` block — the same shape in a run spec and in hillclimb.yaml."""
+    """The `climber:` block — the same shape in a run spec and in runs/config.yaml."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -324,7 +324,7 @@ class ClimberSpec(BaseModel):
         if "routing" in data:
             raise ValueError(
                 "`routing` is reserved: which coding agent and model run is the user's "
-                "choice (hillclimb.yaml `routing:`), never a climber's"
+                "choice (runs/config.yaml `routing:`), never a climber's"
             )
         for key, advice in _GONE.items():
             if key in data:

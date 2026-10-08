@@ -12,6 +12,13 @@
   agent, `hc.run(...)`) it stops with the fix before anything is written. A budget capped in
   evaluations, tokens or cost is a chosen one and gets the default clock. `hillclimb reset
   --runs` keeps `runs/config.yaml`.
+- **How runs climb is a run default, in `runs/config.yaml`:** `climber`, `agent`, `model`,
+  `routing`, `budget`, `concurrency` (but `machine_max_agents`, the machine's), `learning` and
+  `similarity`. In `hillclimb.yaml` or the user config each is an error naming its new home;
+  the user config may keep a personal `agent`/`model`. `climber get` pins into
+  `runs/config.yaml`; `connect --local` pins the agent there and the login in `hillclimb.yaml`.
+  A run's `spec.yaml` records the run settings it used (`set:` pairs), so it reruns the same
+  after the defaults change.
 - **The engine ships no problem and no climber: one catalog, fetched with `get`.** hillclimb is
   the harness and the contracts; what to climb and how to climb it are the user's. What the
   package ships is a *catalog* of examples — the repository's own `problems/` and `climbers/`

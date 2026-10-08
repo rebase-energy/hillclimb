@@ -3,7 +3,7 @@
                                                                                                                         
  Print a climber as the block a run config takes.                                                                       
                                                                                                                         
- Paste it under `climber:` in a run spec or in hillclimb.yaml and edit                                                  
+ Paste it under `climber:` in a run spec or in runs/config.yaml and edit                                                
  it there: the block IS the climber. A pre-0.6 directory holding                                                        
  climber.yaml comes out as its block too — this is how one is migrated.                                                 
                                                                                                                         

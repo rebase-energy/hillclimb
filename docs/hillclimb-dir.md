@@ -12,7 +12,7 @@ my-project/
 ├── hillclimb.yaml      # defaults, and the marker that makes this the hillclimb dir
 ├── problems/           # problem definitions
 ├── runs/               # one folder per run: its spec, its records, its artifacts
-│   └── config.yaml     # the run defaults: the budget runs here climb on
+│   └── config.yaml     # the run defaults: climber, agent, model, budget, concurrency
 └── climbers/           # your own climbers, empty until `hillclimb climber get`
 ```
 
@@ -44,6 +44,17 @@ taken for yours. From anywhere else, commands error and point you at
 Config precedence, highest first: CLI flags → the run defaults in
 `runs/config.yaml` → the hillclimb dir's `hillclimb.yaml` → user
 `~/.config/hillclimb/config.yaml` → built-in defaults.
+
+The files split the settings by what they are about. `runs/config.yaml` holds
+how runs climb — `climber`, `agent`, `model`, `routing`, `budget`,
+`concurrency`, `learning`, `similarity` — and is committed beside the runs it
+launched. `hillclimb.yaml` and the user config hold the rest (logins, the
+sandbox, paths, the store, `concurrency.machine_max_agents`), and a run key
+in either is an error that names its new home; the user config may keep a
+personal `agent` and `model` under every folder's run defaults (`hillclimb
+connect` pins the agent there; `--local` pins it in the folder's
+`runs/config.yaml`). Each run's `spec.yaml` records the run settings it used,
+so it reruns the same way after the defaults change.
 
 ### A run needs a budget
 

@@ -153,6 +153,7 @@ def experiment_run(
             spec_entry(
                 job.problem, name=f"{job.experiment}-r{job.repeat}", budget=child_budget, seed_from=seed_path,
                 set=[f"{key}={_set_value(value)}" for key, value in job.overrides.items()],
+                run_config=config,
             )
             for job in jobs
         ], source=common._spec_provenance(config, spec_path))

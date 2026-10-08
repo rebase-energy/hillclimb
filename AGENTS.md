@@ -323,9 +323,10 @@ hold only the bases, which decide nothing. `_moved.py` maps pre-move module pref
   not identity); `routing`, `description`, `similarity`, `holdout_timing`
   are refused with advice (`routing` is the user's). The SAME block is a
   run-spec entry's `climber:`, the spec's top-level `climber:` (default for
-  its entries) and `hillclimb.yaml`'s (`Config.climber`, the folder default).
-  Precedence: layers REPLACE the block whole (user config < folder < spec
-  default < entry < `--climber NAME`); `--set climber.<field>` and
+  its entries) and `runs/config.yaml`'s (`Config.climber`, the folder default).
+  Precedence: layers REPLACE the block whole (runs/config.yaml < spec
+  default < entry < `--climber NAME`; hillclimb.yaml and the user config
+  refuse a `climber:`, `config._check_general_level`); `--set climber.<field>` and
   experiment overrides then EDIT the chosen block (`climber=<name|block>`
   replaces it; `climber.operator_policy`/`climber.loop` drop each other;
   `climber.operators.<name>.<k>` addresses `operator_params`). There are NO
@@ -381,8 +382,8 @@ hold only the bases, which decide nothing. `_moved.py` maps pre-move module pref
   (`spec.folder_block`: its refs come back prefixed with the folder, `load_climber`
   reads it with the folder as base; a `ClimberSpec` validated from a string looks a
   relative folder up under `context={"base_dir": …}`, the hillclimb dir for
-  `hillclimb.yaml`, `--set climber=` and `--climber`). `get` pins `climber:
-  climbers/<name>/policy.py` in hillclimb.yaml (`cli/climber.pin_climber`: a scalar line is
+  `runs/config.yaml`, `--set climber=` and `--climber`). `get` pins `climber:
+  climbers/<name>/policy.py` in runs/config.yaml (`cli/climber.pin_climber`: a scalar line is
   replaced, the commented `init` line uncommented, an active block left alone); `get
   gepa` copies the loop folder like any; the copy is its own identity
 - Module refs (`modules/refs.py`): every slot is named the same three ways —

@@ -75,7 +75,7 @@ def test_subscription_env_strips_api_key(monkeypatch):
 def test_dotenv_beside_config_is_loaded(tmp_path: Path, monkeypatch):
     hillclimb_dir = tmp_path / "hillclimb"
     hillclimb_dir.mkdir()
-    (hillclimb_dir / "hillclimb.yaml").write_text("model: sonnet\n")
+    (hillclimb_dir / "hillclimb.yaml").write_text("")
     (hillclimb_dir / ".env").write_text("# a comment\n\nOPENROUTER_API_KEY=sk-or-test\nQUOTED='sk-quoted'\n")
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.delenv("QUOTED", raising=False)
@@ -90,7 +90,7 @@ def test_dotenv_beside_config_is_loaded(tmp_path: Path, monkeypatch):
 def test_dotenv_never_overrides_a_real_env_var(tmp_path: Path, monkeypatch):
     hillclimb_dir = tmp_path / "hillclimb"
     hillclimb_dir.mkdir()
-    (hillclimb_dir / "hillclimb.yaml").write_text("model: sonnet\n")
+    (hillclimb_dir / "hillclimb.yaml").write_text("")
     (hillclimb_dir / ".env").write_text("OPENROUTER_API_KEY=from-file\n")
     monkeypatch.setenv("OPENROUTER_API_KEY", "from-shell")
     monkeypatch.chdir(hillclimb_dir)
@@ -283,27 +283,34 @@ def test_the_0_5_climber_block_still_loads():
         Config.model_validate({"climber": {"ref": "climbers/mine"}})  # a directory: show it as a block
 
 
-def test_the_folders_block_replaces_the_user_levels_whole(tmp_path, monkeypatch):
-    """Precedence between config files is per block: a folder that names a
-    climber gets that climber, not the user-level one's params under it."""
+def test_the_climber_is_a_run_default_and_the_user_config_keeps_only_agent_and_model(tmp_path, monkeypatch):
+    """The folder's climber lives in runs/config.yaml; the user config may
+    keep a personal agent/model under it, and nothing else of a run's."""
+    from hillclimb.config import ConfigError
+
     user = tmp_path / "user" / "config.yaml"
     user.parent.mkdir()
-    user.write_text("model: opus\nclimber: {policy: mine.py, params: {x: 1}, tuner: optuna}\n")
+    user.write_text("model: opus\nagent: codex\n")
     folder = tmp_path / "proj"
-    folder.mkdir()
-    (folder / "hillclimb.yaml").write_text(f"climber: {GEPA}\n")
+    (folder / "runs").mkdir(parents=True)
+    (folder / "hillclimb.yaml").write_text("")
+    (folder / "runs" / "config.yaml").write_text(f"climber: {GEPA}\nmodel: sonnet\n")
     monkeypatch.setattr("hillclimb.config.user_config_path", lambda: user)
     monkeypatch.setattr("hillclimb.config.user_env_path", lambda: tmp_path / "user" / ".env")
     monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
     monkeypatch.chdir(folder)
     config = Config.load()
-    assert config.model == "opus"  # other settings still merge
     assert config.climber.block() == block("gepa")
-    (folder / "hillclimb.yaml").write_text("model: sonnet\n")
-    config = Config.load()
-    assert config.model == "sonnet" and config.climber.tuner == "optuna"
-    # the user-level block's file refs resolve from ITS folder, wherever it is used from
-    assert config.climber.operator_policy == str(user.parent / "mine.py")
+    assert config.model == "sonnet" and config.agent == "codex"  # the run defaults win; the rest merges
+    user.write_text("climber: {operator_policy: mine.py}\n")
+    with pytest.raises(ConfigError, match="`climber:` is a run default now"):
+        Config.load()
+    user.write_text("")
+    (folder / "hillclimb.yaml").write_text("budget: {total_s: 60}\n")
+    with pytest.raises(ConfigError, match="hillclimb.yaml: `budget:` is a run default now: move it to runs/config.yaml"):
+        Config.load()
+    (folder / "hillclimb.yaml").write_text("concurrency: {machine_max_agents: 2}\n")  # the machine's, not a run's
+    assert Config.load().concurrency.machine_max_agents == 2
 
 
 def test_a_config_file_written_for_0_3_still_loads():

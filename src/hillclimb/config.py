@@ -30,8 +30,60 @@ RUNS_CONFIG_KEYS = frozenset({
 })
 
 
+# Run keys the user config may still hold, as personal defaults under every
+# folder's run defaults (`hillclimb connect` pins the agent there).
+USER_RUN_DEFAULTS = frozenset({"agent", "model"})
+# The one concurrency knob that is the machine's, not a run's: it caps every
+# search on this computer, so it stays with the general config.
+MACHINE_CONCURRENCY = frozenset({"machine_max_agents"})
+
+
 class ConfigError(ValueError):
     """A config file to fix: the message names the file, the key and the fix."""
+
+
+def _check_general_level(level: dict, path: Path, *, keep: frozenset = frozenset()) -> None:
+    """A general config file (hillclimb.yaml, the user config) holds no run
+    defaults: each run key there is an error that names its new home."""
+    for key in level:
+        if key not in RUNS_CONFIG_KEYS or key in keep:
+            continue
+        value = level[key]
+        if key == "concurrency" and isinstance(value, dict) and set(value) <= MACHINE_CONCURRENCY:
+            continue
+        where = " (concurrency.machine_max_agents stays here)" if key == "concurrency" else ""
+        raise ConfigError(f"{path}: `{key}:` is a run default now: move it to runs/{RUNS_CONFIG}{where}")
+
+
+def split_config(data: dict) -> tuple[dict, dict]:
+    """A whole config as (hillclimb.yaml, runs/config.yaml): the run keys
+    go to the run defaults, but for the machine's concurrency cap."""
+    general = {key: value for key, value in data.items() if key not in RUNS_CONFIG_KEYS}
+    runs = {key: value for key, value in data.items() if key in RUNS_CONFIG_KEYS}
+    concurrency = dict(runs.get("concurrency") or {})
+    machine = {key: concurrency.pop(key) for key in list(concurrency) if key in MACHINE_CONCURRENCY}
+    if machine:
+        general["concurrency"] = machine
+    if "concurrency" in runs:
+        runs["concurrency"] = concurrency
+    return general, runs
+
+
+def _check_runs_level(level: dict, path: Path) -> None:
+    """The run defaults hold run keys only."""
+    unknown = sorted(set(level) - RUNS_CONFIG_KEYS)
+    if unknown:
+        raise ConfigError(
+            f"{path}: {', '.join(unknown)} cannot go in the run defaults "
+            f"(they hold {', '.join(sorted(RUNS_CONFIG_KEYS))}); "
+            f"the rest of the config lives in {MARKER_FILE}"
+        )
+    machine = sorted(set(level.get("concurrency") or {}) & MACHINE_CONCURRENCY)
+    if machine:
+        raise ConfigError(
+            f"{path}: concurrency.{machine[0]} caps every search on this machine, "
+            f"not a run: it goes in {MARKER_FILE} or the user config"
+        )
 
 
 class BudgetConfig(BaseModel):
@@ -698,14 +750,18 @@ class Config(BaseModel):
         dir's `hillclimb.yaml` > user `~/.config/hillclimb/config.yaml` >
         built-in defaults.
 
-        An explicit `path` reads only that file (no discovery, no user
-        config) — the escape hatch for tests and embedders. Otherwise the
+        An explicit `path` reads only that file, and the run defaults beside
+        it when it is a hillclimb.yaml (no discovery, no user config, no
+        per-file key checks) — the escape hatch for tests and embedders. Otherwise the
         hillclimb dir is `start` (default CWD) or its `hillclimb/` subfolder —
         no upward search;
         with `require_dir` (the default) a missing one raises
         HillclimbDirNotFound."""
         if path is not None:
-            config = cls.model_validate(_read_yaml(path))
+            data = _read_yaml(path)
+            if path.name == MARKER_FILE:
+                data = _merge_level(data, renamed_keys(_read_yaml(runs_config_path(path.parent, data))), path.parent)
+            config = cls.model_validate(data)
             config.hillclimb_dir = None
             if (path.parent / ".env").exists():
                 _load_dotenv(path.parent / ".env")
@@ -719,25 +775,15 @@ class Config(BaseModel):
             # folder's `backend: dummy` must beat the user level's `agent:`,
             # not lose to it as "the new spelling wins" would after merging
             data = renamed_keys(_read_yaml(user_config_path()))
-            if isinstance(data.get("climber"), (dict, str)):
-                # a block means what it says where it was written: its file
-                # refs resolve from the user config's own folder
-                data["climber"] = ClimberSpec.model_validate(data["climber"]).anchored(
-                    user_config_path().parent
-                ).block()
+            _check_general_level(data, user_config_path(), keep=USER_RUN_DEFAULTS)
             if found is not None:
                 folder = renamed_keys(_read_yaml(found / MARKER_FILE))
+                _check_general_level(folder, found / MARKER_FILE)
                 data = _merge_level(data, folder, found)
                 # the run defaults sit above the folder's config
                 runs_file = runs_config_path(found, data)
                 runs = renamed_keys(_read_yaml(runs_file))
-                unknown = sorted(set(runs) - RUNS_CONFIG_KEYS)
-                if unknown:
-                    raise ConfigError(
-                        f"{runs_file}: {', '.join(unknown)} cannot go in the run defaults "
-                        f"(they hold {', '.join(sorted(RUNS_CONFIG_KEYS))}); "
-                        f"the rest of the config lives in {MARKER_FILE}"
-                    )
+                _check_runs_level(runs, runs_file)
                 data = _merge_level(data, runs, found)
             config = cls.model_validate(data)
             config.hillclimb_dir = found

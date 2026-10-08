@@ -737,6 +737,18 @@ def unpin_config_defaults(text: str, target: str) -> str:
     return "\n".join(lines) + ("\n" if lines else "")
 
 
+def unpin_split(runs_text: str, folder_text: str, target: str) -> tuple[str, str]:
+    """`unpin_config_defaults` for a folder whose pin is split: the `agent:`
+    in its run defaults, the `agent_auth:` in its hillclimb.yaml. The login
+    is unpinned only with the agent it belongs to."""
+    agent = next((line for line in runs_text.splitlines() if re.match(r"^agent:", line)), None)
+    if agent is None:
+        folder_after = unpin_config_defaults(folder_text, target)
+    else:
+        folder_after = unpin_config_defaults(f"{agent}\n{folder_text}", target).split("\n", 1)[1]
+    return unpin_config_defaults(runs_text, target) if runs_text else runs_text, folder_after
+
+
 def pins_agent(text: str) -> bool:
     """Does this config.yaml already choose a coding agent on purpose?
 

@@ -105,3 +105,38 @@ def test_reset_runs_keeps_the_run_defaults(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert not (folder / "runs" / "some-run").exists()
     assert (folder / "runs" / RUNS_CONFIG).read_text() == "budget: {total_s: 900}\n"
+
+
+def test_a_whole_config_splits_into_the_folders_and_the_run_defaults():
+    from hillclimb.config import split_config
+
+    general, runs = split_config({
+        "agent": "dummy", "sandbox": {"enabled": False},
+        "concurrency": {"parallel_agents": 2, "machine_max_agents": 4}, "budget": {"total_s": 60},
+    })
+    assert general == {"sandbox": {"enabled": False}, "concurrency": {"machine_max_agents": 4}}
+    assert runs == {"agent": "dummy", "concurrency": {"parallel_agents": 2}, "budget": {"total_s": 60}}
+
+
+def test_an_explicit_path_reads_the_run_defaults_beside_it(tmp_path):
+    (tmp_path / "runs").mkdir()
+    (tmp_path / "hillclimb.yaml").write_text("sandbox: {enabled: false}\n")
+    (tmp_path / "runs" / RUNS_CONFIG).write_text("budget: {total_s: 60}\nagent: dummy\n")
+    config = Config.load(path=tmp_path / "hillclimb.yaml")
+    assert config.budget.total_s == 60 and config.agent == "dummy" and not config.sandbox.enabled
+
+
+def test_the_machines_cap_is_refused_in_the_run_defaults(tmp_path):
+    folder = scaffold_hillclimb_dir(tmp_path / "hc")
+    (folder / "runs" / RUNS_CONFIG).write_text("concurrency: {machine_max_agents: 2}\n")
+    with pytest.raises(ConfigError, match="caps every search on this machine"):
+        Config.load(start=folder)
+
+
+def test_a_folder_pin_is_unpinned_in_both_its_files():
+    from hillclimb.connect import unpin_split
+
+    runs, folder = unpin_split("agent: codex\n", "agent_auth: subscription\n", "codex")
+    assert runs == "# agent: codex\n" and folder == "# agent_auth: subscription\n"
+    runs, folder = unpin_split("agent: claude-code\n", "agent_auth: subscription\n", "codex")
+    assert runs == "agent: claude-code\n" and folder == "agent_auth: subscription\n"  # another agent's pin stays

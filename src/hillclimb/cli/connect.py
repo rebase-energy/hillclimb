@@ -86,9 +86,11 @@ def _write_defaults(
     """Persist `agent`/`agent_auth`, unless the config already pins a
     coding agent on purpose — connecting a second coding agent to try it out must not
     silently repoint an existing setup. A user-level write also says so
-    when this folder's hillclimb.yaml pins something else and keeps winning."""
+    when this folder's run defaults pin something else and keep winning.
+    A folder's (`--local`) write splits: the agent is a run default
+    (runs/config.yaml), the login stays in hillclimb.yaml."""
     from hillclimb import connect as connect_mod
-    from hillclimb.project import MARKER_FILE, user_config_path
+    from hillclimb.project import MARKER_FILE, RUNS_CONFIG, user_config_path
 
     if wanted is False:
         return
@@ -99,23 +101,32 @@ def _write_defaults(
             "or drop [cmd]--local[/] to pin the defaults for every folder"
         )
         raise typer.Exit(1)
-    text = path.read_text() if path.exists() else ""
+    run_defaults = config.paths.runs_dir / RUNS_CONFIG if config.hillclimb_dir else None
+    agent_path = run_defaults if path.name == MARKER_FILE and run_defaults else path
+    text = agent_path.read_text() if agent_path.exists() else ""
     if wanted is None and connect_mod.pins_agent(text):
         current = f"{updates['agent']}/{updates['agent_auth']}"
         common.say(
-            f"[path]{common._m(path)}[/] already pins a coding agent — left as is "
+            f"[path]{common._m(agent_path)}[/] already pins a coding agent — left as is "
             f"[note](`hillclimb connect … --default` switches it to {common._m(current)})[/]"
         )
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(connect_mod.apply_config_defaults(text, updates))
-    settings = ", ".join(f"{key}: {value}" for key, value in updates.items())
-    common.say(f"[head]wrote[/] {common._m(settings)} to [path]{common._m(path)}[/]")
-    folder = config.hillclimb_dir / MARKER_FILE if config.hillclimb_dir else None
-    if path == user_config_path() and folder and folder.exists() and connect_mod.pins_agent(folder.read_text()):
+    writes = (
+        [(agent_path, {"agent": updates["agent"]}), (path, {k: v for k, v in updates.items() if k != "agent"})]
+        if agent_path != path else [(path, updates)]
+    )
+    for target, values in writes:
+        if not values:
+            continue
+        current_text = target.read_text() if target.exists() else ""
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(connect_mod.apply_config_defaults(current_text, values))
+        settings = ", ".join(f"{key}: {value}" for key, value in values.items())
+        common.say(f"[head]wrote[/] {common._m(settings)} to [path]{common._m(target)}[/]")
+    if path == user_config_path() and run_defaults and run_defaults.exists() and connect_mod.pins_agent(run_defaults.read_text()):
         common.say(
-            f"[note]this folder's[/] [path]{common._m(folder)}[/] [note]pins its own coding agent "
-            "and keeps overriding the user default here (`--local` changes that one)[/]"
+            f"[note]this folder's run defaults[/] [path]{common._m(run_defaults)}[/] [note]pin their own coding agent "
+            "and keep overriding the user default here (`--local` changes that one)[/]"
         )
 
 
@@ -517,7 +528,7 @@ def disconnect(
     never logs you out of claude, codex or pi.
     """
     from hillclimb import connect as connect_mod
-    from hillclimb.project import MARKER_FILE, user_config_path
+    from hillclimb.project import MARKER_FILE, RUNS_CONFIG, user_config_path
 
     if target not in connect_mod.TARGETS:
         raise typer.BadParameter(f"{target} is not one of {', '.join(connect_mod.TARGETS)}", param_hint="agent")
@@ -528,13 +539,20 @@ def disconnect(
     if path is None:
         common.fail("error: no hillclimb dir here — drop [cmd]--local[/] to unpin the user default")
         raise typer.Exit(1)
-    if path.exists():
-        before = path.read_text()
-        after = connect_mod.unpin_config_defaults(before, target)
-        if after != before:
-            path.write_text(after)
-            common.say(f"[head]unpinned[/] {common._m(target)} in [path]{common._m(path)}[/]")
-        else:
+    run_defaults = config.paths.runs_dir / RUNS_CONFIG if local else None
+    if path.exists() or (run_defaults is not None and run_defaults.exists()):
+        before = path.read_text() if path.exists() else ""
+        if run_defaults is None:
+            changed = [(path, before, connect_mod.unpin_config_defaults(before, target))]
+        else:  # a folder's pin: the agent in its run defaults, the login in hillclimb.yaml
+            runs_before = run_defaults.read_text() if run_defaults.exists() else ""
+            runs_after, after = connect_mod.unpin_split(runs_before, before, target)
+            changed = [(run_defaults, runs_before, runs_after), (path, before, after)]
+        changed = [(where, new) for where, old, new in changed if new != old]
+        for where, new in changed:
+            where.write_text(new)
+            common.say(f"[head]unpinned[/] {common._m(target)} in [path]{common._m(where)}[/]")
+        if not changed:
             common.say(f"[note]{common._m(path)} does not pin {common._m(target)} — nothing to unpin[/]")
 
     # 2. the key, for the OpenRouter route

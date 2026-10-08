@@ -477,13 +477,13 @@ def pick(module: types.ModuleType, kind: str | Kind, source: Path):
 
 
 class NoClimber(ClimberLoadError):
-    """Nothing names a climber: the folder's hillclimb.yaml has no `climber:`
+    """Nothing names a climber: the folder's runs/config.yaml has no `climber:`
     and the call gave none. The message says how to fetch one."""
 
 
 NO_CLIMBER_HINT = (
     "no climber: fetch one from the catalog with `hillclimb climber get greedy`, "
-    "or name your own (`--climber <file.py>`, `climber:` in hillclimb.yaml, "
+    "or name your own (`--climber <file.py>`, `climber:` in runs/config.yaml, "
     "`hc.catalog.climber('greedy')` in Python)"
 )
 

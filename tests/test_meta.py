@@ -31,6 +31,7 @@ from tests.test_prompt_golden import _check, collect_prompts
 REPO = Path(__file__).resolve().parents[1]
 META_PROBLEM = REPO / "problems" / "meta-heilbronn"
 GREEDY_SOURCE = META_PROBLEM / "greedy.py"  # the catalog greedy file up to its Climber(...) tail: candidate-shaped
+from tests.folder_config import write_config
 
 
 def _write_problem(root: Path, name: str, extra_yaml: str = "") -> Path:
@@ -313,13 +314,13 @@ def _meta_hillclimb_dir(tmp_path: Path, budget: str = "20s") -> Path:
                     ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copytree(META_PROBLEM, problems / "meta-heilbronn", ignore=shutil.ignore_patterns("__pycache__"))
     (problems / "meta-heilbronn" / "grade.yaml").write_text(f"problems: [heilbronn-11]\nbudget: {budget}\n")
-    (hc / "hillclimb.yaml").write_text(yaml.safe_dump({
+    write_config(hc, {
         "agent": "dummy",
         "paths": {"runtime_python": sys.executable},
         "budget": {"exec_timeout_s": 600},
         "learning": {"enabled": False},
         "holdout": {"enabled": False},
-    }))
+    })
     return hc
 
 

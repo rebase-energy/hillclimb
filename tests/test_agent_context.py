@@ -11,6 +11,7 @@ import pytest
 from hillclimb.config import Config
 from hillclimb.harness import agent_context
 from tests.catalog_fixture import pin
+from tests.folder_config import write_config
 
 
 def write_skill(root: Path, name: str, description: str, body: str = "Do the thing.\n") -> Path:
@@ -133,7 +134,7 @@ def test_skills_lists_and_deletes(layers, monkeypatch):
 
     config, _, local = layers
     monkeypatch.setenv("HILLCLIMB_DIR", str(config.hillclimb_dir))
-    (config.hillclimb_dir / "hillclimb.yaml").write_text("model: sonnet\n")
+    write_config(config.hillclimb_dir, {"model": "sonnet"})
     result = CliRunner().invoke(cli.app, ["skills"])
     assert result.exit_code == 0, result.output
     assert "dst-gaps" in result.output and "profile-first" in result.output and "local" in result.output

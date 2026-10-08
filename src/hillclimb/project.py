@@ -113,49 +113,25 @@ def user_env_path() -> Path:
 
 INIT_CONFIG = """\
 # hillclimb config — this file marks the hillclimb dir (problems/, climbers/ and
-# runs/ sit beside it); run hillclimb from this folder. Precedence: CLI flags >
-# runs/config.yaml (the run defaults) > this file > ~/.config/hillclimb/config.yaml >
-# built-in defaults.
-
-model: sonnet
-# agent: claude-code
+# runs/ sit beside it); run hillclimb from this folder. HOW runs climb (climber,
+# coding agent, model, budget, concurrency) is in runs/config.yaml, the run
+# defaults. Precedence: CLI flags > runs/config.yaml > this file >
+# ~/.config/hillclimb/config.yaml > built-in defaults.
 __STORE__
-# climber: climbers/greedy/policy.py   # HOW to climb, this folder's default: a climber `hillclimb climber get greedy`
-#                                      # fetched from the catalog (greedy | openevolve | gepa — the whole climber as
-#                                      # Python you can edit), or your own .py. A run spec's own `climber:` replaces it
-# climber:                 # ...or the whole block (`hillclimb climber show climbers/greedy` prints one to edit)
-#   selector_policy: climbers/greedy/policy.py:Best    # which candidate to build on next: a file:Class or package.module:Class
-#   operator_policy: climbers/greedy/policy.py:Greedy  # which operator to use on it
-#   selector_params: {num_drafts: 3}   # overrides of the classes' DEFAULTS (`params:` for the operator policy's)
-#   operators: [draft, debug, improve, ensemble]
-#   tuner: random          # random | optuna (parameter tuning of candidates that declare params.json)
-#   memory: files          # files | none
+# agent_auth: subscription        # how the coding agent logs in (`hillclimb connect` sets it)
+# allow_internet_for_agents: true # may the coding agents use the web?
+
+# concurrency:
+#   machine_max_agents: 8  # cap across every search on this machine (default min(8, cores-2))
 
 # evaluation:
 #   n_replicates: 1        # seeded runs per trial (median is the trial's score)
 #   noise_k: 0             # require gains > k x the measured noise floor
 #   min_improvement: 0     # ...or an absolute floor, in metric units
 
-# concurrency:              # four levels; see docs.hillclimb.sh/parallelism
-#   parallel_agents: 1     # coding agents (attempts in flight) per search
-#   machine_max_agents: 8  # cap across every search on this machine (default min(8, cores-2))
-#   parallel_replicates: 0 # a trial's seeded runs at once: 0 = all; 1 when the metric measures the machine (time!)
-#   solution_cpus: 1       # cores each run of a solution may use ($HILLCLIMB_CPUS)
-
 # holdout:
 #   enabled: true
 #   top_k: 5             # holdout scored only for top-k-by-val candidates
-
-# similarity:            # `hillclimb similarity scores`: name (or my_score.py) -> params
-#   scores:
-#     solution-card: {card_model: anthropic/claude-haiku-4.5, embedding_model: voyageai/voyage-4}
-#     api-calls: {}
-
-# learning:
-#   enabled: true        # knowledge cards in knowledge/ inform new searches
-#   max_cards: 3
-#   complexity_prior: false
-#   live: true           # concurrent searches in one run share discoveries mid-flight
 
 # report:
 #   enabled: true        # inject eval breakdowns (per-zone/horizon/quantile) into improve prompts
@@ -171,11 +147,40 @@ RUNS_CONFIG_TEMPLATE = """\
 # flag (`hillclimb run --budget 30m`) or a run spec says otherwise. Each run
 # still records what it used in runs/<run-id>/spec.yaml.
 
+# climber: climbers/greedy/policy.py   # HOW to climb: a climber `hillclimb climber get greedy` fetched from the
+#                                      # catalog (greedy | openevolve | gepa — the whole climber as Python you can
+#                                      # edit), or your own .py. A run spec's own `climber:` replaces it
+# climber:                 # ...or the whole block (`hillclimb climber show climbers/greedy` prints one to edit)
+#   selector_policy: climbers/greedy/policy.py:Best    # which candidate to build on next: a file:Class or package.module:Class
+#   operator_policy: climbers/greedy/policy.py:Greedy  # which operator to use on it
+#   selector_params: {num_drafts: 3}   # overrides of the classes' DEFAULTS (`params:` for the operator policy's)
+#   operators: [draft, debug, improve, ensemble]
+#   tuner: random          # random | optuna (parameter tuning of candidates that declare params.json)
+#   memory: files          # files | none
+
+model: sonnet
+# agent: claude-code       # the coding agent (a personal default can live in ~/.config/hillclimb/config.yaml)
+# routing:                 # another agent or model for one operator
+#   draft: {model: opus}
+
 # budget:
 #   total_s: 1800          # the wall clock of a run (unset: `hillclimb run` asks first)
 #   deadline: graceful     # `hard` aborts in-flight operators when total_s runs out
 #   max_evaluations: 0     # verifier trials the climber may spend (0 = unlimited)
 #   max_cost_usd: 0        # coding-agent spend that parks the search (0 = no ceiling)
+
+# concurrency:              # see docs.hillclimb.sh/parallelism
+#   parallel_agents: 1     # coding agents (attempts in flight) per search
+#   parallel_replicates: 0 # a trial's seeded runs at once: 0 = all; 1 when the metric measures the machine (time!)
+#   solution_cpus: 1       # cores each run of a solution may use ($HILLCLIMB_CPUS)
+
+# learning:
+#   enabled: true          # knowledge cards in knowledge/ inform new searches
+
+# similarity:              # `hillclimb similarity scores`: name (or my_score.py) -> params
+#   scores:
+#     solution-card: {card_model: anthropic/claude-haiku-4.5, embedding_model: voyageai/voyage-4}
+#     api-calls: {}
 """
 
 

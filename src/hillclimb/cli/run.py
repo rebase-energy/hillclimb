@@ -159,6 +159,7 @@ def _run_problem(
             climber=config.climber_block(), parallel_agents=config.concurrency.parallel_agents,
             n_replicates=config.evaluation.n_replicates, seed_from=seed_from,
             set=[f"{key}={value}" for key, value in (experiment_overrides or {}).items()],
+            run_config=config,
         )])
     else:
         # suite child: the parent already wrote run.yaml and spec.yaml
@@ -289,7 +290,7 @@ def _run_suite(
         entries.append(spec_entry(
             problem_target, name=entry.name, budget=child_budget, agent=child_agent,
             model=child_model, climber=_spec_climber(config, child_climber), parallel_agents=child_parallel,
-            n_replicates=child_replicates, seed_from=seed_path, set=child_set,
+            n_replicates=child_replicates, seed_from=seed_path, set=child_set, run_config=config,
         ))
         pid, log_path = _spawn_search(config, run_dir, index, slug, cmd)
         launched.append((problem_target, pid, log_path))
@@ -338,7 +339,7 @@ def run(
         help=(
             "The climber: a .py file, a climber folder, or package.module:Class (hillclimb "
             "climber list shows the catalog's). It "
-            "replaces the `climber:` block of hillclimb.yaml (or of the run spec); --set "
+            "replaces the `climber:` block of runs/config.yaml (or of the run spec); --set "
             "climber.params.k=v edits it. Repeat it "
             "(--climber climbers/greedy --climber climbers/gepa) for a mixed fleet: one search per climber "
             "on the problem, under one run, each tagged as an experiment"
@@ -650,7 +651,7 @@ def _launch_entry(config: Config, record: SearchRecord) -> dict | None:
 
 def _restore_launch_settings(config: Config, record: SearchRecord) -> None:
     """Put back what the search was launched with beyond the folder's
-    hillclimb.yaml: its `--set` settings (spend caps among them), its agents
+    config: its `--set` settings (spend caps among them), its agents
     per search and replicates per trial, and its study experiment's
     overrides. Without them a resumed search runs uncapped."""
     from hillclimb.config import parse_set_overrides

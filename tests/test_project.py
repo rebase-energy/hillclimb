@@ -19,9 +19,11 @@ from tests.catalog_fixture import GEPA, GREEDY, class_ref
 
 
 def make_hillclimb_dir(root: Path, config: dict | None = None) -> Path:
-    """Create `<root>/hillclimb.yaml`; returns `root`, now a hillclimb dir."""
-    root.mkdir(parents=True, exist_ok=True)
-    (root / "hillclimb.yaml").write_text(yaml.safe_dump(config or {}))
+    """Create `<root>/hillclimb.yaml` (and the run defaults, for run keys);
+    returns `root`, now a hillclimb dir."""
+    from tests.folder_config import write_config
+
+    write_config(root, config)
     return root
 
 
@@ -408,7 +410,8 @@ def test_a_folders_old_spelling_beats_the_user_levels_new_one(tmp_path, monkeypa
     user.write_text("agent: claude-code\nagent_auth: subscription\n")
     monkeypatch.setattr("hillclimb.config.user_config_path", lambda: user)
     folder = tmp_path / "proj"
-    folder.mkdir()
-    (folder / "hillclimb.yaml").write_text("backend: dummy\n")
+    (folder / "runs").mkdir(parents=True)
+    (folder / "hillclimb.yaml").write_text("")
+    (folder / "runs" / "config.yaml").write_text("backend: dummy\n")
     monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
     assert Config.load(start=folder).agent == "dummy"

@@ -14,6 +14,7 @@ DEAD = AgentResult(
     error_message="Failed to authenticate: OAuth session expired and could not be refreshed",
 )
 ALIVE = AgentResult(ok=True, model_id="claude-sonnet-5-5")
+from tests.folder_config import write_config
 
 
 @pytest.fixture
@@ -111,7 +112,7 @@ def test_run_stops_before_launching_on_a_dead_login(login, tmp_path, monkeypatch
     answers.append(DEAD)
     root = tmp_path / "proj"
     root.mkdir()
-    (root / "hillclimb.yaml").write_text("agent: claude-code\n")
+    write_config(root, {"agent": "claude-code"})
     monkeypatch.chdir(root)
     launched = []
     monkeypatch.setattr("hillclimb.cli.run._run_problem_fleet", lambda *a, **k: launched.append(a))
@@ -162,7 +163,7 @@ def test_resume_detaches_like_run_and_its_engine_does_not(tmp_path, monkeypatch)
     from hillclimb.cli import run as run_cli
 
     original_spawn = run_cli._spawn_resume  # before it is patched below
-    (tmp_path / "hillclimb.yaml").write_text("agent: dummy\n")
+    write_config(tmp_path, {"agent": "dummy"})
     monkeypatch.chdir(tmp_path)
     record = SimpleNamespace(ref="r1/s1", state="parked", meta=SimpleNamespace(agent="dummy", model="m"))
     monkeypatch.setattr(run_cli.common, "open_search", lambda config, ref: (None, record))

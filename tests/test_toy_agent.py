@@ -165,7 +165,8 @@ def test_a_toy_search_climbs_and_its_spec_reruns_it(config, lean_runtime):
     assert outcome.selected.val_score == max(c.val_score for c in journal.candidates.values())
     entry = yaml.safe_load((outcome.run_dir / "spec.yaml").read_text())["problems"][0]
     assert entry["agent"] == "toy"
-    assert entry["set"] == ["learning.enabled=false", "budget.max_evaluations=6"]
+    # the run settings it climbed with (the fixture's exec timeout), then the call's own
+    assert entry["set"] == ["budget.exec_timeout_s=30", "learning.enabled=false", "budget.max_evaluations=6"]
 
 
 def test_a_search_from_python_says_where_to_watch_and_reports_every_candidate(config, lean_runtime):

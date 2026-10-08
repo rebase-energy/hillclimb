@@ -338,6 +338,34 @@ def create_run(config: Config, meta: RunMeta) -> Path:
 RUN_SPEC_FILE = "spec.yaml"
 
 
+# The run settings a spec entry records as `set` pairs when they differ from
+# the built-in defaults (the rest have keys of their own, or are a view's):
+# with them, runs/<id>/spec.yaml reruns the run even after the folder's run
+# defaults have changed.
+_RECORDED_RUN_SETTINGS = (
+    ("budget", ("deadline", "max_evaluations", "max_tokens", "max_cost_usd", "stop_margin_s",
+                "agent_timeout_s", "exec_timeout_s")),
+    ("concurrency", ("parallel_replicates", "solution_cpus")),
+    ("learning", ("enabled", "tool", "claims_timeout_s")),
+)
+
+
+def run_settings_set(config: Config) -> list[str]:
+    """`key=value` pairs for the run settings of `config` that differ from
+    the defaults (see `_RECORDED_RUN_SETTINGS`)."""
+    import json
+
+    defaults = Config()
+    pairs = []
+    for section, names in _RECORDED_RUN_SETTINGS:
+        for name in names:
+            value = getattr(getattr(config, section), name)
+            if value != getattr(getattr(defaults, section), name):
+                shown = value if isinstance(value, str) else json.dumps(value)
+                pairs.append(f"{section}.{name}={shown}")
+    return pairs
+
+
 def spec_entry(
     target: str,
     *,
@@ -350,6 +378,7 @@ def spec_entry(
     n_replicates: int | None = None,
     seed_from: Path | str | None = None,
     set: Sequence[str] = (),  # noqa: A002 — the spec key is `set`
+    run_config: Config | None = None,
 ) -> dict:
     """One `problems:` entry of a run spec, from the parameters a search
     actually launched with (see `write_run_spec`). Keys left None are left
@@ -366,6 +395,10 @@ def spec_entry(
         from hillclimb.climber import as_spec
 
         climber = as_spec(climber).block()
+    if run_config is not None:
+        # the run settings it climbs with, before the explicit pairs (which win)
+        named = {pair.split("=", 1)[0] for pair in set}
+        set = [*(pair for pair in run_settings_set(run_config) if pair.split("=", 1)[0] not in named), *set]  # noqa: A001
     entry = {
         "target": target, "name": name, "budget": budget, "agent": agent, "model": model,
         "climber": climber, "parallel_agents": parallel_agents, "n_replicates": n_replicates,
@@ -1301,6 +1334,7 @@ def _new_search(
             target, budget=total_s, agent=config.agent, model=config.model,
             climber=climber_block, parallel_agents=config.concurrency.parallel_agents,
             n_replicates=config.evaluation.n_replicates, seed_from=seed_path, set=spec_set,
+            run_config=config,
         )])
     search_dir = create_search(config, problem, run_dir, run_id, total_s, seed_from=seed_path)
     log(
@@ -1399,8 +1433,8 @@ def run(
     clock (None: the folder's run defaults in runs/config.yaml; with none
     there either it raises NoBudget); `max_evaluations=N` is short for
     `Budget(evaluations=N)`. `learning=False` keeps the search out of the
-    folder's knowledge, both ways. The folder's hillclimb.yaml supplies
-    everything else unless a `config` is given."""
+    folder's knowledge, both ways. The folder's config (runs/config.yaml
+    above hillclimb.yaml) supplies everything else unless a `config` is given."""
     _not_while_importing("run")
     config = config.model_copy(deep=True) if config is not None else sdk_config(agent=agent, model=model)
     if climber is not None:
@@ -1523,7 +1557,7 @@ def run_spec(path: Path | str, *, config: Config | None = None, log: Log = print
         entries.append(spec_entry(
             target, name=entry.name, budget=entry.budget, agent=entry_config.agent, model=entry_config.model,
             climber=entry_config.climber_block(), parallel_agents=entry.parallel_agents,
-            n_replicates=entry.n_replicates, seed_from=seed, set=entry.set,
+            n_replicates=entry.n_replicates, seed_from=seed, set=entry.set, run_config=entry_config,
         ))
     write_run_spec(run_dir, entries, source=path)
     return [
@@ -1836,6 +1870,7 @@ def run_fleet(
     shared_entry = dict(
         budget=budget, agent=agent or config.agent, model=model or config.model,
         parallel_agents=parallel_agents, n_replicates=n_replicates, seed_from=seed_from,
+        run_config=config,
     )
     from hillclimb.climber import as_spec
 

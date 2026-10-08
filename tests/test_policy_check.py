@@ -18,6 +18,7 @@ from hillclimb.modules.policies.base import Action, SearchState
 from hillclimb.modules.policies.check import JournalCase, check_policy
 from tests.test_policy import add_candidate
 from tests.catalog_fixture import GREEDY, class_ref
+from tests.folder_config import write_config
 
 
 def _cases(tmp_path: Path) -> list[JournalCase]:
@@ -287,7 +288,7 @@ def test_cli_replays_the_stores_journals(tmp_path, monkeypatch, capsys):
     from hillclimb.harness.run import RunMeta
     from tests.test_cli import write_problem
 
-    (tmp_path / "hillclimb.yaml").write_text(f"climber: {GREEDY}\n")  # the folder names its climber: the catalog file
+    write_config(tmp_path, {"climber": str(GREEDY)})  # the folder names its climber: the catalog file
     write_problem(tmp_path / "problems", "p")
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
@@ -396,16 +397,16 @@ def test_climber_check_takes_a_run_spec_and_checks_every_entrys_climber(tmp_path
 
 
 def test_the_config_init_writes_shows_a_block_that_loads():
-    """The commented `climber:` block in a fresh hillclimb.yaml is the
+    """The commented `climber:` block in a fresh runs/config.yaml is the
     documentation most people read: uncommented, it must be a valid block."""
     import re
 
     import yaml
 
-    from hillclimb.cli.common import INIT_CONFIG
     from hillclimb.config import Config
+    from hillclimb.project import RUNS_CONFIG_TEMPLATE
 
-    lines = INIT_CONFIG.splitlines()
+    lines = RUNS_CONFIG_TEMPLATE.splitlines()
     start = next(i for i, line in enumerate(lines) if line.startswith("# climber:") and "whole block" in line)
     block = []
     for line in lines[start:]:

@@ -63,8 +63,8 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
-from hillclimb.config import Config
-from hillclimb.project import MARKER_FILE
+from hillclimb.config import Config, split_config
+from hillclimb.project import MARKER_FILE, RUNS_CONFIG
 
 DEFAULT_SPEC = "grade.yaml"
 SPLITS = ("validation", "holdout")  # the verifier contract's `$HILLCLIMB_SPLIT`
@@ -481,9 +481,15 @@ def evaluate(
         )
     nested_dir = workdir / NESTED_DIRNAME
     nested_dir.mkdir(parents=True, exist_ok=True)
+    general, runs = split_config(nested_config(outer, climber, spec, nested_dir))
     (nested_dir / MARKER_FILE).write_text(
         "# written by `hillclimb grade`: the inner searches' hillclimb dir\n"
-        + yaml.safe_dump(nested_config(outer, climber, spec, nested_dir), sort_keys=False)
+        + yaml.safe_dump(general, sort_keys=False)
+    )
+    (nested_dir / "runs").mkdir(exist_ok=True)
+    (nested_dir / "runs" / RUNS_CONFIG).write_text(
+        "# written by `hillclimb grade`: the inner searches' run defaults\n"
+        + yaml.safe_dump(runs, sort_keys=False)
     )
     inner_config = Config.load(path=nested_dir / MARKER_FILE)
     # measure before spending: every inner problem must load, have a target

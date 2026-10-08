@@ -22,14 +22,15 @@
 │                                                                                  folder, or package.module:Class     │
 │                                                                                  (hillclimb climber list shows the   │
 │                                                                                  catalog's). It replaces the         │
-│                                                                                  `climber:` block of hillclimb.yaml  │
-│                                                                                  (or of the run spec); --set         │
-│                                                                                  climber.params.k=v edits it. Repeat │
-│                                                                                  it (--climber climbers/greedy       │
-│                                                                                  --climber climbers/gepa) for a      │
-│                                                                                  mixed fleet: one search per climber │
-│                                                                                  on the problem, under one run, each │
-│                                                                                  tagged as an experiment             │
+│                                                                                  `climber:` block of                 │
+│                                                                                  runs/config.yaml (or of the run     │
+│                                                                                  spec); --set climber.params.k=v     │
+│                                                                                  edits it. Repeat it (--climber      │
+│                                                                                  climbers/greedy --climber           │
+│                                                                                  climbers/gepa) for a mixed fleet:   │
+│                                                                                  one search per climber on the       │
+│                                                                                  problem, under one run, each tagged │
+│                                                                                  as an experiment                    │
 │ --holdout                                 --no-holdout                           Hidden selection holdout            │
 │                                                                                  [default: holdout]                  │
 │ --learning                                --no-learning                          Cross-search memory (cards/claims   │

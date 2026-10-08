@@ -46,8 +46,8 @@ def test_get_writes_the_folder_and_makes_it_the_default(folder):
     # Climber(...) at its end makes it the whole climber; prompts/ beside it is its prompts dir
     assert (target / "policy.py").read_bytes() == GREEDY.read_bytes()
     assert "climber = Climber(" in GREEDY.read_text() and "name='greedy'," in GREEDY.read_text()
-    # the file is this hillclimb dir's climber now
-    assert re.search(r"^climber: climbers/greedy/policy.py$", (folder / "hillclimb.yaml").read_text(), re.M)
+    # the file is this hillclimb dir's climber now: a run default
+    assert re.search(r"^climber: climbers/greedy/policy.py$", (folder / "runs" / "config.yaml").read_text(), re.M)
     config = Config.load(start=folder)
     policy_file = (target / "policy.py").resolve()
     assert config.climber.operator_policy == f"{policy_file}:Greedy"

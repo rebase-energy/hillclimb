@@ -38,7 +38,7 @@ The same block in three places, highest first:
 |---|---|
 | an entry of a run spec (`problems: [- {target: ..., climber: {...}}]`) | that search's climber |
 | the top of a run spec (`climber:` beside `problems:`) | the default for its entries |
-| `hillclimb.yaml` | the folder's default: what `hillclimb run <problem>` uses |
+| `runs/config.yaml` | the folder's default (a run default): what `hillclimb run <problem>` uses |
 
 A higher one **replaces** a lower one whole — blocks are never merged, so
 one policy's params cannot end up under another policy. Two things then
@@ -68,8 +68,8 @@ A whole climber is also named by a **folder** holding `policy.py` (what
 holding `climber.yaml` still loads; its file refs and `prompts:` are relative
 to the folder.
 
-A file is relative to the file the block is written in (the spec, or
-`hillclimb.yaml`). Files may import each other relatively (`from .helpers
+A file is relative to the file the block is written in (the spec), or to
+the hillclimb dir (`runs/config.yaml`). Files may import each other relatively (`from .helpers
 import x`). `hillclimb climber list` shows the catalog and what is registered.
 
 A bare string instead of a block is one `.py` file, or a folder holding one.
@@ -96,7 +96,7 @@ file), a new config is told to fetch the climber.
 ## The catalog climber as a folder you can read
 
 ```bash
-hillclimb climber get greedy        # -> climbers/greedy/, and `climber: climbers/greedy/policy.py` in hillclimb.yaml
+hillclimb climber get greedy        # -> climbers/greedy/, and `climber: climbers/greedy/policy.py` in runs/config.yaml
 ```
 
 copies the catalog's greedy out as a folder whose `policy.py` **is** the climber:
@@ -152,12 +152,12 @@ schedule with its numbers, one row per token with what fills it and when it
 is empty.
 
 The copy becomes this folder's climber (`--no-default` leaves
-`hillclimb.yaml` alone), so change a threshold in `policy.py` or a sentence
+`runs/config.yaml` alone), so change a threshold in `policy.py` or a sentence
 in `improve.md` and the next `hillclimb run` climbs with it; `hillclimb
 climber check --climber climbers/greedy/policy.py` replays recorded
 searches through the edited policy and lints a template's tokens first. The
 file is named like any climber — `climber: climbers/greedy/policy.py` in
-`hillclimb.yaml`, `--climber climbers/greedy/policy.py`, an entry of a run
+`runs/config.yaml`, `--climber climbers/greedy/policy.py`, an entry of a run
 spec — and has its own identity: a search that ran it is not a run of the
 catalog's `greedy`, as it must not be once a line was changed. `--name` copies
 under another name (`climber get openevolve --name qd`); `hillclimb climber
@@ -188,7 +188,8 @@ and names the operator. The slots, in the order a step runs them:
 | `memory` | what a search knows from others and leaves for the next | `Memory` | `files`, `none` |
 
 Which coding agent and model run is **not** a climber's: `routing:` in a block is
-refused. That is the user's choice, in `hillclimb.yaml`.
+refused. That is the user's choice, a run default in `runs/config.yaml` (`agent`,
+`model`, `routing`; a personal `agent`/`model` may sit in the user config under it).
 
 A climber's own file imports the contracts from `hillclimb.sdk` and, to
 build on a prebuilt block, that block from `hillclimb.policies` and its

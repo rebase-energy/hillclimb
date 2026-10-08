@@ -233,9 +233,14 @@ def test_status_rows_marks_the_configured_agent(monkeypatch):
 
 def _hillclimb_dir(tmp_path: Path) -> Path:
     folder = tmp_path / "hillclimb"
-    folder.mkdir()
-    (folder / "hillclimb.yaml").write_text(INIT_SHAPED)
+    (folder / "runs").mkdir(parents=True)
+    (folder / "hillclimb.yaml").write_text("# hillclimb config\n")
+    (folder / "runs" / "config.yaml").write_text(INIT_SHAPED)  # the agent is a run default
     return folder
+
+
+def _run_defaults(folder: Path) -> Path:
+    return folder / "runs" / "config.yaml"
 
 
 def test_connect_lists_every_target_as_json(monkeypatch, tmp_path):
@@ -270,13 +275,14 @@ def test_connect_a_agent_checks_stages_and_pins(monkeypatch, tmp_path):
     # the defaults land at the user level — every folder on the machine —
     # and the folder's own config.yaml is left as `init` wrote it
     assert _user_config(tmp_path).read_text() == "agent: codex\nagent_auth: subscription\n"
-    assert (folder / "hillclimb.yaml").read_text() == INIT_SHAPED
+    assert _run_defaults(folder).read_text() == INIT_SHAPED
 
-    # `--local` pins this folder instead: the override for it alone
+    # `--local` pins this folder instead: the override for it alone. The
+    # agent is a run default (runs/config.yaml), the login the folder's
     result = CliRunner().invoke(cli.app, ["connect", "claude", "--no-probe", "--local"])
     assert result.exit_code == 0, result.output
-    text = (folder / "hillclimb.yaml").read_text()
-    assert "agent: claude-code" in text and "agent_auth: subscription" in text
+    assert "agent: claude-code" in _run_defaults(folder).read_text()
+    assert "agent_auth: subscription" in (folder / "hillclimb.yaml").read_text()
     assert _user_config(tmp_path).read_text() == "agent: codex\nagent_auth: subscription\n"
 
 
@@ -302,11 +308,11 @@ def test_connect_leaves_a_config_that_already_pins_a_agent(monkeypatch, tmp_path
 
     # a folder that pins its own agent keeps overriding the user default,
     # and connect says so rather than leaving the reader to wonder
-    (folder / "hillclimb.yaml").write_text("agent: pi\n")
+    _run_defaults(folder).write_text("agent: pi\n")
     result = CliRunner().invoke(cli.app, ["connect", "codex", "--no-probe", "--default"])
     assert result.exit_code == 0, result.output
-    assert "keeps overriding the user default" in result.output
-    assert (folder / "hillclimb.yaml").read_text() == "agent: pi\n"
+    assert "keep overriding the user default" in result.output
+    assert _run_defaults(folder).read_text() == "agent: pi\n"
 
 
 def test_connect_stops_on_a_missing_cli(monkeypatch, tmp_path):
@@ -358,7 +364,7 @@ def test_connect_fails_when_the_ping_fails(monkeypatch, tmp_path):
     assert result.exit_code == 1
     assert "model not supported" in result.output
     # a route that does not work must not become the default
-    assert not connect.pins_agent((folder / "hillclimb.yaml").read_text())
+    assert not connect.pins_agent(_run_defaults(folder).read_text())
 
 
 def test_connect_openrouter_validates_before_storing(monkeypatch, tmp_path):

@@ -6,7 +6,7 @@ the operators it may use with their prompts, a tuner, a memory. Everything
 else is the harness, the same for every climber.
 
 A climber is DEFINED where the run is defined: the `climber:` block of a run
-spec entry, or of `hillclimb.yaml` as the folder's default. `ClimberSpec` is
+spec entry, or of `runs/config.yaml` as the folder's default. `ClimberSpec` is
 that block:
 
     climber:
@@ -271,7 +271,7 @@ class Climber:
 
     def write(self, path: Path | str) -> Path:
         """Write the climber as a `climber:` block — the top of a run spec
-        (add `problems:`), or what goes into hillclimb.yaml."""
+        (add `problems:`), or what goes into runs/config.yaml."""
         path = Path(path)
         path.write_text(yaml.safe_dump({"climber": self.to_spec().block()}, sort_keys=False))
         return path

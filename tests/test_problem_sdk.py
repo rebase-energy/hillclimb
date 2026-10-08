@@ -247,6 +247,7 @@ def test_a_budget_sets_every_limit_and_the_spec_records_them(scoring, counter, f
     entry = yaml.safe_load((climber.result.run_dir / "spec.yaml").read_text())["problems"][0]
     assert entry["budget"] == "300s"
     assert entry["set"] == [
+        "budget.exec_timeout_s=30",  # the folder's run setting, recorded beside the call's own
         "learning.enabled=false", "budget.max_evaluations=2", "budget.max_tokens=1000000", "budget.max_cost_usd=1.5",
     ]
     # the shorthand lays over the Budget

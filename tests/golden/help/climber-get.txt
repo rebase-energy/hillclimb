@@ -21,7 +21,7 @@
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --name                         TEXT  The folder's name under climbers/ (default: the catalog's)                      │
-│ --default      --no-default          Make the copy this folder's climber (`climber:` in hillclimb.yaml), so          │
+│ --default      --no-default          Make the copy this folder's climber (`climber:` in runs/config.yaml), so        │
 │                                      `hillclimb run` uses it                                                         │
 │                                      [default: default]                                                              │
 │ --help     -h                        Show this message and exit.                                                     │
