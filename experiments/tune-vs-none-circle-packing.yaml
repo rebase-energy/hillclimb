@@ -17,7 +17,6 @@ defaults:
   # schedule that reaches tune jobs inside an hour (a 30m pilot with the
   # default three drafts never got there)
   climber.params.num_drafts: 1
-  evaluation.n_replicates: 1
   climber.tuner: optuna
 experiments:
   no-tune:

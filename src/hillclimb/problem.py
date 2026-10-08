@@ -9,7 +9,7 @@ from typing import Callable, Literal, Mapping, Sequence
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from hillclimb.config import Config
+from hillclimb.config import Config, EvaluationConfig, ReportConfig
 from hillclimb.harness.direction import legacy_direction_key
 
 
@@ -44,6 +44,7 @@ KNOWN_PROBLEM_KEYS = frozenset({
     "verifier", "score", "run", "private", "holdout", "holdout_inputs", "time_limit_s",
     "baseline", "baseline_files", "chart_baselines", "output_artifacts",
     "requirements", "unit_tests", "data_dir", "allow_internet_during_solution", "allow_network",
+    "evaluation", "report",
     "solution_kind", "interface", "landscape", "surface_metrics", "fingerprint", "plot",
     "written_by", "score_function", "kind",
 })
@@ -148,6 +149,11 @@ class ProblemSpec(BaseModel):
     runtime: Literal["csv", "emflow"] = "csv"  # which shared runtime venv to build
     requirements_file: Path | None = None  # per-problem venv requirements
     unit_tests: UnitTestSpec | None = None
+    # How noisy its score is (replicates, the noise band) and what its report
+    # shows: the problem's to say. None = the defaults. Only the keys it sets
+    # are applied (`apply_problem_settings`).
+    evaluation: EvaluationConfig | None = None
+    report: ReportConfig | None = None
 
     # --- prompt assembly ---
     contract_template: str = "contract_verifier"  # prompts/<name>.md
@@ -504,6 +510,37 @@ def _private_paths(problem_yaml: Path, problem_dir: Path, raw, key: str = "priva
     return paths
 
 
+def _settings_block(problem_yaml: Path, meta: dict, key: str, model):
+    """`evaluation:` / `report:` of a problem.yaml, as the config model it
+    fills (its unset keys stay the defaults)."""
+    raw = meta.get(key)
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ProblemValueError(f"{problem_yaml}: `{key}:` must be a mapping")
+    unknown = sorted(set(raw) - set(model.model_fields))
+    if unknown:
+        raise ProblemValueError(
+            f"{problem_yaml}: unknown `{key}.{unknown[0]}` (it takes {', '.join(model.model_fields)})"
+        )
+    try:
+        return model.model_validate(raw)
+    except ValueError as exc:
+        raise ProblemValueError(f"{problem_yaml}: `{key}:` {exc}") from exc
+
+
+def apply_problem_settings(config: Config, problem: ProblemSpec) -> None:
+    """The problem's `evaluation:` and `report:` onto the config a search
+    runs with: each key the problem.yaml sets replaces the default."""
+    for name in ("evaluation", "report"):
+        block = getattr(problem, name, None)
+        if block is None:
+            continue
+        target = getattr(config, name)
+        for field in block.model_fields_set:
+            setattr(target, field, getattr(block, field))
+
+
 def _check_meta(problem_yaml: Path, meta: dict) -> None:
     """The keys every problem needs, and the one that decides which way the
     search climbs, which must be a real YAML boolean: `bool("false")` is
@@ -638,6 +675,8 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
         if not test_root.is_dir():
             raise ProblemFileNotFound(f"unit test directory not found: {test_root}")
         unit_tests = UnitTestSpec(root=test_root, command=command)
+    evaluation = _settings_block(problem_yaml, meta, "evaluation", EvaluationConfig)
+    report = _settings_block(problem_yaml, meta, "report", ReportConfig)
     if baseline_score is not None:
         baseline_summary = f"baseline: {baseline_score:g} (declared)"
     elif baseline_path:
@@ -667,6 +706,8 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
         plot_path=_optional_file(problem_dir, meta, "plot", default="plot.py"),
         requirements_file=_optional_file(problem_dir, meta, "requirements"),
         unit_tests=unit_tests,
+        evaluation=evaluation,
+        report=report,
         baseline_text=baseline_path.read_text() if baseline_path else None,
         baseline_score=baseline_score,
         baseline_summary=baseline_summary,

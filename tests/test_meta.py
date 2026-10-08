@@ -319,7 +319,6 @@ def _meta_hillclimb_dir(tmp_path: Path, budget: str = "20s") -> Path:
         "paths": {"runtime_python": sys.executable},
         "budget": {"exec_timeout_s": 600},
         "learning": {"enabled": False},
-        "holdout": {"enabled": False},
     })
     return hc
 

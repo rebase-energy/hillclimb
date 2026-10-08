@@ -209,6 +209,10 @@ class SearchMeta(BaseModel):
 
     budget_s: int = 0
     holdout_enabled: bool = False
+    # how candidates were measured and reported (the problem's `evaluation:`
+    # and `report:` over the defaults), frozen at start; empty before 0.9
+    evaluation: dict = Field(default_factory=dict)
+    report: dict = Field(default_factory=dict)
     seed_from: str | None = None  # incumbent solution the search was seeded with
     # sha256 of that seed file's bytes at search start: the identity views
     # compare when several searches claim to share one seed

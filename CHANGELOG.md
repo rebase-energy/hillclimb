@@ -19,6 +19,13 @@
   `runs/config.yaml`; `connect --local` pins the agent there and the login in `hillclimb.yaml`.
   A run's `spec.yaml` records the run settings it used (`set:` pairs), so it reruns the same
   after the defaults change.
+- **How a score is measured is the problem's:** `evaluation:` (`n_replicates`, `noise_k`,
+  `min_improvement`) and `report:` go in `problem.yaml`, and whether it has a hidden split is
+  its `holdout: true` (`holdout.enabled` and the unused `climb_on` are gone from the config;
+  `--no-holdout` still skips it for one run). A config file, `--set evaluation.*` or an
+  experiment override setting them is an error that says so; `--n-replicates` / `--n-trials`
+  are gone, and a run spec's `n_replicates` is ignored with a note. Each search records what
+  it measured with (`search.yaml` `evaluation` / `report`), and a resume keeps it.
 - **The engine ships no problem and no climber: one catalog, fetched with `get`.** hillclimb is
   the harness and the contracts; what to climb and how to climb it are the user's. What the
   package ships is a *catalog* of examples — the repository's own `problems/` and `climbers/`

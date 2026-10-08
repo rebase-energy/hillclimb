@@ -124,17 +124,8 @@ __STORE__
 # concurrency:
 #   machine_max_agents: 8  # cap across every search on this machine (default min(8, cores-2))
 
-# evaluation:
-#   n_replicates: 1        # seeded runs per trial (median is the trial's score)
-#   noise_k: 0             # require gains > k x the measured noise floor
-#   min_improvement: 0     # ...or an absolute floor, in metric units
-
 # holdout:
-#   enabled: true
 #   top_k: 5             # holdout scored only for top-k-by-val candidates
-
-# report:
-#   enabled: true        # inject eval breakdowns (per-zone/horizon/quantile) into improve prompts
 """
 
 

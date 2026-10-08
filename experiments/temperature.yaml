@@ -23,7 +23,6 @@ defaults:
   climber: climbers/greedy/policy.py
   climber.params: {tune_budget: 0}
   concurrency.parallel_agents: 1
-  evaluation.n_replicates: 1
   budget.max_cost_usd: 2.0
 experiments:
   t0.2:

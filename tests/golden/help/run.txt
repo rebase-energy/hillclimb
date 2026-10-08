@@ -54,9 +54,6 @@
 │                                                                                  `hillclimb watch` follows it) or in │
 │                                                                                  this terminal (Ctrl-C stops it)     │
 │                                                                                  [default: detach]                   │
-│ --n-replicates,--n-trials                                  INTEGER               Seeded runs per trial (the median   │
-│                                                                                  is the trial's score; --n-trials is │
-│                                                                                  the old spelling)                   │
 │ --parallel-replicates                                      INTEGER RANGE [x>=0]  How many of a trial's replicates    │
 │                                                                                  run at once: 0 = all (default), 1 = │
 │                                                                                  one after another, required when    │

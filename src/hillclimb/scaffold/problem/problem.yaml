@@ -25,5 +25,11 @@ allow_internet_during_solution: false
 # private: [hidden]                # files only score.py may read (hidden labels)
 # holdout: true                    # also score the selected solution on a hidden split
 # holdout_inputs: [holdout]        # inputs only the holdout split reads
+# evaluation:                      # a noisy score: `hillclimb verify --repeat 5` measures the noise
+#   n_replicates: 3                # seeded runs per trial (the median is the trial's score)
+#   noise_k: 2                     # count a gain only above k x the measured noise floor
+#   min_improvement: 0             # ...or above an absolute floor, in metric units
+# report:
+#   enabled: true                  # eval breakdowns (eval_result.json) in improve prompts
 # chart_baselines:                 # reference lines in `hillclimb chart`
 #   best known: 0.0

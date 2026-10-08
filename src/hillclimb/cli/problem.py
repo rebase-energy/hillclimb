@@ -418,12 +418,12 @@ def verify(
             return
         say(
             f"[warn]an improvement smaller than ~{2 * mad:.3g} cannot be told from noise.[/] "
-            "To stop the search climbing it:"
+            "To stop the search climbing it, add to its problem.yaml:"
         )
         say(f"[path]  evaluation:\n    n_replicates: {max(3, repeat)}\n    noise_k: 2[/]")
         say(
-            "[note]  add `concurrency: {parallel_replicates: 1}` if this metric measures the machine "
-            "(time, throughput, memory) — replicates running at once would measure each other[/]"
+            "[note]  and `concurrency: {parallel_replicates: 1}` to runs/config.yaml if this metric measures "
+            "the machine (time, throughput, memory) — replicates running at once would measure each other[/]"
         )
 
 

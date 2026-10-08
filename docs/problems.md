@@ -237,8 +237,8 @@ yours via `segment_label`) worst-first. Producers, by trust:
   claim, so the report is stored and rendered labelled *self-reported*.
 
 Only `"split": "validation"` reports are ever fed back to operators — holdout
-evaluations never produce one, by construction. `report.enabled: false` in
-config disables prompt injection (data is still recorded).
+evaluations never produce one, by construction. `report: {enabled: false}` in
+the problem.yaml disables prompt injection (data is still recorded).
 
 ### Tunable parameters (optional)
 
@@ -316,13 +316,20 @@ are the references.
 ## Noise: not climbing your own measurement error
 
 A greedy search will happily spend a whole budget chasing a metric that moves
-on its own. Three settings decide whether it can:
+on its own. Three settings decide whether it can. How noisy the score is, is
+the problem's, so they go in its `problem.yaml` (a run cannot override them;
+each search records what it measured with):
 
 ```yaml
 evaluation:
   n_replicates: 5        # run each trial (parameter set) this many times
   noise_k: 2             # a gain must beat 2x the measured noise floor
   min_improvement: 0.0   # ...or an absolute floor, in metric units
+```
+
+How many replicates run at once is the run's, in `runs/config.yaml`:
+
+```yaml
 concurrency:
   parallel_replicates: 1 # of those, how many at once: 0 = all (default), 1 = one after another
 ```
@@ -360,7 +367,7 @@ verifier five times and reports the floor, with the settings to match.
 
 ```
 5 runs: median 0.9738, spread 0.0822, noise floor (MAD) 0.0104
-an improvement smaller than ~0.0208 cannot be told from noise. To stop the search climbing it:
+an improvement smaller than ~0.0208 cannot be told from noise. To stop the search climbing it, add to its problem.yaml:
   evaluation:
     n_replicates: 5
     noise_k: 2

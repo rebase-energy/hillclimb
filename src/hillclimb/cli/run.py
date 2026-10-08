@@ -157,7 +157,7 @@ def _run_problem(
         write_run_spec(run_dir, [spec_entry(
             target, budget=budget or total_s, agent=config.agent, model=config.model,
             climber=config.climber_block(), parallel_agents=config.concurrency.parallel_agents,
-            n_replicates=config.evaluation.n_replicates, seed_from=seed_from,
+            seed_from=seed_from,
             set=[f"{key}={value}" for key, value in (experiment_overrides or {}).items()],
             run_config=config,
         )])
@@ -208,7 +208,6 @@ def _run_suite(
     name: str | None,
     climber: str | None = None,
     parallel_agents: int | None = None,
-    n_replicates: int | None = None,
     seed_from: Path | None = None,
     learning: bool = True,
     set_: list[str] | None = None,
@@ -258,7 +257,9 @@ def _run_suite(
         child_model = model or entry.model
         child_climber = climber or entry.climber
         child_parallel = parallel_agents if parallel_agents is not None else entry.parallel_agents
-        child_replicates = n_replicates if n_replicates is not None else entry.n_replicates
+        if entry.n_replicates is not None:
+            warn(f"note: {_m(problem_target)}: `n_replicates` in a run spec is ignored; "
+                 "replicates are the problem's (`evaluation: {n_replicates: N}` in its problem.yaml)")
         child_seed = seed_from or entry.seed_from
         child_set = [*entry.set, *(set_ or [])]  # the CLI's pairs apply last, so they win
         seed_path: Path | None = None
@@ -273,8 +274,6 @@ def _run_suite(
         cmd += climber_argv(child_climber)
         if child_parallel is not None:
             cmd += ["--parallel-agents", str(child_parallel)]
-        if child_replicates is not None:
-            cmd += ["--n-replicates", str(child_replicates)]
         if child_seed:
             # spec-relative paths resolve against the spec's own directory
             seed_path = Path(child_seed)
@@ -290,7 +289,7 @@ def _run_suite(
         entries.append(spec_entry(
             problem_target, name=entry.name, budget=child_budget, agent=child_agent,
             model=child_model, climber=_spec_climber(config, child_climber), parallel_agents=child_parallel,
-            n_replicates=child_replicates, seed_from=seed_path, set=child_set, run_config=config,
+            seed_from=seed_path, set=child_set, run_config=config,
         ))
         pid, log_path = _spawn_search(config, run_dir, index, slug, cmd)
         launched.append((problem_target, pid, log_path))
@@ -311,7 +310,7 @@ def _warn_oversubscribed(config, overrides: dict, searches: int) -> None:
 
     cpus = int(overrides.get("concurrency.solution_cpus", config.concurrency.solution_cpus))
     agents = int(overrides.get("concurrency.parallel_agents", config.concurrency.parallel_agents))
-    replicates = int(overrides.get("evaluation.n_replicates", config.evaluation.n_replicates))
+    replicates = config.evaluation.n_replicates  # the problem's, once a search applies it
     at_once = int(overrides.get("concurrency.parallel_replicates", config.concurrency.parallel_replicates))
     replicates = max(1, replicates) if at_once == 0 else min(max(1, replicates), at_once)
     runs = max(1, searches) * max(1, agents) * replicates
@@ -369,10 +368,6 @@ def run(
     detach: bool = typer.Option(
         True, "--detach/--no-detach",
         help="Run in the background (the default; `hillclimb watch` follows it) or in this terminal (Ctrl-C stops it)",
-    ),
-    n_replicates: int = typer.Option(
-        None, "--n-replicates", "--n-trials",
-        help="Seeded runs per trial (the median is the trial's score; --n-trials is the old spelling)",
     ),
     parallel_replicates: int = typer.Option(
         None, "--parallel-replicates", min=0,
@@ -434,8 +429,6 @@ def run(
             raise typer.BadParameter(str(exc), param_hint="--climber") from exc
     if parallel_agents is not None:
         config.concurrency.parallel_agents = parallel_agents
-    if n_replicates is not None:
-        config.evaluation.n_replicates = n_replicates
     if parallel_replicates is not None:
         # a --set, so it reaches every engine the run starts and its spec.yaml
         set_ = [*(set_ or []), f"concurrency.parallel_replicates={parallel_replicates}"]
@@ -469,7 +462,7 @@ def run(
             raise typer.BadParameter("a spec takes one --climber; mixed fleets run on a single problem")
         _run_suite(
             target, config, budget, agent, model, holdout, name,
-            climber=single_climber, parallel_agents=parallel_agents, n_replicates=n_replicates,
+            climber=single_climber, parallel_agents=parallel_agents,
             seed_from=seed_from, learning=learning, set_=set_,
         )
         return
@@ -481,7 +474,7 @@ def run(
         _run_problem_fleet(
             target, config, budget, parallel_searches, name,
             agent=agent, model=model, climber=None, parallel_agents=parallel_agents,
-            n_replicates=n_replicates, holdout=holdout, learning=learning, set_=set_ or [],
+            holdout=holdout, learning=learning, set_=set_ or [],
             seed_from=seed_from, knowledge_context_file=knowledge_context_file,
             engines=engines, study=study,
         )
@@ -496,7 +489,7 @@ def run(
         _run_problem_fleet(
             target, config, budget, parallel_searches, name,
             agent=agent, model=model, climber=single_climber, parallel_agents=parallel_agents,
-            n_replicates=n_replicates, holdout=holdout, learning=learning, set_=set_ or [],
+            holdout=holdout, learning=learning, set_=set_ or [],
             seed_from=seed_from, knowledge_context_file=knowledge_context_file,
         )
         return
@@ -526,7 +519,6 @@ def _run_problem_fleet(
     model: str | None,
     climber: str | None,
     parallel_agents: int | None,
-    n_replicates: int | None,
     holdout: bool,
     learning: bool,
     set_: list[str],
@@ -545,7 +537,7 @@ def _run_problem_fleet(
         run_name=name,
         budget=budget,
         agent=agent, model=model, climber=climber,
-        parallel_agents=parallel_agents, n_replicates=n_replicates,
+        parallel_agents=parallel_agents,
         holdout=holdout, learning=learning, seed_from=seed_from,
         knowledge_context_file=knowledge_context_file, overrides=set_,
         engines=engines, study=study,
@@ -660,11 +652,25 @@ def _restore_launch_settings(config: Config, record: SearchRecord) -> None:
     if entry is not None:
         if entry.get("parallel_agents") is not None:
             config.concurrency.parallel_agents = int(entry["parallel_agents"])
-        if entry.get("n_replicates") is not None:
+        if entry.get("n_replicates") is not None:  # a record from before 0.9
             config.evaluation.n_replicates = int(entry["n_replicates"])
-        config.apply_overrides(parse_set_overrides([str(pair) for pair in entry.get("set") or []]))
+        _apply_recorded(config, parse_set_overrides([str(pair) for pair in entry.get("set") or []]))
     if record.meta.experiment_overrides:
-        config.apply_overrides(dict(record.meta.experiment_overrides))
+        _apply_recorded(config, dict(record.meta.experiment_overrides))
+
+
+def _apply_recorded(config: Config, overrides: dict) -> None:
+    """A record's overrides back onto the config. The problem's settings
+    (`evaluation.*`, which a run could set before 0.9) are put back as
+    recorded: they say how that search measured, which a resume keeps."""
+    from hillclimb.config import current_setting, problem_setting_advice
+
+    measured = {key: value for key, value in overrides.items() if problem_setting_advice(current_setting(key))}
+    config.apply_overrides({key: value for key, value in overrides.items() if key not in measured})
+    for key, value in measured.items():
+        section, _, name = current_setting(key).partition(".")
+        if name:
+            setattr(getattr(config, section), name, value)
 
 
 def _stop_what_the_dead_engine_left(record: SearchRecord) -> None:
@@ -772,6 +778,13 @@ def resume(
     config = common.load_config(agent=meta.agent, model=meta.model)
     _restore_launch_settings(config, record)
     config.holdout.enabled = meta.holdout_enabled
+    from hillclimb.config import EvaluationConfig, ReportConfig
+
+    # measured as it started (its record), not as the problem.yaml says now
+    if meta.evaluation:
+        config.evaluation = EvaluationConfig.model_validate(meta.evaluation)
+    if meta.report:
+        config.report = ReportConfig.model_validate(meta.report)
     if not meta.learning_enabled:
         config.learning.enabled = False  # started without learning: it stays out of the knowledge
     # the search resumes as the climber it started as: its snapshot is the
@@ -814,6 +827,10 @@ def resume(
             )
     config.routing = {op: RouteConfig(**route) for op, route in meta.routing.items()}
     problem = load_problem(meta.problem, config)
+    if not meta.evaluation:  # a record from before 0.9: the problem's, as it says now
+        from hillclimb.problem import apply_problem_settings
+
+        apply_problem_settings(config, problem)
     from hillclimb.harness.unit_tests import restore_frozen
 
     problem = restore_frozen(

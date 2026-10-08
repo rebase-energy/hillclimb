@@ -126,12 +126,14 @@ class TestOverrides:
     def test_apply_overrides_walks_dotted_paths_with_coercion(self):
         config = Config()
         config.apply_overrides(parse_set_overrides([
-            f"search.policy={OPENEVOLVE}", "learning.enabled=false", "search.n_replicates=3",
+            f"search.policy={OPENEVOLVE}", "learning.enabled=false",
             "search.policy_params={population_size: 50}", "search.policy_params.seed=7", "model=opus",
         ]))
         assert config.climber.label == "openevolve"
         assert config.learning.enabled is False
-        assert config.evaluation.n_replicates == 3
+        # replicates are the problem's (problem.yaml), in any spelling: no run sets them
+        with pytest.raises(KeyError, match="evaluation is the problem's"):
+            config.apply_overrides({"search.n_replicates": 3})
         assert config.climber.params == {"population_size": 50, "seed": 7}  # the dict replaces the preset's, then one key
         assert config.model == "opus"
         with pytest.raises(KeyError, match="search.nope"):
@@ -637,9 +639,10 @@ class TestLegacyReplicateKeys:
 
     def test_apply_overrides_maps_old_keys(self):
         config = Config()
-        config.apply_overrides(parse_set_overrides(["search.n_trials=3", "search.trial_mode=serial"]))
-        assert config.evaluation.n_replicates == 3
+        config.apply_overrides(parse_set_overrides(["search.trial_mode=serial"]))
         assert config.concurrency.parallel_replicates == 1
+        with pytest.raises(KeyError, match="problem.yaml"):
+            config.apply_overrides(parse_set_overrides(["search.n_trials=3"]))
 
 
 class TestSummaryJson:

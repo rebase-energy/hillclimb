@@ -181,7 +181,7 @@ def test_fleet_argv_carries_every_engine_option(tmp_path):
     argv = fleet_argv(
         "emflow://gefcom2014:solar", run_dir, "solar",
         budget=900, agent="dummy", model="sonnet", climber="gepa", parallel_agents=2,
-        n_replicates=3, holdout=False, learning=False, seed_from=tmp_path / "seed.py",
+        holdout=False, learning=False, seed_from=tmp_path / "seed.py",
         knowledge_context_file=tmp_path / "kc.md", overrides=["search.num_drafts=2"],
     )
     assert argv[:5] == ["emflow://gefcom2014:solar", "--run-id", run_dir.name, "--run-name", "solar"]

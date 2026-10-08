@@ -38,13 +38,44 @@ USER_RUN_DEFAULTS = frozenset({"agent", "model"})
 MACHINE_CONCURRENCY = frozenset({"machine_max_agents"})
 
 
+# Settings that are the problem's (problem.yaml), not a config file's or a
+# run's: how noisy its score is, what its report shows, whether it has a
+# hidden split. `Config.evaluation`/`report` are filled from the problem
+# when a search starts (`apply_problem_settings`).
+PROBLEM_SETTINGS = {
+    "evaluation": "set it in the problem's problem.yaml (`evaluation: {n_replicates: 3, noise_k: 2}`)",
+    "report": "set it in the problem's problem.yaml (`report: {enabled: false}`)",
+    "holdout.enabled": "a problem has a hidden split when its problem.yaml says `holdout: true`; "
+                       "`hillclimb run --no-holdout` skips it for one run",
+}
+
+
 class ConfigError(ValueError):
     """A config file to fix: the message names the file, the key and the fix."""
 
 
+def problem_setting_advice(key: str) -> str | None:
+    """Where a dotted setting went, when it is the problem's now."""
+    for name, advice in PROBLEM_SETTINGS.items():
+        if key == name or key.startswith(name + "."):
+            return f"{name} is the problem's: {advice}"
+    return None
+
+
+def _check_problem_settings(level: dict, path: Path) -> None:
+    for key, value in level.items():
+        dotted = [key] if not isinstance(value, dict) else [key, *(f"{key}.{sub}" for sub in value)]
+        for name in dotted:
+            advice = problem_setting_advice(name)
+            if advice:
+                raise ConfigError(f"{path}: {advice}")
+
+
 def _check_general_level(level: dict, path: Path, *, keep: frozenset = frozenset()) -> None:
     """A general config file (hillclimb.yaml, the user config) holds no run
-    defaults: each run key there is an error that names its new home."""
+    defaults and no problem settings: each one there is an error that names
+    its new home."""
+    _check_problem_settings(level, path)
     for key in level:
         if key not in RUNS_CONFIG_KEYS or key in keep:
             continue
@@ -71,6 +102,7 @@ def split_config(data: dict) -> tuple[dict, dict]:
 
 def _check_runs_level(level: dict, path: Path) -> None:
     """The run defaults hold run keys only."""
+    _check_problem_settings(level, path)
     unknown = sorted(set(level) - RUNS_CONFIG_KEYS)
     if unknown:
         raise ConfigError(
@@ -352,10 +384,12 @@ class RouteConfig(BaseModel):
 
 class HoldoutConfig(BaseModel):
     """Selection hygiene for problems whose verifier ships a hidden split
-    (`holdout: true`). `enabled: false` turns the split off search-wide."""
+    (`holdout: true`). `enabled: false` (`--no-holdout`) skips the split for
+    a run."""
 
+    # the run's switch, from the problem (`holdout: true`) and `--no-holdout`;
+    # never a config file's (PROBLEM_SETTINGS)
     enabled: bool = True
-    climb_on: str = "val"  # seam only; 'holdout' climbing is a future experiment
     selection: str = "rank-blend"  # rank-blend | holdout | val
     # holdout hygiene: only candidates whose val score ranks top-k get a
     # holdout evaluation (0 = score every passing candidate). Non-top-k candidates
@@ -798,6 +832,8 @@ class Config(BaseModel):
             if value is None:
                 continue
             key = current_setting(key)
+            if advice := problem_setting_advice(key):
+                raise ConfigError(advice)
             value = legacy_value(key, value)
             *parents, leaf = key.split(".")
             if not parents and leaf == "climber":
@@ -830,6 +866,8 @@ class Config(BaseModel):
         working = self.model_copy(deep=True)
         for key, value in overrides.items():
             key = current_setting(key)
+            if advice := problem_setting_advice(key):
+                raise KeyError(advice)
             value = legacy_value(key, value)
             if key == "climber":
                 # naming a climber (a file, a folder, a whole block)

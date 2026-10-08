@@ -364,7 +364,7 @@ class TestRunSpecs:
         (tmp_path / "seed.py").write_text("x = 1\n")
         entries = [
             spec_entry("heilbronn-11", budget=600, agent="dummy", model="sonnet", climber=str(GREEDY),
-                       parallel_agents=2, n_replicates=None, seed_from=tmp_path / "seed.py",
+                       parallel_agents=2, seed_from=tmp_path / "seed.py",
                        set=["budget.max_evaluations=3"]),
             spec_entry("heilbronn-11", name="gepa", budget="10m", climber=str(GEPA)),
         ]

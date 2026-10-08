@@ -375,7 +375,6 @@ def spec_entry(
     model: str | None = None,
     climber: Any = None,
     parallel_agents: int | None = None,
-    n_replicates: int | None = None,
     seed_from: Path | str | None = None,
     set: Sequence[str] = (),  # noqa: A002 — the spec key is `set`
     run_config: Config | None = None,
@@ -401,7 +400,7 @@ def spec_entry(
         set = [*(pair for pair in run_settings_set(run_config) if pair.split("=", 1)[0] not in named), *set]  # noqa: A001
     entry = {
         "target": target, "name": name, "budget": budget, "agent": agent, "model": model,
-        "climber": climber, "parallel_agents": parallel_agents, "n_replicates": n_replicates,
+        "climber": climber, "parallel_agents": parallel_agents,
         "seed_from": seed_from, "set": list(set),
     }
     return {key: value for key, value in entry.items() if value not in (None, [])}
@@ -443,7 +442,12 @@ def create_search(
     from hillclimb import __version__
     from hillclimb.climber import ClimberLoadError, load_snapshot, snapshot_climber
     from hillclimb.harness.unit_tests import bundle_relative, freeze_for_run
+    from hillclimb.problem import apply_problem_settings
 
+    # how the problem's score is measured and reported is the problem's:
+    # its problem.yaml's `evaluation:`/`report:` (recorded below, so a
+    # resume measures the same way whatever the problem.yaml says by then)
+    apply_problem_settings(config, problem)
     # a climber that cannot be loaded — a module that does not resolve, a
     # prompt that names a token nothing fills — fails here, before a search
     # dir exists
@@ -501,6 +505,8 @@ def create_search(
         unit_tests_sha256=(problem.unit_tests.sha256 if problem.unit_tests else None),
         budget_s=total_s,
         holdout_enabled=config.holdout.enabled and problem.holdout_cmd is not None,
+        evaluation=config.evaluation.model_dump(),
+        report=config.report.model_dump(),
         seed_from=str(seed_from) if seed_from else None,
         seed_sha256=_sha256(seed_from) if seed_from else None,
         learning_enabled=effective_memory(config) != "none",
@@ -1333,7 +1339,7 @@ def _new_search(
         write_run_spec(run_dir, [spec_entry(
             target, budget=total_s, agent=config.agent, model=config.model,
             climber=climber_block, parallel_agents=config.concurrency.parallel_agents,
-            n_replicates=config.evaluation.n_replicates, seed_from=seed_path, set=spec_set,
+            seed_from=seed_path, set=spec_set,
             run_config=config,
         )])
     search_dir = create_search(config, problem, run_dir, run_id, total_s, seed_from=seed_path)
@@ -1548,7 +1554,8 @@ def run_spec(path: Path | str, *, config: Config | None = None, log: Log = print
         if entry.parallel_agents is not None:
             entry_config.concurrency.parallel_agents = entry.parallel_agents
         if entry.n_replicates is not None:
-            entry_config.evaluation.n_replicates = entry.n_replicates
+            log(f"note: {target}: `n_replicates` in a run spec is ignored; replicates are the problem's "
+                "(`evaluation: {n_replicates: N}` in its problem.yaml)")
         entry_config.apply_overrides(parse_set_overrides(entry.set))
         seed = Path(entry.seed_from) if entry.seed_from else None
         if seed is not None and not seed.is_absolute():
@@ -1557,7 +1564,7 @@ def run_spec(path: Path | str, *, config: Config | None = None, log: Log = print
         entries.append(spec_entry(
             target, name=entry.name, budget=entry.budget, agent=entry_config.agent, model=entry_config.model,
             climber=entry_config.climber_block(), parallel_agents=entry.parallel_agents,
-            n_replicates=entry.n_replicates, seed_from=seed, set=entry.set, run_config=entry_config,
+            seed_from=seed, set=entry.set, run_config=entry_config,
         ))
     write_run_spec(run_dir, entries, source=path)
     return [
@@ -1633,7 +1640,6 @@ def fleet_argv(
     model: str | None = None,
     climber: Any = None,
     parallel_agents: int | None = None,
-    n_replicates: int | None = None,
     holdout: bool = True,
     learning: bool = True,
     seed_from: Path | str | None = None,
@@ -1661,8 +1667,6 @@ def fleet_argv(
     argv += climber_argv(climber)
     if parallel_agents is not None:
         argv += ["--parallel-agents", str(parallel_agents)]
-    if n_replicates is not None:
-        argv += ["--n-replicates", str(n_replicates)]
     if not holdout:
         argv.append("--no-holdout")
     if not learning:
@@ -1824,7 +1828,6 @@ def run_fleet(
     model: str | None = None,
     climber: Any = None,
     parallel_agents: int | None = None,
-    n_replicates: int | None = None,
     holdout: bool = True,
     learning: bool = True,
     seed_from: Path | str | None = None,
@@ -1869,7 +1872,7 @@ def run_fleet(
     run_dir = create_problem_run(config, name, target, problem.problem_id)
     shared_entry = dict(
         budget=budget, agent=agent or config.agent, model=model or config.model,
-        parallel_agents=parallel_agents, n_replicates=n_replicates, seed_from=seed_from,
+        parallel_agents=parallel_agents, seed_from=seed_from,
         run_config=config,
     )
     from hillclimb.climber import as_spec
@@ -1903,7 +1906,7 @@ def run_fleet(
     problem.unit_tests = freeze_for_run(problem, run_dir)
     shared = dict(
         budget=budget, agent=agent, model=model,
-        parallel_agents=parallel_agents, n_replicates=n_replicates, holdout=holdout,
+        parallel_agents=parallel_agents, holdout=holdout,
         learning=learning, seed_from=seed_from, knowledge_context_file=knowledge_context_file,
     )
     plan: list[tuple[str, list[str]]] = []  # (log slug, argv) per engine

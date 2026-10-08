@@ -32,7 +32,6 @@ defaults:
   model: claude-opus-5
   learning.enabled: false
   concurrency.parallel_agents: 1
-  evaluation.n_replicates: 1
 
 experiments:
   greedy:
