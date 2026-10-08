@@ -73,7 +73,7 @@ def problem_yaml(n: int) -> str:
     if n in BEST_KNOWN:
         lines.append("chart_baselines:")
         lines += [f'  "{label}": {value!r}' for label, value in BEST_KNOWN[n]]
-    lines += ["time_budget_s: 900", "allow_internet_during_solution: false", ""]
+    lines += ["allow_internet_during_solution: false", ""]
     return "\n".join(lines)
 
 

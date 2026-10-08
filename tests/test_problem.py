@@ -23,7 +23,6 @@ problem_id: my-problem
 metric: score
 higher_is_better: true
 description: description.md
-time_budget_s: 123
 chart_baselines:
   reference floor: 0.5
   OpenEvolve best: 0.75
@@ -43,7 +42,6 @@ def test_load_problem_from_directory(problem_dir, config):
     assert spec.higher_is_better
     assert spec.verifier_cmd == [str(problem_dir / "verifier.sh")]
     assert spec.verifier_display == "./problem/verifier.sh"
-    assert spec.time_budget_s == 123
     assert spec.chart_baselines == {"reference floor": 0.5, "OpenEvolve best": 0.75}
     assert spec.holdout_cmd is None  # no `holdout: true`
     assert not spec.allow_internet_during_solution
@@ -169,7 +167,6 @@ problem_id: my-eval
 metric: mean-bins
 higher_is_better: false
 holdout: true
-time_budget_s: 300
 """
     )
     return problem

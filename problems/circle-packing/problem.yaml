@@ -10,5 +10,4 @@ chart_baselines:
   AlphaEvolve: 2.6359830849176067
 # lean runtime venv (numpy/scipy/pandas) so the demo starts in seconds
 requirements: requirements.txt
-time_budget_s: 60  # good packings converge in seconds; bounds how long one candidate can hold a core
 allow_internet_during_solution: false

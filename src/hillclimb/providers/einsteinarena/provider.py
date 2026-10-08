@@ -248,7 +248,6 @@ class EinsteinArenaProvider:
             description=_description(payload, slug, revision),
             metric_name="arena_score",
             higher_is_better=payload["scoring"] == "maximize",
-            time_budget_s=config.budget.total_s,
             chart_baselines=baselines,
             verifier_cmd=[
                 "{python}",

@@ -57,7 +57,6 @@ baseline_files:                  # or files the floor is scored on as they are
 chart_baselines:                 # optional named horizontal lines in `hillclimb chart`
   previous best: 0.73
 output_artifacts: [submission.csv]  # files of a solution `best/` and `summit` copy beside solution.py
-time_budget_s: 900               # the default `hillclimb run --budget`
 requirements: requirements.txt   # per-problem venv (default: a shared one with numpy, scipy, pandas, scikit-learn)
 unit_tests:                      # optional correctness gate, frozen at run start
   root: tests

@@ -17,6 +17,8 @@ import os
 from pathlib import Path
 
 MARKER_FILE = "hillclimb.yaml"
+# the run defaults, in runs/ beside the runs they launch (committed with them)
+RUNS_CONFIG = "config.yaml"
 
 
 class HillclimbDirNotFound(Exception):
@@ -110,9 +112,10 @@ def user_env_path() -> Path:
 
 
 INIT_CONFIG = """\
-# hillclimb config — this file marks the hillclimb dir (problems/ and runs/
-# sit beside it); run hillclimb from this folder. Precedence: CLI flags > this file >
-# ~/.config/hillclimb/config.yaml > built-in defaults.
+# hillclimb config — this file marks the hillclimb dir (problems/, climbers/ and
+# runs/ sit beside it); run hillclimb from this folder. Precedence: CLI flags >
+# runs/config.yaml (the run defaults) > this file > ~/.config/hillclimb/config.yaml >
+# built-in defaults.
 
 model: sonnet
 # agent: claude-code
@@ -127,11 +130,6 @@ __STORE__
 #   operators: [draft, debug, improve, ensemble]
 #   tuner: random          # random | optuna (parameter tuning of candidates that declare params.json)
 #   memory: files          # files | none
-
-# budget:
-#   total_s: 7200
-#   deadline: graceful     # `hard` aborts in-flight operators when total_s runs out
-#   max_evaluations: 0     # verifier trials the climber may spend (0 = unlimited)
 
 # evaluation:
 #   n_replicates: 1        # seeded runs per trial (median is the trial's score)
@@ -161,6 +159,23 @@ __STORE__
 
 # report:
 #   enabled: true        # inject eval breakdowns (per-zone/horizon/quantile) into improve prompts
+"""
+
+
+# The run defaults `init` writes to runs/config.yaml: how the runs launched
+# here climb unless a flag or a run spec says otherwise. Committed with the
+# runs, so the record shows what they defaulted to. The budget is left unset
+# on purpose: a run without one asks before it climbs on the default.
+RUNS_CONFIG_TEMPLATE = """\
+# hillclimb run defaults — how the runs launched in this folder climb, unless a
+# flag (`hillclimb run --budget 30m`) or a run spec says otherwise. Each run
+# still records what it used in runs/<run-id>/spec.yaml.
+
+# budget:
+#   total_s: 1800          # the wall clock of a run (unset: `hillclimb run` asks first)
+#   deadline: graceful     # `hard` aborts in-flight operators when total_s runs out
+#   max_evaluations: 0     # verifier trials the climber may spend (0 = unlimited)
+#   max_cost_usd: 0        # coding-agent spend that parks the search (0 = no ceiling)
 """
 
 
@@ -233,7 +248,8 @@ def init_config(datastore: str = "files") -> str:
 
 def scaffold_hillclimb_dir(folder: Path, datastore: str = "files") -> Path:
     """Make `folder` (created if missing) a hillclimb dir: hillclimb.yaml,
-    empty problems/, runs/ and climbers/ beside it, and the gitignore rules that keep
+    empty problems/ and climbers/ beside it, runs/ holding the run defaults
+    (runs/config.yaml), and the gitignore rules that keep
     run artifacts and keys out of git while the record of every run goes in
     (`INIT_GITIGNORE`). No problem is added: picking one (`hillclimb problem
     get`) is the user's first real choice. Idempotent on the folder layout;
@@ -247,6 +263,8 @@ def scaffold_hillclimb_dir(folder: Path, datastore: str = "files") -> Path:
         (folder / sub / ".gitkeep").touch()
     if not (folder / MARKER_FILE).exists():
         (folder / MARKER_FILE).write_text(init_config(datastore))
+    if not (folder / "runs" / RUNS_CONFIG).exists():
+        (folder / "runs" / RUNS_CONFIG).write_text(RUNS_CONFIG_TEMPLATE)
     gitignore = folder / ".gitignore"
     existing_ignore = gitignore.read_text() if gitignore.exists() else ""
     present = existing_ignore.splitlines()

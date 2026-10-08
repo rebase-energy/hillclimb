@@ -30,7 +30,6 @@ def test_registered_provider_uses_generic_target_seam(tmp_path, config, monkeypa
                 description="fake benchmark",
                 metric_name="score",
                 higher_is_better=True,
-                time_budget_s=60,
                 verifier_cmd=["true"],
                 provider_target=f"fakebench://{name}@v1",
                 problem_key_override=f"fakebench://{name}",

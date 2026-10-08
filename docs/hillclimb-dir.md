@@ -12,6 +12,7 @@ my-project/
 ├── hillclimb.yaml      # defaults, and the marker that makes this the hillclimb dir
 ├── problems/           # problem definitions
 ├── runs/               # one folder per run: its spec, its records, its artifacts
+│   └── config.yaml     # the run defaults: the budget runs here climb on
 └── climbers/           # your own climbers, empty until `hillclimb climber get`
 ```
 
@@ -40,8 +41,22 @@ a `hillclimb.yaml` (a hillclimb checkout beside your project, say) is never
 taken for yours. From anywhere else, commands error and point you at
 `hillclimb init`; `HILLCLIMB_DIR` pins it explicitly.
 
-Config precedence, highest first: CLI flags → the hillclimb dir's
-`hillclimb.yaml` → user `~/.config/hillclimb/config.yaml` → built-in defaults.
+Config precedence, highest first: CLI flags → the run defaults in
+`runs/config.yaml` → the hillclimb dir's `hillclimb.yaml` → user
+`~/.config/hillclimb/config.yaml` → built-in defaults.
+
+### A run needs a budget
+
+A problem carries no budget; a run does. `hillclimb run` takes it from
+`--budget` (or a run spec's or study's `budget:`), else from
+`budget.total_s` in `runs/config.yaml`, which `hillclimb init` writes with the
+budget left unset. With neither, it asks at the terminal before climbing on
+the default (`Run with the default budget of 7200s (2h 00m)? [y/N]`); where
+nobody can answer (a script, a coding agent, the Python API) it stops with the
+fix, before anything is written. A budget capped in another dimension
+(`budget.max_evaluations`, `max_tokens`, `max_cost_usd`) is a chosen one: its
+clock is the default without asking. `hillclimb reset --runs` keeps
+`runs/config.yaml`.
 
 `hillclimb reset` stops this dir's engines and deletes what hillclimb made in
 it — `hillclimb.yaml`, the sqlite store, and the folders carrying the
@@ -123,7 +138,7 @@ margin; by default (`budget.deadline: graceful`) whatever is still in flight
 finishes and is committed, so a search can overrun by up to one operator. The
 duration column in `hillclimb watch` keeps counting and says by how much:
 `1h 04m 16s (budget: 1h, 4m 16s over)`. Pass `--set budget.deadline=hard` (or
-set it in `hillclimb.yaml`) to cut in-flight operators off at the deadline
+set it in `runs/config.yaml`) to cut in-flight operators off at the deadline
 instead; they are journaled `abandoned` ("cut off at the budget deadline").
 
 The clock is one dimension of the budget: `budget.max_evaluations` (verifier

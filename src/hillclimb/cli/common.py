@@ -521,6 +521,31 @@ def show_solution_plot(
         open_file(out)
 
 
+def is_interactive() -> bool:
+    """Whether a person is at the terminal to answer a question: a script, a
+    pipe or a coding agent running hillclimb is not."""
+    import sys
+
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _ask_default_budget(seconds: int) -> bool:
+    from hillclimb.harness.budget import format_remaining
+
+    say("[head]No budget set[/] [note](no --budget, and no budget.total_s in runs/config.yaml)[/]")
+    return typer.confirm(
+        f"Run with the default budget of {seconds}s ({format_remaining(seconds)})?", default=False
+    )
+
+
+def resolve_run_budget(explicit: str | int | None, config: Config) -> int:
+    """`resolve_budget` with a person to ask about the default, when there is
+    one; with none, or a no, it raises NoBudget, before anything is written."""
+    from hillclimb.harness.budget import resolve_budget
+
+    return resolve_budget(explicit, config, ask=_ask_default_budget if is_interactive() else None)
+
+
 def ensure_agents_ready(config: Config, agent: str | None = None, model: str | None = None) -> None:
     """Before a command uses coding agents: every one it would call — the
     default and any per-operator route — has a live login, or, at a

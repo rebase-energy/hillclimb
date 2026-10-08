@@ -7,5 +7,4 @@ contract: contract.md
 eval: "{python} problem/evaluate.py"
 holdout_eval: "{python} problem/evaluate.py --holdout"
 baseline: baseline.py
-time_budget_s: 900
 allow_internet_during_solution: false

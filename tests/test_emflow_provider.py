@@ -126,7 +126,7 @@ def test_quantile_note_literal():
     spec = ProblemSpec(
         problem_id="q", problem_dir=Path("."), data_dir=Path("."),
         description="", metric_name="pinball", higher_is_better=False,
-        time_budget_s=600, emflow_problem="x", verifier_cmd=["eval"],
+        emflow_problem="x", verifier_cmd=["eval"],
         emflow_quantiles=[i / 100 for i in range(1, 100)],
     )
     class Stub:  # noqa: N801 — minimal receiver for the unbound method

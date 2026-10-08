@@ -125,7 +125,6 @@ def load_emflow_problem(name: str, config: Config) -> ProblemSpec:
         description=(problem_dir / "description.md").read_text(),
         metric_name=problem.objective.name,
         higher_is_better=not problem.objective.lower_is_better,  # legacy-key: emflow's own field
-        time_budget_s=config.budget.total_s,
         chart_baselines=reference_baselines(problem),
         verifier_cmd=verifier_cmd,
         holdout_cmd=holdout_cmd,

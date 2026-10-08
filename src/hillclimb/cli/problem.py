@@ -40,9 +40,6 @@ def problem_list():
         metadata = yaml.safe_load((problem_path(problem_id) / "problem.yaml").read_text()) or {}
         higher = bool(metadata.get("higher_is_better", True))
         value, who = _best_known(metadata.get("chart_baselines") or {}, higher)
-        # no budget column: the problem's `time_budget_s` is only the default
-        # `--budget`, the user's to set, and the clock is one of several budget
-        # dimensions — a listing that showed it would read as the problem's size
         rows.append((
             _m(problem_id),
             _m(metadata.get("metric", "-")),
@@ -171,7 +168,7 @@ def _stdin_is_tty() -> bool:
 
 
 PROBLEM_FILES = (
-    ("problem.yaml", "metric, direction, budget — the problem's identity"),
+    ("problem.yaml", "metric, direction — the problem's identity"),
     ("description.md", "what the coding agents read before drafting"),
     ("contract.md", "the interface solution.py must implement"),
     ("interface.py", "the output format, machine-checked (hillclimb spaces)"),

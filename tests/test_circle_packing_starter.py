@@ -108,7 +108,6 @@ def test_committed_dirs_match_the_generator(generator, tmp_path):
 def test_sample_scores_the_grid_floor(config: Config, tmp_path, generator, n):
     spec = load_problem(f"circle-packing-{n}", config)
     assert spec.metric_name == "sum-radii" and spec.higher_is_better
-    assert spec.time_budget_s == 900
     assert spec.interface_path == spec.problem_dir / "interface.py"
     assert spec.chart_baselines and all(v > 0 for v in spec.chart_baselines.values())
 

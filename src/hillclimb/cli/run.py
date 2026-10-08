@@ -148,7 +148,7 @@ def _run_problem(
         except (KeyError, ValueError) as exc:
             raise typer.BadParameter(str(exc)) from exc
     problem = load_problem(target, config)
-    total_s = common.parse_budget(budget) if budget else problem.time_budget_s
+    total_s = common.resolve_run_budget(budget, config)
     if run_id is None:
         run_name = run_name or problem.problem_id
         run_dir = _create_problem_run(config, run_name, target, problem.problem_id)
@@ -218,6 +218,11 @@ def _run_suite(
     suite = resolved.suite
     run_name = name or suite.suite_id
     run_id = new_run_id(run_name)
+    # one budget for the entries that name none, settled (or asked for, once)
+    # before the run is created
+    default_budget = None
+    if not budget and any(not entry.budget for entry in suite.problems):
+        default_budget = f"{common.resolve_run_budget(None, config)}s"
     problem_targets = suite_problem_targets(suite, config)
     # a problem may appear more than once (two models on one problem, say):
     # each entry is its own search, and search ids get a -2/-3 suffix
@@ -247,7 +252,7 @@ def _run_suite(
         slug = Path(problem_target).name or f"problem-{index}"
         cmd = [problem_target, "--run-id", run_id, "--run-name", run_name]
         # CLI flags override the spec entry's committed values
-        child_budget = budget or entry.budget
+        child_budget = budget or entry.budget or default_budget
         child_agent = agent or entry.agent
         child_model = model or entry.model
         child_climber = climber or entry.climber
@@ -452,6 +457,12 @@ def run(
 
         fail(f"error: {_m(NO_CLIMBER_HINT)}")
         raise typer.Exit(1)
+    if resolved.kind != "suite" and run_id is None:
+        # the budget is settled here too, before anything is written: the
+        # flag, else the folder's run defaults, else a yes to the default.
+        # Every child is then handed it explicitly. (A suite asks once, for
+        # the entries that name none; a suite's child has its --budget.)
+        budget = budget or f"{common.resolve_run_budget(overrides.get('budget.total_s'), config)}s"
     if resolved.kind == "suite":
         if mixed:
             raise typer.BadParameter("a spec takes one --climber; mixed fleets run on a single problem")

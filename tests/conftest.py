@@ -90,7 +90,6 @@ def task(tmp_path: Path) -> ProblemSpec:
         verifier_cmd=SELF_REPORT_CMD,
         report_trusted=False,
         contract_template="contract_submission",
-        time_budget_s=3600,
     )
 
 
@@ -119,7 +118,6 @@ def task_larger(tmp_path: Path) -> ProblemSpec:
         verifier_cmd=SELF_REPORT_CMD,
         report_trusted=False,
         contract_template="contract_submission",
-        time_budget_s=3600,
     )
 
 
@@ -132,6 +130,7 @@ def config(tmp_path: Path) -> Config:
     cfg.paths.problems_dir = Path("problems")  # this repo keeps problems/ at the root
     cfg.paths.runtime_python = Path(sys.executable)
     cfg.budget.exec_timeout_s = 30
+    cfg.budget.total_s = 3600  # the run defaults a folder sets in runs/config.yaml
     pin(cfg)  # the catalog's greedy, by file: the engine ships no default climber
     return cfg
 

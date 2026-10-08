@@ -151,7 +151,7 @@ class TestOverrides:
         problem = ProblemSpec(
             problem_id="p", problem_dir=tmp_path, data_dir=tmp_path,
             description="", metric_name="accuracy", higher_is_better=True,
-            verifier_cmd=["./verifier.sh"], time_budget_s=60,
+            verifier_cmd=["./verifier.sh"],
         )
         run_dir = create_run_dir(tmp_path / "runs", "r1")
         search_dir = create_search(

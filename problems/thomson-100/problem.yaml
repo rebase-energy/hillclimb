@@ -6,5 +6,4 @@ description: description.md
 baseline_files: {submission.csv: sample_submission.csv}
 chart_baselines:
   "best known (Wikipedia Thomson table)": 4448.350634
-time_budget_s: 900
 allow_internet_during_solution: false

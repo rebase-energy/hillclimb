@@ -792,7 +792,6 @@ def make_evaluator_searcher(config, tmp_path, agent, evaluate_py=EVALUATOR_EVALU
         description="Maximize answer().",
         metric_name="score",
         higher_is_better=True,
-        time_budget_s=3600,
         verifier_cmd=["{python}", "problem/evaluate.py"],
         verifier_display="./problem/evaluate.py",
         contract="solution.py must define `answer() -> float`.",

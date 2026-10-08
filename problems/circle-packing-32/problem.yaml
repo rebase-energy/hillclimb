@@ -7,5 +7,4 @@ baseline_files: {submission.csv: sample_submission.csv}
 chart_baselines:
   "AlphaEvolve 2025": 2.937944526205518
   "best known (Georgiev et al. 2025)": 2.939572
-time_budget_s: 900
 allow_internet_during_solution: false

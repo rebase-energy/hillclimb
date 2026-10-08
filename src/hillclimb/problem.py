@@ -42,12 +42,16 @@ class ProblemPermissionError(ProblemError, PermissionError):
 KNOWN_PROBLEM_KEYS = frozenset({
     "problem_id", "metric", "higher_is_better", "lower_is_better", "description", "contract",  # legacy-key
     "verifier", "score", "run", "private", "holdout", "holdout_inputs", "time_limit_s",
-    "baseline", "baseline_files", "chart_baselines", "output_artifacts", "time_budget_s",
+    "baseline", "baseline_files", "chart_baselines", "output_artifacts",
     "requirements", "unit_tests", "data_dir", "allow_internet_during_solution", "allow_network",
     "solution_kind", "interface", "landscape", "surface_metrics", "fingerprint", "plot",
     "written_by", "score_function", "kind",
 })
 _WARNED_KEYS: set[tuple[str, str]] = set()
+# Keys a problem used to carry, ignored now, with where the setting went.
+RETIRED_PROBLEM_KEYS = {
+    "time_budget_s": "the budget is the run's: pass --budget, or set budget.total_s in runs/config.yaml",
+}
 
 
 class UnitTestSpec(BaseModel):
@@ -97,7 +101,6 @@ class ProblemSpec(BaseModel):
     description: str
     metric_name: str
     higher_is_better: bool
-    time_budget_s: int
     # may solution.py reach the internet when the verifier runs it? Only
     # the contract prompt says so; the verifier's network is not jailed.
     # (The operator AGENTS' internet is the user's `allow_internet_for_agents`.)
@@ -510,6 +513,9 @@ def _check_meta(problem_yaml: Path, meta: dict) -> None:
     for key in sorted(set(meta) - KNOWN_PROBLEM_KEYS):
         if (str(problem_yaml), key) not in _WARNED_KEYS:
             _WARNED_KEYS.add((str(problem_yaml), key))
+            if key in RETIRED_PROBLEM_KEYS:
+                print(f"warning: {problem_yaml}: `{key}:` is ignored ({RETIRED_PROBLEM_KEYS[key]})", file=sys.stderr)
+                continue
             close = difflib.get_close_matches(key, KNOWN_PROBLEM_KEYS, n=1)
             hint = f"did you mean `{close[0]}:`?" if close else "a typo?"
             print(f"warning: {problem_yaml}: unknown key `{key}:` is ignored ({hint})", file=sys.stderr)
@@ -570,7 +576,6 @@ def load_problem(target: str | Path, config: Config) -> ProblemSpec:
         description=description_path.read_text(),
         metric_name=meta["metric"],
         higher_is_better=bool(legacy_direction_key(meta)["higher_is_better"]),
-        time_budget_s=meta.get("time_budget_s", config.budget.total_s),
         # `allow_network` is the pre-0.6 spelling
         allow_internet_during_solution=bool(
             meta.get("allow_internet_during_solution", meta.get("allow_network", False))
@@ -910,7 +915,7 @@ class Problem:
         files: Mapping[str, str | Path] | None = None,
         requirements: Sequence[str] | None = None,
         time_limit_s: float | None = None,
-        time_budget_s: int = 3600,
+        time_budget_s: int | None = None,
         allow_internet_during_solution: bool = False,
         chart_baselines: Mapping[str, float] | None = None,
         private: Sequence[str | Path] | None = None,
@@ -925,7 +930,11 @@ class Problem:
         self.files = dict(files or {})
         self.requirements = list(requirements) if requirements is not None else None
         self.time_limit_s = float(time_limit_s) if time_limit_s is not None else None
-        self.time_budget_s = int(time_budget_s)
+        if time_budget_s is not None:
+            raise TypeError(
+                "Problem(time_budget_s=...) is gone: the budget is the run's "
+                "(hc.run(problem, budget='30m'), or budget.total_s in runs/config.yaml)"
+            )
         self.allow_internet_during_solution = bool(allow_internet_during_solution)
         self.chart_baselines = dict(chart_baselines or {})
         # what only `score` reads (hidden labels, a held-back set): absolute,
@@ -981,7 +990,6 @@ class Problem:
             "metric": self.metric,
             "higher_is_better": self.higher_is_better,
             "description": "description.md",
-            "time_budget_s": self.time_budget_s,
             "allow_internet_during_solution": self.allow_internet_during_solution,
             "output_artifacts": [self.output],
             "written_by": "hillclimb.Problem",

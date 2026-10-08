@@ -74,7 +74,7 @@ def problem_yaml(n: int) -> str:
     if n in BEST_KNOWN:
         value, who = BEST_KNOWN[n]
         lines += ["chart_baselines:", f'  "optimal ({who})": {value}']
-    lines += ["time_budget_s: 900", "allow_internet_during_solution: false", ""]
+    lines += ["allow_internet_during_solution: false", ""]
     return "\n".join(lines)
 
 

@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
 from hillclimb.agents import get_agent
 from hillclimb.agents.base import AgentRequest
-from hillclimb.harness.budget import Budget, BudgetManager
+from hillclimb.harness.budget import Budget, BudgetManager, resolve_budget
 from hillclimb.harness.candidate import Candidate
 from hillclimb.config import Config, parse_set_overrides
 from hillclimb.harness.journal import Journal
@@ -1279,6 +1279,7 @@ def _new_search(
     problem = load_problem(target, config)
     run_dir_is_new = run_id is None
     climber_block = config.climber_block()  # before anything is written: no climber, no run folder
+    total_s = resolve_budget(budget_s, config)  # ...and no budget, no run folder either
     if run_id is None:
         run_name = run_name or name or problem.problem_id
         run_id = new_run_id(run_name)
@@ -1294,7 +1295,6 @@ def _new_search(
         )
     else:
         run_dir = config.paths.runs_dir / run_id  # suite child: parent wrote run.yaml
-    total_s = budget_s or problem.time_budget_s
     seed_path = Path(seed_from) if seed_from else None
     if run_dir_is_new:
         write_run_spec(run_dir, [spec_entry(
@@ -1396,7 +1396,8 @@ def run(
     `climber` is a .py file, a block, or a composed `hillclimb.Climber`
     (None: the folder's `climber:` block). `budget` is a `Budget` — time,
     evaluations, tokens, cost — or just `"10m"` / `"2h"` / seconds for the
-    clock (None: the problem's own); `max_evaluations=N` is short for
+    clock (None: the folder's run defaults in runs/config.yaml; with none
+    there either it raises NoBudget); `max_evaluations=N` is short for
     `Budget(evaluations=N)`. `learning=False` keeps the search out of the
     folder's knowledge, both ways. The folder's hillclimb.yaml supplies
     everything else unless a `config` is given."""
@@ -1487,7 +1488,6 @@ def run_spec(path: Path | str, *, config: Config | None = None, log: Log = print
     Python counterpart of `hillclimb run SPEC` (which detaches one engine per
     entry). One run holds them all and carries its own `spec.yaml`."""
     from hillclimb.climber import as_spec
-    from hillclimb.harness.budget import parse_budget
     from hillclimb.problem import load_suite, suite_problem_targets
 
     _not_while_importing("run_spec")
@@ -1496,6 +1496,8 @@ def run_spec(path: Path | str, *, config: Config | None = None, log: Log = print
     targets = suite_problem_targets(suite, base)
     run_id = new_run_id(suite.suite_id)
     problem_ids = list(dict.fromkeys(load_problem(target, base).problem_id for target in targets))
+    # every entry's budget (its own, else the folder's run defaults) before the run exists
+    budgets = [resolve_budget(entry.budget, base) for entry in suite.problems]
     run_dir = create_run(base, RunMeta(
         run_id=run_id, name=suite.suite_id, kind="suite", target=str(path), problem_ids=problem_ids,
     ))
@@ -1526,10 +1528,10 @@ def run_spec(path: Path | str, *, config: Config | None = None, log: Log = print
     write_run_spec(run_dir, entries, source=path)
     return [
         run_search(
-            target, budget_s=parse_budget(entry.budget) if entry.budget else None,
+            target, budget_s=total_s,
             run_id=run_id, run_name=suite.suite_id, config=entry_config, seed_from=seed, log=log,
         )
-        for (entry_config, seed), entry, target in zip(configs, suite.problems, targets)
+        for (entry_config, seed), total_s, target in zip(configs, budgets, targets)
     ]
 
 
@@ -1828,6 +1830,8 @@ def run_fleet(
     problem = load_problem(target, config)
     ensure_runtime_venv(config, problem.runtime, log=log, requirements=problem.requirements_file)
     name = run_name or problem.problem_id
+    if not budget:  # settled before the run exists: every engine is handed it
+        budget = f"{resolve_budget(None, config)}s"
     run_dir = create_problem_run(config, name, target, problem.problem_id)
     shared_entry = dict(
         budget=budget, agent=agent or config.agent, model=model or config.model,

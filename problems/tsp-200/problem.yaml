@@ -5,5 +5,4 @@ description: description.md
 data_dir: data
 # valid-by-construction floor: best/ always holds something
 baseline_files: {submission.csv: sample_submission.csv}
-time_budget_s: 900
 allow_internet_during_solution: false

@@ -76,7 +76,6 @@ def test_instance_loads_and_scores_its_sample(config: Config, tmp_path, key):
 
     spec = load_problem(key, config)
     assert not spec.higher_is_better
-    assert spec.time_budget_s == 900
     assert spec.metric_name == {"autocorr-1": "c1-ratio", "autocorr-3": "c3-ratio", "erdos-overlap": "overlap-bound"}[key]
     assert (spec.problem_dir / "verifier.sh").read_bytes() == (REPO / "problems" / "heilbronn-11" / "verifier.sh").read_bytes()
     best = spec.chart_baselines[next(iter(spec.chart_baselines))]

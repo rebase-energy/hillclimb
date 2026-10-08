@@ -11,4 +11,3 @@ baseline: greedy.py         # the bundled greedy policy as one file (byte-identi
 allow_internet_during_solution: true         # inner searches spawn coding agents
 # a verifier run is the whole grade.yaml (2 problems x 1 repeat x 3m + start-up),
 # so the outer config needs `budget.exec_timeout_s` above that: 900 fits
-time_budget_s: 7200

@@ -97,7 +97,6 @@ def problem_yaml(n: int, m: int) -> str:
         "baseline_files: {submission.csv: sample_submission.csv}",
         "chart_baselines:",
         f'  "best known ({BEST_KNOWN_SOURCE})": {best}',
-        "time_budget_s: 900",
         "allow_internet_during_solution: false",
         "",
     ])

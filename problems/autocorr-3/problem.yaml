@@ -7,5 +7,4 @@ baseline_files: {submission.csv: sample_submission.csv}
 chart_baselines:
   "best known (AlphaEvolve 2025)": 1.455700
   "previous best (Vinuesa 2010)": 1.458100
-time_budget_s: 900
 allow_internet_during_solution: false

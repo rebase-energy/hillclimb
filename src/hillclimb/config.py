@@ -12,6 +12,7 @@ from pydantic import PrivateAttr, BaseModel, ConfigDict, Field, field_validator,
 from hillclimb.project import (
     find_hillclimb_dir,
     MARKER_FILE,
+    RUNS_CONFIG,
     user_config_path,
     user_env_path,
     HillclimbDirNotFound,
@@ -19,8 +20,23 @@ from hillclimb.project import (
 from hillclimb.modules.spec import ClimberSpec
 
 
+# Offered, never assumed: with no budget anywhere `hillclimb run` asks before
+# climbing for this long, and refuses where nobody can answer.
+DEFAULT_BUDGET_S = 7200
+
+# The keys runs/config.yaml holds: how the runs in this folder climb by default.
+RUNS_CONFIG_KEYS = frozenset({
+    "agent", "model", "routing", "budget", "climber", "concurrency", "learning", "similarity",
+})
+
+
+class ConfigError(ValueError):
+    """A config file to fix: the message names the file, the key and the fix."""
+
+
 class BudgetConfig(BaseModel):
-    total_s: int = 7200
+    # None: nobody has set one (see DEFAULT_BUDGET_S)
+    total_s: int | None = None
     agent_timeout_s: int = 1800
     exec_timeout_s: int = 1800
     stop_margin_s: int = 300
@@ -415,6 +431,29 @@ def _read_yaml(path: Path) -> dict:
     return yaml.safe_load(path.read_text()) or {}
 
 
+def runs_config_path(hillclimb_dir: Path, data: dict | None = None) -> Path:
+    """`<runs_dir>/config.yaml`: the folder's run defaults. `data` is the
+    config read so far, whose `paths.runs_dir` may move runs/."""
+    runs_dir = Path(((data or {}).get("paths") or {}).get("runs_dir") or "runs").expanduser()
+    return (runs_dir if runs_dir.is_absolute() else hillclimb_dir / runs_dir) / RUNS_CONFIG
+
+
+def _merge_level(data: dict, level: dict, hillclimb_dir: Path) -> dict:
+    """Merge one config level over the levels below it."""
+    merged = _deep_merge(data, level)
+    if "climber" in level:
+        # a climber is ONE block: a higher level's replaces a lower one's
+        # whole, never merges into it (its params belong to its policy, not
+        # to whichever policy ends up chosen). A string names a file or a
+        # climber folder (looked for under the hillclimb dir); its refs stay
+        # relative, anchored at the hillclimb dir when used
+        merged["climber"] = (
+            ClimberSpec.model_validate(level["climber"], context={"base_dir": hillclimb_dir}).block()
+            if isinstance(level["climber"], str) else level["climber"]
+        )
+    return merged
+
+
 def _load_dotenv(path: Path) -> None:
     """`KEY=VALUE` lines into the environment, never overriding the shell.
     Provider keys (OPENROUTER_API_KEY) live here; the value stays in the
@@ -655,8 +694,9 @@ class Config(BaseModel):
         **overrides,
     ) -> Config:
         """Resolve configuration. Precedence (highest wins): keyword
-        overrides > the hillclimb dir's `hillclimb.yaml` > user
-        `~/.config/hillclimb/config.yaml` > built-in defaults.
+        overrides > the run defaults in `runs/config.yaml` > the hillclimb
+        dir's `hillclimb.yaml` > user `~/.config/hillclimb/config.yaml` >
+        built-in defaults.
 
         An explicit `path` reads only that file (no discovery, no user
         config) — the escape hatch for tests and embedders. Otherwise the
@@ -687,18 +727,18 @@ class Config(BaseModel):
                 ).block()
             if found is not None:
                 folder = renamed_keys(_read_yaml(found / MARKER_FILE))
-                data = _deep_merge(data, folder)
-                if "climber" in folder:
-                    # a climber is ONE block: the folder's replaces the user
-                    # level's whole, never merges into it (its params belong
-                    # to its policy, not to whichever policy ends up chosen).
-                    # A string names a file or a climber folder
-                    # (looked for under the hillclimb dir); its refs stay
-                    # relative, anchored at the hillclimb dir when used
-                    data["climber"] = (
-                        ClimberSpec.model_validate(folder["climber"], context={"base_dir": found}).block()
-                        if isinstance(folder["climber"], str) else folder["climber"]
+                data = _merge_level(data, folder, found)
+                # the run defaults sit above the folder's config
+                runs_file = runs_config_path(found, data)
+                runs = renamed_keys(_read_yaml(runs_file))
+                unknown = sorted(set(runs) - RUNS_CONFIG_KEYS)
+                if unknown:
+                    raise ConfigError(
+                        f"{runs_file}: {', '.join(unknown)} cannot go in the run defaults "
+                        f"(they hold {', '.join(sorted(RUNS_CONFIG_KEYS))}); "
+                        f"the rest of the config lives in {MARKER_FILE}"
                     )
+                data = _merge_level(data, runs, found)
             config = cls.model_validate(data)
             config.hillclimb_dir = found
             if found is not None and (found / ".env").exists():

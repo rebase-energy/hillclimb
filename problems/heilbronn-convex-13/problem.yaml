@@ -8,5 +8,4 @@ chart_baselines:
   "OpenEvolve": 0.0267
   "AdaEvolve": 0.0290
   "AlphaEvolve": 0.030936889034895654
-time_budget_s: 1800
 allow_internet_during_solution: false

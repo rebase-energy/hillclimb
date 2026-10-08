@@ -108,7 +108,6 @@ def make_evaluator_problem(tmp_path, **overrides):
         description="score the answer",
         metric_name="score",
         higher_is_better=True,
-        time_budget_s=600,
         verifier_cmd=["{python}", "problem/evaluate.py"],
     )
     fields.update(overrides)

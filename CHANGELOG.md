@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Changed
+- **A run needs a budget someone chose; a problem has none.** `time_budget_s` is gone from
+  `problem.yaml` (ignored with a warning that says where the budget went) and from
+  `hillclimb.Problem`. The budget comes from `--budget` (or a run spec's / study's `budget:`),
+  else from the new run defaults, `runs/config.yaml` (`budget: {total_s: 1800}`), which `init`
+  writes with the budget unset. With neither, `hillclimb run` asks at the terminal before
+  climbing on the default 7200s (`[y/N]`, no by default); with nobody to ask (a script, a coding
+  agent, `hc.run(...)`) it stops with the fix before anything is written. A budget capped in
+  evaluations, tokens or cost is a chosen one and gets the default clock. `hillclimb reset
+  --runs` keeps `runs/config.yaml`.
 - **The engine ships no problem and no climber: one catalog, fetched with `get`.** hillclimb is
   the harness and the contracts; what to climb and how to climb it are the user's. What the
   package ships is a *catalog* of examples — the repository's own `problems/` and `climbers/`

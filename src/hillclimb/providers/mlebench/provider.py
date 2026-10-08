@@ -98,7 +98,6 @@ def load_mlebench_problem(comp_id: str, config: Config) -> ProblemSpec:
         description=(comp_dir / "description.md").read_text(),
         metric_name=meta["grader"]["name"],
         higher_is_better=_higher_is_better(comp_dir / "leaderboard.csv"),
-        time_budget_s=config.budget.total_s,
         # the competition ships no runnable validator: the coding agent splits the
         # public data and reports its own score; official grading is one
         # `mlebench grade-sample` run after the search

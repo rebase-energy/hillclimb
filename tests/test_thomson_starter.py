@@ -81,7 +81,6 @@ def test_instance_loads_and_scores_its_sample(config: Config, generator, tmp_pat
 
     spec = load_problem(f"thomson-{n}", config)
     assert spec.metric_name == "coulomb-energy" and not spec.higher_is_better
-    assert spec.time_budget_s == 900
     assert len(spec.chart_baselines) == 1
 
     candidate_dir = tmp_path / f"thomson-{n}"

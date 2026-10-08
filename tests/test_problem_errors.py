@@ -38,9 +38,18 @@ def test_bad_keys_are_problem_errors(problem_yaml, old, new, message):
 
 
 def test_a_misspelt_key_is_warned_about_with_the_right_name(problem_yaml, capsys):
-    _edit(problem_yaml, "time_budget_s:", "time_budjet_s:")
+    _edit(problem_yaml, "time_limit_s:", "time_limt_s:")
     load_problem(problem_yaml, Config())
-    assert "did you mean `time_budget_s:`?" in capsys.readouterr().err
+    assert "did you mean `time_limit_s:`?" in capsys.readouterr().err
+
+
+def test_a_problem_budget_is_ignored_and_says_where_the_budget_went(problem_yaml, capsys):
+    # the budget is the run's, not the problem's (runs/config.yaml or --budget)
+    problem_yaml.write_text(problem_yaml.read_text() + "time_budget_s: 600\n")
+    spec = load_problem(problem_yaml, Config())
+    err = capsys.readouterr().err
+    assert "`time_budget_s:` is ignored" in err and "--budget" in err and "runs/config.yaml" in err
+    assert not hasattr(spec, "time_budget_s")
 
 
 def test_legacy_lower_is_better_still_loads(problem_yaml):

@@ -103,7 +103,9 @@ def experiment_run(
         schedule = "parallel"  # the flag implies detached launches
     if schedule != "parallel":
         limit = None
-    child_budget = budget or study.budget
+    # settled once, before any experiment starts: the flag, the study's own,
+    # else the folder's run defaults or a yes to the default
+    child_budget = budget or study.budget or f"{common.resolve_run_budget(None, config)}s"
     repeats_text = (
         f"{study.repeats} repeat(s)" if first_repeat == 1
         else f"repeats {first_repeat}..{first_repeat + study.repeats - 1}"

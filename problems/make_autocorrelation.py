@@ -90,7 +90,6 @@ def problem_yaml(inst: Instance) -> str:
         "chart_baselines:",
         f'  "best known ({inst.best_source})": {inst.best:.6f}',
         f'  "previous best ({inst.previous_source})": {inst.previous:.6f}',
-        "time_budget_s: 900",
         "allow_internet_during_solution: false",
         "",
     ])

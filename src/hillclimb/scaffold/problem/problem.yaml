@@ -18,7 +18,6 @@ score: score.py
 time_limit_s: 60                 # a solution that runs longer is a failed attempt
 
 baseline: baseline.py            # the starting solution, scored at t=0 as c000
-time_budget_s: 600               # the default `hillclimb run --budget`
 allow_internet_during_solution: false
 
 # Optional, when you need them:

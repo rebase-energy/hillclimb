@@ -32,8 +32,6 @@ def test_demo_problems_load(config: Config):
             assert len((spec.problem_dir / "sample_submission.csv").read_text().splitlines()) == 27
         else:
             assert spec.baseline_files["submission.csv"].exists()
-        # circle-packing is the lean first-run problem (a 60 s budget, a small runtime); the rest get 15 min
-        assert spec.time_budget_s == (60 if problem_id == "circle-packing" else 900)
 
 
 def test_demo_verifiers_score_the_sample_submission(config: Config, tmp_path):
@@ -72,7 +70,6 @@ def test_heilbronn_convex_13_loads_and_scores_baseline(config: Config, tmp_path)
     spec = load_problem("heilbronn-convex-13", config)
     assert spec.metric_name == "normalized-min-triangle-area"
     assert spec.higher_is_better is True
-    assert spec.time_budget_s == 1800
     assert spec.baseline_text is not None
     assert spec.baseline_files["submission.csv"].exists()
     assert spec.chart_baselines == {

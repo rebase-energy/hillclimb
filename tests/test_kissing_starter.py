@@ -71,7 +71,6 @@ def test_committed_dirs_match_the_generator(generator, tmp_path):
 def test_sample_scores_at_the_floor(config: Config, tmp_path, d):
     spec = load_problem(f"kissing-{d}", config)
     assert spec.metric_name == "points" and spec.higher_is_better
-    assert spec.time_budget_s == 3600
     assert len(spec.chart_baselines) == 1
     sample = (spec.problem_dir / "sample_submission.csv").read_text()
     score = _score(config, tmp_path, d, sample)

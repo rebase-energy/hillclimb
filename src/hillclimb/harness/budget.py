@@ -48,7 +48,8 @@ class Budget:
     The search ends when the first limit is reached: the clock and the
     evaluation or token caps end it as `done`, the cost ceiling parks it
     (resumable). A dimension left as None has no limit, except the wall
-    clock, which falls back to the problem's own `time_budget_s`. A plain
+    clock, which falls back to the folder's run defaults
+    (`runs/config.yaml`) and is an error when nothing sets it. A plain
     "10m" or a number of seconds where a Budget is expected means
     `Budget(wall_clock=...)`."""
 
@@ -112,6 +113,39 @@ def parse_budget(value: str | int) -> int:
         raise ValueError(f"cannot parse budget {value!r} (use e.g. 2h, 30m, 90s)")
     amount, unit = int(match.group(1)), match.group(2)
     return amount * {"h": 3600, "m": 60, "s": 1, "": 1}[unit]
+
+
+class NoBudget(ValueError):
+    """Nothing set a budget and nobody said yes to the default: the message
+    says where to set one."""
+
+
+NO_BUDGET_HINT = (
+    "no budget: pass one (`--budget 30m`), or set the folder's default in "
+    "runs/config.yaml (`budget: {total_s: 1800}`)"
+)
+
+
+def resolve_budget(explicit: str | int | None, config: Config, *, ask=None) -> int:
+    """The seconds a run climbs for: `explicit` (a flag, a spec or study
+    `budget:`, an API argument) > the run defaults' `budget.total_s` > the
+    default, only when `ask(seconds)` says yes to it. With no `ask` (no one
+    to answer: an agent, a script, a notebook) a missing budget raises
+    NoBudget: a run never climbs on a budget nobody chose. A budget chosen in
+    another dimension (`Budget(evaluations=30)`, a token or cost cap) is a
+    choice: its clock is the default, without asking."""
+    from hillclimb.config import DEFAULT_BUDGET_S
+
+    if explicit is not None and explicit != "":
+        return parse_budget(explicit)
+    if config.budget.total_s is not None:
+        return config.budget.total_s
+    limits = config.budget
+    if limits.max_evaluations or limits.max_tokens or limits.max_cost_usd:
+        return DEFAULT_BUDGET_S
+    if ask is not None and ask(DEFAULT_BUDGET_S):
+        return DEFAULT_BUDGET_S
+    raise NoBudget(NO_BUDGET_HINT)
 
 
 def format_remaining(seconds: float) -> str:

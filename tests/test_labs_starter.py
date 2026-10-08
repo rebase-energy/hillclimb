@@ -83,7 +83,6 @@ def test_committed_dirs_match_the_generator(generator, tmp_path):
 def test_sample_scores_the_growing_runs_floor(config: Config, tmp_path, generator, n):
     spec = load_problem(f"labs-{n}", config)
     assert spec.metric_name == "autocorrelation-energy" and not spec.higher_is_better
-    assert spec.time_budget_s == 900
     optimal = spec.chart_baselines[f"optimal ({generator.OPTIMAL_SOURCE})"]
     assert optimal == generator.BEST_KNOWN[n][0]
 

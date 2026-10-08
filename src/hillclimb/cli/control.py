@@ -368,16 +368,23 @@ def reset(
             f"[head]Terminated[/] {len(mine)} {ENGINE} process tree(s)"
             + (f"; {len(forced)} needed SIGKILL." if forced else ".")
         )
+    from hillclimb.project import OWNED_MARKER, RUNS_CONFIG, ensure_owned_dir, is_owned_dir
+
+    # `reset --runs` clears what searches produced, not the run defaults
+    # written beside them: those are config, kept like hillclimb.yaml
+    run_defaults = config.paths.runs_dir / RUNS_CONFIG
+    kept_defaults = run_defaults.read_text() if runs and run_defaults.is_file() else None
     for path in owned:
         if path.is_dir() and not path.is_symlink():
             shutil.rmtree(path)
         else:
             path.unlink(missing_ok=True)
-    from hillclimb.project import OWNED_MARKER, ensure_owned_dir, is_owned_dir
 
     if runs:
         if config.paths.runs_dir in owned:
             ensure_owned_dir(config.paths.runs_dir)  # as `hillclimb init` left it
+        if kept_defaults is not None:
+            run_defaults.write_text(kept_defaults)
         say(f"[head]Reset the runs[/] of [path]{_m(root)}[/] [note](problems and config kept)[/]")
         return
     left = [p.name for p in root.iterdir() if p.name not in (OWNED_MARKER, ".gitignore")] if root.is_dir() else []
