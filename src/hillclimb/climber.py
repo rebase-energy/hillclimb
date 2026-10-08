@@ -161,6 +161,7 @@ class Climber:
     def __init__(self, preset=None, *, selector_policy=None, operator_policy=None, operators=None, tuner=None,
                  memory=None, loop=None, params: Mapping | None = None, selector_params: Mapping | None = None,
                  prompts_dir=None, name: str | None = None, base_dir: Path | None = None,
+                 holdout: Mapping | None = None,
                  select=None, policy=None, select_params: Mapping | None = None, prompts=None):
         # the keywords are in the order one step runs them: π_sel, π_op, the
         # operator, a tune trial of the result, the memory the operator reads.
@@ -199,6 +200,10 @@ class Climber:
         )
         if selector_params:
             block["selector_params"] = {**block.get("selector_params", {}), **dict(selector_params)}
+        if holdout:
+            # how the best is picked on a problem with a hidden split
+            # (selection, top_k, timing): the climber's to say
+            block["holdout"] = dict(holdout)
         if preset_block:
             block = {
                 **preset_block, **block,
@@ -478,8 +483,11 @@ class Climber:
 
     @property
     def holdout_timing(self) -> str | None:
-        """`after` when the loop's state must never meet a holdout value —
-        asking can only ever tighten what the user's config allows."""
+        """When the hidden split is scored: the block's `holdout.timing`,
+        else `after` when the loop's state must never meet a holdout value
+        (its class says so), else what an old record said; None = inline."""
+        if self.spec.holdout is not None and self.spec.holdout.timing:
+            return self.spec.holdout.timing
         return getattr(self.brain.target, "holdout_timing", None) or self.legacy_holdout_timing
 
     @property
@@ -787,7 +795,10 @@ def identity(spec: ClimberSpec, scope: FileScope, live: Mapping[str, type] | Non
     spelled_as_hashed = {new: old for old, new in RENAMED_BLOCK_KEYS.items()}
     block = {
         spelled_as_hashed.get(key, key): value
-        for key, value in spec.canonical().map_refs(portable).model_dump(exclude={"name", "prompts"}).items()
+        for key, value in spec.canonical().map_refs(portable).model_dump(
+            # `holdout` came in 0.9: a climber without one keeps the identity it had
+            exclude={"name", "prompts", *(() if spec.holdout else ("holdout",))}
+        ).items()
     }
     blob = json.dumps(
         {

@@ -13,6 +13,7 @@ from hillclimb.config import Config
 from hillclimb import terms
 from hillclimb.terms import ENGINE
 from hillclimb.harness.control import request_prune, request_stop
+from hillclimb.harness.run import search_selection
 from hillclimb.harness.store import (
     DataStore,
     SearchRecord,
@@ -235,7 +236,7 @@ def prune(
             record.key,
             candidate_id,
             higher_is_better=higher,
-            selection_mode=config.holdout.selection,
+            selection_mode=search_selection(record.meta),
             reason=reason,
             source="cli",
         )

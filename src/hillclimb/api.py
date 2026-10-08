@@ -35,6 +35,7 @@ from hillclimb.harness.run import RunMeta, SearchMeta, new_search_uid
 from hillclimb.harness.glue import (
     ParkedSearch,
     StopRequested,
+    apply_climber_settings,
     build_loop,
     build_operators,
     build_tuner,
@@ -452,6 +453,7 @@ def create_search(
     # prompt that names a token nothing fills — fails here, before a search
     # dir exists
     climber = search_climber(config)
+    apply_climber_settings(config, climber)  # how it picks the best on a hidden split
     climber.operator_set()
     climber.tuner()
     climber.graph_module()
@@ -809,6 +811,7 @@ class Search:
 
         # validated before anything is scored: a bad climber costs nothing
         climber = search_climber(config, search_dir)
+        apply_climber_settings(config, climber)  # how it picks the best on a hidden split
         problems = climber.lint_prompts()
         if problems:
             raise ValueError(f"climber {climber.name}: prompts do not lint clean: " + "; ".join(problems))

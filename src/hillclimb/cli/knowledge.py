@@ -12,7 +12,7 @@ from hillclimb.cli.common import _m, fail, say, warn
 from hillclimb.cli._app import HillclimbGroup, app
 from hillclimb.config import Config
 from hillclimb.harness.journal import Journal
-from hillclimb.harness.run import search_ref
+from hillclimb.harness.run import search_ref, search_selection
 from hillclimb.harness.store import latest_search, open_store
 from hillclimb.problem import load_problem
 
@@ -56,7 +56,7 @@ def knowledge_backfill():
             card = distill_card(
                 journal, problem=problem, run_ref=search_ref(search_dir),
                 target=target, budget_s=meta.budget_s,
-                selection=config.holdout.selection,
+                selection=search_selection(meta),
             )
             path = write_card(knowledge_dir, card)
             written += 1
@@ -215,7 +215,7 @@ def knowledge_distill(
     card = distill_card(
         journal, problem=problem, run_ref=search_ref(search_dir),
         target=target, budget_s=meta.budget_s,
-        selection=config.holdout.selection,
+        selection=search_selection(meta),
     )
     card.claims = distill_claims(
         journal, problem=problem, card=card, search_dir=search_dir,

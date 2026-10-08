@@ -339,3 +339,10 @@ def resolve_search_dir(runs_dir: Path, ref: str | None) -> Path:
     from hillclimb.harness.store import FileDataStore, resolve_search
 
     return resolve_search(FileDataStore(runs_dir), ref).search_dir
+
+
+def search_selection(meta: SearchMeta | None) -> str:
+    """How a search picks its best on a hidden split (rank-blend | holdout |
+    val): its climber's `holdout.selection`, as the search recorded it."""
+    block = (meta.climber_spec or {}) if meta is not None else {}
+    return (block.get("holdout") or {}).get("selection") or "rank-blend"

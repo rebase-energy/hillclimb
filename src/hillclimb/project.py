@@ -123,9 +123,6 @@ __STORE__
 
 # concurrency:
 #   machine_max_agents: 8  # cap across every search on this machine (default min(8, cores-2))
-
-# holdout:
-#   top_k: 5             # holdout scored only for top-k-by-val candidates
 """
 
 

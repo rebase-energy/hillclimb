@@ -26,6 +26,10 @@
   experiment override setting them is an error that says so; `--n-replicates` / `--n-trials`
   are gone, and a run spec's `n_replicates` is ignored with a note. Each search records what
   it measured with (`search.yaml` `evaluation` / `report`), and a resume keeps it.
+- **How the best is picked on a hidden split is the climber's:** `holdout: {selection, top_k,
+  timing}` in its block or `Climber(holdout={...})`; config files refuse `holdout:`. Views
+  (summit, prune, results, knowledge) read the selection a search recorded, not today's config.
+  A climber without `holdout:` keeps its identity.
 - **The engine ships no problem and no climber: one catalog, fetched with `get`.** hillclimb is
   the harness and the contracts; what to climb and how to climb it are the user's. What the
   package ships is a *catalog* of examples — the repository's own `problems/` and `climbers/`

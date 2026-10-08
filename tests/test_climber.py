@@ -318,7 +318,7 @@ def test_a_snapshot_is_the_climber_it_was_taken_of(tmp_path):
         ("policy: policy.py\nnum_drafts: 3\n", "num_drafts"),  # a typo'd top-level key, not silently ignored
         ("policy: policy.py\ndescription: mine\n", "`description`: .*YAML comment"),
         ("policy: policy.py\nsimilarity: [api-calls]\n", "`similarity`: .*viewer's setting"),
-        ("policy: policy.py\nholdout_timing: after\n", "`holdout_timing`: a loop declares it on its class"),
+        ("policy: policy.py\nholdout_timing: after\n", "`holdout_timing`: it is `holdout: {timing: after}` in the block"),
         ("policy: nope.py\n", "climber file not found: .*nope.py"),
         ("policy: nonsense\n", r"unknown operator policy 'nonsense' \(available: none registered"),
         ("policy: policy.py\nselect: nonsense\n", r"unknown selector policy 'nonsense' \(available: none registered"),

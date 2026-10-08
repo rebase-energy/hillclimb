@@ -17,6 +17,7 @@ from hillclimb.config import Config
 from hillclimb.harness.journal import Journal
 from hillclimb.harness.store import SearchRecord, open_store
 from hillclimb.problem import load_problem
+from hillclimb.harness.run import search_selection
 
 problem_app = typer.Typer(
     cls=HillclimbGroup,
@@ -451,7 +452,7 @@ def _summit(config: Config, problem: str | None, dest: Path):
         for record in records:
             journal = Journal(store.journal(record.key))
             candidate = journal.selected_candidate(
-                record.meta.higher_is_better, config.holdout.selection
+                record.meta.higher_is_better, search_selection(record.meta)
             )
             if candidate is None or candidate.val_score is None:
                 continue

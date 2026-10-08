@@ -357,10 +357,11 @@ def nested_config(outer: Config, climber: Path, spec: GradeSpec, nested_dir: Pat
     data["store"] = {"backend": "files"}
     data["learning"] = {**data.get("learning", {}), "enabled": False}
     # how the inner problems measure is theirs (their problem.yaml), and
-    # whether they have a hidden split too
+    # whether they have a hidden split too; how the best is picked on one is
+    # the candidate climber's
     data.pop("evaluation", None)
     data.pop("report", None)
-    data.get("holdout", {}).pop("enabled", None)
+    data.pop("holdout", None)
     return data
 
 

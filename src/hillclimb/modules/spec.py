@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
 
@@ -48,7 +48,7 @@ def renamed_block_keys(data: dict) -> dict:
 _GONE = {
     "description": "a block has no `description`: say it in a YAML comment",
     "similarity": "similarity scores are a viewer's setting (`similarity.scores` in runs/config.yaml), not a climber's",
-    "holdout_timing": "a loop declares it on its class (`holdout_timing = \"after\"`); otherwise it is the user's `holdout.timing`",
+    "holdout_timing": "it is `holdout: {timing: after}` in the block now (a loop may also declare `holdout_timing = \"after\"` on its class)",
 }
 
 
@@ -277,6 +277,21 @@ def composed_block(ref: str, base_dir: Path | None = None) -> dict[str, Any] | N
     return found.to_spec().block()
 
 
+class HoldoutSettings(BaseModel):
+    """How a climber picks the search's best when the problem has a hidden
+    split (`holdout: true`): which score decides, how many candidates get a
+    holdout score, and when. Unset keys are the defaults (rank-blend, 5,
+    inline). Whether there IS a split is the problem's."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    selection: Literal["rank-blend", "holdout", "val"] | None = None
+    # only candidates whose val score ranks top-k get a holdout score (0 = every passing one)
+    top_k: int | None = Field(default=None, ge=0)
+    # `inline` scores the split as candidates land; `after` only at the end
+    timing: Literal["inline", "after"] | None = None
+
+
 class ClimberSpec(BaseModel):
     """The `climber:` block — the same shape in a run spec and in runs/config.yaml."""
 
@@ -309,6 +324,8 @@ class ClimberSpec(BaseModel):
     memory: MemoryKind = "files"  # `knowledge-graph` (pre-0.4) still loads
     memory_params: dict[str, Any] = Field(default_factory=dict)
     prompts: str | None = None  # a dir whose templates shadow the built-in operator templates by name
+    # how the best is picked when the problem has a hidden split; None = the defaults
+    holdout: HoldoutSettings | None = None
 
     @model_validator(mode="before")
     @classmethod

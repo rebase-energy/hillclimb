@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 from hillclimb.harness.budget import Spend, journal_spend
 from hillclimb.harness.candidate import Candidate, read_solution
 from hillclimb.harness.journal import Journal
-from hillclimb.harness.run import search_ref
+from hillclimb.harness.run import search_ref, search_selection
 
 if TYPE_CHECKING:
     from hillclimb.config import Config
@@ -103,13 +103,9 @@ class SearchOutcome:
         if live:
             self.state = records.state
             self.error = status.last_error if status is not None else self.error
-            self.selected = journal.selected_candidate(self.higher_is_better_from(records), self._selection)
+            self.selected = journal.selected_candidate(self.higher_is_better_from(records), search_selection(records.meta))
         self._records = records
         return records
-
-    @property
-    def _selection(self) -> str:
-        return self.config.holdout.selection if self.config is not None else "rank-blend"
 
     @staticmethod
     def higher_is_better_from(records: _Records) -> bool:
@@ -260,7 +256,7 @@ def open_search(ref: str | None = None, *, config: Config | None = None) -> Sear
     outcome = SearchOutcome(
         run_dir=record.search_dir.parents[1],
         search_dir=record.search_dir,
-        selected=journal.selected_candidate(record.meta.higher_is_better, config.holdout.selection),
+        selected=journal.selected_candidate(record.meta.higher_is_better, search_selection(record.meta)),
         state=record.state,
         error=status.last_error if status is not None else None,
         config=config,

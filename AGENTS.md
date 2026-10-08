@@ -488,8 +488,13 @@ hold only the bases, which decide nothing. `_moved.py` maps pre-move module pref
   interrupt.
   `harness.glue.build_loop(config)` returns `PolicyLoop(policy)` or, for
   `gepa`, its own `GepaLoop` — there is no engine tier, no `_ENGINES`, no
-  `SearchStrategy`. `holdout_timing(config)` is the user's `holdout.timing`
-  (`inline | after`), tightened to `after` for gepa. Harness-native,
+  `SearchStrategy`. `holdout_timing(config)` is the climber's: its block's
+  `holdout.timing` (`inline | after`), else its loop class's (`after` for
+  gepa). The block's `holdout: {selection, top_k, timing}` is the climber's
+  (`glue.apply_climber_settings` lays it onto `config.holdout` at search
+  start; views read a search's from its record, `run.search_selection`);
+  config files refuse `holdout:`, and whether a split exists is the
+  problem's (`holdout: true`). Harness-native,
   coding-agent-free actions: `tune` and `inject` (`Action(INJECT_ACTION,
   args={"source": text}, target_id=parent)` scores a text the loop already
   has; `--seed-from` runs through the same path as operator `seed`; the text

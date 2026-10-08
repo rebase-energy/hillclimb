@@ -26,7 +26,7 @@ from hillclimb.config import Config
 from hillclimb.harness.control import request_prune, request_stop
 from hillclimb.harness.journal import Journal
 from hillclimb.climber import climber_label
-from hillclimb.harness.run import RunMeta, SearchMeta, run_display_name
+from hillclimb.harness.run import RunMeta, SearchMeta, run_display_name, search_selection
 from hillclimb.harness.run import search_ref as _search_ref
 from hillclimb.harness.status import SearchStatus, live_remaining_s, live_spent_s
 from hillclimb.harness.store import DataStore, FileDataStore, SearchRecord, key_for, open_store
@@ -2331,7 +2331,7 @@ class CandidateScreen(ResizableDetail, LiveScreen):
                     self.key,
                     candidate_id,
                     higher_is_better=bool(self._record().meta.higher_is_better),
-                    selection_mode=self.config.holdout.selection,
+                    selection_mode=search_selection(self._record().meta),
                     source="tui",
                 )
             except ValueError as exc:

@@ -74,10 +74,21 @@ def search_climber(config: Config, search_dir=None) -> Climber:
 
 
 def holdout_timing(config: Config, search_dir=None) -> str:
-    """When the harness scores the hidden split: the user's `holdout.timing`,
-    tightened to `after` for a climber whose loop asks for it."""
-    asked = search_climber(config, search_dir).holdout_timing
-    return asked or config.holdout.timing
+    """When the harness scores the hidden split: what the climber says
+    (`Climber.holdout_timing`), else inline."""
+    return search_climber(config, search_dir).holdout_timing or config.holdout.timing
+
+
+def apply_climber_settings(config: Config, climber) -> None:
+    """The climber's `holdout:` (selection, top_k, timing) onto the config a
+    search runs with: each key it sets replaces the default."""
+    held = climber.spec.holdout
+    if held is None:
+        return
+    for name in held.model_fields_set:
+        value = getattr(held, name)
+        if value is not None:
+            setattr(config.holdout, name, value)
 
 
 def build_tuner(config: Config, search_dir=None):

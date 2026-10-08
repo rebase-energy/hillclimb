@@ -338,6 +338,12 @@ reflection and selection themselves. Those bring a `Loop`: the block says
 declares what it needs of its search (`operators = (...)`, `holdout_timing =
 "after"`), so `{loop: gepa}` is complete.
 
+On a problem with a hidden split (`holdout: true` in its problem.yaml), how
+the climber picks the best is its own setting: `holdout: {selection:
+rank-blend | holdout | val, top_k: 5, timing: inline | after}` in its block,
+or `Climber(holdout={...})` in its policy.py. Unset keys are those defaults; a
+climber without `holdout:` keeps the identity it had.
+
 - `greedy`: hillclimb chooses the parent and asks a coding agent to mutate;
 - `openevolve`: MAP-Elites picks parent and inspirations, hillclimb's coding agent
   still mutates;

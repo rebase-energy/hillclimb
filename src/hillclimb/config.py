@@ -47,6 +47,9 @@ PROBLEM_SETTINGS = {
     "report": "set it in the problem's problem.yaml (`report: {enabled: false}`)",
     "holdout.enabled": "a problem has a hidden split when its problem.yaml says `holdout: true`; "
                        "`hillclimb run --no-holdout` skips it for one run",
+    # how the best is picked on that split is the climber's
+    "holdout": "`holdout: {selection: rank-blend, top_k: 5, timing: inline}` in its block, "
+               "`Climber(holdout={...})` in its policy.py, or `--set climber.holdout.top_k=3`",
 }
 
 
@@ -58,13 +61,15 @@ def problem_setting_advice(key: str) -> str | None:
     """Where a dotted setting went, when it is the problem's now."""
     for name, advice in PROBLEM_SETTINGS.items():
         if key == name or key.startswith(name + "."):
-            return f"{name} is the problem's: {advice}"
+            whose = "the climber's" if name == "holdout" else "the problem's"
+            return f"{name} is {whose}: {advice}"
     return None
 
 
 def _check_problem_settings(level: dict, path: Path) -> None:
     for key, value in level.items():
-        dotted = [key] if not isinstance(value, dict) else [key, *(f"{key}.{sub}" for sub in value)]
+        # the most specific first: `holdout.enabled` is the problem's, the rest of `holdout` the climber's
+        dotted = [key] if not isinstance(value, dict) else [*(f"{key}.{sub}" for sub in value), key]
         for name in dotted:
             advice = problem_setting_advice(name)
             if advice:
