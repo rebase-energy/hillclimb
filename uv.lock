@@ -600,7 +600,6 @@ wheels = [
 
 [[package]]
 name = "hillclimb"
-version = "0.8.2"
 source = { editable = "." }
 dependencies = [
     { name = "networkx" },
@@ -655,7 +654,7 @@ requires-dist = [
     { name = "typer", specifier = ">=0.12" },
     { name = "uv", specifier = ">=0.5" },
 ]
-provides-extras = ["tui", "emflow", "optuna"]
+provides-extras = ["emflow", "optuna", "tui"]
 
 [package.metadata.requires-dev]
 dev = [

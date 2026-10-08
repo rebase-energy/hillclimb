@@ -4,7 +4,9 @@
 
 ### Fixed
 - `hillclimb --version` (and the `hillclimb_version` a search records) said 0.8.0 in 0.8.1: the
-  package's `__version__` was not bumped with `pyproject.toml`. A test now holds the two together.
+  package's `__version__` was a second literal, bumped by hand beside `pyproject.toml`'s. There is
+  one now — `pyproject.toml` declares `dynamic = ["version"]` and hatchling reads `__version__`
+  from `hillclimb/__init__.py` at build time.
 
 ## 0.8.1 — 2026-10-08
 

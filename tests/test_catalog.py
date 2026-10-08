@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+import hillclimb
 from hillclimb import catalog
 
 REPO = Path(__file__).resolve().parents[1]
@@ -77,6 +78,7 @@ def test_scaffold_is_engine_data_not_catalog(tmp_path):
 def test_a_built_wheel_carries_the_catalog(tmp_path):
     subprocess.run(["uv", "build", "--wheel", "--out-dir", str(tmp_path)], cwd=REPO, check=True, capture_output=True)
     wheel = next(tmp_path.glob("hillclimb-*.whl"))
+    assert wheel.name == f"hillclimb-{hillclimb.__version__}-py3-none-any.whl"  # the one version, read at build time
     names = set(zipfile.ZipFile(wheel).namelist())
     for problem_id in catalog.PROBLEM_IDS:
         assert f"hillclimb/_catalog/problems/{problem_id}/problem.yaml" in names, problem_id

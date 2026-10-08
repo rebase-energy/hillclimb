@@ -1,6 +1,6 @@
 [project]
 name = "hillclimb"
-version = "0.8.2"
+dynamic = ["version"]  # one source: `__version__` in src/hillclimb/__init__.py
 description = "Hillclimbing on verifiable rewards: coding agents search for Python programs that optimize a score you define"
 readme = "README.md"
 license = "MIT"
@@ -96,6 +96,9 @@ emflow = { git = "https://github.com/rebase-energy/emflow.git", branch = "main" 
 [build-system]
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/hillclimb/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/hillclimb"]
