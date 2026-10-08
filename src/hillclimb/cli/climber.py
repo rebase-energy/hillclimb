@@ -369,6 +369,14 @@ def climber_new(
         text = source_file.read_text(encoding="utf-8")
         if source.spec.name:
             text = text.replace(f"name={source.spec.name!r},", f"name={name!r},", 1)
+        # the policy class carries the source's name (Greedy): it takes the new one
+        old_class = getattr(source.brain.target, "__name__", "")
+        new_class = "".join(part[:1].upper() + part[1:] for part in _re.split(r"[-_]", name) if part)
+        if (
+            old_class and new_class != old_class and new_class.isidentifier()
+            and not _re.search(rf"\b{new_class}\b", text)
+        ):
+            text = _re.sub(rf"\b{old_class}\b", new_class, text)
         (folder / "policy.py").write_text(text, encoding="utf-8")
         if source.prompts_dir is not None:
             shutil.copytree(source.prompts_dir, folder / "prompts")

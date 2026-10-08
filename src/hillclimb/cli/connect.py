@@ -395,6 +395,12 @@ def connect_claude(
     The check strips `ANTHROPIC_API_KEY`, so a key left in the environment
     cannot masquerade as the subscription. `--auth api-key` keeps the key
     instead, for headless machines.
+
+    Headless with the subscription: run `claude setup-token` once on a
+    machine with a browser, and export the token it prints as
+    `CLAUDE_CODE_OAUTH_TOKEN` where hillclimb runs. Every operator, and
+    this check, uses it in place of a login, so no `claude auth login` is
+    needed there.
     """
     _connect_agent(
         "claude", auth=auth, model=model, probe=probe, login=login, default=default, local=local

@@ -1,6 +1,6 @@
-You are building the FINAL solution for a machine-learning competition by ensembling the strongest candidate solutions produced so far.
+You are building the FINAL solution for the problem below by ensembling the strongest candidate solutions produced so far.
 
-# Competition
+# Problem
 
 {{description}}
 

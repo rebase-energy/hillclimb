@@ -31,20 +31,13 @@ Use Claude Code and Codex to autonomously search for python programs that optimi
 
 ---
 
-`hillclimb` provides a modular harness, tooling and testbed for exploring and
-benchmarking autoresearch algorithms. The aim is to provide a tool to discover better
-autoresearch methods, rather than build a single best autoresearcher.
+`hillclimb` is a CLI and modular Python framework for building, testing and benchmarking hillclimbing algorithms powered by coding agents. It provides reusable components and a common way to evaluate different search strategies across different problems — from speeding up code and solving optimisation problems to improving prediction accuracy. The goal of `hillclimb` to create a framework to enable discovery of better autoresearch methods, rather than build a single best autoresearcher.
 
-You provide a verifier script, `verifier.sh`, and (optionally) a starting
-solution, `solution.py`. `hillclimb` then spends a compute budget running a
-search policy — a [climber](https://docs.hillclimb.sh/python/climber?utm_medium=readme) — that
-decides which version to build on next and dispatches headless coding agents
-to write, debug and improve it. Each version is scored through your verifier,
-and `hillclimb` keeps the one that scores best.
+There are two main parts: the [problem](https://docs.hillclimb.sh/problems?utm_medium=readme) and the [climber](https://docs.hillclimb.sh/climbers?utm_medium=readme). A problem defines what counts as better through a verifier script, `verifier.sh`, and optionally includes a starting solution, `solution.py`. A climber is a search algorithm that drafts initial solutions and then decides which solutions to build on and what to try next. Start with built-in problems and climbers, or write your own ones.
 
-The harness is fixed. The **climber** — what to try next and how each attempt
-is prompted — is a block you can swap, edit and share, so two methods can be
-compared on the same problem under the same budget.
+[`hillclimb run`](https://docs.hillclimb.sh/cli/commands/run?utm_medium=readme) starts the search in the background and returns control of your terminal. Within the compute budget you set, the climber dispatches headless coding agents to write, debug and improve solutions. Your verifier scores each attempt, and `hillclimb` keeps the best result.
+
+A `hillclimb` search running visualised through `hillclimb watch`:
 
 <img alt="hillclimb watch: the candidate tree growing as coding agents draft, improve and ensemble solutions" src="https://raw.githubusercontent.com/rebase-energy/hillclimb/main/docs/assets/hillclimb-watch.gif" width="100%">
 

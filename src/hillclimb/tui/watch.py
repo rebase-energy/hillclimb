@@ -555,7 +555,7 @@ def _run_row(store: DataStore, meta: RunMeta) -> RunRow:
         spend=_fmt_cost(spend_total),
         selected=f"{selected_count} selected" if selected_count else "-",
         budget_left=_format_budget_left(remaining_s if has_budget else None),
-        started=started[:19].replace("T", " ") if started else "-",
+        started=_display_time(started, "%Y-%m-%d %H:%M:%S") or "-",
     )
 
 
@@ -638,6 +638,51 @@ def _set_candidate_columns(table, holdout: bool) -> None:
 BEST_STAR = " ★"  # after the id of the search's current selection
 
 
+def copy_marks(journal: Journal) -> dict[str, str]:
+    """Candidates whose code is a copy, read from the journal alone so older
+    runs show them too: the same solution.py (and, when both were scored, the
+    same starting params) as their parent — `unchanged` — or as an earlier
+    candidate — `copy of cNNN`."""
+    def params(candidate: Candidate):
+        return json.dumps(candidate.trials[0].params, sort_keys=True, default=str) if candidate.trials else None
+
+    def same(a: Candidate, b: Candidate) -> bool:
+        pa, pb = params(a), params(b)
+        return a.solution_sha256 == b.solution_sha256 and (pa is None or pb is None or pa == pb)
+
+    marks: dict[str, str] = {}
+    earlier: list[Candidate] = []
+    for candidate in journal.candidates.values():
+        if candidate.solution_sha256:
+            parent = journal.candidates.get(candidate.parent_id) if candidate.parent_id else None
+            if parent is not None and parent.solution_sha256 and same(candidate, parent):
+                marks[candidate.candidate_id] = "unchanged"
+            else:
+                twin = next((other for other in earlier if same(candidate, other)), None)
+                if twin is not None:
+                    marks[candidate.candidate_id] = f"copy of {twin.candidate_id}"
+            earlier.append(candidate)
+    return marks
+
+
+def latest_best_id(journal: Journal) -> str | None:
+    """The candidate that holds the best val now. `is_best` stays on every
+    candidate that was a new best when it landed, so only the latest of them
+    is the best; the earlier ones were."""
+    bests = [c for c in journal.candidates.values() if c.is_best]
+    if not bests:
+        return None
+    # in the order they were scored, not created: a quick improve can land
+    # before a slow draft that started first
+    return max(bests, key=lambda c: c.finished_at or c.created_at or "").candidate_id
+
+
+def best_mark(candidate: Candidate, best_id: str | None) -> str | None:
+    if not candidate.is_best:
+        return None
+    return "best-val" if candidate.candidate_id == best_id else "was best"
+
+
 def cpu_mark(replicate: Replicate) -> str:
     """`cpu 7.0/1`: cores the run kept busy on average over its allotment."""
     return f"cpu {replicate.cpu_load:.1f}/{replicate.cpus or 1}"
@@ -657,6 +702,8 @@ def candidate_rows(
     current = (
         journal.selected_candidate(higher_is_better) if higher_is_better is not None else None
     )
+    copies = copy_marks(journal)
+    best_id = latest_best_id(journal)
     rows = []
     for candidate, guide in _tree_order(journal):
         is_current = current is not None and candidate.candidate_id == current.candidate_id
@@ -664,14 +711,18 @@ def candidate_rows(
         marks = []
         if selected and not candidate.pruned:
             marks.append("SELECTED")
-        if candidate.is_best:
-            marks.append("best-val")
+        best = best_mark(candidate, best_id)
+        if best:
+            marks.append(best)
+        copy = copies.get(candidate.candidate_id)
+        if copy:
+            marks.append(copy)
         if candidate.pruned:
             marks.append("PRUNED")
         if candidate.cpu_overuse is not None:
             marks.append(cpu_mark(candidate.cpu_overuse))
         shown = display_status(candidate.status, live)
-        style = "dim strike" if candidate.pruned else STATUS_STYLE.get(shown, "")
+        style = "dim strike" if candidate.pruned else ("dim" if copy else STATUS_STYLE.get(shown, ""))
         if selected and not candidate.pruned:
             style = "bold gold1"
         if shown == "running" and phases and phases.get(candidate.candidate_id):
@@ -687,7 +738,7 @@ def candidate_rows(
                 val=_fmt(candidate.val_score),
                 hold=_fmt(candidate.holdout_score),
                 marks=" ".join(marks),
-                summary=(candidate.summary or "").strip()[:60],
+                summary=(candidate.summary or "").strip().split("\n", 1)[0],
                 style=style,
             )
         )
@@ -705,13 +756,37 @@ class StreamEntry:
     text: str
 
 
-def _local_clock(iso: str | None) -> str:
+_ZONE_CACHE: list = [None, None]  # [tui.json mtime, zone]
+
+
+def _display_zone():
+    """The zone the header clock shows (the saved choice, or the system's),
+    so every time on screen reads in one zone. Re-read when tui.json changes."""
+    from hillclimb.tui.header import load_display_timezone, tui_prefs_path
+
+    try:
+        mtime = tui_prefs_path().stat().st_mtime
+    except OSError:
+        mtime = None
+    if _ZONE_CACHE[0] != mtime or _ZONE_CACHE[1] is None:
+        _ZONE_CACHE[:] = [mtime, load_display_timezone() or datetime.now().astimezone().tzinfo]
+    return _ZONE_CACHE[1]
+
+
+def _display_time(iso: str | None, fmt: str = "%H:%M:%S") -> str:
     if not iso:
         return ""
     try:
-        return datetime.fromisoformat(iso).astimezone().strftime("%H:%M:%S")
+        moment = datetime.fromisoformat(iso)
     except ValueError:
         return ""
+    if moment.tzinfo is None:  # journals write UTC
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(_display_zone()).strftime(fmt)
+
+
+def _local_clock(iso: str | None) -> str:
+    return _display_time(iso)
 
 
 # system subtypes worth a line; the CLI also streams per-turn bookkeeping
@@ -935,12 +1010,16 @@ def _candidate_dir(search_dir: Path, candidate: Candidate) -> Path:
     return resolve_candidate_dir(search_dir, candidate.candidate_id, candidate.candidate_dir)
 
 
-def _candidate_marks(candidate: Candidate) -> str:
+def _candidate_marks(candidate: Candidate, journal: Journal) -> str:
     marks = []
     if candidate.is_selected and not candidate.pruned:
         marks.append("selected")
-    if candidate.is_best:
-        marks.append("best-val")
+    best = best_mark(candidate, latest_best_id(journal))
+    if best:
+        marks.append(best)
+    copy = copy_marks(journal).get(candidate.candidate_id)
+    if copy:
+        marks.append(copy)
     if candidate.pruned:
         marks.append("pruned")
     if candidate.cpu_overuse is not None:
@@ -987,7 +1066,7 @@ def candidate_detail_lines(record: SearchRecord, journal: Journal, candidate_id:
         f"{display_status(candidate.status, record.state == 'running')}",
         f"Score: val={_fmt(candidate.val_score)}  holdout={_fmt(candidate.holdout_score)}  "
         f"metric={metric} ({direction})",
-        f"Marks: {_candidate_marks(candidate)}",
+        f"Marks: {_candidate_marks(candidate, journal)}",
         f"Parent: {parent}  Children: {len(children)}  "
         f"Path: {' -> '.join(_ancestry(journal, candidate))}",
     ]
@@ -1191,7 +1270,7 @@ def candidate_detail_renderables(
     status_text = _status_text(candidate.status, live)
     if phase:
         status_text = Text(phase_label(phase), style=STATUS_STYLE["running"])
-    overview.add_row("status", status_text, "marks", Text(_candidate_marks(candidate), style="gold1"))
+    overview.add_row("status", status_text, "marks", Text(_candidate_marks(candidate, journal), style="gold1"))
     if phase:
         overview.add_row(
             "phase", Text(PHASE_NOTE.get(phase, phase)), "in this phase", _phase_clock(current, candidate_dir)
@@ -1310,7 +1389,7 @@ def candidate_detail_renderables(
                 child_op,
                 _status_text(child.status, live),
                 _score_text(child.val_score, selected=child.is_selected, best=child.is_best),
-                Text(_candidate_marks(child), style="gold1" if not child.pruned else "dim"),
+                Text(_candidate_marks(child, journal), style="gold1" if not child.pruned else "dim"),
                 style="dim" if child.pruned else "",
             )
         if len(children) > 12:

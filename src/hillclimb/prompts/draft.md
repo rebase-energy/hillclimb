@@ -1,12 +1,12 @@
-You are drafting a new candidate solution for a machine-learning competition.
+You are drafting a new candidate solution for the problem below.
 
-# Competition
+# Problem
 
 {{description}}
 
 # Objective
 
-Optimize **{{metric_name}}** ({{direction}}). Your internal validation score must estimate this competition metric as faithfully as possible.
+Optimize **{{metric_name}}** ({{direction}}). Your internal validation score must estimate this metric as faithfully as possible.
 
 # Data
 

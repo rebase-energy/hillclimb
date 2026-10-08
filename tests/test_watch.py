@@ -2000,3 +2000,31 @@ async def test_running_candidate_detail_has_a_following_console(tmp_path: Path):
         await pilot.press("escape")
         await pilot.pause()
         assert str(detail.styles.display) == "none"
+
+
+def test_copies_and_best_marks(tmp_path):
+    """Copies are read from the journal (same code as the parent: unchanged;
+    as an earlier candidate: copy of it), and only the candidate holding the
+    best val now reads best-val — earlier new bests read `was best`."""
+    journal = Journal(tmp_path / "journal.jsonl")
+    journal.candidate_result(make_candidate(
+        "c000", operator="baseline", status="passing", val_score=0.1, solution_sha256="a",
+        is_best=True, finished_at="2026-10-01T10:00:00+00:00",
+    ))
+    journal.candidate_result(make_candidate(
+        "c001", status="passing", val_score=0.5, solution_sha256="b",
+        is_best=True, finished_at="2026-10-01T10:05:00+00:00",
+    ))
+    journal.candidate_result(make_candidate(
+        "c002", operator="improve", parent_id="c001", status="passing", val_score=0.5,
+        solution_sha256="b", summary="x" * 120,
+    ))
+    journal.candidate_result(make_candidate(
+        "c003", operator="improve", parent_id="c000", status="passing", val_score=0.5, solution_sha256="b",
+    ))
+    rows = {row.candidate_id: row for row in candidate_rows(journal, live=False, higher_is_better=True)}
+    assert "was best" in rows["c000"].marks
+    assert "best-val" in rows["c001"].marks and "was best" not in rows["c001"].marks
+    assert "unchanged" in rows["c002"].marks
+    assert "copy of c001" in rows["c003"].marks
+    assert rows["c002"].summary == "x" * 120  # not cut at 60

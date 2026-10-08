@@ -57,6 +57,7 @@ WEB_TOOLS = "WebSearch,WebFetch"
 MODEL_HOSTS = ("api.anthropic.com", "console.anthropic.com", "platform.claude.com", "claude.ai")
 
 STREAM_FILE = "agent_stream.jsonl"
+PING_SYSTEM_PROMPT = "You are a connectivity check. Answer in one word."
 PID_FILE = "agent.pid"
 
 
@@ -266,7 +267,14 @@ class ClaudeCodeAgent:
         ).for_agent(request.allow_internet, hosts=MODEL_HOSTS)
         return sandbox.launch(cmd, policy)
 
-    def invoke(self, request: AgentRequest) -> AgentResult:
+    def preflight(self, request: AgentRequest) -> AgentResult:
+        """The connect ping: the same call with no tools, no settings and a
+        one-line system prompt. Claude Code's own system prompt and tool
+        definitions are ~20k tokens; this proves the login, model and route
+        for well under one thousand."""
+        return self.invoke(request, bare=True)
+
+    def invoke(self, request: AgentRequest, *, bare: bool = False) -> AgentResult:
         cmd = [
             self.claude_bin,
             "-p",
@@ -284,6 +292,11 @@ class ClaudeCodeAgent:
         # account's connectors (mail, drives, calendars) — they come with the
         # login, not the config dir, and an operator has no business there
         cmd += ["--strict-mcp-config"]
+        if bare:
+            cmd += [
+                "--tools", "", "--system-prompt", PING_SYSTEM_PROMPT,
+                "--disable-slash-commands", "--setting-sources", "",
+            ]
         for plugin in request.plugins:
             cmd += ["--plugin-dir", str(plugin)]
         try:

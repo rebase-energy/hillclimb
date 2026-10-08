@@ -858,6 +858,7 @@ from hillclimb.tui.lines import flow_items  # noqa: E402
 
 from hillclimb.tui.theme import CYAN, HILLCLIMB_CSS, PLOT_BG, apply_theme, themed_plot  # noqa: E402
 from hillclimb.tui.watch import (  # noqa: E402
+    _display_time,
     STATE_STYLE, LiveScreen, _fmt, _fmt_tokens, _restore_table, _snapshot_table, _state_summary,
 )
 
@@ -2277,7 +2278,7 @@ class ChartPickerScreen(LiveScreen):
                 searches,
                 Text(row.state, style=STATE_STYLE.get(row.state, "")),
                 _fmt(row.best),
-                row.activity_at[:19].replace("T", " ") if row.activity_at else "-",
+                _display_time(row.activity_at, "%Y-%m-%d %H:%M:%S") or "-",
                 key=row.anchor,  # unique per row: the search ref enter opens
             )
         _restore_table(table, snapshot)

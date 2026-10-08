@@ -305,6 +305,9 @@ def verify(
     config = common.load_config()
     common.require_sandbox(config)
     problem = load_problem(target, config)
+    if solution is not None and not solution.is_file():
+        fail(f"no solution file at [path]{_m(solution)}[/]")
+        raise typer.Exit(1)
     source = solution.read_text() if solution else problem.baseline_text
     floor_files = {} if solution else problem.baseline_files
     # a tuned solution reads its values from the params.json beside it

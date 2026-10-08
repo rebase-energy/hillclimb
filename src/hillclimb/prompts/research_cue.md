@@ -11,7 +11,7 @@ an approach:
 - Note the 1-3 references that informed your choice in `notes.md`.
 
 Rules: research METHODS for the problem class only — do NOT search for
-solutions, leaderboards, or code written for this specific competition, and
-never copy competition-specific artifacts from the web. Keep it brief; the
+solutions, leaderboards, or code written for this specific problem, and
+never copy problem-specific artifacts from the web. Keep it brief; the
 bulk of your time belongs to building and validating the solution. Web access
 applies to YOU now, not to the solution script: {{network_note}}

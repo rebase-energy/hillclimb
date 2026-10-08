@@ -149,12 +149,17 @@ def show(
     higher = bool(meta.higher_is_better)
     parent = journal.candidates.get(cand.parent_id) if cand.parent_id else None
 
+    from hillclimb.tui.watch import best_mark, copy_marks, latest_best_id
+
     marks = [
         name
-        for name, on in (
-            ("SELECTED", cand.is_selected), ("best-val", cand.is_best), ("PRUNED", cand.pruned),
+        for name in (
+            "SELECTED" if cand.is_selected else None,
+            best_mark(cand, latest_best_id(journal)),
+            copy_marks(journal).get(cand.candidate_id),
+            "PRUNED" if cand.pruned else None,
         )
-        if on
+        if name
     ]
     header = f"[head][path]{_m(cand.candidate_id)}[/]  {_m(cand.operator)}"
     if cand.complexity:
