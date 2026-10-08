@@ -456,7 +456,10 @@ def run(
         # flag, else the folder's run defaults, else a yes to the default.
         # Every child is then handed it explicitly. (A suite asks once, for
         # the entries that name none; a suite's child has its --budget.)
-        budget = budget or f"{common.resolve_run_budget(overrides.get('budget.total_s'), config)}s"
+        # a cap set on the command line (`--set budget.max_evaluations=1`) is a chosen budget
+        chosen = config.model_copy(deep=True)
+        chosen.apply_overrides({key: value for key, value in overrides.items() if key.startswith("budget.")})
+        budget = budget or f"{common.resolve_run_budget(overrides.get('budget.total_s'), chosen)}s"
     if resolved.kind == "suite":
         if mixed:
             raise typer.BadParameter("a spec takes one --climber; mixed fleets run on a single problem")

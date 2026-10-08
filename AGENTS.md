@@ -617,7 +617,9 @@ hold only the bases, which decide nothing. `_moved.py` maps pre-move module pref
   search); `Climber.lint_prompts()` refuses harness-owned templates
   (`contract_*`, the clauses, the knowledge passes) and unknown tokens, and
   `create_search` refuses to start on a finding
-- GEPA (`climbers/gepa/`, extra `hillclimb[gepa]`): a climber that
+- GEPA (`climbers/gepa/`; its `requirements.txt` names the `gepa` library — a catalog
+  climber's third-party imports are declared there, never as an extra of the engine, and
+  `refs.requirements_hint` / `climber get` point at the file): a climber that
   brings its own `Loop`. gepa drives proposal order, Pareto selection
   and its checkpoint; everything that costs or counts is `harness.run(...)`:
   a reflective mutation is one `gepa-reflect` attempt (`operator.py`, a real

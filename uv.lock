@@ -600,7 +600,7 @@ wheels = [
 
 [[package]]
 name = "hillclimb"
-version = "0.8.0"
+version = "0.8.1"
 source = { editable = "." }
 dependencies = [
     { name = "networkx" },
@@ -619,13 +619,6 @@ dependencies = [
 [package.optional-dependencies]
 emflow = [
     { name = "emflow" },
-]
-gepa = [
-    { name = "gepa" },
-    { name = "optuna" },
-]
-openevolve = [
-    { name = "openevolve" },
 ]
 optuna = [
     { name = "optuna" },
@@ -649,10 +642,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "emflow", marker = "extra == 'emflow'", git = "https://github.com/rebase-energy/emflow.git?branch=main" },
-    { name = "gepa", marker = "extra == 'gepa'", specifier = ">=0.1.4,<0.2" },
     { name = "networkx", specifier = ">=3.0" },
-    { name = "openevolve", marker = "extra == 'openevolve'", specifier = ">=0.3,<0.4" },
-    { name = "optuna", marker = "extra == 'gepa'", specifier = ">=3.6,<5" },
     { name = "optuna", marker = "extra == 'optuna'", specifier = ">=3.6,<5" },
     { name = "pandas", specifier = ">=3.0.3" },
     { name = "plotui", specifier = ">=0.6" },
@@ -665,7 +655,7 @@ requires-dist = [
     { name = "typer", specifier = ">=0.12" },
     { name = "uv", specifier = ">=0.5" },
 ]
-provides-extras = ["tui", "emflow", "openevolve", "gepa", "optuna"]
+provides-extras = ["tui", "emflow", "optuna"]
 
 [package.metadata.requires-dev]
 dev = [

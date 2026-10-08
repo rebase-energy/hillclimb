@@ -14,6 +14,7 @@ hillclimb sandbox check || die "hillclimb sandbox check: an attempt got through,
 
 say "a problem with hidden holdout data (knapsack), scored on both splits"
 hillclimb init >/dev/null
+hillclimb climber get greedy >/dev/null
 hillclimb problem get knapsack >/dev/null
 scores=$(hillclimb verify knapsack --holdout 2>&1) || die "hillclimb verify knapsack: $scores"
 echo "$scores" | tail -2

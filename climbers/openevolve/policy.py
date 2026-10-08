@@ -51,7 +51,8 @@ Operator policy knobs (`params`, default in brackets):
   tune_burst (2)        tune trials released between coding agent proposals, so tuning
                         interleaves with improving instead of starving it
 
-Needs the optional extra: pip install 'hillclimb[openevolve]'
+Imports OpenEvolve, named in `requirements.txt` beside this file:
+pip install -r climbers/openevolve/requirements.txt
 """
 
 from __future__ import annotations
@@ -85,9 +86,11 @@ def _require_openevolve():
         from openevolve.config import DatabaseConfig
         from openevolve.database import Program, ProgramDatabase
     except ImportError as exc:  # pragma: no cover - exercised only without the extra
+        from pathlib import Path
+
         raise ImportError(
-            "the map-elites selector needs the `openevolve` package: "
-            "pip install 'hillclimb[openevolve]'"
+            "the map-elites selector needs the `openevolve` package — this climber's requirements: "
+            f"pip install -r {Path(__file__).parent / 'requirements.txt'}"
         ) from exc
     return DatabaseConfig, Program, ProgramDatabase
 

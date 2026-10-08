@@ -1322,6 +1322,9 @@ def _new_search(
     run_dir_is_new = run_id is None
     climber_block = config.climber_block()  # before anything is written: no climber, no run folder
     total_s = resolve_budget(budget_s, config)  # ...and no budget, no run folder either
+    # ...and a climber that cannot be built — a library it imports and the environment lacks,
+    # a param its policy does not have — writes nothing either (create_search checks it again)
+    search_climber(config).build_loop(parallelism=max(1, config.concurrency.parallel_agents), log=lambda *_: None)
     if run_id is None:
         run_name = run_name or name or problem.problem_id
         run_id = new_run_id(run_name)

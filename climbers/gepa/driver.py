@@ -24,14 +24,15 @@ from .config import GEPAParams
 from .evaluator import GepaScoring
 from .proposer import COMPONENT
 
-MISSING_EXTRA = "the GEPA optimizer needs the `gepa` package: pip install 'hillclimb[gepa]'"
+REQUIREMENTS = Path(__file__).parent / "requirements.txt"  # what this climber imports beyond hillclimb
+MISSING_REQUIREMENTS = f"the GEPA optimizer needs the `gepa` package — this climber's requirements: pip install -r {REQUIREMENTS}"
 
 
 def build_driver() -> "CoreOptimizeDriver":
     try:
         import gepa  # noqa: F401
     except ImportError as exc:
-        raise ImportError(MISSING_EXTRA) from exc
+        raise ImportError(MISSING_REQUIREMENTS) from exc
     return CoreOptimizeDriver()
 
 

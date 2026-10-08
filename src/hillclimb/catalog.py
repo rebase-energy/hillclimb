@@ -29,6 +29,7 @@ BUNDLED_DIRNAME = "_catalog"  # where hatch_build.py puts the catalog inside the
 PROBLEMS_DIRNAME = "problems"
 CLIMBERS_DIRNAME = "climbers"
 CLIMBER_ENTRY = "policy.py"  # the file that makes a catalog folder a climber
+CLIMBER_REQUIREMENTS = "requirements.txt"  # what a climber imports beyond hillclimb, if anything
 
 DEMO_PROBLEM_ID = "circle-packing"
 

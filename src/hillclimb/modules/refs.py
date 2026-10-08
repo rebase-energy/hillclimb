@@ -421,9 +421,26 @@ class FileScope:
         try:
             return importlib.import_module(".".join((component.package, *relative.parts)))
         except Exception as exc:  # noqa: BLE001 — an author's import error, reported with its file
-            raise ClimberLoadError(f"{noun} file {path} failed to import: {type(exc).__name__}: {exc}") from exc
+            hint = requirements_hint(component.root, exc)
+            raise ClimberLoadError(f"{noun} file {path} failed to import: {type(exc).__name__}: {exc}{hint}") from exc
         finally:
             _IMPORTING -= 1
+
+
+def requirements_hint(root: Path, exc: BaseException) -> str:
+    """The install line for a library a climber's files import and the
+    environment lacks: a `requirements.txt` beside them names what they need
+    beyond hillclimb, as a problem's names its own. Empty for anything else —
+    a missing sibling, a typo in hillclimb's name, no requirements file."""
+    if not isinstance(exc, ModuleNotFoundError):
+        return ""
+    missing = (exc.name or "").split(".")[0]
+    if not missing or missing == "hillclimb" or missing.startswith(SCOPE_PACKAGE_PREFIX):
+        return ""
+    requirements = root / "requirements.txt"
+    if not requirements.is_file():
+        return ""
+    return f" — this climber's requirements: pip install -r {requirements}"
 
 
 # --- resolving -------------------------------------------------------------------

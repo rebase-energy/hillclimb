@@ -642,7 +642,10 @@ class Climber:
             merged = {**{k: v for k, v in (priors or {}).items() if k in known}, **merged}
         offered = {"params": merged, "parallelism": parallelism, "log": log}
         if self.is_loop:
-            loop = refs.construct(target, offered, self.source)
+            try:
+                loop = refs.construct(target, offered, self.source)
+            except ImportError as exc:  # a library the loop needs: its message carries the install line
+                raise ClimberLoadError(f"{self.source}: {exc}") from exc
             if not isinstance(loop, Loop):
                 raise ClimberLoadError(f"{self.source}: `loop:` must name a Loop, got {type(loop).__name__}")
             return loop

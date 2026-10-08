@@ -1,0 +1,2 @@
+# what climbers/gepa imports beyond hillclimb: pip install -r climbers/gepa/requirements.txt
+gepa>=0.1.4,<0.2

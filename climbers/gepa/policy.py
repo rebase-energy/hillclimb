@@ -6,7 +6,8 @@ reflective mutation, `gepa-reflect`, rendering `prompts/gepa_reflect.md`),
 `evaluator.py` (gepa's scoring view on the harness), `proposer.py`,
 `config.py` (the params, validated before any spend) and `driver.py`, the one
 module that imports the `gepa` library. Everything but `driver.py` runs
-without the optional extra; install it with: pip install 'hillclimb[gepa]'.
+without it; `requirements.txt` beside this file names it:
+pip install -r climbers/gepa/requirements.txt
 
 gepa drives proposal order, Pareto selection and its checkpoint; everything
 that costs or counts is `harness.run(...)`: a reflective mutation is one

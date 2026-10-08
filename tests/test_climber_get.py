@@ -114,6 +114,8 @@ def test_get_refuses_what_is_not_in_the_catalog_and_copies_a_loop_folder_whole(f
     gepa = folder / "climbers" / "gepa"
     assert {p.name for p in gepa.iterdir() if p.suffix == ".py"} >= {"policy.py", "loop.py", "driver.py", "operator.py"}
     assert (gepa / "prompts" / "gepa_reflect.md").is_file() and not (gepa / "prompts" / "README.md").exists()
+    # what it imports beyond hillclimb rides along, and the fetch says how to install it
+    assert (gepa / "requirements.txt").is_file() and "pip install -r climbers/gepa/requirements.txt" in result.output
     copy = load_climber("climbers/gepa", folder)
     assert copy.is_loop and copy.operator_set().names() == ("gepa-reflect",) and copy.prompts_dir == (gepa / "prompts").resolve()
 

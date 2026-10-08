@@ -264,6 +264,13 @@ def climber_get(
         )
         say(f"[head]Fetched {_m(preset)}[/] as [path]{_m(folder_ref)}[/]")
     legend([(path, note) for path, note in _folder_legend(written)])
+    if catalog.CLIMBER_REQUIREMENTS in written:
+        requirements = _climber_ref(target / catalog.CLIMBER_REQUIREMENTS, base_dir)
+        needs = ", ".join(
+            line.strip() for line in (target / catalog.CLIMBER_REQUIREMENTS).read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        )
+        say(f"[head]Needs[/] [cmd]pip install -r {_m(requirements)}[/] [note]({_m(needs)} — the climber runs inside the engine's Python)[/]")
     if default and config.hillclimb_dir is not None:
         # the climber is a run default: it goes in runs/config.yaml
         run_defaults = config.paths.runs_dir / RUNS_CONFIG
@@ -290,6 +297,7 @@ def _folder_legend(written: list[str]) -> list[tuple[str, str]]:
             "(which operator on it), their defaults, and the Climber(...) that wires them to the operators, tuner, memory and prompts"
         ),
         "prompts/README.md": "how a prompt is made; what fills every token",
+        "requirements.txt": "the libraries the climber imports beyond hillclimb — yours to install (below)",
     }
     rows = [(path, notes[path]) for path in notes if path in written]
     templates = [Path(path).name for path in written if path.startswith("prompts/") and path not in notes]

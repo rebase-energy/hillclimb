@@ -75,6 +75,29 @@ def test_run_without_a_budget_refuses_before_writing_anything(config, monkeypatc
     assert not launched and not Path(config.paths.runs_dir).exists()
 
 
+def test_a_cap_set_on_the_command_line_is_a_chosen_budget(config, monkeypatch, tmp_path):
+    """`--set budget.max_evaluations=1` with no --budget and no run default:
+    a budget chosen in another dimension, so the default clock runs without
+    asking (the sandbox smoke relies on it)."""
+    from types import SimpleNamespace
+
+    from hillclimb import cli
+    from hillclimb.config import DEFAULT_BUDGET_S
+
+    config.budget.total_s = None
+    calls = []
+
+    def fake_run_fleet(target, **kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(startup_failures=lambda **_: [], procs=[], run_id="r", run_dir=tmp_path / "runs" / "r")
+
+    monkeypatch.setattr(common, "load_config", lambda agent=None, model=None: config)
+    monkeypatch.setattr("hillclimb.cli.run.run_fleet", fake_run_fleet)
+    result = CliRunner().invoke(cli.app, ["run", "circle-packing", "--agent", "dummy", "--set", "budget.max_evaluations=1"])
+    assert result.exit_code == 0, result.output
+    assert calls[0]["budget"] == f"{DEFAULT_BUDGET_S}s" and config.budget.max_evaluations in (0, None)  # the config itself untouched
+
+
 def test_run_hands_the_run_defaults_budget_to_its_engine(config, monkeypatch, tmp_path):
     from types import SimpleNamespace
 

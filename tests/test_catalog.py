@@ -91,7 +91,7 @@ def test_a_built_wheel_carries_the_catalog(tmp_path):
 
 import inspect  # noqa: E402
 
-from tests.catalog_fixture import GREEDY, META_BASELINE, OPENEVOLVE  # noqa: E402
+from tests.catalog_fixture import GEPA, GREEDY, META_BASELINE, OPENEVOLVE  # noqa: E402
 
 SCHEDULE_METHODS = (
     "schedule", "debuggable_tip", "prospective_branches", "in_ensemble_window",
@@ -238,3 +238,81 @@ def test_catalog_climber_files_reach_the_harness_through_the_sdk_only():
                 if module.split(".")[0] == "hillclimb" and module not in allowed and not module.startswith("hillclimb.sdk."):
                     offenders.append(f"{path.relative_to(REPO)}: {module}")
     assert offenders == []
+
+
+# --- what a climber imports beyond hillclimb -----------------------------------
+
+
+def _hillclimb_installs() -> set[str]:
+    """The top-level module names of hillclimb's own dependencies: a climber
+    may lean on what the engine's environment is guaranteed to hold."""
+    import re
+    import tomllib
+
+    names = set()
+    for requirement in tomllib.loads((REPO / "pyproject.toml").read_text())["project"]["dependencies"]:
+        names.add(re.match(r"[A-Za-z0-9_.-]+", requirement).group(0).lower().replace("-", "_"))
+    return names | {"yaml"}  # pyyaml imports as yaml
+
+
+def _third_party_imports(folder: Path) -> set[str]:
+    import ast
+    import sys
+
+    found = set()
+    installs = _hillclimb_installs()
+    for path in sorted(folder.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                top = node.module.split(".")[0]
+            elif isinstance(node, ast.Import):
+                top = node.names[0].name.split(".")[0]
+            else:
+                continue
+            if top not in sys.stdlib_module_names and top != "hillclimb" and top.lower() not in installs:
+                found.add(top)
+    return found
+
+
+def test_a_catalog_climber_names_what_it_imports_beyond_hillclimb():
+    """A library a catalog climber imports beyond what hillclimb installs is
+    declared in its own `requirements.txt`, like a problem's — never as an
+    extra of the engine, which ships no climber. gepa and openevolve are the
+    two today."""
+    import tomllib
+
+    extras = tomllib.loads((REPO / "pyproject.toml").read_text())["project"].get("optional-dependencies", {})
+    assert "gepa" not in extras and "openevolve" not in extras
+    for name in catalog.climber_names():
+        folder = catalog.climber_path(name)
+        imports = _third_party_imports(folder)
+        requirements = folder / catalog.CLIMBER_REQUIREMENTS
+        if not imports:
+            assert not requirements.exists(), f"{name} declares requirements it never imports"
+            continue
+        declared = [line.strip() for line in requirements.read_text().splitlines() if line.strip() and not line.startswith("#")]
+        for module in imports:
+            assert any(line.startswith(module) for line in declared), f"{name} imports {module} without declaring it"
+    assert _third_party_imports(catalog.climber_path("gepa")) == {"gepa"}
+    assert _third_party_imports(catalog.climber_path("openevolve")) == {"openevolve"}
+
+
+def test_install_climber_copies_the_requirements(tmp_path):
+    folder, _ = catalog.install_climber(tmp_path / "climbers", "gepa")
+    assert (folder / "requirements.txt").read_bytes() == (GEPA.parent / "requirements.txt").read_bytes()
+
+
+def test_a_missing_library_is_told_with_the_requirements_line(tmp_path):
+    """An import a climber's file cannot satisfy ends with the install line of
+    the `requirements.txt` beside it — and with nothing more when there is none."""
+    from hillclimb.modules.refs import ClimberLoadError, FileScope
+
+    mine = tmp_path / "mine.py"
+    mine.write_text("import no_such_library_xyz\n")
+    with pytest.raises(ClimberLoadError) as bare:
+        FileScope([mine]).import_file(mine)
+    assert "no_such_library_xyz" in str(bare.value) and "pip install" not in str(bare.value)
+    (tmp_path / "requirements.txt").write_text("no_such_library_xyz>=1\n")
+    with pytest.raises(ClimberLoadError) as told:
+        FileScope([mine]).import_file(mine)
+    assert str(told.value).endswith(f"this climber's requirements: pip install -r {tmp_path / 'requirements.txt'}")

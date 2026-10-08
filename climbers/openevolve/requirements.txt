@@ -1,0 +1,2 @@
+# what climbers/openevolve imports beyond hillclimb: pip install -r climbers/openevolve/requirements.txt
+openevolve>=0.3,<0.4

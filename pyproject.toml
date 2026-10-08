@@ -1,6 +1,6 @@
 [project]
 name = "hillclimb"
-version = "0.8.0"
+version = "0.8.1"
 description = "Hillclimbing on verifiable rewards: coding agents search for Python programs that optimize a score you define"
 readme = "README.md"
 license = "MIT"
@@ -52,15 +52,6 @@ dependencies = [
 tui = []
 emflow = [
     "emflow>=0.3.1,<0.4",
-]
-# `selector_policy: map-elites` (the `openevolve` climber) — OpenEvolve's MAP-Elites database
-openevolve = [
-    "openevolve>=0.3,<0.4",
-]
-# `climber: gepa` — reflective Pareto search loop
-gepa = [
-    "gepa>=0.1.4,<0.2",
-    "optuna>=3.6,<5",
 ]
 # `climber.tuner: optuna` — TPE over a candidate's declared params.json
 optuna = [

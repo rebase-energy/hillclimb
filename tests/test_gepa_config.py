@@ -74,7 +74,7 @@ def test_valid_config_parses_policy_params(config):
     assert gepa_loop(config).params.max_metric_calls == 7
 
 
-def test_missing_extra_message():
+def test_a_missing_gepa_library_names_the_requirements_file():
     import builtins
 
     driver_mod = gepa_module("driver")
@@ -88,7 +88,7 @@ def test_missing_extra_message():
 
     builtins.__import__ = no_gepa
     try:
-        with pytest.raises(ImportError, match=r"pip install 'hillclimb\[gepa\]'"):
+        with pytest.raises(ImportError, match=r"pip install -r .*climbers/gepa/requirements\.txt$"):
             driver_mod.build_driver()
     finally:
         builtins.__import__ = real_import

@@ -84,7 +84,7 @@ climber get <name>` copies one into your `climbers/`, like `problem get`:
 |---|---|
 | `greedy` | `Best` over `Greedy`, both in one file: debug the newest failing tip > ensemble in the final budget window > draft until `num_drafts` branches are scored > tune > improve the best |
 | `openevolve` | the same schedule, ensemble and tune off, over [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve)'s MAP-Elites archive: a population kept diverse over feature dimensions, on islands with migration. `pip install 'hillclimb[openevolve]'` |
-| `gepa` | [GEPA](https://github.com/gepa-ai/gepa) owns the whole loop (see below): a folder of several files. `pip install 'hillclimb[gepa]'` |
+| `gepa` | [GEPA](https://github.com/gepa-ai/gepa) owns the whole loop (see below): a folder of several files; its `requirements.txt` names the `gepa` library |
 
 In Python the same files are `hc.catalog.climber("greedy")` (a `Climber`, read
 in place) and `hc.catalog.module("greedy")` (its classes, to subclass or
@@ -351,9 +351,16 @@ climber without `holdout:` keeps the identity it had.
   evaluates and records.
 
 ```bash
-uv sync --extra gepa
-uv run hillclimb run <problem> --climber gepa --seed-from my_solution.py
+hillclimb climber get gepa
+pip install -r climbers/gepa/requirements.txt
+hillclimb run <problem> --climber climbers/gepa --seed-from my_solution.py
 ```
+
+A climber that imports a library beyond hillclimb names it in a `requirements.txt`
+beside its file, as a problem names its own: `climber get` prints the install line, and
+a missing import fails `climber check` or the run with the same line. Nothing is
+installed into your environment behind your back — a climber runs inside the engine's
+process, so what it imports is your environment's.
 
 GEPA's reflective mutation is the `gepa-reflect` operator, run by a routed
 hillclimb coding agent (`routing.gepa-reflect`, falling back to `routing.default`

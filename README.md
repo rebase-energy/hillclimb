@@ -105,8 +105,9 @@ climber.search(problem, budget=budget)
 climber.best, climber.history, climber.to_frame()
 ```
 
-`MapElites` and the `openevolve` climber need `pip install 'hillclimb[openevolve]'`,
-`tuner: optuna` needs `'hillclimb[optuna]'` and `gepa` needs `'hillclimb[gepa]'`.
+A catalog climber that imports a library beyond hillclimb (`openevolve`, `gepa`) names it in a
+`requirements.txt` beside its `policy.py` — `pip install -r climbers/gepa/requirements.txt`, as
+`climber get` says; `tuner: optuna` is the engine's and needs `'hillclimb[optuna]'`.
 
 `climber.start(...)` opens the same search to drive by hand, one `climber.step()` at a
 time, and `Problem(name, score=my_function, ...)` defines a problem from a scoring function.

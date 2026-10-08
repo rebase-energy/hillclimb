@@ -83,6 +83,10 @@ class GepaLoop(Loop):
         if not isinstance(params, GEPAParams):
             params = GEPAParams.model_validate(dict(params or {}))  # a typo fails before any spend
         self.params = params
+        if driver is None:  # the gepa library, checked where the climber is built: before any spend
+            from .driver import build_driver
+
+            driver = build_driver()
         self.driver = driver
         self.log = log
         self.scoring: GepaScoring | None = None
@@ -118,10 +122,6 @@ class GepaLoop(Loop):
         run_dir = harness.state_dir / "state"
         run_dir.mkdir(parents=True, exist_ok=True)
         driver = self.driver
-        if driver is None:
-            from .driver import build_driver
-
-            driver = build_driver()
         try:
             driver.run(
                 seed_source=seed_source,

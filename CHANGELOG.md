@@ -1,8 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.8.1 — 2026-10-08
 
 ### Changed
+- **A climber declares what it imports, like a problem does.** A `requirements.txt` beside a
+  climber's file names the libraries it needs beyond hillclimb (`climbers/gepa/`: `gepa`;
+  `climbers/openevolve/`: `openevolve`). `climber get` prints the install line
+  (`pip install -r climbers/gepa/requirements.txt`), and an import that fails for want of one
+  — in `climber check`, `show` or a run — ends with the same line. The `hillclimb[gepa]` and
+  `hillclimb[openevolve]` extras are gone: the engine's metadata names no climber's dependency.
+  `hillclimb[optuna]` stays — the tuner is the engine's.
 - **A plateau costs as little as possible.** `improve` and `debug` attempts that hand back the
   parent's code untouched are not scored (`require_change`, as GEPA's operator already did);
   code the search has scored already (same `solution.py` and `params.json`) is not scored
