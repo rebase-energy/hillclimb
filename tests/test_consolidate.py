@@ -19,6 +19,7 @@ from hillclimb.modules.memory.consolidate import (
 from hillclimb.modules.memory.graph import build_graph, rebuild_graph
 from hillclimb.modules.memory.knowledge import write_card
 from tests.test_graph import claim, make_card
+from tests.catalog_fixture import pinned
 
 
 @pytest.fixture
@@ -135,7 +136,7 @@ class TestPlaybooks:
             agent.queue(operator="consolidate",
                           files={"playbook.md": "Start with HGB; avoid physics sims."})
         monkeypatch.setattr("hillclimb.api.get_agent", lambda *a, **k: agent)
-        summary = consolidate(knowledge_dir, Config(), lambda m: None)
+        summary = consolidate(knowledge_dir, pinned(), lambda m: None)
         assert summary["generalized"]  # the 2-family lift happened
         assert load_consolidated_claims(knowledge_dir)
         assert summary["playbooks_written"]
@@ -148,7 +149,7 @@ class TestPlaybooks:
             "hillclimb.api.get_agent",
             lambda *a, **k: (_ for _ in ()).throw(AssertionError("no agent calls in dry run")),
         )
-        summary = consolidate(knowledge_dir, Config(), lambda m: None, dry_run=True)
+        summary = consolidate(knowledge_dir, pinned(), lambda m: None, dry_run=True)
         assert summary["generalized"]
         assert load_consolidated_claims(knowledge_dir) == []
         assert load_playbooks(knowledge_dir) == []
@@ -164,7 +165,7 @@ class TestInjectionReplaceRule:
     def test_playbook_replaces_claims_and_carries_source_credit(self, knowledge_dir):
         from hillclimb.api import build_knowledge_context
 
-        config = Config()
+        config = pinned()
         config.learning.dir = knowledge_dir
         # no playbook yet -> raw claims block
         text, _, ids = build_knowledge_context(config, self._problem(), "", lambda m: None)

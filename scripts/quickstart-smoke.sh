@@ -17,6 +17,9 @@ esac
 test -f "problems/heilbronn-convex-13/$want"
 test ! -e "problems/heilbronn-convex-13/$other"
 hillclimb verify heilbronn-convex-13
+# the engine ships no climber: the catalog's greedy, as Python, pinned in hillclimb.yaml
+hillclimb climber get greedy
+test -f climbers/greedy/policy.py
 # colour codes (CI forces them) would split the flag names: strip them
 run_help=$(NO_COLOR=1 COLUMNS=200 hillclimb run --help | tr -d '\033' | sed 's/\[[0-9;]*m//g')
 extra=()

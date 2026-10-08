@@ -23,7 +23,12 @@ MOVED = {
 # classes that were renamed, or replaced by a composition, in 0.6 — by the
 # exact `module:Class` a run folder may hold
 RENAMED = {
-    "hillclimb.modules.policies.greedy:GreedyPolicy": "hillclimb.modules.policies.greedy:Greedy",
+    # 0.9: the bundled policies live in one file per climber (`climbers/greedy/
+    # policy.py` holds Best + Greedy), where `hillclimb climber get` copies them from
+    "hillclimb.modules.policies.greedy:GreedyPolicy": "hillclimb.climbers.greedy.policy:Greedy",
+    "hillclimb.modules.policies.greedy:Greedy": "hillclimb.climbers.greedy.policy:Greedy",
+    "hillclimb.modules.selectors.best:Best": "hillclimb.climbers.greedy.policy:Best",
+    "hillclimb.modules.selectors.map_elites:MapElites": "hillclimb.climbers.openevolve.policy:MapElites",
     # the openevolve policy is greedy over the map-elites selector now; a
     # pre-0.6 snapshot keeps MAP-Elites' settings among the policy's params
     "hillclimb.modules.policies.openevolve:OpenEvolvePolicy": "hillclimb.modules.policies.compat:OpenEvolvePolicy",

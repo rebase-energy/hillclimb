@@ -14,11 +14,13 @@ distance from the inner search's floor (its baseline) to the best known
 value that the search covered, averaged over problems. 0 means the inner
 searches never beat their floor; 1 means they matched the literature.
 
-The starting point is the bundled greedy policy as one file: debug a
-failing tip while its chain is shallow, ensemble in the final budget window,
-draft until a few branches hold a scored solution, tune a candidate that
-declared parameters, otherwise improve the best. Everything in that file is
-yours to change — the order of those rules, their thresholds, the number of
+The starting point is the bundled greedy climber as one file, both of its
+policies written out: the selector policy (`Best.schedule`: debug a failing
+tip while its chain is shallow, ensemble in the final budget window, draft
+until a few branches hold a scored solution, otherwise the best) and the
+operator policy (`Greedy.propose`: tune a candidate that declared
+parameters, otherwise improve). Everything in that file is yours to change —
+the order of those rules, their thresholds (`DEFAULTS`), the number of
 drafts, when to give up on a chain, what an operator's prompt says — but the
 inner budget is short, so what matters most is what the first few attempts
 are spent on.

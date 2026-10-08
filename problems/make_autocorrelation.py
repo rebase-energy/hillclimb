@@ -34,7 +34,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-DEMO_ROOT = ROOT.parent / "src" / "hillclimb" / "demo"
 PENALTY = 10000.0
 
 
@@ -418,7 +417,7 @@ def stamp(root: Path, key: str) -> Path:
 def main(argv: list[str]) -> None:
     keys = list(argv) or list(DEFAULT_KEYS)
     for key in keys:
-        for root in (ROOT, DEMO_ROOT):
+        for root in (ROOT,):
             print(f"wrote {stamp(root, key)}")
 
 

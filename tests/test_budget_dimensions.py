@@ -9,7 +9,9 @@ from hillclimb.harness.budget import Spend, journal_spend
 from hillclimb.harness.candidate import AgentInfo, Candidate
 from hillclimb.harness.journal import Journal
 from hillclimb.harness.loop import PolicyLoop, Loop
-from hillclimb.modules.policies.greedy import Greedy
+from tests.catalog_fixture import greedy_classes
+
+Greedy, _Best = greedy_classes()
 from hillclimb.modules.policies.base import Action
 from hillclimb.harness.status import SearchStatus, StatusWriter
 from tests.conftest import ok_script

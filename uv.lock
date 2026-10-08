@@ -655,7 +655,7 @@ requires-dist = [
     { name = "optuna", marker = "extra == 'gepa'", specifier = ">=3.6,<5" },
     { name = "optuna", marker = "extra == 'optuna'", specifier = ">=3.6,<5" },
     { name = "pandas", specifier = ">=3.0.3" },
-    { name = "plotui", editable = "../plotui" },
+    { name = "plotui", specifier = ">=0.6" },
     { name = "psutil", marker = "sys_platform == 'win32'", specifier = ">=5.9" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pydot", specifier = ">=4.0.1" },
@@ -675,7 +675,7 @@ dev = [
     { name = "networkx", specifier = ">=3.0" },
     { name = "openevolve", specifier = ">=0.3,<0.4" },
     { name = "optuna", specifier = ">=3.6,<5" },
-    { name = "plotui", editable = "../plotui" },
+    { name = "plotui", specifier = ">=0.6" },
     { name = "pydot", specifier = ">=4.0.1" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
@@ -1446,11 +1446,15 @@ wheels = [
 [[package]]
 name = "plotui"
 version = "0.6.0"
-source = { editable = "../plotui" }
-
-[package.metadata]
-requires-dist = [{ name = "textual", marker = "extra == 'textual'", specifier = ">=0.60" }]
-provides-extras = ["textual"]
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/63/33/be4919531ebf00f42fcbe93e328be95dd978b73bcc4f20182b87cb940177/plotui-0.6.0.tar.gz", hash = "sha256:fe2293f078dc28f511eea6832307c06363f30483c6b1f4fddc0db160c4d86ccc", size = 308464, upload-time = "2026-10-03T18:04:34.66Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0a/2c/146db4d8d93ef36f10196bcd9dc6cd682f743137952a7e07aac220684aa5/plotui-0.6.0-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:79eb2b6da874a359de46c3b55a3547582830bfc66aef509d7bcb7fd66f94127b", size = 1757898, upload-time = "2026-10-03T18:04:28.582Z" },
+    { url = "https://files.pythonhosted.org/packages/8d/07/b53ae534b82358cd72da867d4bce505775e4e7afdb7a9c2281dc5c8bdb92/plotui-0.6.0-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:e5a1818b17144968e7e2b2af12cfb1f9706308d9b0c883672a8677b8948b2fb7", size = 1687382, upload-time = "2026-10-03T18:04:30.025Z" },
+    { url = "https://files.pythonhosted.org/packages/77/17/e36584f8f37142f25f01e2402c9a34fc855ae3082a858a9e1ddcb57f1a12/plotui-0.6.0-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:77cdbcdc052d590b7e016e5a8835c50b60886b3060b231b6e3b2759404b0f285", size = 1801088, upload-time = "2026-10-03T18:04:31.171Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/1e/630999b2158080518db11c0166232b68e5262471c326014a579ece2d6867/plotui-0.6.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:52a1f0bab746e0fc5197d3f2853986f20b27e596563b7e206cb3dc849a7cb47d", size = 1869494, upload-time = "2026-10-03T18:04:32.333Z" },
+    { url = "https://files.pythonhosted.org/packages/15/6c/c94d84ee6a1a0aea5d3e266b18f25e153417aca323f0132ef34d53712793/plotui-0.6.0-cp39-abi3-win_amd64.whl", hash = "sha256:ead54266e3d1878c4e4bfad85cdb664a5aea9e54298ba16a82a109c2c5ad9cad", size = 1515247, upload-time = "2026-10-03T18:04:33.625Z" },
+]
 
 [[package]]
 name = "pluggy"

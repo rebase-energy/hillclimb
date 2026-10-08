@@ -42,8 +42,10 @@ counts too — as does a mixed fleet (`--climber A --climber B`, see
 [climbers.md](climbers.md)). `hillclimb experiment report <name>` compares the experiments on the
 selected candidate's holdout score (val when holdout is off): n / mean /
 median / spread, best-of-repeat wins, minutes to best, tokens, and each experiment's
-paired gap to the control judged against the noise floor — a gap inside it
-is reported as "within noise, not a result". `hillclimb chart` colours a
+paired gap to the control judged against the noise floor or the spread
+across repeats of either experiment, whichever is larger — a gap inside it
+is reported as "within noise, not a result". The spread matters when the
+verifier is deterministic: its floor is 0, but searches still land apart. `hillclimb chart` colours a
 study's curves by experiment.
 
 A spec may name one shared executable seed — `seed_from: seeds/foo.py`,

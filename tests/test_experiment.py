@@ -27,17 +27,18 @@ from hillclimb.harness.journal import Journal
 from hillclimb.harness.run import RunMeta, SearchMeta, write_run_meta, write_search_meta
 from hillclimb.harness.status import ScoreRef, SearchStatus, write_status
 from tests.test_watch import make_candidate
+from tests.catalog_fixture import GREEDY, OPENEVOLVE, class_ref, pin
 
-SPEC = """
+SPEC = f"""
 problems: [circle-packing]
 repeats: 2
 budget: 10m
 noise_floor: 0.02
-defaults: {model: sonnet}
+defaults: {{model: sonnet}}
 experiments:
-  greedy: {search.policy: greedy}
-  nomem: {search: {policy: greedy}, learning: {enabled: false}}
-  openevolve: {search.policy: openevolve, search.policy_params: {population_size: 50}}
+  greedy: {{search.policy: {GREEDY}}}
+  nomem: {{search: {{policy: {GREEDY}}}, learning: {{enabled: false}}}}
+  openevolve: {{search.policy: {OPENEVOLVE}, search.policy_params: {{population_size: 50}}}}
 """
 
 
@@ -54,9 +55,9 @@ class TestSpec:
         assert spec.control == "greedy"
         assert spec.noise_for("circle-packing") == 0.02
         # nested and dotted forms are the same overrides; policy_params stays a mapping
-        assert spec.experiment_overrides("nomem") == {"model": "sonnet", "search.policy": "greedy", "learning.enabled": False}
+        assert spec.experiment_overrides("nomem") == {"model": "sonnet", "search.policy": str(GREEDY), "learning.enabled": False}
         assert spec.experiment_overrides("openevolve") == {
-            "model": "sonnet", "search.policy": "openevolve", "search.policy_params": {"population_size": 50},
+            "model": "sonnet", "search.policy": str(OPENEVOLVE), "search.policy_params": {"population_size": 50},
         }
         jobs = expand(spec)
         # repeat-major, experiments round-robin inside: every experiment's k-th repeat starts
@@ -94,17 +95,17 @@ class TestSpec:
             "problems: [p]\n"
             "defaults: {climber.params.num_drafts: 2, model: sonnet}\n"
             "experiments:\n"
-            "  a: {climber.params.tune_budget: 0, climber: openevolve}\n"
-            "  b: {climber: {operator_policy: greedy, tuner: optuna, params: {ensemble: false}}}\n",
+            f"  a: {{climber.params.tune_budget: 0, climber: {OPENEVOLVE}}}\n"
+            f"  b: {{climber: {{operator_policy: {class_ref('greedy', 'Greedy')}, tuner: optuna, params: {{ensemble: false}}}}}}\n",
         ))
         a, b = spec.experiment_overrides("a"), spec.experiment_overrides("b")
         assert list(a) == ["climber", "climber.params.num_drafts", "model", "climber.params.tune_budget"]
-        assert b["climber"] == {"operator_policy": "greedy", "tuner": "optuna", "params": {"ensemble": False}}
+        assert b["climber"] == {"operator_policy": class_ref("greedy", "Greedy"), "tuner": "optuna", "params": {"ensemble": False}}
         config = Config()
         config.apply_overrides(a)
-        assert config.climber.selector_policy == "map-elites"
-        assert config.climber.params == {"tune_budget": 0}
-        assert config.climber.selector_params == {"ensemble": False, "num_drafts": 2}
+        assert config.climber.selector_policy == class_ref("openevolve", "MapElites")
+        assert config.climber.params == {"tune_budget": 0}  # `a` sets it; the preset itself carries no values
+        assert config.climber.selector_params == {"num_drafts": 2}
         config = Config()
         config.apply_overrides(b)
         assert (config.climber.tuner, config.climber.selector_params) == ("optuna", {"ensemble": False, "num_drafts": 2})
@@ -125,7 +126,7 @@ class TestOverrides:
     def test_apply_overrides_walks_dotted_paths_with_coercion(self):
         config = Config()
         config.apply_overrides(parse_set_overrides([
-            "search.policy=openevolve", "learning.enabled=false", "search.n_replicates=3",
+            f"search.policy={OPENEVOLVE}", "learning.enabled=false", "search.n_replicates=3",
             "search.policy_params={population_size: 50}", "search.policy_params.seed=7", "model=opus",
         ]))
         assert config.climber.label == "openevolve"
@@ -144,6 +145,7 @@ class TestOverrides:
         from hillclimb.harness.run import load_search_meta
 
         config = Config()
+        pin(config)
         config.paths.runs_dir = tmp_path / "runs"
         config.apply_overrides({"learning.enabled": False})
         problem = ProblemSpec(
@@ -206,9 +208,28 @@ class TestSummary:
         cmp = {c.experiment: c for c in summary.comparisons}
         assert cmp["openevolve"].gap == pytest.approx(0.025)  # paired: (+0.10 - 0.05) / 2
         assert (cmp["openevolve"].wins, cmp["openevolve"].losses) == (1, 1)
-        assert cmp["openevolve"].within_noise is False
+        # greedy's own repeats land 0.2 apart: a 0.025 gap is inside that, whatever the floor
+        assert cmp["openevolve"].within_noise is True
+        assert (cmp["openevolve"].threshold, cmp["openevolve"].threshold_source) == (pytest.approx(0.2), "repeat spread")
         assert cmp["nomem"].gap == pytest.approx(0.0) and cmp["nomem"].ties == 1
         assert cmp["nomem"].within_noise is True
+
+    def test_repeat_spread_outweighs_a_deterministic_verifier_floor(self):
+        """A floor from `verify --repeat` is 0 for a deterministic verifier, but
+        the searches themselves still land apart: the gap is judged against
+        the larger of the two."""
+        rows = [
+            row("a", 1, 0.40), row("b", 1, 0.45),
+            row("a", 2, 0.53), row("b", 2, 0.54),
+        ]
+        cmp = summarize(rows, noise_floor={"p": 0.01})[0].comparisons[0]
+        assert cmp.gap == pytest.approx(0.03) and cmp.within_noise is True
+        assert cmp.threshold_source == "repeat spread"
+        text = render_report(summarize(rows, noise_floor={"p": 0.01}))
+        assert "b: +0.03 vs a — within noise (0.13, the spread across repeats), not a result" in text
+        wide = [row("a", 1, 0.40), row("b", 1, 0.60), row("a", 2, 0.41), row("b", 2, 0.62)]
+        cmp = summarize(wide, noise_floor={"p": 0.01})[0].comparisons[0]
+        assert cmp.within_noise is False and cmp.threshold == pytest.approx(0.02)
 
     def test_control_can_be_named_and_direction_respected(self):
         rows = [row("a", 1, 0.03, lower=True), row("b", 1, 0.02, lower=True)]
@@ -306,7 +327,7 @@ class TestCli:
         write_problem(root, "p")
         config.paths.problems_dir = root
         hillclimb_dir = tmp_path / "hillclimb"
-        spec = write_spec(hillclimb_dir / "experiments" / "ab.yaml", "problems: [p]\nrepeats: 1\nexperiments:\n  a: {search.policy: greedy}\n  b: {learning.enabled: false, search.policy_params: {k: 1}}\n")
+        spec = write_spec(hillclimb_dir / "experiments" / "ab.yaml", f"problems: [p]\nrepeats: 1\nexperiments:\n  a: {{search.policy: {GREEDY}}}\n  b: {{learning.enabled: false, search.policy_params: {{k: 1}}}}\n")
         config.hillclimb_dir = hillclimb_dir
         monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config)
         monkeypatch.chdir(tmp_path)
@@ -349,7 +370,7 @@ class TestCli:
         write_spec(
             hillclimb_dir / "experiments" / "ab.yaml",
             "problems: [p]\nrepeats: 1\nseed_from: seeds/p.py\n"
-            "experiments:\n  a: {search.policy: greedy}\n  b: {learning.enabled: false}\n",
+            f"experiments:\n  a: {{search.policy: {GREEDY}}}\n  b: {{learning.enabled: false}}\n",
         )
         config.hillclimb_dir = hillclimb_dir
         monkeypatch.setattr("hillclimb.cli.common.load_config", lambda **kw: config)
@@ -505,7 +526,7 @@ class TestBoundedLaunch:
         spec = self._setup(
             config, tmp_path, monkeypatch,
             "problems: [p]\nrepeats: 2\nschedule: parallel\nmax_concurrent: 2\n"
-            "experiments:\n  a: {search.policy: greedy}\n  b: {learning.enabled: false}\n  c: {}\n",
+            f"experiments:\n  a: {{search.policy: {GREEDY}}}\n  b: {{learning.enabled: false}}\n  c: {{}}\n",
         )
         calls, peak = self._fake_popen(monkeypatch)
         result = CliRunner().invoke(app, ["experiment", "run", str(spec)])
@@ -640,7 +661,8 @@ class TestSummaryJson:
         assert experiments["openevolve"]["control"] is False and experiments["openevolve"]["wins"] == 1
         cmp = {c["experiment"]: c for c in data["comparisons"]}
         assert cmp["openevolve"]["gap"] == pytest.approx(0.025)
-        assert cmp["openevolve"]["verdict"] == "better"
+        assert cmp["openevolve"]["verdict"] == "within-noise"  # inside greedy's 0.2 repeat spread
+        assert cmp["openevolve"]["threshold_source"] == "repeat spread"
         assert cmp["nomem"]["verdict"] == "within-noise"
         assert data["unfinished"] == [{"search": "r/p-late-1", "experiment": "late", "state": "running"}]
         json.dumps(payload)  # plain data throughout
@@ -672,6 +694,7 @@ def test_every_experiment_spec_in_the_repo_builds_its_climbers():
         study = load_study(path)
         for name in study.experiments:
             config = Config()
+            pin(config)  # the folder's climber, which an experiment may edit or replace
             config.apply_overrides(study.experiment_overrides(name))
             if config.climber.selector_policy == "map-elites":
                 pytest.importorskip("openevolve")

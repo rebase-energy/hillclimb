@@ -30,7 +30,7 @@ NOT_IMPLEMENTATIONS = {"__init__.py", "base.py", "check.py", "compute.py", "comp
 EXCHANGE_KINDS = ("policies", "selectors", "operators", "tuners", "similarity")  # memory/ joins with its ABC
 
 # the only files that may import hillclimb.sdk at module top level
-SDK_EAGER_IMPORTERS = set(CLIMBER_MODULES) | {"climbers/gepa/evaluator.py"}
+SDK_EAGER_IMPORTERS = set(CLIMBER_MODULES)
 
 
 def _py_files(root: Path) -> list[Path]:
@@ -86,7 +86,7 @@ def test_only_module_implementations_import_the_sdk_eagerly():
     offenders = [
         str(path.relative_to(SRC))
         for path in sorted(SRC.rglob("*.py"))
-        if "demo" not in path.parts and "sdk" not in path.parts
+        if "scaffold" not in path.parts and "sdk" not in path.parts
         and str(path.relative_to(SRC)) not in SDK_EAGER_IMPORTERS
         and "hillclimb.sdk" in _top_level_hillclimb_imports(path)
     ]
@@ -102,7 +102,7 @@ def test_package_inits_under_harness_and_modules_import_nothing():
 
 
 # the flat top level is the public surface and nothing else
-FLAT = {"__init__", "_moved", "api", "benchmark_providers", "climber", "config",
+FLAT = {"__init__", "_moved", "api", "benchmark_providers", "catalog", "climber", "config",
         "connect", "experiment", "meta", "problem", "project", "results", "spaces",
         # the building blocks by name, for composing in Python: lazy windows
         # onto hillclimb.modules (single modules — `_moved.py` owns the
@@ -153,7 +153,7 @@ def test_nothing_outside_the_cli_package_imports_it():
     offenders = [
         str(path.relative_to(SRC))
         for path in sorted(SRC.rglob("*.py"))
-        if "cli" not in path.parts and "demo" not in path.parts
+        if "cli" not in path.parts and "scaffold" not in path.parts
         and any(m == "hillclimb.cli" or m.startswith("hillclimb.cli.") for m in hillclimb_imports(path))
     ]
     assert not offenders, offenders

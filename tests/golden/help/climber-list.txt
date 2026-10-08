@@ -1,7 +1,7 @@
                                                                                                                         
  Usage: root climber list [OPTIONS]                                                                                     
                                                                                                                         
- The climbers a bare name stands for: the presets, and every one-file climber under climbers/.                          
+ The catalog's climbers (`climber get` copies one out) and every climber under climbers/.                               
                                                                                                                         
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --json            Machine-readable output                                                                            │

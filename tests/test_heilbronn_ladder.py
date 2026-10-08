@@ -35,7 +35,7 @@ def test_committed_dirs_match_the_generator(generator, tmp_path):
     both the repo's problems/ and the wheel's bundled copy."""
     for n in LEVELS:
         generated = generator.stamp(tmp_path, n)
-        for root in (REPO / "problems", REPO / "src" / "hillclimb" / "demo"):
+        for root in (REPO / "problems",):
             committed = root / f"heilbronn-{n}"
             for path in generated.iterdir():
                 assert (committed / path.name).read_text() == path.read_text(), f"{committed / path.name} is stale"

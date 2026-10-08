@@ -1,7 +1,9 @@
 `solution.py` is a one-file climber: it imports from `hillclimb.sdk` (and the
-standard library) only, defines exactly one search policy (`propose` +
-`observe`, or `POLICY = ...`), and may define `Operator` subclasses whose
-`prepare()` returns the prompt an inner coding agent reads. It is loaded with
+standard library) only, defines exactly one operator policy (`propose` +
+`observe`, or `POLICY = ...`) and at most one selector policy (a
+`SelectorPolicy` subclass with `schedule` + `select`, or `SELECTOR = ...`),
+and may define `Operator` subclasses whose `prepare()` returns the prompt an
+inner coding agent reads. It is loaded with
 `hillclimb run <inner problem> --climber solution.py`; if it does not load,
 the verifier fails and this candidate is a debug target.
 

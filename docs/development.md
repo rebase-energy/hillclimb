@@ -3,7 +3,7 @@
 Running the test suite and the one real coding agent call that checks the stream contract.
 
 ```bash
-uv sync                  # editable install; the `tui` extra builds plotui and needs a Rust toolchain
+uv sync                  # editable install, Python 3.12+ (plotui from PyPI; CONTRIBUTING.md covers a local checkout)
 uv run pytest            # test suite (fake coding agents, no coding agent calls)
 uv run hillclimb smoke   # one real claude call: verifies auth + stream contract
 ```

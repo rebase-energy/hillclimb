@@ -108,7 +108,7 @@ KINDS: dict[str, Kind] = {
     for kind in (
         Kind("operator_policy", "operator policy", attr="POLICY", duck=("propose", "observe"),
              home="hillclimb.modules.policies"),
-        Kind("loop", "loop", attr="LOOP", base="hillclimb.harness.loop:Loop", home="hillclimb.climbers"),
+        Kind("loop", "loop", attr="LOOP", base="hillclimb.harness.loop:Loop", home=None),
         Kind("selector_policy", "selector policy", attr="SELECTOR",
              base="hillclimb.modules.selectors.base:SelectorPolicy", home="hillclimb.modules.selectors"),
         Kind("operator", "operator", base="hillclimb.modules.operators.base:Operator",
@@ -281,6 +281,8 @@ def closure_sha256(files: Sequence[Path], root: Path) -> str:
     return digest.hexdigest()
 
 
+SCOPE_PACKAGE_PREFIX = "hillclimb_climber_"  # the synthetic packages climber files are imported as
+
 # how many climber files are being imported right now (a file that starts a
 # search at import time would start it again when the search imports it)
 _IMPORTING = 0
@@ -290,45 +292,134 @@ def importing() -> bool:
     return _IMPORTING > 0
 
 
+@dataclass
+class _Component:
+    """One synthetic package: files that belong together, rooted at their
+    common directory, hashed by their place below it and their bytes."""
+
+    root: Path
+    files: list[Path]
+    digest: str
+    package: str = ""
+
+
+def _one_package(files: Sequence[Path], root: Path) -> bool:
+    """Can every file be imported below ONE root? Not from the filesystem's
+    root, and only through directories that are module names: a user's file
+    beside a catalog file in `…/lib/python3.12/site-packages/…` is not."""
+    if root == Path(root.anchor):
+        return False
+    return all(part.isidentifier() for f in files for part in f.relative_to(root).parts[:-1])
+
+
+def _connected(entries: Sequence[Path]) -> list[list[Path]]:
+    """The entries grouped with what they reach through relative imports:
+    two entries whose closures share a file are one group."""
+    groups: list[set[Path]] = []
+    for entry in entries:
+        closure = set(source_closure([entry]))
+        for group in [g for g in groups if g & closure]:
+            closure |= group
+            groups.remove(group)
+        groups.append(closure)
+    return [sorted(g) for g in groups]
+
+
+def _components(entries: Sequence[Path]) -> list[_Component]:
+    closure = source_closure(entries)
+    if not closure:
+        return []
+    root = _common_root(closure)
+    groups = [closure] if _one_package(closure, root) else _connected(entries)
+    components = []
+    for files in groups:
+        group_root = _common_root(files)
+        components.append(_Component(group_root, files, closure_sha256(files, group_root)))
+    # ordered by content, so a snapshot (other roots, same bytes) numbers them alike
+    components.sort(key=lambda c: c.digest)
+    for component in components:
+        # the package is named by WHERE the files are as well as what they hold: two
+        # byte-identical copies (`climber get greedy` twice, under two names) are two
+        # modules with their own `__file__`, not one cached under the first's path —
+        # while `digest`, the identity, stays a function of the bytes alone
+        located = hashlib.sha256(f"{component.root}\0{component.digest}".encode()).hexdigest()
+        component.package = f"{SCOPE_PACKAGE_PREFIX}{located[:12]}"
+    return components
+
+
 class FileScope:
     """The local files one climber (or one standalone ref) reaches, imported
-    as a single package. `files` are the entry points; the closure, its
-    common root and its digest follow from them."""
+    as synthetic packages. `files` are the entry points; the closure, its
+    roots and its digest follow from them. Files that sit together under one
+    importable root (a climber folder) are ONE package, as they read; files
+    far apart on disk — a user's policy subclassing a catalog class that
+    lives in site-packages — are one package EACH, rooted where they are,
+    never one rooted at `/`. A one-package scope hashes and numbers its files
+    exactly as before, so every recorded identity stands."""
 
-    def __init__(self, files: Sequence[Path], *, package: str | None = None, root: Path | None = None):
+    def __init__(self, files: Sequence[Path]):
         missing = [Path(f) for f in files if not Path(f).is_file()]
         if missing:
             raise ClimberLoadError(f"file not found: {missing[0]}")
         self.entries = [Path(f).resolve() for f in files]
-        self.files = source_closure(self.entries)
-        self.root = Path(root).resolve() if root is not None else (
-            _common_root(self.files) if self.files else Path.cwd()
-        )
-        self.digest = closure_sha256(self.files, self.root) if self.files else hashlib.sha256().hexdigest()
-        self.package = package or f"hillclimb_climber_{self.digest[:12]}"
+        self.components = _components(self.entries)
+        self.files = sorted(f for component in self.components for f in component.files)
+        if not self.components:
+            self.digest = hashlib.sha256().hexdigest()
+        elif len(self.components) == 1:
+            self.digest = self.components[0].digest
+        else:
+            self.digest = hashlib.sha256("\0".join(c.digest for c in self.components).encode()).hexdigest()
+
+    @property
+    def root(self) -> Path:
+        """The one root, or the directory every component sits below."""
+        if len(self.components) == 1:
+            return self.components[0].root
+        return _common_root(self.files) if self.files else Path.cwd()
+
+    @property
+    def package(self) -> str:
+        """The one package's name (a multi-root scope: `component_of(path).package`)."""
+        if self.components:
+            return self.components[0].package
+        located = hashlib.sha256(f"{Path.cwd()}\0{self.digest}".encode()).hexdigest()
+        return f"{SCOPE_PACKAGE_PREFIX}{located[:12]}"
+
+    def component_of(self, path: Path) -> tuple[int, _Component]:
+        resolved = Path(path).resolve()
+        for index, component in enumerate(self.components):
+            if resolved in component.files or component.root in resolved.parents:
+                return index, component
+        raise ClimberLoadError(f"{resolved} is not among this climber's files ({self.root})")
 
     def relative(self, path: Path) -> Path:
-        return Path(path).resolve().relative_to(self.root)
+        """Where `path` sits in the scope: below the one root, or
+        `<component>/<below its root>` when there are several."""
+        index, component = self.component_of(path)
+        below = Path(path).resolve().relative_to(component.root)
+        return below if len(self.components) == 1 else Path(str(index)) / below
 
-    def _ensure_package(self) -> None:
-        if self.package not in sys.modules:
-            package = types.ModuleType(self.package)
-            package.__path__ = [str(self.root)]
-            sys.modules[self.package] = package
+    def _ensure_package(self, component: _Component) -> None:
+        if component.package not in sys.modules:
+            package = types.ModuleType(component.package)
+            package.__path__ = [str(component.root)]
+            sys.modules[component.package] = package
 
     def import_file(self, path: Path, noun: str = "climber") -> types.ModuleType:
         path = Path(path).resolve()
         if not path.is_file():
             raise ClimberLoadError(f"{noun} file not found: {path}")
         try:
-            relative = path.relative_to(self.root).with_suffix("")
-        except ValueError:
+            _, component = self.component_of(path)
+        except ClimberLoadError:
             raise ClimberLoadError(f"{noun} file {path} is outside {self.root}") from None
-        self._ensure_package()
+        relative = path.relative_to(component.root).with_suffix("")
+        self._ensure_package(component)
         global _IMPORTING
         _IMPORTING += 1
         try:
-            return importlib.import_module(".".join((self.package, *relative.parts)))
+            return importlib.import_module(".".join((component.package, *relative.parts)))
         except Exception as exc:  # noqa: BLE001 — an author's import error, reported with its file
             raise ClimberLoadError(f"{noun} file {path} failed to import: {type(exc).__name__}: {exc}") from exc
         finally:
@@ -348,10 +439,15 @@ class Resolved:
 
     @property
     def label(self) -> str:
-        """A short display name: the registry name, a file's stem, a class's name."""
+        """A short display name: the registry name, a file's stem (the class
+        named after the colon, when `file.py:Class` names one — one file may
+        hold both policies), a class's name."""
         if self.form == "name":
             return self.ref
         if self.form == "file":
+            _, attr = split_file_ref(self.ref)
+            if attr:
+                return attr
             return self.path.stem if self.path is not None else self.ref
         return getattr(self.target, "__name__", self.ref)
 
@@ -380,16 +476,64 @@ def pick(module: types.ModuleType, kind: str | Kind, source: Path):
     return found[0]
 
 
+class NoClimber(ClimberLoadError):
+    """Nothing names a climber: the folder's hillclimb.yaml has no `climber:`
+    and the call gave none. The message says how to fetch one."""
+
+
+NO_CLIMBER_HINT = (
+    "no climber: fetch one from the catalog with `hillclimb climber get greedy`, "
+    "or name your own (`--climber <file.py>`, `climber:` in hillclimb.yaml, "
+    "`hc.catalog.climber('greedy')` in Python)"
+)
+
+
+def _recorded(slot: Kind, ref: str, form: str, legacy: bool) -> Resolved | None:
+    """A name or module path a RECORD holds from before 0.9, when the bundled
+    climbers were engine code: resolved to the catalog file that holds the
+    class today — only when `legacy` says this is a record (a snapshot, a run
+    folder), never for a new config."""
+    if not legacy:
+        return None
+    from hillclimb import catalog
+
+    entry = catalog.RECORDED.get((slot.name, ref)) if form == "name" else catalog.RECORDED_MODULES.get(modernize(ref))
+    if entry is None:
+        return None
+    path, attr = catalog.recorded_file(entry)
+    module = FileScope([path]).import_file(path, slot.noun)
+    target = getattr(module, attr)
+    return Resolved(_checked(target, slot, ref), form, ref, path=path.resolve(), module=module)
+
+
+def _catalog_hint(slot: Kind, ref: str) -> str:
+    from hillclimb import catalog
+
+    if ref in catalog.RECORDED_PRESETS or any(name == ref for kind, name in catalog.RECORDED):
+        return (
+            f"{ref!r} is a catalog climber, not a name the engine knows: `hillclimb climber get {ref}` (CLI) "
+            f"or `hc.catalog.climber({ref!r})` (Python)"
+        )
+    return (
+        f"unknown {slot.noun} {ref!r} (available: {', '.join(sorted(slot.registry)) or 'none registered'}, "
+        "a path to a .py file, or module:Class)"
+    )
+
+
 def resolve_ref(
     ref: str,
     kind: str | Kind,
     *,
     base_dir: Path | None = None,
     scope: FileScope | None = None,
+    legacy: bool = False,
 ) -> Resolved:
     """The class (or factory) a ref names. `base_dir` anchors a relative
     file; `scope` is the climber's `FileScope` when the file is one of
-    several that must share a package (a standalone file gets its own)."""
+    several that must share a package (a standalone file gets its own);
+    `legacy` lets a name or module path a record holds from before 0.9
+    (`greedy`, `hillclimb.climbers.greedy.policy:Greedy`) find the catalog
+    file that holds the class today."""
     slot = kind_of(kind)
     if not isinstance(ref, str) or not ref:
         raise ClimberLoadError(f"`{slot.name}:` needs a name, a .py file or module:Class (got {ref!r})")
@@ -411,14 +555,17 @@ def resolve_ref(
         try:
             target = getattr(importlib.import_module(module_name), attr)
         except (ImportError, AttributeError) as exc:
+            recorded = _recorded(slot, ref, "module", legacy)
+            if recorded is not None:
+                return recorded
             raise ClimberLoadError(f"cannot import {slot.noun} {ref!r}: {exc}") from exc
         return Resolved(_checked(target, slot, ref), "module", ref)
     if ref in slot.load().registry:
         return Resolved(_checked(_registered_target(slot, ref), slot, ref), "name", ref)
-    raise ClimberLoadError(
-        f"unknown {slot.noun} {ref!r} (available: {', '.join(sorted(slot.registry)) or 'none registered'}, "
-        "a path to a .py file, or module:Class)"
-    )
+    recorded = _recorded(slot, ref, "name", legacy)
+    if recorded is not None:
+        return recorded
+    raise ClimberLoadError(_catalog_hint(slot, ref))
 
 
 def _checked(target: Any, slot: Kind, ref: str):

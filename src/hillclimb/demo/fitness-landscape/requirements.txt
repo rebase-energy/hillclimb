@@ -1,4 +1,0 @@
-# Solution-runtime packages for fitness-landscape. Kept small so a first run
-# builds its venv in seconds, not minutes.
-numpy
-pandas

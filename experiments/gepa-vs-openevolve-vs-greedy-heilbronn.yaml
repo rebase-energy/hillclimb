@@ -30,16 +30,16 @@ defaults:
 
 experiments:
   greedy:
-    climber: greedy
+    climber: climbers/greedy/policy.py
     climber.params: {}
 
   openevolve:
-    climber: openevolve
+    climber: climbers/openevolve/policy.py
     climber.selector_params:
       random_seed: 42
 
   gepa:
-    climber: gepa
+    climber: climbers/gepa/policy.py
     climber.params:
       # the heilbronn scorer emits no per-instance breakdown, so the
       # instance frontier degenerates to the aggregate score and metric

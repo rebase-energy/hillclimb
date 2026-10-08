@@ -250,7 +250,7 @@ class Harness:
         if tuner is None:
             from hillclimb.modules.tuners.random_search import RandomSearch
 
-            tuner = RandomSearch(config.climber.tuner_params)
+            tuner = RandomSearch(config.climber_params("tuner_params"))
         self.tuner = tuner  # which params a `tune` action tries; WHEN is the policy's call
         self.router = router  # None: everything routes to `agent` + config.model
         self.agents = agents
@@ -1073,7 +1073,7 @@ class Harness:
         (resolved per call: the config block is the live source of truth)."""
         if self.operators is not None:
             return self.operators.get(name)
-        return get_operator(name, self.config.climber.operator_params.get(name))
+        return get_operator(name, self.config.climber_params("operator_params").get(name))
 
     def _prepare_attempt(self, action: Action, target: Candidate | None) -> tuple[Operator, Attempt]:
         """Ask the operator what this attempt needs. Everything it sees is

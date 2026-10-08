@@ -9,8 +9,8 @@
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ check  Conformance check for a climber — the cheap pre-verifier.                                                     │
-│ get    Copy a preset into climbers/<name>/: a folder you can read and edit.                                          │
-│ list   The climbers a bare name stands for: the presets, and every one-file                                          │
+│ get    Copy a catalog climber into climbers/<name>/: the whole climber as Python you can read and edit.              │
+│ list   The catalog's climbers (`climber get` copies one out) and every                                               │
 │        climber under climbers/.                                                                                      │
 │ new    Start your own climber from a copy of an existing one.                                                        │
 │ show   Print a climber as the block a run config takes.                                                              │

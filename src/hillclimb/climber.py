@@ -24,10 +24,12 @@ that block:
 
 Every module is named the same three ways (`modules/refs.py`): a registry
 name, a `.py` file (`mine.py` or `mine.py:Class`), or `package.module:Class`.
-A bare string is shorthand: a preset's name (`greedy | openevolve | gepa`) or
-one `.py` file — the single operator policy or loop it defines, plus any
-`Operator` subclasses in it. Defaults live on the classes, so
-`{operator_policy: greedy}` and `{loop: gepa}` are complete climbers.
+A bare string is shorthand: one `.py` file — the whole `Climber(...)` it
+builds, or the single operator policy or loop it defines plus any
+`Operator` subclasses in it — or a climber folder (`policy.py` inside).
+Defaults live on the classes, so `{operator_policy: mine.py}` is a
+complete climber. The engine ships none: `hillclimb climber get greedy`
+fetches one from the catalog (`hillclimb.catalog`).
 
 `resolve_climber(spec)` gives the `Climber`: the spec with its local files
 imported as one package (`refs.FileScope`) and its identity, `sha256` — the
@@ -58,15 +60,12 @@ from hillclimb.modules import refs
 from hillclimb.modules.memory.base import GraphModule
 from hillclimb.modules.operators import Operator
 from hillclimb.modules.operators.builtin import BUILTIN_OPERATORS
-from hillclimb.modules.refs import ClimberLoadError, FileScope, Resolved
+from hillclimb.modules.refs import NO_CLIMBER_HINT, ClimberLoadError, FileScope, NoClimber, Resolved
 from hillclimb.modules.spec import (  # noqa: F401 — the block's home is modules/spec.py
-    DEFAULT_POLICY,
-    PRESETS,
     ClimberSpec,
     block_error,
     climber_label,
     expand_name,
-    presets,
 )
 
 MANIFEST = "climber.yaml"  # the snapshot's block (and the pre-0.6 manifest's file name)
@@ -86,11 +85,6 @@ def climber_base_dir(config) -> Path | None:
     """Where a relative climber (or graph, or similarity-score) path resolves
     from: the hillclimb dir, like `paths.runs_dir`; None when no dir is known."""
     return getattr(config, "hillclimb_dir", None)
-
-
-def bundled_climbers() -> list[str]:
-    """The presets (the name predates them)."""
-    return presets()
 
 
 class OperatorSet:
@@ -151,8 +145,8 @@ class Climber:
         hc.run("heilbronn-11", climber=climber, budget="10m")
         climber.to_spec()          # the same climber as the block a run config takes
 
-    A preset's name stands for its block: `hc.Climber("openevolve",
-    params={"tune_budget": 4})`. An instance stands for its class and params (`Best(num_drafts=3)` is
+    A catalog climber's classes come from `hc.catalog.module("greedy")`
+    (`Greedy`, `Best`); a bare name like `Climber("greedy")` is refused. An instance stands for its class and params (`Best(num_drafts=3)` is
     `selector_policy: best` + `selector_params: {num_drafts: 3}`): a search always builds its
     own. A class is written down the most portable way it can be — a
     registry name, `module:Class`, else `its_file.py:Class` — and a class
@@ -166,11 +160,15 @@ class Climber:
 
     def __init__(self, preset=None, *, selector_policy=None, operator_policy=None, operators=None, tuner=None,
                  memory=None, loop=None, params: Mapping | None = None, selector_params: Mapping | None = None,
-                 prompts=None, name: str | None = None, base_dir: Path | None = None,
-                 select=None, policy=None, select_params: Mapping | None = None):
+                 prompts_dir=None, name: str | None = None, base_dir: Path | None = None,
+                 select=None, policy=None, select_params: Mapping | None = None, prompts=None):
         # the keywords are in the order one step runs them: π_sel, π_op, the
         # operator, a tune trial of the result, the memory the operator reads.
-        # `select=`, `policy=` and `select_params=` are the pre-0.7 spellings.
+        # `prompts_dir=` names the templates' directory (a `prompts/` beside a
+        # climber file needs no naming). `select=`, `policy=` and
+        # `select_params=` are the pre-0.7 spellings, `prompts=` the pre-0.9 one.
+        if prompts is not None:
+            raise TypeError("Climber(): `prompts=` is the old spelling of `prompts_dir=`")
         if select is not None:
             if selector_policy is not None:
                 raise TypeError("Climber(): `select=` is the old spelling of `selector_policy=`; give one")
@@ -182,10 +180,12 @@ class Climber:
         if select_params:
             selector_params = {**dict(select_params), **dict(selector_params or {})}
         block: dict[str, Any] = {}
-        if isinstance(preset, str) and preset in PRESETS and loop is None:
-            # `Climber("openevolve", params=...)`: a preset's name stands for
-            # its whole block, and the other arguments lie over it
-            block, preset = expand_name(preset), None
+        if isinstance(preset, str) and not (refs.is_file_ref(preset) or refs.is_module_ref(preset)) and loop is None:
+            # `Climber("greedy")` named a preset once; the bundled climbers are a catalog now
+            raise ClimberLoadError(
+                f"{preset!r} is not a climber the engine knows: `hc.catalog.climber({preset!r})` loads the catalog's, "
+                "or give a .py file"
+            )
         if preset is not None:
             if operator_policy is not None:
                 raise TypeError(
@@ -195,7 +195,7 @@ class Climber:
         preset_block, block = block, {}
         block, live = _compose(
             operator_policy=operator_policy, loop=loop, selector_policy=selector_policy, operators=operators,
-            tuner=tuner, memory=memory, params=params, prompts=prompts, name=name,
+            tuner=tuner, memory=memory, params=params, prompts=prompts_dir, name=name,
         )
         if selector_params:
             block["selector_params"] = {**block.get("selector_params", {}), **dict(selector_params)}
@@ -211,13 +211,18 @@ class Climber:
         self._setup(as_spec(block).anchored(base_dir if base_dir is not None else Path.cwd()), live=live)
 
     @classmethod
-    def from_spec(cls, spec: Any, base_dir: Path | None = None, *, ref: str = "") -> Climber:
-        """The climber a block defines (relative file refs resolve from `base_dir`)."""
+    def from_spec(cls, spec: Any, base_dir: Path | None = None, *, ref: str = "", legacy_names: bool = False) -> Climber:
+        """The climber a block defines (relative file refs resolve from
+        `base_dir`). `legacy_names`: the block is a RECORD's (a snapshot, a
+        run folder) and may name the bundled climbers of before 0.9 by their
+        registry names; those resolve to the catalog's files."""
         climber = cls.__new__(cls)
-        climber._setup(as_spec(spec, base_dir).anchored(base_dir), ref=ref)
+        climber._setup(as_spec(spec, base_dir, legacy=legacy_names).anchored(base_dir), ref=ref, legacy_names=legacy_names)
         return climber
 
-    def _setup(self, spec: ClimberSpec, *, ref: str = "", live: Mapping[str, type] | None = None) -> None:
+    def _setup(
+        self, spec: ClimberSpec, *, ref: str = "", live: Mapping[str, type] | None = None, legacy_names: bool = False
+    ) -> None:
         try:
             files = spec.file_paths()
         except ValueError as exc:
@@ -228,6 +233,7 @@ class Climber:
         self.spec = spec  # anchored: every file ref absolute
         self.scope = FileScope(files)  # its local files, one package
         self.ref = ref  # how it was named, when it was named by a string
+        self.legacy_names = legacy_names  # a record's block: pre-0.9 names find the catalog
         # blocks that are classes of this process only: `live:Name` -> the class
         self._live: dict[str, type] = dict(live or {})
         # a pre-0.6 manifest could ask for `holdout_timing: after`
@@ -415,7 +421,7 @@ class Climber:
     def _resolve(self, ref: str, kind: str) -> Resolved:
         if ref in self._live:
             return Resolved(self._live[ref], LIVE, ref)
-        return refs.resolve_ref(ref, kind, scope=self.scope)
+        return refs.resolve_ref(ref, kind, scope=self.scope, legacy=self.legacy_names)
 
     @property
     def source(self) -> str:
@@ -452,10 +458,23 @@ class Climber:
         about itself — and, for an operator policy over a selector policy the
         block names, what that selector policy picks."""
         text = _doc_line(self.brain.target)
-        if self.spec.selector_policy and not self.is_loop:
-            picks = _doc_line(self._resolve(self.spec.selector_policy, "selector_policy").target)
-            return f"{climber_label(self.spec.brain)} over {climber_label(self.spec.selector_policy)}: {picks}"
+        if not self.is_loop and (self.spec.selector_policy or self._own_selector() is not None):
+            own = self._own_selector()
+            if own is not None:
+                return f"{self._label(self.spec.brain, 'operator_policy')} over {own.__name__}: {_doc_line(own)}"
+            ref = self._selector_ref()
+            picks = _doc_line(self._resolve(ref, "selector_policy").target)
+            return f"{self._label(self.spec.brain, 'operator_policy')} over {self._label(ref, 'selector_policy')}: {picks}"
         return text
+
+    def _label(self, ref: str, kind: str) -> str:
+        """What to call a module in a sentence: its registry name, else the
+        class's own name (a file's stem says nothing when one file holds both
+        policies)."""
+        resolved = self._resolve(ref, kind)
+        if resolved.form == "name":
+            return resolved.ref
+        return getattr(resolved.target, "__name__", None) or resolved.label
 
     @property
     def holdout_timing(self) -> str | None:
@@ -470,6 +489,13 @@ class Climber:
         path = Path(self.spec.prompts)
         return path if path.is_dir() else None
 
+    @property
+    def module(self):
+        """The module a one-file climber IS, when it was named by a file:
+        its classes to subclass or compose with (`hc.catalog.module("greedy")
+        .Greedy`). None for a climber built from registry names."""
+        return self.brain.module
+
     # --- building the modules ---
 
     def resolved_params(self, overlay: Mapping | None = None) -> dict:
@@ -482,18 +508,88 @@ class Climber:
         declared = getattr(self.brain.target, "defaults", None)
         return dict(declared()) if callable(declared) else None
 
+    def _own_selector(self):
+        """The selector policy the operator policy's own file defines, when
+        the block names none: `SELECTOR = <class>`, else the one
+        `SelectorPolicy` subclass written there (one file, both policies —
+        what `hillclimb climber get` writes and a meta-problem's candidate
+        is). None when the brain is not a file, or the file defines none."""
+        if self.is_loop or self.spec.selector_policy:
+            return None
+        from hillclimb.modules.selectors.base import SelectorPolicy
+
+        module = self.brain.module
+        if module is not None:
+            explicit = getattr(module, refs.KINDS["selector_policy"].attr, None)
+            if explicit is not None:
+                return explicit
+            found = _classes(module, SelectorPolicy)
+            if len(found) > 1:
+                raise ClimberLoadError(
+                    f"{self.source}: defines {len(found)} selector policies ({', '.join(c.__name__ for c in found)}); "
+                    f"set SELECTOR = <class>, or name one in `selector_policy:`"
+                )
+            if found:
+                return found[0]
+        # a policy that subclasses one written in a climber file (`class Mine(
+        # hc.catalog.module("greedy").Greedy)`) inherits the selector written
+        # beside its base: the two halves of that file go together
+        target = self.brain.target
+        for base in (inspect.getmro(target)[1:] if inspect.isclass(target) else ()):
+            base_module = sys.modules.get(base.__module__)
+            if base_module is None or not base.__module__.startswith(refs.SCOPE_PACKAGE_PREFIX):
+                continue
+            explicit = getattr(base_module, refs.KINDS["selector_policy"].attr, None)
+            found = [explicit] if explicit is not None else _classes(base_module, SelectorPolicy)
+            if found:
+                return found[0]
+        return None
+
+    def _selector_ref(self) -> str | None:
+        """How the selector policy (π_sel) is named: the block's
+        `selector_policy:`, else the one its own file defines (as
+        `<file>:<Class>`), else the operator policy class's `default_selector`.
+        None for a loop, and for an operator policy that names none."""
+        if self.is_loop:
+            return None
+        if self.spec.selector_policy:
+            return self.spec.selector_policy
+        own = self._own_selector()
+        if own is not None:
+            try:
+                return f"{Path(inspect.getsourcefile(own)).resolve()}:{own.__name__}"
+            except TypeError:
+                return f"{self.brain.path}:{own.__name__}"
+        return getattr(self.brain.target, "default_selector", None)
+
+    def _selector_target(self):
+        """The selector policy's class (or factory), or None — see `_selector_ref`."""
+        own = self._own_selector()
+        if own is not None:
+            return own
+        ref = self._selector_ref()
+        return None if ref is None else self._resolve(ref, "selector_policy").target
+
     def selector(self, extra: Mapping | None = None):
-        """The selector policy (π_sel) the loop asks first: the block's
-        `selector_policy:`, else the operator policy class's own default.
-        None for a loop, and for an operator policy that names none. `extra`
-        lays more settings over the block's `selector_params` (the schedule
-        knobs a caller handed `build_loop`)."""
+        """The selector policy (π_sel) the loop asks first (`_selector_ref`:
+        the block's, the file's own, the class's default). None for a loop,
+        and for an operator policy that names none. `extra` lays more
+        settings over the block's `selector_params` (the schedule knobs a
+        caller handed `build_loop`)."""
         from hillclimb.modules.selectors import get_selector
 
         if self.is_loop:
             return None
-        ref = self.spec.selector_policy or getattr(self.brain.target, "default_selector", None)
         params = {**self.spec.selector_params, **dict(extra or {})}
+        own = self._own_selector()
+        if own is not None:
+            # the file's own class, built directly: it is already imported with
+            # the brain, in the brain's package, wherever the file sits
+            selector = refs.construct(own, {"params": params}, self.source)
+            if not getattr(selector, "name", None):
+                selector.name = own.__name__
+            return selector
+        ref = self._selector_ref()
         if ref is None:
             if params:
                 raise ClimberLoadError(
@@ -502,7 +598,7 @@ class Climber:
             return None
         if ref in self._live:
             return self._live[ref](params)
-        return get_selector(ref, params, scope=self.scope)
+        return get_selector(ref, params, scope=self.scope, legacy=self.legacy_names)
 
     def build_loop(self, *, params: Mapping | None = None, priors: Mapping | None = None,
                    parallelism: int = 1, log=print) -> Loop:
@@ -517,8 +613,16 @@ class Climber:
         known = self._known_params()
         merged = self.resolved_params(params)
         # the schedule is the selector policy's: knobs handed to the operator
-        # policy (every block before 0.7, a caller's overlay) reach it there
-        schedule = {k: merged.pop(k) for k in SCHEDULE_KNOBS if k in merged and not (known and k in known)}
+        # policy (every block before 0.7, a caller's overlay, a tuned
+        # `--set climber.params.<knob>`) reach it there — the fixed schedule
+        # names, plus whatever the selector policy class itself declares
+        selector_target = None if self.is_loop else self._selector_target()
+        declared = getattr(selector_target, "defaults", None)
+        selector_known = set(declared()) if callable(declared) else set()
+        schedule = {
+            k: merged.pop(k) for k in list(merged)
+            if (k in SCHEDULE_KNOBS or k in selector_known) and not (known and k in known)
+        }
         if known is not None:
             if getattr(target, "strict_params", False):
                 unknown = sorted(set(merged) - set(known))
@@ -536,9 +640,10 @@ class Climber:
             return loop
         selector = self.selector(schedule)
         if selector is not None:
-            if self.spec.selector_policy is not None and not _accepts(target, "selector"):
+            named = self.spec.selector_policy is not None or self._own_selector() is not None
+            if named and not _accepts(target, "selector"):
                 raise ClimberLoadError(
-                    f"{self.source}: `selector_policy: {self.spec.selector_policy}` — this operator policy "
+                    f"{self.source}: `selector_policy: {self._selector_ref()}` — this operator policy "
                     "takes no selector policy (its constructor has no `selector` argument)"
                 )
             offered["selector"] = selector
@@ -630,28 +735,33 @@ class Climber:
 # --- resolving ---------------------------------------------------------------------
 
 
-def as_spec(value: Any, base_dir: Path | None = None) -> ClimberSpec:
+def as_spec(value: Any, base_dir: Path | None = None, *, legacy: bool = False) -> ClimberSpec:
     """A `ClimberSpec` from whatever named it: a spec, a block, a bare
-    string (a preset, a file, a climber folder looked for under `base_dir`),
-    or a composed `Climber` (which must be portable)."""
+    string (a file, a climber folder looked for under `base_dir`), or a
+    composed `Climber` (which must be portable). None names nothing: the
+    folder has no climber (`NoClimber`, which says how to fetch one).
+    `legacy`: a record's value, which may name a preset of before 0.9."""
+    if value is None:
+        raise NoClimber(NO_CLIMBER_HINT)
     if isinstance(value, ClimberSpec):
         return value
     if isinstance(value, Climber):
         return value.to_spec()
     try:
-        return ClimberSpec.model_validate(value, context={"base_dir": base_dir})
+        return ClimberSpec.model_validate(value, context={"base_dir": base_dir, "legacy": legacy})
     except ValueError as exc:
         raise ClimberLoadError(block_error(exc)) from exc
 
 
-def resolve_climber(spec: Any, base_dir: Path | None = None, *, ref: str = "") -> Climber:
+def resolve_climber(spec: Any, base_dir: Path | None = None, *, ref: str = "", legacy_names: bool = False) -> Climber:
     """The `Climber` a block defines. Relative file refs resolve from
     `base_dir`. Every failure is a `ClimberLoadError` naming the file and the
     fix — never a traceback from deep inside engine start-up. The modules
-    themselves are imported when they are first asked for."""
+    themselves are imported when they are first asked for. `legacy_names`:
+    the block is a record's (see `Climber.from_spec`)."""
     if isinstance(spec, Climber):
         return spec
-    return Climber.from_spec(spec, base_dir, ref=ref)
+    return Climber.from_spec(spec, base_dir, ref=ref, legacy_names=legacy_names)
 
 
 def identity(spec: ClimberSpec, scope: FileScope, live: Mapping[str, type] | None = None) -> str:
@@ -693,21 +803,24 @@ def identity(spec: ClimberSpec, scope: FileScope, live: Mapping[str, type] | Non
 
 
 def load_climber(ref: str, base_dir: Path | None = None) -> Climber:
-    """The climber a STRING names: a preset, one `.py` file, or a climber
-    folder — a directory holding `climber.yaml` (`hillclimb climber get`
-    writes one; the pre-0.6 manifest form reads the same way)."""
-    if ref in PRESETS:
-        return resolve_climber(ref, ref=ref)
+    """The climber a STRING names: one `.py` file, or a climber
+    folder — a directory holding `policy.py` (`hillclimb climber get` writes
+    one: the file builds the whole climber, the folder names it) or a
+    pre-0.9 `climber.yaml` (the pre-0.6 manifest form reads the same way)."""
     path = Path(refs.split_file_ref(ref)[0]).expanduser() if not refs.is_module_ref(ref) else None
     if path is not None and not path.is_absolute() and base_dir is not None:
         path = Path(base_dir) / path
     if path is not None and path.is_dir():
+        if not (path / MANIFEST).is_file() and (path / FOLDER_POLICY).is_file():
+            return resolve_climber(ref, base_dir, ref=ref)  # `spec.folder_block`: the folder's policy.py
         return _load_climber_dir(ref, path)
     if refs.is_file_ref(ref) or refs.is_module_ref(ref):
         return resolve_climber(ref, base_dir, ref=ref)
+    from hillclimb.catalog import climber_names
+
     raise ClimberLoadError(
-        f"Unknown climber: {ref} (bundled: {', '.join(presets())}; "
-        f"or one .py file; or a climber folder holding {MANIFEST})"
+        f"Unknown climber: {ref} (one .py file, or a climber folder holding {FOLDER_POLICY}; "
+        f"the catalog's — {', '.join(climber_names()) or 'none'} — are fetched with `hillclimb climber get <name>`)"
     )
 
 
@@ -746,7 +859,7 @@ def _load_climber_dir(ref: str, root: Path, name: str | None = None) -> Climber:
     except Exception as exc:  # noqa: BLE001
         raise ClimberLoadError(f"{manifest_path}: {block_error(exc)}") from exc
     try:
-        climber = resolve_climber(spec, root, ref=ref)
+        climber = resolve_climber(spec, root, ref=ref, legacy_names=True)  # a manifest is a record
     except ClimberLoadError as exc:
         raise ClimberLoadError(f"{manifest_path}: {exc}") from exc
     climber.legacy_holdout_timing = timing
@@ -826,7 +939,7 @@ def load_snapshot(search_dir: Path, name: str | None = None) -> Climber | None:
                 )
             data = {key: value for key, value in data.items() if key not in ("snapshot", "portable")}
             try:
-                return resolve_climber(data, root, ref=str(root))
+                return resolve_climber(data, root, ref=str(root), legacy_names=True)  # a record: pre-0.9 names resolve
             except ClimberLoadError as exc:
                 raise ClimberLoadError(f"{manifest_path}: {exc}") from exc
         return _load_climber_dir(str(root), root, name=name)
@@ -837,11 +950,10 @@ def load_snapshot(search_dir: Path, name: str | None = None) -> Climber | None:
 
 
 # --- climber folders --------------------------------------------------------------------
-# `hillclimb climber get <preset>`: a preset copied out as a folder a person can
-# read and edit — the folder IS a climber (`climber: climbers/greedy`, `--climber
-# climbers/greedy`, `load_climber("climbers/greedy")`), laid out like a search's
-# snapshot: the block as climber.yaml, the operator policy's source, and every
-# template its operators render under prompts/, with a README of what fills them.
+# `hillclimb climber get <name>` copies a catalog climber (`catalog.install_climber`):
+# the folder IS a climber — its `policy.py` builds the whole `Climber(...)` —
+# and, when the catalog folder brought no prompts/ of its own, gets one here:
+# every template its operators render, with a README of what fills them.
 
 FOLDER_POLICY = "policy.py"
 FOLDER_README = "README.md"
@@ -858,87 +970,36 @@ def operator_templates(climber: Climber) -> list[str]:
     return list(seen)
 
 
-def write_climber_folder(climber: Climber, target: Path, name: str) -> list[str]:
-    """Copy a preset-shaped climber (an operator policy from ONE file, no
-    local files of its own) into `target`, a folder that is that climber:
-    climber.yaml with every default spelled out, policy.py, and prompts/
-    with the templates its operators render plus README.md. Returns the
-    files written, relative to `target`. Refuses a loop and a climber that
-    already reaches local files — those are not what a preset is."""
+def write_prompts_folder(climber: Climber, target: Path, name: str) -> list[str]:
+    """Write `target/` (a climber's prompts dir): the built-in templates its
+    operators render, byte for byte, plus README.md. Returns the files
+    written, relative to `target`. Refuses when a template an operator
+    renders is not a built-in one."""
     from hillclimb.prompts.render import TEMPLATE_DIR, TEMPLATE_SUFFIX
 
-    if climber.is_loop:
-        raise ClimberLoadError(f"{climber.name} is a loop; it owns its whole control flow and is not copied out as a folder")
-    if climber.scope.files or climber.prompts_dir is not None:
-        raise ClimberLoadError(f"{climber.name} already has local files or prompts; copy those instead")
-    policy_cls = climber.brain.target
-    if not inspect.isclass(policy_cls):
-        raise ClimberLoadError(f"{climber.name}: its operator policy is not a class")
-    source_file = Path(inspect.getsourcefile(policy_cls))
-    if refs._relative_imports(source_file):
-        raise ClimberLoadError(f"{climber.name}: {source_file.name} imports its neighbours; it is not one file")
     templates = operator_templates(climber)
     missing = [t for t in templates if not (TEMPLATE_DIR / f"{t}{TEMPLATE_SUFFIX}").is_file()]
     if missing:
         raise ClimberLoadError(f"{climber.name}: no built-in template {', '.join(missing)}")
-
     target.mkdir(parents=True)
     written: list[str] = []
-    shutil.copy2(source_file, target / FOLDER_POLICY)
-    written.append(FOLDER_POLICY)
-    (target / SNAPSHOT_PROMPTS).mkdir()
     for template in templates:
-        shutil.copy2(TEMPLATE_DIR / f"{template}{TEMPLATE_SUFFIX}", target / SNAPSHOT_PROMPTS / f"{template}{TEMPLATE_SUFFIX}")
-        written.append(f"{SNAPSHOT_PROMPTS}/{template}{TEMPLATE_SUFFIX}")
-    (target / SNAPSHOT_PROMPTS / FOLDER_README).write_text(prompts_guide(climber, name, templates))
-    written.append(f"{SNAPSHOT_PROMPTS}/{FOLDER_README}")
-    (target / MANIFEST).write_text(folder_manifest(climber, name, policy_cls.__name__))
-    written.append(MANIFEST)
+        shutil.copy2(TEMPLATE_DIR / f"{template}{TEMPLATE_SUFFIX}", target / f"{template}{TEMPLATE_SUFFIX}")
+        written.append(f"{template}{TEMPLATE_SUFFIX}")
+    (target / FOLDER_README).write_text(prompts_guide(climber, name, templates))
+    written.append(FOLDER_README)
     return written
 
 
 def _spelled_out(climber: Climber) -> tuple[dict, dict]:
-    """(params, selector_params) with every default filled in: a folder's
-    block reads whole, and pins what the climber was copied with."""
+    """(params, selector_params) with every default filled in, read off the
+    classes' `DEFAULTS` with the block's overrides on top — no selector is
+    built, so a copy needs no optional extra to be written."""
     known = climber._known_params() or {}
     params = {**known, **climber.spec.params}
-    selector = climber.selector()
-    selector_params = dict(selector.resolved_params()) if selector is not None else {}
+    declared = getattr(climber._selector_target(), "defaults", None)
+    selector_params = {**(declared() if callable(declared) else {}), **climber.spec.selector_params}
     return params, selector_params
-
-
-def folder_manifest(climber: Climber, name: str, class_name: str) -> str:
-    """The folder's climber.yaml: the preset's block, defaults spelled out,
-    paths relative to the folder, a comment on every key."""
-    params, selector_params = _spelled_out(climber)
-    spec = climber.spec
-    flow = lambda value: yaml.safe_dump(value, default_flow_style=True, sort_keys=False, width=10_000).strip()  # noqa: E731
-    operators = climber.operator_set().names()
-    selector = spec.selector_policy or getattr(climber.brain.target, "default_selector", None)
-    lines = [
-        f"# The `{name}` climber, copied by `hillclimb climber get`: this folder IS a climber",
-        f"# (`climber: climbers/{name}` in hillclimb.yaml, `--climber climbers/{name}`). Paths are",
-        "# relative to it. Edit policy.py or a template under prompts/ and the next run climbs",
-        "# with the change; a started search keeps the copy it snapshotted. Every default is",
-        "# spelled out, so the block reads whole and pins what was copied.",
-        f"name: {name}",
-        f"operator_policy: {FOLDER_POLICY}:{class_name}   # which operator to apply to what the selector policy chose",
-        f"params: {flow(params)}   # the operator policy's knobs (see its docstring)",
-    ]
-    if selector is not None:
-        lines.append(f"selector_policy: {selector}   # which candidate the next attempt starts from, or none")
-        lines.append(f"selector_params: {flow(selector_params)}   # its schedule: drafts, debugging, the ensemble window")
-    lines.append(f"operators: {flow(list(operators))}   # how an attempt is made; each renders its template under prompts/")
-    if spec.operator_params:
-        lines.append(f"operator_params: {flow(spec.operator_params)}")
-    lines.append(f"tuner: {spec.tuner}   # which parameter values a tunable candidate tries")
-    if spec.tuner_params:
-        lines.append(f"tuner_params: {flow(spec.tuner_params)}")
-    lines.append(f"memory: {spec.memory}   # what a search knows from earlier ones, and leaves for the next")
-    if spec.memory_params:
-        lines.append(f"memory_params: {flow(spec.memory_params)}")
-    lines.append(f"prompts: {SNAPSHOT_PROMPTS}   # the templates the operators render; a missing one falls back to the built-in")
-    return "\n".join(lines) + "\n"
 
 
 def prompts_guide(climber: Climber, name: str, templates: list[str]) -> str:
@@ -951,21 +1012,23 @@ def prompts_guide(climber: Climber, name: str, templates: list[str]) -> str:
     params, selector_params = _spelled_out(climber)
     operators = climber.operator_set()
     policy_cls = climber.brain.target
+    selector_cls = climber._selector_target()
     lines = [
         f"# The prompts of the `{name}` climber",
         "",
         "Each file here is a template: the words are the climber's, the `{{tokens}}` are",
         "context the harness fills in for one attempt — the problem, the candidate the",
         "attempt builds on, what earlier attempts tried, what memory knows from other",
-        "searches. The policy (`../policy.py`) decides which operator makes the next",
-        "attempt; the operator renders its template; the harness adds the contract.",
+        "searches. `../policy.py` is the climber: its selector policy decides which",
+        "candidate the next attempt starts from, its operator policy which operator",
+        "makes it; the operator renders its template; the harness adds the contract.",
         "Edit a template and the next run climbs with it (`hillclimb climber check`",
         "lints the tokens). A template deleted here falls back to the built-in one.",
         "",
         "## When each template is used",
         "",
     ]
-    lines += _schedule_lines(policy_cls, params, selector_params)
+    lines += _schedule_lines(policy_cls, selector_cls, params, selector_params)
     lines += ["", "| operator | kind | template(s) | what it does |", "| --- | --- | --- | --- |"]
     for op_name in operators.names():
         operator = operators.get(op_name)
@@ -1005,37 +1068,40 @@ def prompts_guide(climber: Climber, name: str, templates: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _schedule_lines(policy_cls, params: dict, selector_params: dict) -> list[str]:
-    """The climber's schedule in words. Greedy over the `best` selector is
-    spelled out with its numbers; any other policy gets its docstring and
+def _schedule_lines(policy_cls, selector_cls, params: dict, selector_params: dict) -> list[str]:
+    """The climber's schedule in words. The greedy shape — a selector with
+    the bundled schedule knobs over an operator policy that tunes — is
+    spelled out with its numbers; anything else gets the two docstrings and
     the resolved knobs, which is what it decides from."""
-    from hillclimb.modules.policies.greedy import Greedy
-
     doc = (inspect.getdoc(policy_cls) or "").split("\n\n")[0].replace("\n", " ").strip()
-    if inspect.isclass(policy_cls) and issubclass(policy_cls, Greedy):
-        drafts = selector_params.get("num_drafts")
-        depth = selector_params.get("max_debug_depth")
-        reserve = selector_params.get("ensemble_reserve_fraction")
-        top_k = selector_params.get("ensemble_top_k")
-        tune = params.get("tune_budget")
+    picks = (inspect.getdoc(selector_cls) or "").split("\n\n")[0].replace("\n", " ").strip() if selector_cls else ""
+    selector_name = getattr(selector_cls, "__name__", "none")
+    head = (
+        f"The selector policy, `{selector_name}`, and the operator policy, `{policy_cls.__name__}` "
+        f"(both in `../policy.py`): {picks} {doc}".rstrip()
+    )
+    knobs = f"Knobs (the classes' `DEFAULTS`, as resolved): `selector_params: {json.dumps(selector_params)}`, `params: {json.dumps(params)}`."
+    schedule_knobs = {"num_drafts", "max_debug_depth", "ensemble_reserve_fraction", "ensemble_top_k", "debug", "ensemble"}
+    if callable(getattr(policy_cls, "tune_now", None)) and schedule_knobs <= set(selector_params) and "tune_budget" in params:
+        drafts = selector_params["num_drafts"]
+        depth = selector_params["max_debug_depth"]
+        reserve = selector_params["ensemble_reserve_fraction"]
+        top_k = selector_params["ensemble_top_k"]
+        tune = params["tune_budget"]
         return [
-            f"The policy, `{policy_cls.__name__}` (`../policy.py`): {doc} In order, at every step:",
+            f"{head} In order, at every step:",
             "",
-            f"1. a candidate that failed gets `debug.md` (`debug: {json.dumps(selector_params.get('debug'))}`, "
+            f"1. a candidate that failed gets `debug.md` (`debug: {json.dumps(selector_params['debug'])}`, "
             f"up to {depth} fixes deep);",
             f"2. in the last {reserve:.0%} of the budget, the top {top_k} get combined with `ensemble.md`"
-            f" (`ensemble: {json.dumps(selector_params.get('ensemble'))}`);",
+            f" (`ensemble: {json.dumps(selector_params['ensemble'])}`);",
             f"3. until {drafts} roots are scored, a fresh `draft.md` (`num_drafts`);",
             f"4. a scored candidate that declared `params.json` is tuned first ({tune} extra trials, `tune_budget`);",
-            "5. otherwise the best candidate nobody is building on gets `improve.md`.",
+            f"5. otherwise the candidate `{selector_name}` selects gets `improve.md`: {picks}".rstrip(":"),
             "",
-            f"Knobs: `params: {json.dumps(params)}`, `selector_params: {json.dumps(selector_params)}`.",
+            knobs,
         ]
-    return [
-        f"The policy, `{policy_cls.__name__}` (`../policy.py`): {doc}",
-        "",
-        f"Knobs: `params: {json.dumps(params)}`, `selector_params: {json.dumps(selector_params)}`.",
-    ]
+    return [head, "", knobs]
 
 
 def tree_sha256(root: Path) -> str:

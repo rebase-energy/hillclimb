@@ -115,6 +115,7 @@ def status(search: str = typer.Argument("latest")):
             f"[head]noise floor:[/] {floor:.5g} [note](median trial spread)[/] — gains below "
             f"~{2 * floor:.3g} are not measurable"
         )
+    common.warn_if_none_passed(journal, search_ref(search_dir), record.meta.agent)
 
 
 @app.command()

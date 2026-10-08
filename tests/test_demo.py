@@ -11,7 +11,7 @@ import pytest
 from hillclimb.harness.candidate import Candidate
 from hillclimb.tui.chart import climb_curve, climb_curves
 from hillclimb.cli import main as cli_main
-from hillclimb.demo import DEMO_PROBLEM_ID, install_demo_problem
+from hillclimb.catalog import DEMO_PROBLEM_ID, install_problem
 from hillclimb.harness.journal import Journal
 from hillclimb.problem import load_problem
 from hillclimb.harness.run import RunMeta, SearchMeta, write_run_meta, write_search_meta
@@ -19,47 +19,25 @@ from hillclimb.harness.run import RunMeta, SearchMeta, write_run_meta, write_sea
 
 def test_install_demo_problem_copies_once(tmp_path):
     problems = tmp_path / "problems"
-    problem_dir, created = install_demo_problem(problems)
+    problem_dir, created = install_problem(problems)
     assert created and problem_dir == problems / DEMO_PROBLEM_ID
     assert (problem_dir / "verifier.sh").exists()
     assert os.access(problem_dir / "verifier.sh", os.X_OK)
     (problem_dir / "description.md").write_text("edited")
-    again, created = install_demo_problem(problems)
+    again, created = install_problem(problems)
     assert not created and (again / "description.md").read_text() == "edited"
 
 
-def test_bundled_problem_loads_and_mirrors_repo_problem(tmp_path, config):
+def test_catalog_problem_loads(tmp_path, config):
+    """The catalog IS the repo's problems/: one copy, nothing to keep in sync."""
     config.paths.problems_dir = tmp_path / "problems"
-    install_demo_problem(config.paths.problems_dir)
+    installed, _ = install_problem(config.paths.problems_dir)
     spec = load_problem(DEMO_PROBLEM_ID, config)
     assert spec.metric_name == "sum-radii" and spec.higher_is_better
-    assert spec.requirements_file is not None
-    # the bundled verifier is the repo's verifier — the two must not drift
+    assert spec.requirements_file is not None  # the lean runtime: a first run starts in seconds
     repo = Path("problems") / DEMO_PROBLEM_ID
-    bundled = Path("src/hillclimb/demo") / DEMO_PROBLEM_ID
-    for name in ("verifier.sh", "verify.py", "description.md", "sample_submission.csv",
-                 "interface.py"):
-        assert (bundled / name).read_text() == (repo / name).read_text(), name
-
-
-def test_every_bundled_problem_mirrors_the_repo_problem():
-    """The wheel ships a copy of each starter problem; the repo's problems/
-    is what the generators stamp and the tests exercise. The two must not
-    drift — circle-packing is the one deliberate exception (a lean runtime
-    so a first run starts in seconds)."""
-    from hillclimb.demo import STARTER_PROBLEM_IDS
-
-    for problem_id in STARTER_PROBLEM_IDS:
-        if problem_id == DEMO_PROBLEM_ID:
-            continue
-        repo = Path("problems") / problem_id
-        bundled = Path("src/hillclimb/demo") / problem_id
-        assert repo.is_dir(), f"{problem_id} is bundled but missing from problems/"
-        repo_files = {p.relative_to(repo) for p in repo.rglob("*") if p.is_file() and "__pycache__" not in p.parts}
-        bundled_files = {p.relative_to(bundled) for p in bundled.rglob("*") if p.is_file() and "__pycache__" not in p.parts}
-        assert repo_files == bundled_files, (problem_id, repo_files ^ bundled_files)
-        for rel in repo_files:
-            assert (bundled / rel).read_bytes() == (repo / rel).read_bytes(), f"{problem_id}/{rel} drifted"
+    for name in ("verifier.sh", "verify.py", "description.md", "sample_submission.csv", "interface.py"):
+        assert (installed / name).read_text() == (repo / name).read_text(), name
 
 
 def _search(runs_dir: Path, run_id: str, name: str, scores: list[tuple[str, float]], lower=False):
@@ -167,6 +145,8 @@ def test_run_parallel_searches_spawns_detached_engines(tmp_path, monkeypatch):
     monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
     with pytest.raises(SystemExit):
         cli_main(["problem", "get", DEMO_PROBLEM_ID])
+    with pytest.raises(SystemExit):
+        cli_main(["climber", "get", "greedy"])  # the engine ships no climber: the folder fetches one
     launched = []
 
     class FakeProc:
@@ -199,7 +179,7 @@ def test_run_parallel_searches_spawns_detached_engines(tmp_path, monkeypatch):
     assert len(spec["problems"]) == 3
     assert spec["problems"][0] == {
         "target": DEMO_PROBLEM_ID, "budget": "10m", "agent": "dummy", "model": "sonnet",
-        "climber": Config().climber.block(), "parallel_agents": 2,  # the full block, as resolved
+        "climber": Config.load().climber_block(), "parallel_agents": 2,  # the full block, as resolved: the folder's fetched greedy
     }
     assert launched[0][3:] == [
         "run", DEMO_PROBLEM_ID, "--run-id", run_dir.name, "--run-name", DEMO_PROBLEM_ID,
@@ -284,7 +264,7 @@ def test_create_search_records_problem_key_and_unique_ids(tmp_path, config):
     from hillclimb.harness.run import load_search_meta
 
     config.paths.problems_dir = tmp_path / "problems"
-    install_demo_problem(config.paths.problems_dir)
+    install_problem(config.paths.problems_dir)
     problem = load_problem(DEMO_PROBLEM_ID, config)
     run_dir = config.paths.runs_dir / "r1"
     first = create_search(config, problem, run_dir, "r1", total_s=60)
@@ -306,7 +286,7 @@ def test_chart_baselines_reload_current_problem_config(tmp_path, config):
     from hillclimb.harness.run import SearchMeta
 
     config.paths.problems_dir = tmp_path / "problems"
-    problem_dir, _ = install_demo_problem(config.paths.problems_dir)
+    problem_dir, _ = install_problem(config.paths.problems_dir)
     meta = SearchMeta(
         search_id="p",
         run_id="r",

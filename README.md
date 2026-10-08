@@ -49,11 +49,12 @@ compared on the same problem under the same budget.
 ## Quickstart
 
 ```bash
-pip install hillclimb                      # or: uv tool install hillclimb
+uv tool install hillclimb                  # or: pip install hillclimb (Python 3.12+)
 hillclimb connect claude                   # or codex, pi, openrouter; add --agent dummy to any run for no LLM at all
 
-hillclimb init                             # hillclimb.yaml, problems/, runs/ in this folder
+hillclimb init                             # hillclimb.yaml, problems/, runs/, climbers/ in this folder
 hillclimb problem get heilbronn-convex-13  # the verifier is the problem; description.md is the brief
+hillclimb climber get greedy               # the climber, as Python you can read and edit (climbers/greedy/policy.py)
 hillclimb verify heilbronn-convex-13       # score the floor solution
 
 hillclimb run heilbronn-convex-13 --budget 10m
@@ -67,13 +68,15 @@ The [walkthrough](https://docs.hillclimb.sh/walkthrough?utm_medium=readme) goes 
 
 ## Climbers
 
-A climber is five modules, run in this order at every step of a search. Each
-one is a built-in or a Python file you can edit.
+A climber is five modules, run in this order at every step of a search. The
+engine ships none of the first two: the catalog's climbers (`greedy`,
+`openevolve`, `gepa`) are Python files `hillclimb climber get` copies into your
+folder, to read and edit; the other three are built in or a file of your own.
 
-| Module | Decides | Built in |
+| Module | Decides | Built in / in the catalog |
 | --- | --- | --- |
-| `selector_policy` | which candidate the next attempt builds on | `best`, `map-elites` |
-| `operator_policy` | which operator to apply to it | `greedy` |
+| `selector_policy` | which candidate the next attempt builds on | `Best`, `MapElites` (catalog) |
+| `operator_policy` | which operator to apply to it | `Greedy` (catalog) |
 | `operators` | how one attempt is made: the prompt the coding agent gets | `draft`, `debug`, `improve`, `ensemble` |
 | `tuner` | which parameter values to try on a candidate | `random`, `optuna` |
 | `memory` | what carries over from one search to the next | `files`, `none` |
@@ -83,32 +86,31 @@ in `hillclimb.yaml`:
 
 ```yaml
 climber:
-  selector_policy: map-elites     # which candidate to build on next
-  operator_policy: greedy         # which operator to use on it
+  selector_policy: climbers/openevolve/policy.py:MapElites   # which candidate to build on next
+  operator_policy: climbers/greedy/policy.py:Greedy           # which operator to use on it
   operators: [draft, debug, improve, crossover.py:Crossover]
   tuner: optuna
   memory: files
   params: {num_drafts: 5}
 ```
 
-Every slot takes a prebuilt module, a `.py` file of your own, or
-`package.module:Class`. Presets: `greedy`, `openevolve`, `gepa`. Or compose in
-Python:
+Every slot takes a `.py` file (`file.py:Class`), `package.module:Class`, or a
+built-in's name. A fetched climber is one file that builds the whole block
+(`climber: climbers/greedy/policy.py`). Or compose in Python:
 
 ```python
-from hillclimb import Budget, Climber, Problem
-from hillclimb.policies import Greedy
-from hillclimb.selectors import MapElites
+from hillclimb import Budget, Climber, Problem, catalog
 
+greedy, openevolve = catalog.module("greedy"), catalog.module("openevolve")
 problem = Problem("heilbronn-convex-13")
 budget = Budget(wall_clock="10m", evaluations=40)
-climber = Climber(selector_policy=MapElites(num_drafts=5), operator_policy=Greedy())
+climber = Climber(selector_policy=openevolve.MapElites(num_drafts=5), operator_policy=greedy.Greedy())
 
 climber.search(problem, budget=budget)
 climber.best, climber.history, climber.to_frame()
 ```
 
-`MapElites` and the `openevolve` preset need `pip install 'hillclimb[openevolve]'`,
+`MapElites` and the `openevolve` climber need `pip install 'hillclimb[openevolve]'`,
 `tuner: optuna` needs `'hillclimb[optuna]'` and `gepa` needs `'hillclimb[gepa]'`.
 
 `climber.start(...)` opens the same search to drive by hand, one `climber.step()` at a
@@ -118,7 +120,8 @@ Runnable scripts are in [`examples/`](https://github.com/rebase-energy/hillclimb
 Compare two head to head:
 
 ```bash
-hillclimb run heilbronn-convex-13 --climber greedy --climber openevolve   # one search each; --parallel-searches 3 runs three of each
+hillclimb climber get openevolve --no-default
+hillclimb run heilbronn-convex-13 --climber climbers/greedy/policy.py --climber climbers/openevolve/policy.py   # one search each; --parallel-searches 3 runs three of each
 hillclimb experiment report <run-id>
 ```
 

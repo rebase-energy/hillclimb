@@ -16,8 +16,9 @@ from hillclimb.harness.candidate import Candidate
 from hillclimb.harness.dirs import create_search_dir
 from hillclimb.harness.journal import Journal
 from hillclimb.harness.loop import PolicyLoop
-from hillclimb.modules.policies.greedy import Greedy
-from hillclimb.modules.selectors.best import Best
+from tests.catalog_fixture import greedy_classes
+
+Greedy, Best = greedy_classes()
 from hillclimb.harness.evaluation import accept_band
 from hillclimb.modules.policies.base import TUNE_ACTION, Action, BudgetView, InflightRef, SearchState
 from tests.harness_factory import SearchRig

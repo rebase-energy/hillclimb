@@ -13,9 +13,9 @@ problems:
   - target: heilbronn-11
     budget: 30m
     climber:
-      operator_policy: greedy       # π_op: which operator on what the selector policy chose (or `loop:` — the whole control flow)
+      operator_policy: climbers/greedy/policy.py:Greedy         # π_op: which operator on what the selector policy chose (or `loop:` — the whole control flow)
       params: {num_drafts: 5}
-      selector_policy: map-elites   # π_sel: WHICH candidate the next attempt starts from
+      selector_policy: climbers/openevolve/policy.py:MapElites  # π_sel: WHICH candidate the next attempt starts from
       selector_params: {num_islands: 3}
       operators: [draft, debug, improve, crossover.py:Crossover]   # HOW an attempt is made
       operator_params: {draft: {retrieval: false}}
@@ -26,8 +26,9 @@ problems:
       prompts: prompts/             # templates that shadow the built-in ones by name
 ```
 
-Every key is optional. With neither `operator_policy:` nor `loop:` the policy is
-`greedy`; everything else defaults to what its class says.
+Every key but one is optional: a block names its `operator_policy:` or its
+`loop:` (the engine ships no default climber — `hillclimb climber get greedy`
+fetches one), and everything else defaults to what its class says.
 
 ## Where the block goes
 
@@ -43,7 +44,7 @@ A higher one **replaces** a lower one whole — blocks are never merged, so
 one policy's params cannot end up under another policy. Two things then
 apply on top of whichever block was chosen:
 
-- `--climber NAME` names a climber outright (a preset or one `.py` file).
+- `--climber REF` names a climber outright (a `.py` file, or a folder `climber get` wrote).
 - `--set climber.params.num_drafts=5` (and `set:` in a spec entry, and an
   experiment's overrides) edits a field of the block.
   `--set climber.operators.draft.retrieval=false` reaches one operator's params.
@@ -57,41 +58,53 @@ Every slot names its module the same three ways:
 
 | form | example |
 |---|---|
-| a registry name | `greedy`, `map-elites`, `optuna`, `files` |
+| a registry name | `draft`, `optuna`, `files` — the built-in operators, tuners and memories |
 | a file | `mine.py` (the one class of that kind it defines) or `mine.py:Class` |
 | an importable class | `mypackage.policies:Annealed` |
 
-A whole climber is also named by a **folder** holding `climber.yaml` (what
-`hillclimb climber get` writes, see below): `climber: climbers/greedy`. Its
-file refs and `prompts:` are relative to the folder.
+A whole climber is also named by a **folder** holding `policy.py` (what
+`hillclimb climber get` writes, see below: the file builds the whole
+`Climber(...)`): `climber: climbers/greedy` names that file. A pre-0.9 folder
+holding `climber.yaml` still loads; its file refs and `prompts:` are relative
+to the folder.
 
 A file is relative to the file the block is written in (the spec, or
 `hillclimb.yaml`). Files may import each other relatively (`from .helpers
-import x`). `hillclimb climber list` shows what is registered.
+import x`). `hillclimb climber list` shows the catalog and what is registered.
 
-A bare name instead of a block is a **preset**, or one `.py` file:
+A bare string instead of a block is one `.py` file, or a folder holding one.
 
-| preset | its block |
+## The catalog
+
+hillclimb defines no climber of its own. It ships a **catalog** of examples —
+the repository's `climbers/` folder, bundled in the wheel — and `hillclimb
+climber get <name>` copies one into your `climbers/`, like `problem get`:
+
+| catalog | what it is |
 |---|---|
-| `greedy` | `{operator_policy: greedy}` — debug the newest failing tip > ensemble in the final budget window > draft until `num_drafts` branches are scored > tune > improve the best |
-| `openevolve` | `{operator_policy: greedy, selector_policy: map-elites, params: {ensemble: false, tune_budget: 0}}` — the same schedule over [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve)'s MAP-Elites archive: a population kept diverse over feature dimensions, on islands with migration. `pip install 'hillclimb[openevolve]'` |
-| `gepa` | `{loop: gepa}` — [GEPA](https://github.com/gepa-ai/gepa) owns the whole loop (see below). `pip install 'hillclimb[gepa]'` |
+| `greedy` | `Best` over `Greedy`, both in one file: debug the newest failing tip > ensemble in the final budget window > draft until `num_drafts` branches are scored > tune > improve the best |
+| `openevolve` | the same schedule, ensemble and tune off, over [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve)'s MAP-Elites archive: a population kept diverse over feature dimensions, on islands with migration. `pip install 'hillclimb[openevolve]'` |
+| `gepa` | [GEPA](https://github.com/gepa-ai/gepa) owns the whole loop (see below): a folder of several files. `pip install 'hillclimb[gepa]'` |
 
-`hillclimb climber show openevolve` prints a preset as the block it stands
-for, ready to paste and edit.
+In Python the same files are `hc.catalog.climber("greedy")` (a `Climber`, read
+in place) and `hc.catalog.module("greedy")` (its classes, to subclass or
+compose with). The names `greedy`, `best`, `openevolve`, `map-elites` and
+`gepa` are not something the engine resolves any more: a search recorded
+before 0.9 that names them still resumes (its record finds the catalog
+file), a new config is told to fetch the climber.
 
-## The default climber as a folder you can read
+## The catalog climber as a folder you can read
 
 ```bash
-hillclimb climber get greedy        # -> climbers/greedy/, and `climber: climbers/greedy` in hillclimb.yaml
+hillclimb climber get greedy        # -> climbers/greedy/, and `climber: climbers/greedy/policy.py` in hillclimb.yaml
 ```
 
-copies a preset out as a folder that **is** a climber:
+copies the catalog's greedy out as a folder whose `policy.py` **is** the climber:
 
 ```text
 climbers/greedy/
-├── climber.yaml        # the block, every default spelled out; paths relative to this folder
-├── policy.py           # the operator policy: which operator makes the next attempt
+├── policy.py           # the whole climber: Best (which candidate next), Greedy (which operator on it),
+│                       # and the Climber(...) that wires them to the operators, tuner, memory and prompts
 └── prompts/
     ├── README.md       # how a prompt is made: when each template is used, what fills each token
     ├── draft.md        # the templates its operators render — the words the coding agents get
@@ -102,25 +115,54 @@ climbers/greedy/
     └── ensemble.md
 ```
 
+`policy.py` is the package's own file, copied as it is: nothing about the
+search is hidden behind it. `Best.schedule` is the order of every step (a
+failing tip first, the ensemble window, roots until `num_drafts`, then the
+best scored candidate nobody is building on), `Greedy.propose` the operator
+for what it chose (draft, debug, ensemble, a tune trial, improve), and every
+knob's value is a `DEFAULTS` entry next to the code that reads it. The copy
+ends with what makes the file a whole climber — there is no config file:
+
+```python
+climber = Climber(
+    selector_policy=Best(),
+    operator_policy=Greedy(),
+    operators=[Draft(), Debug(), Improve(), Ensemble()],
+    tuner=RandomSearch(),
+    memory=FilesMemory(),
+    name='greedy',
+)
+```
+
+`Best(num_drafts=5)` or `Greedy(tune_budget=0)` there changes a default for
+good; `--set climber.params.tune_budget=0` still does for one run. The
+`prompts/` beside the file is its prompts dir without being named (any
+climber file's is; `Climber(prompts_dir=...)` points elsewhere). The folder
+names the file (`climber: climbers/greedy` and `climber:
+climbers/greedy/policy.py` are the same climber).
+
 A template is the climber's words plus `{{tokens}}` the harness fills in for
 one attempt: the problem, the candidate the attempt builds on, what earlier
-attempts tried, what memory knows from other searches. The policy decides
-which operator makes the attempt; the operator renders its template; the
-harness adds the contract (`{{contract}}`: how the solution is run and
+attempts tried, what memory knows from other searches. The two policies
+decide which operator makes the attempt; the operator renders its template;
+the harness adds the contract (`{{contract}}`: how the solution is run and
 scored, the same for every climber and never a template of yours).
 `prompts/README.md` spells it out for the folder's own templates: the
 schedule with its numbers, one row per token with what fills it and when it
 is empty.
 
 The copy becomes this folder's climber (`--no-default` leaves
-`hillclimb.yaml` alone), so edit `improve.md` and the next `hillclimb run`
-climbs with it; `hillclimb climber check --climber climbers/greedy` lints a
-template's tokens first. A folder is named like any climber — `climber:
-climbers/greedy` in `hillclimb.yaml`, `--climber climbers/greedy`, an entry
-of a run spec — and has its own identity: a search that ran it is not a run
-of the `greedy` preset, as it must not be once a line was changed. `--name`
-copies under another name (`climber get openevolve --name qd`). A loop
-(`gepa`) owns its whole control flow and is not copied out this way.
+`hillclimb.yaml` alone), so change a threshold in `policy.py` or a sentence
+in `improve.md` and the next `hillclimb run` climbs with it; `hillclimb
+climber check --climber climbers/greedy/policy.py` replays recorded
+searches through the edited policy and lints a template's tokens first. The
+file is named like any climber — `climber: climbers/greedy/policy.py` in
+`hillclimb.yaml`, `--climber climbers/greedy/policy.py`, an entry of a run
+spec — and has its own identity: a search that ran it is not a run of the
+catalog's `greedy`, as it must not be once a line was changed. `--name` copies
+under another name (`climber get openevolve --name qd`); `hillclimb climber
+new mine --from climbers/greedy` copies the folder as `climbers/mine/`. A
+loop (`gepa`) owns its whole control flow and is not copied out this way.
 
 A `.py` file that builds a whole `Climber(...)` (your own policies next to
 built-in operators, tuner and memory) stands for THAT climber:
@@ -138,8 +180,8 @@ and names the operator. The slots, in the order a step runs them:
 
 | slot | decides | base class | built in |
 |---|---|---|---|
-| `selector_policy` | which node, or none: a failing tip first, roots until `num_drafts`, the top-k to combine in the final window, else the subclass's `select` | `SelectorPolicy` | `best`, `map-elites` |
-| `operator_policy` | which operator on what the selector policy chose (draft, debug, ensemble, improve; greedy adds tune) | `OperatorPolicy` | `greedy` |
+| `selector_policy` | which node, or none — its `schedule`: for `best`, a failing tip first, roots until `num_drafts`, the top-k to combine in the final window, else `select` | `SelectorPolicy` | `best`, `map-elites` |
+| `operator_policy` | which operator on what the selector policy chose — its `propose`: for `greedy`, draft, debug, ensemble, tune, improve | `OperatorPolicy` | `greedy`, `openevolve` |
 | `loop` | the control flow itself (instead of a selector and a policy) | `Loop` | `gepa` |
 | `operators` | how one attempt is made: the prompt the coding agent gets | `Operator` | `draft`, `debug`, `improve`, `ensemble` |
 | `tuner` | which parameter values a tunable candidate tries | `Tuner` | `random`, `optuna` |
@@ -156,13 +198,14 @@ siblings — nothing deeper.
 
 ```python
 # climbers/drafts_only.py
-from hillclimb.sdk import Action, OperatorPolicy
+from hillclimb.policies import Greedy
+from hillclimb.sdk import Action
 
 
-class DraftsOnly(OperatorPolicy):
+class DraftsOnly(Greedy):
     """Never improves: whatever the selector chose, draft (repair a failing tip first)."""
 
-    DEFAULTS = {}                         # its knobs; `params` in the block set them
+    DEFAULTS = {"tune_budget": 0}         # its knobs over Greedy's; `params` in the block set them
 
     def propose(self, state, selection):
         node = state.journal.candidates[selection.target_id] if selection is not None else None
@@ -184,12 +227,14 @@ until an in-flight result lands. `selection` is what the selector chose:
 combined candidate. `observe(state, candidate)` is called after every
 result, and replayed over the journal when a search starts or resumes.
 
-The base `propose` is the plain mapping (no node → draft, a failing node →
-debug, several → ensemble, a scored node → improve), so a policy overrides
-only where it differs; `draft_action(state)` and `expand_action(state,
-selection, operator=...)` build the usual actions, `param(name)` and
-`resolved_params()` read its knobs, `self.selector` is the selector the loop
-asks first. A class with just `propose` and `observe` and no base runs too.
+The `OperatorPolicy` base decides nothing — it carries `param(name)` and
+`resolved_params()` for the knobs and `self.selector`, the selector the loop
+asks first. `Greedy` is the mapping written out (no node → draft, a failing
+node → debug, several → ensemble, a scored node → a tune trial while it has
+budget, else improve), so a policy of your own subclasses it and overrides
+only where it differs; its `draft_action(state)` and `expand_action(state,
+selection, operator=...)` build the usual actions. A class with just
+`propose` and `observe` and no base runs too.
 
 Three rules the harness relies on:
 
@@ -201,17 +246,21 @@ Three rules the harness relies on:
 - A param the block sets must be one the class declares in `DEFAULTS`: a
   typo is an error before anything is spent.
 
-`greedy.py` (`src/hillclimb/modules/policies/greedy.py`) is the reference.
-Subclass it to change one move: `from hillclimb.policies import Greedy`.
+`policy.py` of the greedy climber (`climbers/greedy/policy.py` in the
+repository, what `hillclimb climber get greedy` copies) is the reference: both
+policies in one file. Subclass one to change one move (`greedy =
+hc.catalog.module("greedy")`, then `class Mine(greedy.Greedy)` — a subclass
+inherits the selector written beside its base), or copy the file and own it.
 
 ### A selector
 
 ```python
 # oldest.py
-from hillclimb.sdk import Selection, SelectorPolicy
+from hillclimb.sdk import Selection
+from hillclimb.selectors import Best
 
 
-class Oldest(SelectorPolicy):
+class Oldest(Best):
     """Build on the oldest scored candidate."""
 
     def select(self, state, *, busy=frozenset()):
@@ -223,16 +272,25 @@ class Oldest(SelectorPolicy):
 climber: {operator_policy: greedy, selector_policy: oldest.py}
 ```
 
-A selector implements `select`: the scored node to build on, with whatever
-rides along — inspirations (copied in beside the parent), a paragraph for the
-prompt, a note journaled on the new candidate; `None` means a root step (the
-policy drafts). The base class's `schedule` wraps it with the order every
-selector shares and its knobs are `selector_params`: `num_drafts` (3), `debug`
-(True), `max_debug_depth` (3), `ensemble` (True), `ensemble_reserve_fraction`
-(0.2), `ensemble_top_k` (3), `ensemble_max_attempts` (2). A block that still
-writes those under `params` (every block before 0.7) loads; they land in
-`selector_params`. A selector with state keeps it a function of the journal
-(`sync(state)`), like a policy.
+A selector implements `schedule` — the whole order of a step: which node(s)
+the next attempt starts from, or `None` for a root step (the policy drafts)
+— and `select`, the scored node to build on, with whatever rides along:
+inspirations (copied in beside the parent), a paragraph for the prompt, a
+note journaled on the new candidate. The `SelectorPolicy` base decides
+nothing; `Best.schedule` is the order the bundled climbers share (a failing
+tip first, the ensemble window, roots until `num_drafts`, then `select`),
+so a selector of your own subclasses `Best` to keep it and replace `select`,
+or writes its own `schedule`. `Best`'s knobs are its `DEFAULTS`, set as
+`selector_params`: `num_drafts` (3), `debug` (True), `max_debug_depth` (3),
+`ensemble` (True), `ensemble_reserve_fraction` (0.2), `ensemble_top_k` (3),
+`ensemble_max_attempts` (2). A block that still writes those under `params`
+(every block before 0.7) loads; they land in `selector_params`. A selector
+with state keeps it a function of the journal (`sync(state)`), like a policy.
+
+A one-file climber may hold both: the one `SelectorPolicy` subclass a file
+defines (or `SELECTOR = <class>`) is its selector when the block names none,
+so `--climber mine.py` needs no `selector_policy:` and a meta-problem's
+candidate can change where attempts start.
 
 `map-elites` takes OpenEvolve's `DatabaseConfig` fields as `selector_params`
 (`num_islands`, `feature_dimensions`, `population_size`, `random_seed`, …)
@@ -264,7 +322,9 @@ journal or a coding agent. The problem's contract is the harness's — it fills
 
 `prompts:` in the block names a directory whose templates (`<name>.md`)
 shadow the built-in operator templates of the same name (`draft`, `improve`,
-`debug`, `ensemble`, the cue snippets). An override may drop `{{tokens}}`
+`debug`, `ensemble`, the cue snippets); a climber named by a file needs no
+`prompts:` when a `prompts/` directory sits beside the file — that one is
+its. An override may drop `{{tokens}}`
 but never add one nothing fills, and the `contract_*` templates cannot be
 shadowed — a search refuses to start on such a file.
 
@@ -340,10 +400,10 @@ the machine-readable form. Exit 1 on any breach.
 ## Starting your own
 
 ```bash
-hillclimb climber list                       # the presets, your folders and one-file climbers, the building blocks
-hillclimb climber get greedy                 # the default climber as a folder to read and edit (policy, prompts)
-hillclimb climber show greedy                # a preset as a block to paste
-hillclimb climber new mine --from greedy     # copy greedy's source into climbers/mine.py, print its block
+hillclimb climber list                       # the catalog, your folders and one-file climbers, the building blocks
+hillclimb climber get greedy                 # the catalog's greedy as a folder to read and edit (policy.py, prompts)
+hillclimb climber show climbers/greedy       # a climber as the block it builds
+hillclimb climber new mine --from greedy     # copy the catalog's greedy as climbers/mine/ (policy.py + prompts/)
 hillclimb climber check --climber climbers/mine.py
 hillclimb run circle-packing --climber climbers/mine.py
 ```
@@ -422,8 +482,8 @@ Its folder is written under `problems/` the first time a climber searches it (a
 file), and it is a problem like any other from then on.
 
 A block may be a name, a class, or an instance — an instance stands for its
-class and params, and a search always builds its own. `hc.Climber("openevolve",
-params={"num_drafts": 5})` starts from a preset.
+class and params, and a search always builds its own. `hc.catalog.climber("openevolve")`
+is the catalog's, loaded; `hc.catalog.module("openevolve")` its classes to subclass.
 
 Your own classes are written down the most portable way possible: by
 registry name, as `module:Class` when the module is importable, else as

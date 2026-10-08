@@ -20,11 +20,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from hillclimb.demo import BUNDLED_PROBLEM_IDS, WINDOWS_VERIFIER, install_demo_problem
+from hillclimb.catalog import PROBLEM_IDS, install_problem, problems_dir
 from hillclimb.problem import windows_edition
+from hillclimb.scaffold import windows_verifier_path
 
-DEMO = Path(__file__).resolve().parent.parent / "src" / "hillclimb" / "demo"
-SHARED = DEMO / WINDOWS_VERIFIER
+DEMO = problems_dir()  # the catalog: this checkout's problems/
+SHARED = windows_verifier_path()
 
 # verifier.sh, comments and blank lines dropped, of every problem the shared
 # Windows verifier stands in for
@@ -47,7 +48,7 @@ def _two_step(problem_id: str) -> bool:
     return "score" in (yaml.safe_load((DEMO / problem_id / "problem.yaml").read_text()) or {})
 
 
-WITH_VERIFIER = [p for p in BUNDLED_PROBLEM_IDS if not _two_step(p)]
+WITH_VERIFIER = [p for p in PROBLEM_IDS if not _two_step(p)]
 
 
 def _windows_verifier(problem_id: str) -> Path:
@@ -82,7 +83,7 @@ def test_windows_verifiers_never_import_the_solution(path):
 @pytest.mark.parametrize("windows", [False, True], ids=["posix", "windows"])
 @pytest.mark.parametrize("problem_id", ["heilbronn-convex-13", "knapsack"])
 def test_problem_get_writes_the_verifier_for_this_os(tmp_path, problem_id, windows):
-    problem_dir, created = install_demo_problem(tmp_path, problem_id, windows=windows)
+    problem_dir, created = install_problem(tmp_path, problem_id, windows=windows)
     assert created
     if _two_step(problem_id):  # no verifier on any OS: nothing needs bash
         assert not (problem_dir / "verifier.sh").exists() and not (problem_dir / "verifier.py").exists()

@@ -15,8 +15,12 @@ import sys
 
 from hillclimb import Budget, Climber, Problem, SearchOutcome
 from hillclimb.operators import Draft
-from hillclimb.selectors import Best
-from hillclimb.sdk import Action, Attempt, Operator, OperatorContext, OperatorPolicy, SearchState, Selection
+from hillclimb.sdk import Action, Attempt, Operator, OperatorContext, SearchState, Selection
+from hillclimb import catalog
+
+# the catalog's greedy climber (`hillclimb climber get greedy` copies the same file): its classes to compose with
+greedy = catalog.module("greedy")
+Greedy, Best = greedy.Greedy, greedy.Best
 
 
 class Stride(Operator):
@@ -38,8 +42,8 @@ class Stride(Operator):
         return Attempt(prompt=prompt, copy_parent=True, inherit_params=True)
 
 
-class UseStride(OperatorPolicy):
-    """The plain mapping, with `stride` as the operator for a chosen node."""
+class UseStride(Greedy):
+    """Greedy's mapping, with `stride` as the operator for a chosen node."""
 
     def expand_action(self, state: SearchState, selection: Selection, operator: str = "improve") -> Action:
         return super().expand_action(state, selection, operator="stride")

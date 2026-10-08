@@ -54,6 +54,7 @@ _LAZY = {
     "Selector": ("hillclimb.modules.selectors.base", "Selector"),  # the pre-0.7 name
     "Selection": ("hillclimb.modules.selectors.base", "Selection"),
     "improvable": ("hillclimb.modules.selectors.base", "improvable"),
+    "top_distinct": ("hillclimb.modules.selectors.base", "top_distinct"),
     # how one attempt is made
     "Operator": ("hillclimb.modules.operators.base", "Operator"),
     "OperatorContext": ("hillclimb.modules.operators.base", "OperatorContext"),
@@ -150,7 +151,7 @@ if TYPE_CHECKING:  # eager for type checkers and editors only
         Policy,
     )
     from hillclimb.modules.similarity.base import SimilarityScore, SimilarityUnavailable, Solution
-    from hillclimb.modules.selectors.base import Selection, Selector, SelectorPolicy, improvable
+    from hillclimb.modules.selectors.base import Selection, Selector, SelectorPolicy, improvable, top_distinct
     from hillclimb.modules.memory.base import (
         GraphEdge,
         GraphModule,

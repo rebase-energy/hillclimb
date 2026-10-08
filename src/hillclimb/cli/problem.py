@@ -30,15 +30,14 @@ app.add_typer(problem_app, name="problem")
 
 @problem_app.command("list")
 def problem_list():
-    """List every problem bundled with hillclimb."""
+    """List every problem in hillclimb's catalog."""
     import yaml
 
-    from hillclimb.demo import BUNDLED_PROBLEM_IDS, demo_problem_resource
+    from hillclimb.catalog import PROBLEM_IDS, problem_path
 
     rows = []
-    for problem_id in BUNDLED_PROBLEM_IDS:  # ladder order, as declared
-        resource = demo_problem_resource(problem_id) / "problem.yaml"
-        metadata = yaml.safe_load(resource.read_text()) or {}
+    for problem_id in PROBLEM_IDS:  # ladder order, as declared
+        metadata = yaml.safe_load((problem_path(problem_id) / "problem.yaml").read_text()) or {}
         higher = bool(metadata.get("higher_is_better", True))
         value, who = _best_known(metadata.get("chart_baselines") or {}, higher)
         # no budget column: the problem's `time_budget_s` is only the default
@@ -84,15 +83,15 @@ def problem_get(
     problem's files in and lists them — read them before you run: the
     verifier IS the problem. An existing folder is never overwritten.
     """
-    from hillclimb.demo import BUNDLED_PROBLEM_IDS, install_demo_problem
+    from hillclimb.catalog import PROBLEM_IDS, install_problem
 
-    if problem not in BUNDLED_PROBLEM_IDS:
-        available = ", ".join(BUNDLED_PROBLEM_IDS)
-        fail(f"error: no bundled problem {_m(repr(problem))} [note](available: {_m(available)})[/]")
+    if problem not in PROBLEM_IDS:
+        available = ", ".join(PROBLEM_IDS)
+        fail(f"error: no catalog problem {_m(repr(problem))} [note](available: {_m(available)})[/]")
         next_steps([(f"hillclimb problem new {_m(problem)}", "or start a problem of your own by that name")])
         raise typer.Exit(1)
     config = _hillclimb_dir_or_offer(problem, "problem get")
-    problem_dir, created = install_demo_problem(config.paths.problems_dir, problem)
+    problem_dir, created = install_problem(config.paths.problems_dir, problem)
     verb = "Fetched" if created else "Already have"
     say(f"[head]{verb} {_m(problem)}[/] at [path]{_m(problem_dir)}[/]")
     legend([(name, what) for name, what in PROBLEM_FILES if (problem_dir / name).exists()])
@@ -114,7 +113,7 @@ def problem_new(
     score.py that scores what it returned, and a baseline. Verify it as it
     is, then replace the example piece by piece, verifying as you go.
     """
-    from hillclimb.demo import scaffold_problem
+    from hillclimb.scaffold import scaffold_problem
 
     config = _hillclimb_dir_or_offer(problem, "problem new")
     try:

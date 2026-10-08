@@ -16,7 +16,7 @@ problems/my-problem/
 
 `hillclimb problem new <problem>` writes a small problem that already runs (two-step:
 `run.py` calls the solution's function, `score.py` scores it) for you to edit into your own;
-`hillclimb problem get <problem>` copies a bundled one into `problems/` instead.
+`hillclimb problem get <problem>` copies one of the catalog's into `problems/` instead.
 
 ```bash
 hillclimb problem new my-problem          # problems/my-problem/, a working example
@@ -120,7 +120,7 @@ code runs inside the verifier and shares its stdout.
 
 **On Windows** the bundled problems need no bash: `hillclimb problem get`
 writes a `verifier.py` there instead of `verifier.sh`, the same steps in
-Python (`src/hillclimb/demo/windows_verifier.py`, or a problem's own), and the
+Python (`src/hillclimb/scaffold/windows_verifier.py`, or a problem's own), and the
 engine runs it with its own interpreter. A problem that has only a
 `verifier.sh` still runs on Windows, through Git for Windows' bash
 (`HILLCLIMB_BASH` points at another). A `verifier.py` must run the solution as

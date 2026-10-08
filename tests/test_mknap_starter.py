@@ -17,7 +17,7 @@ from hillclimb.problem import load_problem
 
 REPO = Path(__file__).resolve().parent.parent
 LEVELS = ((100, 5), (250, 10))
-COMMITTED_ROOTS = (REPO / "problems", REPO / "src" / "hillclimb" / "demo")
+COMMITTED_ROOTS = (REPO / "problems",)
 PENALTY = 0.0
 # OR-Library mkcbres: Chu & Beasley's best feasible values for 5.100-00 and 10.250-00
 BEST_KNOWN = {(100, 5): 24381, (250, 10): 59187}

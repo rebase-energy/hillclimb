@@ -25,7 +25,6 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-DEMO = ROOT.parent / "src" / "hillclimb" / "demo"
 CACHE = Path.home() / ".cache" / "hillclimb-orlib"
 ORLIB = "https://people.brunel.ac.uk/~mastjjb/jeb/orlib/files"
 PENALTY = 0.0   # an invalid submission scores nothing; higher is better
@@ -290,7 +289,7 @@ def stamp(root: Path, n: int, m: int) -> Path:
 def main(argv: list[str]) -> None:
     levels = [tuple(int(v) for v in a.split("-")) for a in argv] or list(LEVELS)
     for n, m in levels:
-        for root in (ROOT, DEMO):
+        for root in (ROOT,):
             print(f"wrote {stamp(root, n, m)}")
 
 

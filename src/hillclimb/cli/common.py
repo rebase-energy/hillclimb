@@ -85,6 +85,33 @@ def fail(text: str) -> None:
     say(f"[bad]{text}[/]", err=True)
 
 
+def warn_if_none_passed(journal, ref: str, agent: str | None = None) -> bool:
+    """Warn when a search made attempts and not one of them passed: `done`
+    then only means the budget ran out, not that anything was found. The
+    baseline and the seed are the harness's floor and do not count. Returns
+    whether it warned."""
+    attempts = [
+        c for c in journal.candidates.values()
+        if c.kind not in ("baseline", "seed") and c.status in ("passing", "failing", "buggy")
+    ]
+    if not attempts or any(c.status == "passing" for c in attempts):
+        return False
+    buggy = sum(c.status == "buggy" for c in attempts)
+    warn(
+        f"none of the {len(attempts)} attempt(s) passed ({buggy} buggy, {len(attempts) - buggy} failing): "
+        "the search found nothing beyond its floor"
+    )
+    say(f"[note]See why with[/] [cmd]hillclimb show {_m(ref)} {_m(attempts[0].candidate_id)}[/]", err=True)
+    if agent == "dummy":
+        say(
+            "[note]The dummy agent writes a canned solution.py that knows nothing of this problem's "
+            "interface: it tests the loop, not the score. For a free run that climbs, try[/] "
+            "[cmd]--agent toy[/] [note]on[/] [path]fitness-landscape[/]",
+            err=True,
+        )
+    return True
+
+
 def _m(text) -> str:
     """Escape a value (a path, an id) for rich markup."""
     from rich.markup import escape

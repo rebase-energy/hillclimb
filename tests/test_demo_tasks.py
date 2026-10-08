@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from hillclimb.config import Config
-from hillclimb.demo import BUNDLED_PROBLEM_IDS, install_demo_problem
+from hillclimb.catalog import PROBLEM_IDS, install_problem
 from hillclimb.problem import load_problem
 
 
@@ -32,7 +32,8 @@ def test_demo_problems_load(config: Config):
             assert len((spec.problem_dir / "sample_submission.csv").read_text().splitlines()) == 27
         else:
             assert spec.baseline_files["submission.csv"].exists()
-        assert spec.time_budget_s == 900
+        # circle-packing is the lean first-run problem (a 60 s budget, a small runtime); the rest get 15 min
+        assert spec.time_budget_s == (60 if problem_id == "circle-packing" else 900)
 
 
 def test_demo_verifiers_score_the_sample_submission(config: Config, tmp_path):
@@ -101,9 +102,9 @@ def test_heilbronn_convex_13_loads_and_scores_baseline(config: Config, tmp_path)
 def test_heilbronn_convex_13_is_fetchable_and_matches_repo_problem(
     config: Config, tmp_path
 ):
-    assert "heilbronn-convex-13" in BUNDLED_PROBLEM_IDS
+    assert "heilbronn-convex-13" in PROBLEM_IDS
     config.paths.problems_dir = tmp_path / "problems"
-    installed, created = install_demo_problem(
+    installed, created = install_problem(
         config.paths.problems_dir, "heilbronn-convex-13"
     )
     assert created

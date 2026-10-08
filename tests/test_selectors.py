@@ -13,14 +13,16 @@ from hillclimb.climber import ClimberLoadError, resolve_climber
 from hillclimb.harness.journal import Journal
 from hillclimb.modules.policies.base import InflightRef
 from hillclimb.harness.loop import PolicyLoop
-from hillclimb.modules.policies.greedy import Greedy
 from hillclimb.modules.selectors import Selection, SelectorPolicy, get_selector
-from hillclimb.modules.selectors.best import Best
+from tests.catalog_fixture import greedy_classes
+
+Greedy, Best = greedy_classes()
 from tests.conftest import ok_script
 from tests.harness_factory import make_harness
 from tests.test_policy import add_candidate, make_view
 
 
+from tests.catalog_fixture import class_ref
 def scored_journal(tmp_path: Path) -> Journal:
     journal = Journal(tmp_path / "j.jsonl")
     add_candidate(journal, "c000", "baseline", val_score=0.9)  # a declared floor: nothing to expand
@@ -33,7 +35,7 @@ def scored_journal(tmp_path: Path) -> Journal:
 def test_best_selects_the_best_candidate_nobody_is_expanding(config, tmp_path):
     journal = scored_journal(tmp_path)
     state = make_view(journal, config)
-    best = get_selector("best")
+    best = get_selector(class_ref("greedy", "Best"))
     assert isinstance(best, Best) and best.name == "best"
     assert best.select(state) == Selection("c002")
     assert best.select(state, busy={"c002"}) == Selection("c001")  # spread over the top ones
@@ -49,11 +51,11 @@ def test_best_selects_the_best_candidate_nobody_is_expanding(config, tmp_path):
 
 
 def test_greedy_expands_what_its_selector_selects(config, tmp_path):
-    """The schedule is the selector base's; the choice — parent, inspirations,
-    prompt context, a note for the journal — is the subclass's; the policy
-    turns that choice into an operator."""
+    """The schedule is `Best`'s; the choice — parent, inspirations, prompt
+    context, a note for the journal — is the subclass's; the policy turns
+    that choice into an operator."""
 
-    class SecondBest(SelectorPolicy):
+    class SecondBest(Best):
         name = "second-best"
 
         def select(self, state, *, busy=frozenset()):
@@ -81,10 +83,12 @@ def test_greedy_expands_what_its_selector_selects(config, tmp_path):
 
 
 SELECTOR_PY = '''\
-from hillclimb.sdk import Selection, SelectorPolicy
+from hillclimb.sdk import Selection
+import hillclimb as hc
+Best = hc.catalog.module("greedy").Best
 
 
-class Oldest(SelectorPolicy):
+class Oldest(Best):
     """Expand the oldest scored candidate (a deliberately different exploration)."""
     DEFAULTS = {"skip": 0}
 
@@ -98,7 +102,7 @@ class Oldest(SelectorPolicy):
 
 def test_a_block_names_its_selector_like_any_module(task, config, tmp_path):
     (tmp_path / "oldest.py").write_text(SELECTOR_PY)
-    block = {"operator_policy": "greedy", "selector_policy": "oldest.py", "params": {"num_drafts": 2, "ensemble": False, "tune_budget": 0}}
+    block = {"operator_policy": class_ref("greedy", "Greedy"), "selector_policy": "oldest.py", "params": {"num_drafts": 2, "ensemble": False, "tune_budget": 0}}
     climber = resolve_climber(block, tmp_path)
     policy = climber.build_loop().policy
     assert type(policy.selector).__name__ == "Oldest" and policy.selector.name == "oldest"
@@ -124,12 +128,50 @@ def test_a_selector_only_goes_where_a_policy_can_take_it(tmp_path):
         "    def propose(self, view):\n        return None\n    def observe(self, view, candidate):\n        pass\n"
     )
     assert resolve_climber({"operator_policy": "plain.py"}, tmp_path).build_loop().policy.params == {}  # no selector asked: fine
-    with pytest.raises(ClimberLoadError, match="`selector_policy: best` — this operator policy takes no selector policy"):
-        resolve_climber({"operator_policy": "plain.py", "selector_policy": "best"}, tmp_path).build_loop()
+    with pytest.raises(ClimberLoadError, match="`selector_policy: .*:Best` — this operator policy takes no selector policy"):
+        resolve_climber({"operator_policy": "plain.py", "selector_policy": class_ref("greedy", "Best")}, tmp_path).build_loop()
     with pytest.raises(ClimberLoadError, match="a `loop:` does its own selection"):
         resolve_climber({"loop": "gepa", "selector_params": {"k": 1}})
-    with pytest.raises(ClimberLoadError, match="unknown selector policy 'nope' .available: best, map-elites"):
-        resolve_climber({"selector_policy": "nope"}).build_loop()
+    with pytest.raises(ClimberLoadError, match="unknown selector policy 'nope' .available: none registered"):
+        resolve_climber({"operator_policy": class_ref("greedy", "Greedy"), "selector_policy": "nope"}).build_loop()
+
+
+ONE_FILE_PY = SELECTOR_PY + '''
+
+import hillclimb as hc
+Greedy = hc.catalog.module("greedy").Greedy
+
+
+class Mine(Greedy):
+    """Greedy over the file's own selector."""
+'''
+
+
+def test_a_one_file_climber_brings_its_own_selector(tmp_path):
+    """One file, both policies — what `climber get` writes and a meta-problem's
+    candidate is: the SelectorPolicy subclass the file defines is the
+    selector, with no `selector_policy:` to name it; its knobs ride with the
+    operator policy's params (`--set climber.params.<knob>`), where a tune
+    trial puts them."""
+    (tmp_path / "mine.py").write_text(ONE_FILE_PY)
+    climber = resolve_climber({"operator_policy": "mine.py"}, tmp_path)
+    policy = climber.build_loop().policy
+    assert type(policy.selector).__name__ == "Oldest" and policy.selector.name == "Oldest"
+    assert climber.description == "Mine over Oldest: Expand the oldest scored candidate (a deliberately different exploration)."
+    tuned = resolve_climber({"operator_policy": "mine.py", "params": {"skip": 1, "num_drafts": 2, "tune_budget": 0}}, tmp_path)
+    policy = tuned.build_loop().policy
+    assert (policy.selector.param("skip"), policy.selector.param("num_drafts"), policy.param("tune_budget")) == (1, 2, 0)
+    # the block's `selector_policy:` still wins; several classes need SELECTOR to say which
+    named = resolve_climber({"operator_policy": "mine.py", "selector_policy": class_ref("greedy", "Best")}, tmp_path)
+    assert type(named.build_loop().policy.selector).__name__ == "Best"
+    (tmp_path / "two.py").write_text(ONE_FILE_PY + "\n\nclass Newest(Best):\n    pass\n")
+    with pytest.raises(ClimberLoadError, match=r"defines 2 selector policies \(Oldest, Newest\); set SELECTOR"):
+        resolve_climber({"operator_policy": "two.py"}, tmp_path).build_loop()
+    (tmp_path / "two.py").write_text(ONE_FILE_PY + "\n\nclass Newest(Best):\n    pass\n\n\nSELECTOR = Newest\n")
+    assert type(resolve_climber({"operator_policy": "two.py"}, tmp_path).build_loop().policy.selector).__name__ == "Newest"
+    # editing the selector half changes what the climber IS, like any of its file
+    (tmp_path / "mine.py").write_text(ONE_FILE_PY + "# edited\n")
+    assert resolve_climber({"operator_policy": "mine.py"}, tmp_path).sha256 != climber.sha256
 
 
 def test_what_memory_learned_is_fixed_when_a_search_first_runs(task, config, tmp_path, monkeypatch):
@@ -172,7 +214,7 @@ def test_what_memory_learned_is_fixed_when_a_search_first_runs(task, config, tmp
 def test_a_selector_written_with_pick_still_runs(config, tmp_path):
     """`pick` was the hook's name for one day; such a selector still loads."""
 
-    class Old(SelectorPolicy):
+    class Old(Best):
         def pick(self, state, *, busy=frozenset()):
             return Selection("c002")
 

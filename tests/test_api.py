@@ -9,6 +9,7 @@ import pytest
 
 from hillclimb.api import run_search
 from hillclimb.harness.run import load_run_meta, load_search_meta
+from tests.catalog_fixture import GEPA, GREEDY, OPENEVOLVE
 
 
 @pytest.mark.slow
@@ -257,17 +258,17 @@ def test_run_fleet_spawns_one_engine_per_search(config, monkeypatch):
 def test_mixed_fleet_names_arms_after_policies_and_repeats_them():
     from hillclimb.api import FleetEngine, mixed_fleet
 
-    engines = mixed_fleet(["greedy", "openevolve", "gepa"], experiment_overrides={"gepa": ["search.parallel_agents=1"]})
+    engines = mixed_fleet([str(GREEDY), str(OPENEVOLVE), str(GEPA)], experiment_overrides={"gepa": ["search.parallel_agents=1"]})
     assert engines == [
-        FleetEngine(experiment="greedy", climber="greedy"),
-        FleetEngine(experiment="openevolve", climber="openevolve"),
-        FleetEngine(experiment="gepa", climber="gepa", overrides=("search.parallel_agents=1",)),
+        FleetEngine(experiment="greedy", climber=str(GREEDY)),
+        FleetEngine(experiment="openevolve", climber=str(OPENEVOLVE)),
+        FleetEngine(experiment="gepa", climber=str(GEPA), overrides=("search.parallel_agents=1",)),
     ]
     # a repeated policy is a second experiment; repeats clone every experiment, repeat-major
-    twice = mixed_fleet(["greedy", "greedy"], repeats=2)
+    twice = mixed_fleet([str(GREEDY), str(GREEDY)], repeats=2)
     assert [(e.experiment, e.repeat) for e in twice] == [("greedy", 1), ("greedy-2", 1), ("greedy", 2), ("greedy-2", 2)]
     with pytest.raises(ValueError, match="unknown experiment"):
-        mixed_fleet(["greedy", "gepa"], experiment_overrides={"openevolve": ["x=1"]})
+        mixed_fleet([str(GREEDY), str(GEPA)], experiment_overrides={"openevolve": ["x=1"]})
     with pytest.raises(ValueError, match="at least one climber"):
         mixed_fleet([])
 
@@ -307,7 +308,7 @@ def test_run_fleet_mixed_engines_get_their_own_policy_and_overrides(config, monk
 
     monkeypatch.setattr(api, "spawn_search_proc", fake_spawn)
     engines = api.mixed_fleet(
-        ["greedy", "gepa"], experiment_overrides={"gepa": ["search.parallel_agents=1"]}
+        [str(GREEDY), str(GEPA)], experiment_overrides={"gepa": ["search.parallel_agents=1"]}
     )
 
     fleet = api.run_fleet(
@@ -322,14 +323,14 @@ def test_run_fleet_mixed_engines_get_their_own_policy_and_overrides(config, monk
         assert argv[argv.index("--study") + 1] == fleet.run_id  # default study: the run id
         assert argv[argv.index("--parallel-agents") + 1] == "3"
         assert "--repeat" not in argv
-    assert greedy[greedy.index("--experiment") + 1] == "greedy" and greedy[greedy.index("--climber") + 1] == "greedy"
-    assert gepa[gepa.index("--experiment") + 1] == "gepa" and gepa[gepa.index("--climber") + 1] == "gepa"
+    assert greedy[greedy.index("--experiment") + 1] == "greedy" and greedy[greedy.index("--climber") + 1] == str(GREEDY)
+    assert gepa[gepa.index("--experiment") + 1] == "gepa" and gepa[gepa.index("--climber") + 1] == str(GEPA)
     sets = [argv[i + 1] for i, tok in enumerate(gepa) if tok == "--set"]
     assert sets == ["learning.enabled=false", "search.parallel_agents=1"]  # the experiment's override last, so it wins
     assert [argv[i + 1] for i, tok in enumerate(greedy) if tok == "--set"] == ["learning.enabled=false"]
 
     api.run_fleet(
-        "circle-packing", config=config, engines=api.mixed_fleet(["greedy", "openevolve"], repeats=2),
+        "circle-packing", config=config, engines=api.mixed_fleet([str(GREEDY), str(OPENEVOLVE)], repeats=2),
         study="three-way",
     )
     tail = spawned[2:]

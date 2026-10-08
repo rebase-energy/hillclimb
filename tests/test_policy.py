@@ -18,14 +18,16 @@ from hillclimb.harness.journal import Journal
 from hillclimb.harness.evaluation import accept_band
 from hillclimb.climber import ClimberLoadError, climber_label
 from hillclimb.harness.loop import PolicyLoop
-from hillclimb.modules.policies.greedy import Greedy
-from hillclimb.modules.selectors.best import Best
+from tests.catalog_fixture import greedy_classes
+
+Greedy, Best = greedy_classes()
 from hillclimb.modules.policies.base import Action, BudgetView, InflightRef, SearchState
 from tests.harness_factory import SearchRig
 from hillclimb.harness.dirs import create_search_dir
 from tests.conftest import ok_script
 
 
+from tests.catalog_fixture import GREEDY
 def make_view(
     journal: Journal,
     config,
@@ -158,18 +160,18 @@ def test_propose_ensemble_in_final_window_with_drain(journal, config, tmp_path):
 
 
 def test_a_bundled_name_resolves_greedy_and_an_unknown_one_is_refused():
-    policy = make_policy("greedy", {"num_drafts": 5, "tune_budget": 4}, priors={"complexity_start": 2, "not_a_knob": 1})
+    policy = make_policy(str(GREEDY), {"num_drafts": 5, "tune_budget": 4}, priors={"complexity_start": 2, "not_a_knob": 1})
     assert isinstance(policy, Greedy)
     assert policy.name == "greedy"
     # the caller's params over the block's; what memory learned under both,
     # and only the knobs the policy declares — the schedule's went to the selector
     assert policy.params == {"tune_budget": 4, "complexity_start": 2}
     assert policy.selector.param("num_drafts") == 5
-    assert make_policy("greedy", {"complexity_start": 0}, priors={"complexity_start": 2}).param("complexity_start") == 0
+    assert make_policy(str(GREEDY), {"complexity_start": 0}, priors={"complexity_start": 2}).param("complexity_start") == 0
     # a param the policy does not have is refused before anything runs
-    with pytest.raises(ClimberLoadError, match="greedy has no param 'note' .it has: .*tune_budget.*selector_params"):
-        make_policy("greedy", {"note": "x"})
-    with pytest.raises(ClimberLoadError, match="bundled: gepa, greedy, openevolve"):
+    with pytest.raises(ClimberLoadError, match="has no param 'note' .it has: .*tune_budget.*selector_params"):
+        make_policy(str(GREEDY), {"note": "x"})
+    with pytest.raises(ClimberLoadError, match="Unknown climber: map-elites"):
         make_policy("map-elites")
 
 
@@ -313,7 +315,8 @@ def test_ensemble_knobs_from_policy_params(journal, config, tmp_path):
 # --- file policies: an edited exploration process loaded from a path ---
 
 FILE_POLICY = '''
-from hillclimb.modules.policies.greedy import Greedy
+import hillclimb as hc
+Greedy = hc.catalog.module("greedy").Greedy
 from hillclimb.modules.policies.base import Action
 
 
@@ -361,7 +364,7 @@ def test_file_policy_loads_by_path_and_is_hashed(tmp_path, journal, config):
 def test_file_policy_exposes_POLICY_class_or_factory(tmp_path):
     factory_file = tmp_path / "factory.py"
     factory_file.write_text(
-        "from hillclimb.modules.policies.greedy import Greedy\n"
+        "import hillclimb as hc\nGreedy = hc.catalog.module('greedy').Greedy\n"
         "class A(Greedy):\n    name = 'a'\n"
         "class B(Greedy):\n    name = 'b'\n"
         "def POLICY(params):\n"
@@ -391,7 +394,7 @@ def test_file_policy_errors_name_the_file(tmp_path):
         make_policy(str(broken))
     two = tmp_path / "two.py"
     two.write_text(
-        "from hillclimb.modules.policies.greedy import Greedy\n"
+        "import hillclimb as hc\nGreedy = hc.catalog.module('greedy').Greedy\n"
         "class A(Greedy): pass\nclass B(Greedy): pass\n"
     )
     with pytest.raises(ValueError, match="exactly one operator policy class"):
@@ -438,7 +441,7 @@ def test_file_policy_drives_a_search_and_is_recorded(task, config, tmp_path):
     assert meta.climber == "drafts_only" and meta.climber_spec["operator_policy"] == str(path)
     from hillclimb.harness.glue import search_climber
     assert meta.climber_sha256 == search_climber(config).sha256  # the block (its params too) + the file's bytes
-    name_climber(config, "greedy")
+    name_climber(config, str(GREEDY))
     meta = load_search_meta(create_search(config, load_problem("p", config), run_dir, "r1", 60))
     assert meta.climber == "greedy" and meta.climber_sha256 == search_climber(config).sha256  # a preset has an identity too
 
@@ -446,9 +449,9 @@ def test_file_policy_drives_a_search_and_is_recorded(task, config, tmp_path):
 def test_mixed_fleet_names_file_policy_experiments_by_stem():
     from hillclimb.api import mixed_fleet
 
-    engines = mixed_fleet(["greedy", "hillclimb/policies/drafts_only.py", "hillclimb/policies/drafts_only.py"])
+    engines = mixed_fleet([str(GREEDY), "hillclimb/policies/drafts_only.py", "hillclimb/policies/drafts_only.py"])
     assert [(e.experiment, e.climber) for e in engines] == [
-        ("greedy", "greedy"),
+        ("greedy", str(GREEDY)),
         ("drafts_only", "hillclimb/policies/drafts_only.py"),
         ("drafts_only-2", "hillclimb/policies/drafts_only.py"),
     ]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from tests.factories import trial as mk_trial, name_climber
+from tests.catalog_fixture import GEPA, GREEDY, OPENEVOLVE, class_ref
 
 import pytest
 import typer
@@ -150,7 +151,7 @@ def test_run_suite_hands_each_child_the_climber_its_entry_defines(config, tmp_pa
     ]}))
     config.paths.problems_dir = root
     config.paths.runs_dir = tmp_path / "runs"
-    config.apply_overrides({"climber": "openevolve"})  # the folder's default, for the entry that names none
+    config.apply_overrides({"climber": str(OPENEVOLVE)})  # the folder's default, for the entry that names none
     calls = []
 
     class DummyProc:
@@ -168,11 +169,11 @@ def test_run_suite_hands_each_child_the_climber_its_entry_defines(config, tmp_pa
     assert "--set" not in second and "--climber" not in second  # no climber named: the child reads the folder's
     written = yaml.safe_load((iter_run_dirs(config.paths.runs_dir)[0] / "spec.yaml").read_text())["problems"]
     assert written[0]["climber"]["operator_policy"] == str(root / "mine.py") and written[0]["climber"]["params"] == {"k": 1}
-    assert written[1]["climber"]["selector_policy"] == "map-elites"  # the full block, though the entry named none
+    assert written[1]["climber"]["operator_policy"] == class_ref("openevolve", "Greedy")  # the full block, though the entry named none
 
     calls.clear()
-    _run_suite(str(suite), config, budget="10m", agent="dummy", model=None, holdout=True, name="Demo2", climber="gepa")
-    assert all(cmd[cmd.index("--climber") + 1] == "gepa" for cmd in calls)
+    _run_suite(str(suite), config, budget="10m", agent="dummy", model=None, holdout=True, name="Demo2", climber=str(GEPA))
+    assert all(cmd[cmd.index("--climber") + 1] == str(GEPA) for cmd in calls)
     assert not any(pair.startswith("climber={") for cmd in calls for pair in cmd)
 
 
@@ -267,13 +268,13 @@ def test_create_search_persists_policy_and_routing(task, config, tmp_path):
     from hillclimb.api import create_search
     from hillclimb.config import RouteConfig
 
-    name_climber(config, "greedy")
+    name_climber(config, str(GREEDY))
     config.climber.params = {"num_drafts": 2}
     config.routing = {"draft": RouteConfig(model="opus-4.8")}
     search_dir = create_search(config, task, tmp_path / "runs" / "r1", "r1", total_s=600)
     meta = load_search_meta(search_dir)
     assert meta.climber == "greedy" and meta.schema_version == SCHEMA_VERSION
-    assert meta.climber_spec["operator_policy"] == "greedy" and meta.climber_spec["selector_params"] == {"num_drafts": 2}
+    assert meta.climber_spec["operator_policy"] == class_ref("greedy", "Greedy") and meta.climber_spec["selector_params"] == {"num_drafts": 2}
     assert meta.climber_ref is None  # only a pre-0.6 record names its climber by reference
     assert meta.routing == {"draft": {"model": "opus-4.8"}}
 
@@ -315,8 +316,8 @@ def test_resume_restores_policy_and_routing(config, tmp_path, monkeypatch):
 
     restored = captured["config"]
     assert (restored.climber.label, restored.climber.selector_policy) == ("openevolve", "map-elites")
-    assert restored.climber.params == {"tune_budget": 0}
-    assert restored.climber.selector_params == {"ensemble": False, "num_drafts": 2}
+    assert restored.climber.params == {}
+    assert restored.climber.selector_params == {"num_drafts": 2}
     assert restored.routing["draft"].model == "opus-4.8"
     assert restored.routing["draft"].agent is None
 
@@ -1334,7 +1335,7 @@ def test_run_with_several_policies_launches_a_mixed_fleet(config, monkeypatch, t
     calls = _capture_fleet(monkeypatch, config, tmp_path)
     result = CliRunner().invoke(cli.app, [
         "run", "circle-packing", "--budget", "1m", "--agent", "dummy",
-        "--climber", "greedy", "--climber", "openevolve", "--climber", "gepa",
+        "--climber", str(GREEDY), "--climber", str(OPENEVOLVE), "--climber", str(GEPA),
         "--experiment-set", "gepa:concurrency.parallel_agents=1", "--set", "learning.enabled=false",
         "--study", "three-way",
     ])
@@ -1343,12 +1344,12 @@ def test_run_with_several_policies_launches_a_mixed_fleet(config, monkeypatch, t
     (call,) = calls
     assert call["target"] == "circle-packing" and call["climber"] is None
     assert call["engines"] == [
-        FleetEngine(experiment="greedy", climber="greedy"),
-        FleetEngine(experiment="openevolve", climber="openevolve"),
-        FleetEngine(experiment="gepa", climber="gepa", overrides=("concurrency.parallel_agents=1",)),
+        FleetEngine(experiment="greedy", climber=str(GREEDY)),
+        FleetEngine(experiment="openevolve", climber=str(OPENEVOLVE)),
+        FleetEngine(experiment="gepa", climber=str(GEPA), overrides=("concurrency.parallel_agents=1",)),
     ]
     assert call["study"] == "three-way" and call["overrides"] == ["learning.enabled=false"]
-    assert config.climber.operator_policy == "greedy"  # the parent's config is not bent to any one experiment
+    assert config.climber.operator_policy == class_ref("greedy", "Greedy")  # the parent's config (the pinned catalog file) is not bent to any one experiment
     assert "3 searches (greedy, openevolve, gepa)" in result.output
     assert "hillclimb experiment report three-way" in result.output
 
@@ -1357,7 +1358,7 @@ def test_run_mixed_fleet_repeats_every_arm_and_rejects_stray_flags(config, monke
     from hillclimb import cli
     calls = _capture_fleet(monkeypatch, config, tmp_path)
     result = CliRunner().invoke(cli.app, [
-        "run", "circle-packing", "--climber", "greedy", "--climber", "gepa", "--parallel-searches", "2",
+        "run", "circle-packing", "--climber", str(GREEDY), "--climber", str(GEPA), "--parallel-searches", "2",
     ])
     assert result.exit_code == 0, result.output
     assert [(e.experiment, e.repeat) for e in calls[0]["engines"]] == [("greedy", 1), ("gepa", 1), ("greedy", 2), ("gepa", 2)]
@@ -1370,12 +1371,12 @@ def test_run_mixed_fleet_repeats_every_arm_and_rejects_stray_flags(config, monke
     ):
         # a wide terminal: rich wraps (and elides) usage errors in narrow boxes
         result = CliRunner().invoke(
-            cli.app, ["run", "circle-packing", "--climber", "greedy", "--climber", "gepa", *extra], env={"COLUMNS": "300"}
+            cli.app, ["run", "circle-packing", "--climber", str(GREEDY), "--climber", str(GEPA), *extra], env={"COLUMNS": "300"}
         )
         assert result.exit_code != 0 and message in result.output, (extra, result.output)
     # a single policy is the classic path; --experiment-set has nothing to attach to
     result = CliRunner().invoke(
-        cli.app, ["run", "circle-packing", "--climber", "gepa", "--experiment-set", "gepa:x=1"], env={"COLUMNS": "300"}
+        cli.app, ["run", "circle-packing", "--climber", str(GEPA), "--experiment-set", "gepa:x=1"], env={"COLUMNS": "300"}
     )
     assert result.exit_code != 0 and "needs a mixed fleet" in result.output
     assert len(calls) == 1
@@ -1408,7 +1409,7 @@ def test_resume_runs_the_snapshot_and_says_when_the_live_climber_changed(task, c
     run_dir = create_run(config, RunMeta(run_id="run-1", name="run-1", kind="problem", target="x", problem_ids=[task.problem_id]))
     search_dir = create_search(config, task, run_dir, "run-1", 600)
     (search_dir / "journal.jsonl").write_text("")
-    config.apply_overrides({"climber": "gepa"})  # the live config has moved on since
+    config.apply_overrides({"climber": str(GEPA)})  # the live config has moved on since
     captured = _resumable(config, tmp_path, monkeypatch)
 
     resume(f"run-1/{search_dir.name}", detach=False)
@@ -1519,3 +1520,24 @@ def test_smoke_fetches_its_bundled_problem_in_a_fresh_folder(tmp_path, monkeypat
         cli_main(["smoke", "--agent", "dummy"])
     assert (folder / "problems" / "circle-packing" / "problem.yaml").is_file()
     assert "fetched circle-packing" in capsys.readouterr().out
+
+
+def test_warns_when_no_attempt_passed(tmp_path, capsys):
+    """`done` with nothing passing means the budget ran out, not that anything
+    was found (a `--agent dummy` run on a fresh `problem new` scaffold): say so.
+    The baseline is the harness's floor and does not count as an attempt."""
+    from hillclimb.harness.journal import Journal
+    from tests.test_watch import make_candidate
+
+    journal = Journal(tmp_path / "journal.jsonl")
+    journal.candidate_result(make_candidate("c000", operator="baseline", status="passing", val_score=0.5))
+    journal.candidate_result(make_candidate("c001", operator="draft", status="buggy"))
+    journal.candidate_result(make_candidate("c002", operator="draft", status="failing", val_score=0.4))
+    assert common.warn_if_none_passed(journal, "r/p") is True
+    err = capsys.readouterr().err
+    assert "none of the 2 attempt(s) passed (1 buggy, 1 failing)" in err
+    assert "hillclimb show r/p c001" in err
+
+    journal.candidate_result(make_candidate("c003", operator="improve", status="passing", val_score=0.6))
+    assert common.warn_if_none_passed(journal, "r/p") is False
+    assert common.warn_if_none_passed(Journal(tmp_path / "empty.jsonl"), "r/p") is False

@@ -19,6 +19,7 @@ from hillclimb.problem import ProblemSpec
 from hillclimb.runtime import RUN_SOLUTION
 from tests.harness_factory import SearchRig
 from tests.gepa_fakes import FakeGEPADriver, make_gepa
+from tests.catalog_fixture import GEPA
 
 
 def json_problem(tmp_path, task):
@@ -139,7 +140,7 @@ def test_gepa_runner_preserves_json_artifact(tmp_path, task, config):
     problem = json_problem(tmp_path, task).model_copy(
         update={"baseline_text": json_solution(0.1)}
     )
-    name_climber(config, "gepa")
+    name_climber(config, str(GEPA))
     agent = FakeAgent()
     agent.queue(script=json_solution(0.8), notes="json improvement\n")
     search_dir = create_search_dir(tmp_path / "runs" / "gepa", "s")

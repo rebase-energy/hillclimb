@@ -19,7 +19,6 @@ _LAZY = {
     "Debug": ("hillclimb.modules.operators.builtin", "Debug"),
     "Improve": ("hillclimb.modules.operators.builtin", "Improve"),
     "Ensemble": ("hillclimb.modules.operators.builtin", "Ensemble"),
-    "GepaReflect": ("hillclimb.climbers.gepa.operator", "GepaReflect"),
 }
 
 __all__ = sorted(_LAZY)

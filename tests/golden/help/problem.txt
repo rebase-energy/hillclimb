@@ -8,7 +8,7 @@
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ get   Copy a ready-made problem into problems/.                                                                      │
-│ list  List every problem bundled with hillclimb.                                                                     │
+│ list  List every problem in hillclimb's catalog.                                                                     │
 │ new   Start a problem of your own in problems/<problem>.                                                             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 

@@ -15,9 +15,12 @@ import sys
 
 from hillclimb import Budget, Climber, Problem, SearchOutcome
 from hillclimb.operators import Draft, Improve
-from hillclimb.policies import Greedy
-from hillclimb.selectors import Best
 from hillclimb.sdk import Action, OperatorPolicy, SearchState, Selection, improves
+from hillclimb import catalog
+
+# the catalog's greedy climber (`hillclimb climber get greedy` copies the same file): its classes to compose with
+greedy = catalog.module("greedy")
+Greedy, Best = greedy.Greedy, greedy.Best
 
 
 class DraftsOnly(OperatorPolicy):
@@ -27,11 +30,11 @@ class DraftsOnly(OperatorPolicy):
         return Action("draft")
 
 
-class GiveUpQuickly(OperatorPolicy):
-    """Build on the chosen node, unless its last few children failed to beat
-    it. Then it is stuck: draft somewhere new instead."""
+class GiveUpQuickly(Greedy):
+    """Greedy's mapping, except: build on the chosen node unless its last few
+    children failed to beat it. Then it is stuck: draft somewhere new instead."""
 
-    DEFAULTS = {"patience": 2}  # every knob and its default; the base adds its own
+    DEFAULTS = {"patience": 2, "tune_budget": 0}  # every knob and its default; Greedy's stay, tuning off
 
     def propose(self, state: SearchState, selection: Selection | None) -> Action | None:
         # `state` is all a policy sees: the journal (every candidate so far),

@@ -83,14 +83,15 @@ def main(argv: list[str] | None = None) -> None:
         print_banner(trailing_blank=False)  # the help screen opens with its own blank line
         args = ["--help"]
     from hillclimb.agents import AgentCLIMissing
+    from hillclimb.modules.refs import NoClimber
     from hillclimb.problem import ProblemError
 
     try:
         app(args=args, prog_name="hillclimb")
-    except (ProblemError, AgentCLIMissing) as exc:
-        # a problem folder to fix (a missing file, a bad key) or a coding
-        # agent to install: the message says what and how, so a traceback
-        # would only bury it
+    except (ProblemError, AgentCLIMissing, NoClimber) as exc:
+        # a problem folder to fix (a missing file, a bad key), a coding agent
+        # to install, or a climber to fetch: the message says what and how,
+        # so a traceback would only bury it
         from hillclimb.cli.common import _m, fail
 
         fail(f"error: {_m(exc)}")

@@ -68,7 +68,7 @@ def test_stepping_reproduces_the_recorded_sequences(agent, config, scenario_name
 
 def test_finish_after_steps_by_hand_ends_like_a_whole_run(agent, config):
     GOLDEN_SCENARIOS["drafts-then-improve"].queue(agent)
-    search = hc.Climber(policy="greedy").start("anything", config=config, max_evaluations=4, **QUIET)
+    search = hc.catalog.climber("greedy").start("anything", config=config, max_evaluations=4, **QUIET)
     assert [search.step().candidate.candidate_id for _ in range(2)] == ["c001", "c002"]
     outcome = search.finish()
     assert outcome.state == "done" and outcome.selected.val_score == 0.8
@@ -81,7 +81,7 @@ def test_finish_after_steps_by_hand_ends_like_a_whole_run(agent, config):
 
 def test_propose_runs_nothing_and_run_takes_your_own_action(agent, config):
     queue(agent, 0.6, 0.7, 0.9, 0.5)
-    climber = hc.Climber(select=hc.selectors.Best(num_drafts=2, ensemble=False), policy=hc.policies.Greedy())
+    climber = hc.Climber(select=hc.catalog.module("greedy").Best(num_drafts=2, ensemble=False), policy=hc.catalog.module("greedy").Greedy())
     search = climber.start("anything", config=config, **QUIET)
     assert climber.session is search and search.is_open and search.closed_reason is None
     assert climber.select() is None  # π_sel: no scored root yet, a root step
@@ -188,14 +188,14 @@ def test_a_setup_that_fails_leaves_nothing_running(task, config, monkeypatch):
 
 def test_one_stepped_search_at_a_time(agent, config):
     queue(agent, 0.6, 0.7)
-    climber = hc.Climber(policy="greedy")
+    climber = hc.catalog.climber("greedy")
     with pytest.raises(RuntimeError, match="no search yet"):
         climber.step()
     climber.start("anything", config=config, **QUIET)
     with pytest.raises(RuntimeError, match="still on search"):
         climber.start("anything", config=config, **QUIET)
     with pytest.raises(RuntimeError, match="still open in this process"):
-        hc.Climber(policy="greedy").start("anything", config=config, **QUIET)
+        hc.catalog.climber("greedy").start("anything", config=config, **QUIET)
     climber.step()
     first = climber.close()
     climber.start("anything", config=config, **QUIET)  # closed: the next one may start
@@ -221,7 +221,7 @@ def test_starting_a_search_leaves_the_climber_the_definition_it_was(agent, confi
     import copy
 
     queue(agent, 0.6)
-    climber = hc.Climber(select=hc.selectors.Best(num_drafts=2), policy=hc.policies.Greedy(), tuner="random")
+    climber = hc.Climber(select=hc.catalog.module("greedy").Best(num_drafts=2), policy=hc.catalog.module("greedy").Greedy(), tuner="random")
     identity, block = climber.sha256, climber.to_spec().block()
     climber.start("anything", config=config, **QUIET)
     climber.step()

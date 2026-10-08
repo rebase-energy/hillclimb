@@ -14,8 +14,9 @@ from hillclimb.modules.selectors.base import Selection, SelectorPolicy, improvab
 
 KIND = "selector_policy"
 
-refs.register(KIND, "best", "hillclimb.modules.selectors.best:Best")
-refs.register(KIND, "map-elites", "hillclimb.modules.selectors.map_elites:MapElites")  # optional extra
+# nothing is registered: the bundled selector policies are catalog files
+# (`hillclimb climber get greedy`), and a record's pre-0.9 name resolves
+# through `catalog.RECORDED`
 
 
 def get_selector(
@@ -24,10 +25,12 @@ def get_selector(
     *,
     base_dir: Path | None = None,
     scope: refs.FileScope | None = None,
+    legacy: bool = False,
 ) -> SelectorPolicy:
     """A selector instance, built with `params`. A setting it does not take
-    (or a missing extra) is a `ClimberLoadError` naming the selector."""
-    resolved = refs.resolve_ref(name, KIND, base_dir=base_dir, scope=scope)
+    (or a missing extra) is a `ClimberLoadError` naming the selector.
+    `legacy`: the name may be one a record holds from before 0.9."""
+    resolved = refs.resolve_ref(name, KIND, base_dir=base_dir, scope=scope, legacy=legacy)
     try:
         selector = refs.construct(resolved.target, {"params": dict(params or {})}, name)
     except (ValueError, ImportError) as exc:

@@ -65,10 +65,12 @@ def search_climber(config: Config, search_dir=None) -> Climber:
     if live is not None:
         return live  # composed in this process from classes no snapshot can rebuild
     if search_dir is not None:
-        snapshot = _snapshot(search_dir, config.climber.label)
+        snapshot = _snapshot(search_dir, config.climber_label())
         if snapshot is not None:
             return snapshot
-    return resolve_climber(config.climber, climber_base_dir(config))
+    return resolve_climber(
+        config.climber, climber_base_dir(config), legacy_names=getattr(config, "_climber_legacy_names", False)
+    )
 
 
 def holdout_timing(config: Config, search_dir=None) -> str:

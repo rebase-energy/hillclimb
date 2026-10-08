@@ -14,7 +14,8 @@
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --problem              TEXT   Filter to one problem id                                                               │
 │ --control              TEXT   Experiment to compare against (default: the first)                                     │
-│ --noise-floor          FLOAT  Gap below which experiments are not different (default: the spec's)                    │
+│ --noise-floor          FLOAT  Gap below which experiments are not different (default: the spec's); the spread across │
+│                               repeats counts when it is larger                                                       │
 │ --json                        Machine-readable: the summaries as JSON (a meta-verifier reads the gaps)               │
 │ --help         -h             Show this message and exit.                                                            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

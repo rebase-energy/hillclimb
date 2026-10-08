@@ -76,10 +76,13 @@ def make_policy(ref, params: dict | None = None, *, priors: dict | None = None, 
 
 
 def name_climber(config, ref: str) -> None:
-    """Name the config's policy or loop by a preset or one file, keeping the
-    rest of its `climber:` block (params set before or after still apply)."""
-    from hillclimb.modules.spec import expand_name
+    """Name the config's policy or loop by a catalog file, a preset or one
+    file, keeping the rest of its `climber:` block (params set before or
+    after still apply). A composed file names its selector and prompts too,
+    so those follow the brain (a block may not keep another's)."""
+    from hillclimb.modules.spec import ClimberSpec, expand_name
 
     block = expand_name(ref)
-    config.climber.name = block.get("name")
-    config.climber.operator_policy, config.climber.loop = block.get("operator_policy"), block.get("loop")
+    moved = {key: block.get(key) for key in ("name", "operator_policy", "loop", "selector_policy", "prompts", "operators")}
+    moved["operator_params"] = block.get("operator_params") or {}
+    config.climber = ClimberSpec.model_validate({**config.climber.block(), **moved})

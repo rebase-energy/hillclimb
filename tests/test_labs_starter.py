@@ -16,7 +16,7 @@ from hillclimb.problem import load_problem
 
 REPO = Path(__file__).resolve().parent.parent
 LEVELS = (40, 60)
-COMMITTED_ROOTS = (REPO / "problems", REPO / "src" / "hillclimb" / "demo")
+COMMITTED_ROOTS = (REPO / "problems",)
 PENALTY = 100000.0
 # energy of the growing-runs sample (1, 2, 3, ... alternating sign, cut at N)
 SAMPLE_ENERGY = {40: 2356, 60: 6882}

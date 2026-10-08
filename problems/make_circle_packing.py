@@ -28,7 +28,6 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-DEMO = ROOT.parent / "src" / "hillclimb" / "demo"
 DEFAULT_INSTANCES = (32,)
 
 # n -> ((chart label, sum of radii), ...) — the LAST entry is the best known
@@ -323,7 +322,7 @@ def stamp(root: Path, n: int) -> Path:
 def main(argv: list[str]) -> None:
     instances = [int(a) for a in argv] or list(DEFAULT_INSTANCES)
     for n in instances:
-        for root in (ROOT, DEMO):
+        for root in (ROOT,):
             print(f"wrote {stamp(root, n)}")
 
 

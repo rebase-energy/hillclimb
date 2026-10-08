@@ -30,7 +30,7 @@ from tests.test_prompt_golden import _check, collect_prompts
 
 REPO = Path(__file__).resolve().parents[1]
 META_PROBLEM = REPO / "problems" / "meta-heilbronn"
-GREEDY_SOURCE = REPO / "src" / "hillclimb" / "modules" / "policies" / "greedy.py"
+GREEDY_SOURCE = META_PROBLEM / "greedy.py"  # the catalog greedy file up to its Climber(...) tail: candidate-shaped
 
 
 def _write_problem(root: Path, name: str, extra_yaml: str = "") -> Path:
@@ -270,16 +270,17 @@ def test_reference_meta_problem_loads_and_its_baseline_is_the_bundled_greedy():
     config.paths.problems_dir = REPO / "problems"
     spec = load_problem(str(META_PROBLEM), config)
     assert spec.solution_kind == "climber"
-    assert spec.baseline_text == GREEDY_SOURCE.read_text()  # one file, byte-identical to the package's
+    assert spec.baseline_text == GREEDY_SOURCE.read_text()
+    assert (REPO / "climbers" / "greedy" / "policy.py").read_text().startswith(spec.baseline_text)  # the catalog file's head
     inner = meta.load_grade_spec(META_PROBLEM / "grade.yaml")
     assert [p.problem for p in inner.problems] == ["heilbronn-11", "heilbronn-14"]
     assert meta.check_climber_source(META_PROBLEM / "greedy.py") == []
 
 
 def test_reference_meta_problem_stays_out_of_the_bundled_catalog():
-    from hillclimb.demo import BUNDLED_PROBLEM_IDS
+    from hillclimb.catalog import PROBLEM_IDS
 
-    assert "meta-heilbronn" not in BUNDLED_PROBLEM_IDS
+    assert "meta-heilbronn" not in PROBLEM_IDS
 
 
 # --- the prompt an improver reads ---

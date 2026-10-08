@@ -8,6 +8,6 @@ budget: 15m
 schedule: sequential   # memory experiments share the knowledge graph: keep them in lockstep
 noise_floor: 0.01
 experiments:
-  greedy:       {climber: greedy}
-  greedy-nomem: {climber: greedy, learning.enabled: false}
-  openevolve:   {climber: openevolve}
+  greedy:       {climber: climbers/greedy/policy.py}
+  greedy-nomem: {climber: climbers/greedy/policy.py, learning.enabled: false}
+  openevolve:   {climber: climbers/openevolve/policy.py}

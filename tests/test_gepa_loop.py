@@ -11,9 +11,11 @@ import pytest
 from hillclimb.agents.fake import FakeAgent
 from hillclimb.harness.candidate import source_hash
 from hillclimb.harness.control import ControlCommand
-from hillclimb.climbers.gepa.loop import GepaLoop
-from hillclimb.climbers.gepa.operator import OPERATOR_NAME
-from hillclimb.climbers.gepa.proposer import COMPONENT, ProposerError
+from tests.catalog_fixture import GEPA, GREEDY, gepa_module
+
+GepaLoop = gepa_module("loop").GepaLoop
+OPERATOR_NAME = gepa_module("operator").OPERATOR_NAME
+COMPONENT, ProposerError = gepa_module("proposer").COMPONENT, gepa_module("proposer").ProposerError
 from hillclimb.harness.journal import Journal
 from hillclimb.harness.loop import PolicyLoop
 from hillclimb.harness.glue import ParkedSearch, StopRequested, build_loop, holdout_timing
@@ -224,19 +226,19 @@ def test_resume_identity_mismatch_is_a_hard_error(task, config, tmp_path):
 
 
 def test_gepa_is_a_loop_every_other_climber_a_policy(config):
-    name_climber(config, "gepa")
+    name_climber(config, str(GEPA))
 
     assert isinstance(build_loop(config, log=lambda *_: None), GepaLoop)
     assert holdout_timing(config) == "after"  # the loop's class asks; the user's holdout.timing cannot loosen it
-    name_climber(config, "greedy")
+    name_climber(config, str(GREEDY))
     assert isinstance(build_loop(config, priors={"complexity_start": 2}), PolicyLoop)
     assert holdout_timing(config) == "inline"
     config.holdout.timing = "after"
     assert holdout_timing(config) == "after"
-    with pytest.raises(ValueError, match="Unknown climber: nope .presets: gepa, greedy, openevolve"):
+    with pytest.raises(ValueError, match="Unknown climber: nope"):
         name_climber(config, "nope")
     config.climber.operator_policy = "nope"
-    with pytest.raises(ValueError, match="unknown operator policy 'nope' .available: greedy"):
+    with pytest.raises(ValueError, match="unknown operator policy 'nope' .available: none registered"):
         build_loop(config)
 
 

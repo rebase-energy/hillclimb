@@ -50,8 +50,9 @@ def _climber_ref(path: Path, base_dir: Path | None) -> str:
 
 
 def _is_climber_dir(path: Path) -> bool:
-    """A climber folder: `hillclimb climber get` wrote it, or a pre-0.6 manifest."""
-    return (path / "climber.yaml").is_file()
+    """A climber folder: `hillclimb climber get` wrote it (its `policy.py` is
+    the climber), or a pre-0.9 folder / pre-0.6 manifest (`climber.yaml`)."""
+    return (path / "policy.py").is_file() or (path / "climber.yaml").is_file()
 
 
 def _is_pre_06_manifest(path: Path) -> bool:
@@ -81,21 +82,23 @@ def _say_check_report(report) -> None:
 
 @climber_app.command("list")
 def climber_list(as_json: bool = typer.Option(False, "--json", help="Machine-readable output")):
-    """The climbers a bare name stands for: the presets, and every one-file
+    """The catalog's climbers (`climber get` copies one out) and every
     climber under climbers/."""
-    from hillclimb.climber import ClimberLoadError, climber_base_dir, load_climber, presets
+    from hillclimb.climber import ClimberLoadError, climber_base_dir, load_climber
 
     from hillclimb.climber import resolve_climber
 
     config = common.load_config()
     base_dir = climber_base_dir(config)
-    try:  # the folder's climber, by identity: a preset and a folder copied from it are two climbers
+    try:  # the folder's climber, by identity: a catalog climber and a copy of it are two climbers
         default = resolve_climber(config.climber, base_dir).sha256
     except (ClimberLoadError, ValueError):
         default = None
-    refs = [(name, "preset") for name in presets()]
+    from hillclimb import catalog
+
+    refs = [(name, "catalog") for name in catalog.climber_names()]
     local = _local_climbers_dir(config)
-    if local is not None and local.is_dir():
+    if local is not None and local.is_dir() and local.resolve() != catalog.climbers_dir().resolve():
         for path in sorted(local.iterdir()):
             if _is_climber_dir(path):
                 refs.append((_climber_ref(path, base_dir), "folder"))
@@ -104,7 +107,7 @@ def climber_list(as_json: bool = typer.Option(False, "--json", help="Machine-rea
     rows = []
     for ref, origin in refs:
         try:
-            climber = load_climber(ref, base_dir)
+            climber = catalog.climber(ref) if origin == "catalog" else load_climber(ref, base_dir)
             kind, description = ("loop" if climber.is_loop else "operator policy"), climber.description
         except (ClimberLoadError, ValueError) as exc:
             rows.append({"ref": ref, "origin": origin, "kind": "?", "description": f"BROKEN: {exc}",
@@ -136,10 +139,10 @@ def climber_list(as_json: bool = typer.Option(False, "--json", help="Machine-rea
         ("operators", "operator"), ("tuner", "tuner"), ("memory", "memory"),
     ):
         say(f"  {slot:<16} [path]{_m(', '.join(module_refs.registered_names(kind)))}[/]")
-    say("\n[note]* = this folder's default.[/]  Run one:        [cmd]hillclimb run <problem> --climber <name>[/]")
-    say("                              See its block:  [cmd]hillclimb climber show <name>[/]")
-    say("                              Read and edit one: [cmd]hillclimb climber get greedy[/]  (its policy and prompts, as a folder)")
-    say("                              Start your own: [cmd]hillclimb climber new <name> --from greedy[/]")
+    say("\n[note]* = this folder's default.[/]  Fetch one from the catalog: [cmd]hillclimb climber get greedy[/]  (the whole climber as Python, plus its prompts)")
+    say("                              Run it:          [cmd]hillclimb run <problem> --climber climbers/greedy/policy.py[/]")
+    say("                              See its block:   [cmd]hillclimb climber show climbers/greedy[/]")
+    say("                              Start your own:  [cmd]hillclimb climber new <name> --from climbers/greedy[/]")
 
 
 def _portable_block(climber, base_dir: Path | None) -> dict:
@@ -170,7 +173,7 @@ def _portable_block(climber, base_dir: Path | None) -> dict:
 
 @climber_app.command("show")
 def climber_show(
-    ref: str = typer.Argument(None, help="A preset, a .py file, or a pre-0.6 climber directory (default: this folder's climber)"),
+    ref: str = typer.Argument(None, help="A .py file, a climber folder, or a pre-0.6 climber directory (default: this folder's climber)"),
 ):
     """Print a climber as the block a run config takes.
 
@@ -195,30 +198,36 @@ def climber_show(
 
 @climber_app.command("get")
 def climber_get(
-    preset: str = typer.Argument("greedy", help="A preset to copy out: greedy | openevolve (see: hillclimb climber list)"),
-    name: str = typer.Option(None, "--name", help="The folder's name under climbers/ (default: the preset's)"),
+    preset: str = typer.Argument("greedy", help="A catalog climber to copy out: greedy | openevolve | gepa (see: hillclimb climber list)"),
+    name: str = typer.Option(None, "--name", help="The folder's name under climbers/ (default: the catalog's)"),
     default: bool = typer.Option(
         True, "--default/--no-default",
         help="Make the copy this folder's climber (`climber:` in hillclimb.yaml), so `hillclimb run` uses it",
     ),
 ):
-    """Copy a preset into climbers/<name>/: a folder you can read and edit.
+    """Copy a catalog climber into climbers/<name>/: the whole climber as Python you can read and edit.
 
-    The folder IS the climber: climber.yaml with every default spelled out,
-    policy.py (which operator makes the next attempt), and prompts/ with the
+    hillclimb ships no climber of its own — a catalog of examples to copy
+    from, like `problem get`. policy.py IS the climber: the selector policy
+    (which candidate the next attempt starts from) and the operator policy
+    (which operator makes it), every decision and every default (`DEFAULTS`)
+    written out, and at the end the `Climber(...)` that wires them to the
+    operators, tuner and memory — no config file; prompts/ holds the
     templates its operators render — the words the coding agents get — plus
     a README of what the harness fills into each template's tokens. It
-    becomes this folder's climber, so edit a template and the next
-    `hillclimb run` climbs with it. An existing folder is never overwritten.
+    becomes this folder's climber, so edit policy.py or a template and the
+    next `hillclimb run` climbs with it. An existing folder is never
+    overwritten.
     """
     import re as _re
 
+    from hillclimb import catalog
     from hillclimb.cli.problem import _hillclimb_dir_or_offer
-    from hillclimb.climber import ClimberLoadError, climber_base_dir, load_climber, presets, write_climber_folder
+    from hillclimb.climber import ClimberLoadError, climber_base_dir, load_climber
     from hillclimb.project import MARKER_FILE, ensure_owned_dir
 
-    if preset not in presets():
-        fail(f"error: no preset {_m(repr(preset))} [note](presets: {_m(', '.join(presets()))})[/]")
+    if preset not in catalog.climber_names():
+        fail(f"error: no catalog climber {_m(repr(preset))} [note](available: {_m(', '.join(catalog.climber_names()))})[/]")
         raise typer.Exit(1)
     name = name or preset
     if not _re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", name):
@@ -227,7 +236,8 @@ def climber_get(
     local = _local_climbers_dir(config)
     base_dir = climber_base_dir(config)
     target = local / name
-    ref = _climber_ref(target, base_dir)
+    folder_ref = _climber_ref(target, base_dir)
+    ref = _climber_ref(target / "policy.py", base_dir)  # the file is the climber; the folder names it too
     if target.exists():
         if not _is_climber_dir(target):
             fail(f"error: [path]{_m(target)}[/] exists and is not a climber folder [note](never overwritten)[/]")
@@ -239,9 +249,8 @@ def climber_get(
         )
     else:
         try:
-            source = load_climber(preset, base_dir)
             ensure_owned_dir(local)  # marked: `reset` may delete it (an existing one stays the user's)
-            written = write_climber_folder(source, target, name)
+            catalog.install_climber(local, preset, as_name=name)
             load_climber(ref, base_dir).operator_set()  # the copy loads, or it is not left behind
         except (ClimberLoadError, ValueError) as exc:
             import shutil
@@ -249,7 +258,11 @@ def climber_get(
             shutil.rmtree(target, ignore_errors=True)
             fail(f"error: {_m(exc)}")
             raise typer.Exit(1) from exc
-        say(f"[head]Fetched {_m(preset)}[/] as [path]{_m(ref)}[/]")
+        written = sorted(
+            p.relative_to(target).as_posix() for p in target.rglob("*")
+            if p.is_file() and "__pycache__" not in p.parts and not p.name.startswith(".")
+        )
+        say(f"[head]Fetched {_m(preset)}[/] as [path]{_m(folder_ref)}[/]")
     legend([(path, note) for path, note in _folder_legend(written)])
     if default and config.hillclimb_dir is not None:
         marker = config.hillclimb_dir / MARKER_FILE
@@ -260,8 +273,8 @@ def climber_get(
             marker.write_text(pinned)
             say(f"[head]Default:[/] `climber: {_m(ref)}` in [path]{_m(MARKER_FILE)}[/] [note](every `hillclimb run` here climbs with it)[/]")
     next_steps([
-        (f"cat {ref}/prompts/README.md", "how a prompt is made, and what fills each template"),
-        (f"hillclimb climber check --climber {ref}", "after editing a template or policy.py"),
+        (f"cat {folder_ref}/prompts/README.md", "how a prompt is made, and what fills each template"),
+        (f"hillclimb climber check --climber {ref}", "after editing policy.py or a template"),
         ("hillclimb run <problem> --budget 10m", "climb with it"),
     ])
 
@@ -269,8 +282,10 @@ def climber_get(
 def _folder_legend(written: list[str]) -> list[tuple[str, str]]:
     """One note per file of a climber folder, prompts grouped."""
     notes = {
-        "climber.yaml": "the block: policy, selector, operators, tuner, memory, prompts",
-        "policy.py": "the operator policy: which operator makes the next attempt",
+        "policy.py": (
+            "the climber, as Python: the selector policy (which candidate next), the operator policy "
+            "(which operator on it), their defaults, and the Climber(...) that wires them to the operators, tuner, memory and prompts"
+        ),
         "prompts/README.md": "how a prompt is made; what fills every token",
     }
     rows = [(path, notes[path]) for path in notes if path in written]
@@ -305,13 +320,15 @@ def pin_climber(text: str, ref: str) -> str | None:
 def climber_new(
     name: str = typer.Argument(..., help="Name of the new climber (becomes climbers/<name>.py)"),
     from_: str = typer.Option(
-        "greedy", "--from", help="What to copy: a preset's name or a .py file"
+        "greedy", "--from", help="What to copy: a catalog climber's name or a local climber (.py file or folder)"
     ),
 ):
     """Start your own climber from a copy of an existing one.
 
-    Copies the source of the operator policy (or loop) into climbers/<name>.py — a
-    one-file climber you can edit — and prints the block that runs it.
+    A climber folder (`hillclimb climber get` wrote it: policy.py builds the
+    whole Climber, prompts/ beside it) is copied as climbers/<name>/. Any other
+    source's file — the policies, or the loop — is copied into climbers/<name>.py,
+    a one-file climber you can edit, and the block that runs it is printed.
     """
     import inspect
     import re as _re
@@ -329,7 +346,9 @@ def climber_new(
         raise typer.BadParameter(f"{name!r}: a climber name is letters, digits, - and _")
     base_dir = climber_base_dir(config)
     try:
-        source = load_climber(from_, base_dir)
+        from hillclimb import catalog
+
+        source = catalog.climber(from_) if from_ in catalog.climber_names() else load_climber(from_, base_dir)
         source_file = Path(inspect.getsourcefile(source.brain.target))
     except (ClimberLoadError, ValueError, TypeError) as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -339,11 +358,40 @@ def climber_new(
     from hillclimb.project import ensure_owned_dir
 
     ensure_owned_dir(local)  # marked: `reset` may delete it (an existing one stays the user's)
+    if "Climber(" in source_file.read_text(encoding="utf-8", errors="replace"):
+        # the file builds the whole climber (a folder `climber get` wrote): the
+        # copy is a folder too — the file, renamed inside, with its prompts beside it
+        folder = local / name
+        folder.mkdir()
+        text = source_file.read_text(encoding="utf-8")
+        if source.spec.name:
+            text = text.replace(f"name={source.spec.name!r},", f"name={name!r},", 1)
+        (folder / "policy.py").write_text(text, encoding="utf-8")
+        if source.prompts_dir is not None:
+            shutil.copytree(source.prompts_dir, folder / "prompts")
+        ref = _climber_ref(folder / "policy.py", base_dir)
+        try:
+            load_climber(ref, base_dir).brain  # noqa: B018
+        except (ClimberLoadError, ValueError) as exc:  # never leave a broken copy behind
+            shutil.rmtree(folder, ignore_errors=True)
+            raise typer.BadParameter(f"the copy does not load: {exc}") from exc
+        say(f"[head]Created[/] [path]{_m(_climber_ref(folder, base_dir))}[/] from [path]{_m(from_)}[/]")
+        say(f"[head]Run it:[/] `climber: {_m(ref)}` in hillclimb.yaml, or [cmd]--climber {_m(ref)}[/]")
+        say(f"[head]Next:[/] edit [path]{_m(ref)}[/] or a template beside it, then   [cmd]hillclimb climber check --climber {_m(ref)}[/]")
+        return
     shutil.copy2(source_file, target)
     ref = _climber_ref(target, base_dir)
     brain = "loop" if source.is_loop else "operator_policy"
     class_name = getattr(source.brain.target, "__name__", "")
     block = {**_portable_block(source, base_dir), "name": name, brain: f"{ref}:{class_name}" if class_name else ref}
+    selector_cls = None if source.is_loop else source._selector_target()
+    if inspect.isclass(selector_cls):
+        try:
+            same_file = Path(inspect.getsourcefile(selector_cls)) == source_file
+        except TypeError:
+            same_file = False
+        if same_file:  # the copy carries the selector policy too: name it there, not in the source
+            block["selector_policy"] = f"{ref}:{selector_cls.__name__}"
     try:
         load_climber(block[brain], base_dir).brain  # noqa: B018
     except (ClimberLoadError, ValueError) as exc:  # never leave a broken copy behind
@@ -361,7 +409,7 @@ def climber_check(
     spec: str = typer.Argument(
         None, help="A run spec: check the climber of every entry (default: this folder's `climber:` block)"
     ),
-    climber: str = typer.Option(None, "--climber", help="A preset or one .py file, instead of the folder's block"),
+    climber: str = typer.Option(None, "--climber", help="A .py file or climber folder, instead of the folder's block"),
     problem: str = typer.Option(
         None, "--problem", help="Replay only this problem's recorded searches (default: every search)"
     ),
@@ -414,14 +462,14 @@ def climber_check(
                     entry_config.climber = as_spec(entry.climber)
                 entry_config.apply_overrides(common._parse_set(entry.set))
                 entry_config.apply_overrides(overrides)
-                block = entry_config.climber.block()
+                block = entry_config.climber_block()  # NoClimber when neither the entry nor the folder names one
                 if block not in seen:  # several entries on one climber: checked once
                     seen.append(block)
                     targets.append((f"{entry.name or entry.target} [{index}]", entry_config))
         else:
             if climber:
                 try:
-                    config.climber = as_spec(climber)  # a preset, one file
+                    config.climber = as_spec(climber)  # one file, a climber folder
                 except ClimberLoadError:
                     # a pre-0.6 directory: read it as the block it is
                     config.climber = load_climber(climber, base_dir).spec
@@ -531,7 +579,12 @@ def _check_climber(config: Config, *, problem, limit, smoke, smoke_budget, as_js
             "candidates": len(journal.candidates),
             "scored": len(journal.scored_candidates()),
             "best": outcome.selected.val_score if outcome.selected is not None else None,
+            "passing": sum(
+                c.status == "passing" for c in journal.candidates.values() if c.kind not in ("baseline", "seed")
+            ),
         }
+        if not as_json:
+            common.warn_if_none_passed(journal, outcome.ref, "dummy")
     payload = None
     if as_json:
         payload = report.to_dict()
@@ -547,6 +600,7 @@ def _check_climber(config: Config, *, problem, limit, smoke, smoke_budget, as_js
             say(
                 f"[head]smoke [path]{_m(smoke_result['search'])}[/]:[/] {_m(smoke_result['state'])}, "
                 f"{smoke_result['candidates']} candidate(s), {smoke_result['scored']} scored, "
+                f"{smoke_result['passing']} attempt(s) passing, "
                 f"best={_m(smoke_result['best'])}"
             )
         elif smoke:

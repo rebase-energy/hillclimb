@@ -24,6 +24,7 @@ from hillclimb.modules.memory.graph import (
 )
 from hillclimb.modules.memory.graphs import _GRAPHS, get_graph, register_graph, registered_graphs
 from tests.test_graph import claim, knowledge_dir, make_card  # noqa: F401 — fixture
+from tests.catalog_fixture import pinned
 
 # a module that only changes the structure: one note node, no claims, no layout
 NOTES_PY = '''
@@ -180,7 +181,7 @@ class TestSeam:
         from hillclimb.api import build_knowledge_context
         from hillclimb.modules.memory.files import FilesMemory
 
-        config = Config()
+        config = pinned()
         config.learning.dir = knowledge_dir
         monkeypatch.setattr(FilesMemory, "graph_module", lambda self: Claimy())
         text, _, injected = build_knowledge_context(config, PROBLEM, "", lambda m: None)
@@ -194,7 +195,7 @@ class TestSeam:
         from hillclimb.cli import common
         from hillclimb.cli.knowledge import knowledge_query
 
-        config = Config()
+        config = pinned()
         config.learning.dir = knowledge_dir
         monkeypatch.setattr(common, "load_config", lambda *a, **k: config)
         monkeypatch.setattr(glue, "build_graph_module", lambda *a, **k: Claimy())
@@ -208,7 +209,7 @@ class TestSeam:
         from hillclimb.modules.memory.consolidate import consolidate
 
         notes: list[str] = []
-        summary = consolidate(knowledge_dir, Config(), notes.append, graph_module=Notes())
+        summary = consolidate(knowledge_dir, pinned(), notes.append, graph_module=Notes())
         assert summary["generalized"] == [] and summary["playbooks_written"] == []
         assert any("yielded no claim nodes" in n for n in notes)
 
@@ -220,7 +221,7 @@ async def test_the_graph_screen_shows_a_climbers_own_graph(knowledge_dir, tmp_pa
 
     monkeypatch.setenv("PLOTUI_RENDER", "placeholder")
     monkeypatch.setattr(glue, "build_graph_module", lambda *a, **k: Notes())
-    config = Config()
+    config = pinned()
     config.learning.dir = knowledge_dir
     config.paths.runs_dir = tmp_path / "runs"
     app = GraphApp(config)

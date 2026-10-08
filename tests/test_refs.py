@@ -107,6 +107,34 @@ def test_identity_follows_the_bytes_not_the_place(tmp_path):
     assert sys.modules[old.__module__].NUM == 3 and sys.modules[new.__module__].NUM == 4
 
 
+def test_files_far_apart_are_one_package_each(tmp_path):
+    """A user's policy beside a catalog class installed under
+    `…/lib/python3.12/site-packages/…`: the common root would be `/` and a
+    directory like `python3.12` is no module name, so each entry is its own
+    package rooted where it is — and the scope still has one identity, by
+    bytes alone, so a snapshot of it (other roots) hashes the same."""
+    for base in ("here", "elsewhere"):
+        write(tmp_path / base / "v1.2" / "mine.py", POLICY)
+        write(tmp_path / base / "lib" / "cat" / "helpers.py", "NUM = 7\n")
+        write(tmp_path / base / "lib" / "cat" / "policy.py", "from .helpers import NUM\n" + POLICY)
+    here = FileScope([tmp_path / "here" / "v1.2" / "mine.py", tmp_path / "here" / "lib" / "cat" / "policy.py"])
+    assert len(here.components) == 2
+    assert {c.root for c in here.components} == {(tmp_path / "here" / "v1.2").resolve(), (tmp_path / "here" / "lib" / "cat").resolve()}
+    assert sorted(here.relative(f).as_posix() for f in here.files) == sorted(["0/helpers.py", "0/policy.py", "1/mine.py"]) or \
+        sorted(here.relative(f).as_posix() for f in here.files) == sorted(["1/helpers.py", "1/policy.py", "0/mine.py"])
+    mine = resolve_ref(str(tmp_path / "here" / "v1.2" / "mine.py"), "policy", scope=here)
+    cat = resolve_ref(str(tmp_path / "here" / "lib" / "cat" / "policy.py"), "policy", scope=here)
+    assert mine.target.__module__ != cat.target.__module__.rsplit(".", 1)[0]
+    assert sys.modules[cat.target.__module__].NUM == 7
+    # the same files laid out elsewhere: the same identity, the same numbering
+    elsewhere = FileScope([tmp_path / "elsewhere" / "lib" / "cat" / "policy.py", tmp_path / "elsewhere" / "v1.2" / "mine.py"])
+    assert elsewhere.digest == here.digest
+    assert sorted(elsewhere.relative(f).as_posix() for f in elsewhere.files) == sorted(here.relative(f).as_posix() for f in here.files)
+    # files that sit together under one importable root stay ONE package, as before
+    together = FileScope([tmp_path / "here" / "lib" / "cat" / "policy.py", tmp_path / "here" / "lib" / "cat" / "helpers.py"])
+    assert len(together.components) == 1 and together.relative(tmp_path / "here" / "lib" / "cat" / "helpers.py").as_posix() == "helpers.py"
+
+
 def test_file_refs_split_and_anchor(tmp_path):
     assert refs.split_file_ref("dir/mine.py:Class") == ("dir/mine.py", "Class")
     assert refs.split_file_ref("C:/x/mine.py:Class") == ("C:/x/mine.py", "Class")  # a drive letter is not a class

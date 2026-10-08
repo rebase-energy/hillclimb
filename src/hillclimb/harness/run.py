@@ -187,7 +187,7 @@ class SearchMeta(BaseModel):
             from hillclimb.modules.spec import block_from_05, schedule_to_selector
 
             try:
-                block = schedule_to_selector(block_from_05({"ref": data["climber"], "params": dict(overlay)}))
+                block = schedule_to_selector(block_from_05({"ref": data["climber"], "params": dict(overlay)}, legacy=True))
             except ValueError:
                 block = {"params": dict(overlay)} if overlay else {}
         else:

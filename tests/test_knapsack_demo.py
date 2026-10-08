@@ -7,26 +7,26 @@ import sys
 import pytest
 
 from hillclimb.cli import main as cli_main
-from hillclimb.demo import BUNDLED_PROBLEM_IDS, install_demo_problem
+from hillclimb.catalog import PROBLEM_IDS, install_problem
 from hillclimb.harness.executor import CommandExecutor, CommandHoldoutScorer, RESULT_FILE
 from hillclimb.problem import load_problem
 
 
 def test_knapsack_is_a_bundled_problem_and_unknown_ids_are_rejected(tmp_path):
-    assert "knapsack" in BUNDLED_PROBLEM_IDS
-    problem_dir, created = install_demo_problem(tmp_path / "problems", "knapsack")
+    assert "knapsack" in PROBLEM_IDS
+    problem_dir, created = install_problem(tmp_path / "problems", "knapsack")
     assert created and problem_dir.name == "knapsack"
     assert (problem_dir / "problem.yaml").exists()
     # two steps: run.py calls select_items, verify.py scores; no verifier to run
     assert (problem_dir / "run.py").exists() and not (problem_dir / "verifier.sh").exists()
 
-    with pytest.raises(ValueError, match="no bundled problem"):
-        install_demo_problem(tmp_path / "problems", "not-a-problem")
+    with pytest.raises(ValueError, match="no catalog problem"):
+        install_problem(tmp_path / "problems", "not-a-problem")
 
 
 def test_knapsack_baseline_scores_validation_and_holdout(tmp_path, config):
     config.paths.problems_dir = tmp_path / "problems"
-    install_demo_problem(config.paths.problems_dir, "knapsack")
+    install_problem(config.paths.problems_dir, "knapsack")
     problem = load_problem("knapsack", config)
     assert problem.metric_name == "mean-percent-of-upper-bound"
     assert problem.higher_is_better

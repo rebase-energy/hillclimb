@@ -3,14 +3,17 @@
                                                                                                                         
  Start your own climber from a copy of an existing one.                                                                 
                                                                                                                         
- Copies the source of the operator policy (or loop) into climbers/<name>.py — a                                         
- one-file climber you can edit — and prints the block that runs it.                                                     
+ A climber folder (`hillclimb climber get` wrote it: policy.py builds the                                               
+ whole Climber, prompts/ beside it) is copied as climbers/<name>/. Any other                                            
+ source's file — the policies, or the loop — is copied into climbers/<name>.py,                                         
+ a one-file climber you can edit, and the block that runs it is printed.                                                
                                                                                                                         
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ *    name      TEXT  Name of the new climber (becomes climbers/<name>.py) [required]                                 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ --from          TEXT  What to copy: a preset's name or a .py file [default: greedy]                                  │
+│ --from          TEXT  What to copy: a catalog climber's name or a local climber (.py file or folder)                 │
+│                       [default: greedy]                                                                              │
 │ --help  -h            Show this message and exit.                                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 

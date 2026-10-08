@@ -260,7 +260,7 @@ class SuiteEntry(BaseModel):
     agent: str | None = None
     budget: str | None = None  # "2h" / "30m" / seconds — parsed by the CLI
     # the climber this search runs: the `climber:` block (`modules/spec.py`),
-    # or a preset's name / one .py file as shorthand. File refs in it are
+    # or one .py file / a climber folder as shorthand. File refs in it are
     # relative to the spec file. None = the spec's own `climber:`, else the folder's
     climber: str | dict | None = None
     parallel_agents: int | None = None
@@ -394,11 +394,11 @@ def resolve_problem_yaml(target: str | Path, config: Config) -> Path:
 
 def _how_to_get(target: str) -> str:
     """The command that would give the user the problem they named."""
-    from hillclimb.demo import BUNDLED_PROBLEM_IDS
+    from hillclimb.catalog import PROBLEM_IDS
 
     name = Path(target).name
-    if name in BUNDLED_PROBLEM_IDS:
-        return f"It is a bundled problem: fetch it with `hillclimb problem get {name}`."
+    if name in PROBLEM_IDS:
+        return f"It is a catalog problem: fetch it with `hillclimb problem get {name}`."
     return f"See `hillclimb problem list`, or start your own with `hillclimb problem new {name}`."
 
 
@@ -1036,10 +1036,10 @@ class Problem:
             try:
                 resolve_problem_yaml(self.name, config)
             except FileNotFoundError:
-                from hillclimb.demo import BUNDLED_PROBLEM_IDS, install_demo_problem
+                from hillclimb.catalog import PROBLEM_IDS, install_problem
 
-                if self.name in BUNDLED_PROBLEM_IDS:
-                    install_demo_problem(config.paths.problems_dir, self.name)
+                if self.name in PROBLEM_IDS:
+                    install_problem(config.paths.problems_dir, self.name)
         return self.name
 
     def spec(self, config: Config | None = None) -> ProblemSpec:

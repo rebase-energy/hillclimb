@@ -15,7 +15,6 @@ from __future__ import annotations
 _LAZY = {
     "OperatorPolicy": ("hillclimb.modules.policies.base", "OperatorPolicy"),
     "Policy": ("hillclimb.modules.policies.base", "Policy"),  # the pre-0.7 name
-    "Greedy": ("hillclimb.modules.policies.greedy", "Greedy"),
 }
 
 __all__ = sorted(_LAZY)

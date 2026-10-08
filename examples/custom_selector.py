@@ -4,23 +4,27 @@
     uv run python examples/custom_selector.py toy      # with the free scripted agent, in seconds
 
 The selector (π_sel) is the first decision of every step: which node the
-next attempt starts from, or none. The base class carries the schedule every
-selector shares (a failing tip first, roots until `num_drafts`, the final
-ensemble window) and asks a subclass for one thing: `select`, the scored node
-to build on. Swap it and the same policy grows a different tree:
-`Best` digs one lineage deep, `LeastExpanded` spreads over the top few.
+next attempt starts from, or none. `Best` writes the whole schedule out (a
+failing tip first, roots until `num_drafts`, the final ensemble window, then
+`select`: the best scored node). Subclassing it and replacing `select` keeps
+that schedule and changes the one choice. Swap it and the same policy grows
+a different tree: `Best` digs one lineage deep, `LeastExpanded` spreads over
+the top few.
 """
 
 import sys
 
 from hillclimb import Budget, Climber, Problem, SearchOutcome
 from hillclimb.operators import Debug, Draft, Improve
-from hillclimb.policies import Greedy
-from hillclimb.sdk import SearchState, Selection, SelectorPolicy, improvable
-from hillclimb.selectors import Best
+from hillclimb.sdk import SearchState, Selection, improvable
+from hillclimb import catalog
+
+# the catalog's greedy climber (`hillclimb climber get greedy` copies the same file): its classes to compose with
+greedy = catalog.module("greedy")
+Greedy, Best = greedy.Greedy, greedy.Best
 
 
-class LeastExpanded(SelectorPolicy):
+class LeastExpanded(Best):
     """Among the top few scored candidates, the one with the fewest children."""
 
     name = "least-expanded"

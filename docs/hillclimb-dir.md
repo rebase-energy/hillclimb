@@ -28,8 +28,9 @@ what marks it as hillclimb's: a folder of the same name without one is yours,
 and hillclimb never deletes it.
 
 `hillclimb climber get greedy` adds `climbers/greedy/` beside them — the
-default climber as a folder to read and edit — and `hillclimb climber new
-<name>` a one-file `climbers/<name>.py` (see [climbers.md](climbers.md));
+default climber as a folder to read and edit, its whole policy in
+`policy.py` — and `hillclimb climber new <name>` a one-file
+`climbers/<name>.py` (see [climbers.md](climbers.md));
 learning writes `knowledge/`, experiments live in `experiments/`.
 
 Commands run from the hillclimb dir's root: the folder holding
@@ -82,7 +83,7 @@ same keys. CLI flags override a spec's values.
 
 `climber` is where the search's climber is **defined**: the block (a policy
 or loop, its selector, operators, tuner and memory — see
-[climbers.md](climbers.md)), or a preset's name. A `climber:` at the top of
+[climbers.md](climbers.md)), or a .py file / climber folder. A `climber:` at the top of
 the spec, beside `problems:`, is the default for entries that name none; an
 entry without one in a spec without one uses the folder's, from
 `hillclimb.yaml`. File refs in a block are relative to the spec file.

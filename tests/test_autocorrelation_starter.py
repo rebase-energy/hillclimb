@@ -62,7 +62,7 @@ def test_committed_dirs_match_the_generator(generator, tmp_path):
     assert tuple(generator.DEFAULT_KEYS) == KEYS
     for key in KEYS:
         generated = generator.stamp(tmp_path, key)
-        for committed in (REPO / "problems" / key, REPO / "src" / "hillclimb" / "demo" / key):
+        for committed in (REPO / "problems" / key,):
             for path in generated.iterdir():
                 assert (committed / path.name).read_text() == path.read_text(), f"{committed / path.name} is stale"
             assert {p.name for p in committed.iterdir() if p.name != "__pycache__"} == {

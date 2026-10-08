@@ -12,12 +12,13 @@ from hillclimb.harness.budget import BudgetManager
 from hillclimb.climber import load_climber
 from hillclimb.harness.dirs import create_search_dir
 from hillclimb.harness.core import Harness
-from hillclimb.climbers.gepa import build_gepa_loop
-from hillclimb.climbers.gepa.loop import GepaLoop
-from hillclimb.climbers.gepa.proposer import COMPONENT, ProposerError
+from tests.catalog_fixture import GEPA, climber as catalog_climber, gepa_loop as build_gepa_loop, gepa_module
 from hillclimb.harness.journal import Journal
 from tests.conftest import executor_for, ok_script
 from tests.factories import name_climber
+
+GepaLoop = gepa_module("loop").GepaLoop
+COMPONENT, ProposerError = gepa_module("proposer").COMPONENT, gepa_module("proposer").ProposerError
 
 
 class FakeGEPADriver:
@@ -64,7 +65,7 @@ class GepaSearch:
 
 def make_gepa(task, config, tmp_path, *, agent=None, driver=None, seed_score: float | None = 0.5,
               budget_s: int = 3600, journal=None, search_dir=None, **harness_kwargs) -> GepaSearch:
-    name_climber(config, "gepa")
+    name_climber(config, str(GEPA))
     search_dir = search_dir or create_search_dir(tmp_path / "runs" / "r", "s")
     seed = None
     if seed_score is not None:
@@ -82,7 +83,8 @@ def make_gepa(task, config, tmp_path, *, agent=None, driver=None, seed_score: fl
         search_dir=search_dir,
         log=lambda *_: None,
         seed_solution=seed,
-        operators=load_climber("gepa").operator_set(),
+        operators=catalog_climber("gepa").operator_set(),
+        prompts_dir=catalog_climber("gepa").prompts_dir,  # gepa_reflect.md lives beside the climber, not in the package
         **harness_kwargs,
     )
     loop = build_gepa_loop(config, driver=driver or FakeGEPADriver(steps=0), log=lambda *_: None)

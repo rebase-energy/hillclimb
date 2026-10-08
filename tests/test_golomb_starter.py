@@ -63,7 +63,7 @@ def test_committed_dirs_match_the_generator(generator, tmp_path):
     """Rerun the generator after editing a template; both copies are committed."""
     for m in INSTANCES:
         generated = generator.stamp(tmp_path, m)
-        for committed in (REPO / "problems" / f"golomb-{m}", REPO / "src" / "hillclimb" / "demo" / f"golomb-{m}"):
+        for committed in (REPO / "problems" / f"golomb-{m}",):
             assert sorted(p.name for p in committed.iterdir() if p.name != "__pycache__") == sorted(
                 p.name for p in generated.iterdir()
             )

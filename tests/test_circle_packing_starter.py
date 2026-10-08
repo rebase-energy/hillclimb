@@ -16,7 +16,7 @@ from hillclimb.problem import load_problem
 
 REPO = Path(__file__).resolve().parent.parent
 INSTANCES = (32,)
-COMMITTED_ROOTS = (REPO / "problems", REPO / "src" / "hillclimb" / "demo")
+COMMITTED_ROOTS = (REPO / "problems",)
 
 # AlphaEvolve's 32-circle construction (google-deepmind/alphaevolve_results,
 # mathematical_results.ipynb, B.12 Construction 2): sum of radii 2.937944526205518

@@ -263,7 +263,7 @@ def experiment_report(
     problem: str = typer.Option("", "--problem", help="Filter to one problem id"),
     control: str = typer.Option(None, "--control", help="Experiment to compare against (default: the first)"),
     noise_floor: float = typer.Option(
-        None, "--noise-floor", help="Gap below which experiments are not different (default: the spec's)"
+        None, "--noise-floor", help="Gap below which experiments are not different (default: the spec's); the spread across repeats counts when it is larger"
     ),
     as_json: bool = typer.Option(
         False, "--json", help="Machine-readable: the summaries as JSON (a meta-verifier reads the gaps)"

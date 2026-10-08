@@ -151,13 +151,15 @@ class OperatorPolicy:
     """π_op, the operator policy: which operator to apply to what the
     selector policy chose — nothing else.
 
-    Subclass it, list your knobs in `DEFAULTS`, override `propose`. The base
-    `propose` is the plain mapping — no node: draft; a failing node: debug;
-    several nodes: ensemble; a scored node: improve — so an operator policy
-    of your own only has to say where it differs (which `refine` operator,
-    when to tune, …). The base also carries `param`, `resolved_params`, the
-    selector policy the loop asks first (`self.selector`, `default_selector`
-    unless the climber's block names another) and `draft_complexity`.
+    Subclass it, list your knobs in `DEFAULTS`, implement `propose`. The base
+    decides nothing: it carries `param`, `resolved_params`, the selector
+    policy the loop asks first (`self.selector`, `default_selector` unless
+    the climber's block names another) and `observe`. The bundled `Greedy`
+    (`hillclimb/climbers/greedy/policy.py`) is the reference mapping — no
+    node: draft; a failing node: debug; several nodes: ensemble; a scored
+    node: tune, else improve — to subclass where yours differs (which
+    `refine` operator, when to tune, …) or to copy (`hillclimb climber get
+    greedy`) and own.
 
     A class with `propose(state, selection)` and `observe(state, candidate)`
     and no base still runs — the contract is the two methods.
@@ -166,14 +168,20 @@ class OperatorPolicy:
     name: str = ""
     # every knob and its default, merged over the class hierarchy: a
     # subclass lists only what it adds or changes
-    DEFAULTS: Mapping[str, Any] = {
-        "complexity_start": 0,  # offset of the draft-complexity cue (memory may have learned one)
-    }
-    # the selector policy an operator policy of this class uses when the block names none
-    default_selector: str | None = "best"
+    DEFAULTS: Mapping[str, Any] = {}
+    # a selector policy to build when the block names none and the file defines
+    # none: a ref (a file, module:Class); None = no selector (every step is a root step)
+    default_selector: str | None = None
     # a param the block sets must be one of `DEFAULTS` (a typo fails before
     # any spend). False for a class that takes free-form params
     strict_params: bool = True
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        # a name is the class's own: a subclass of `Greedy` that declares none
+        # is not `greedy` (the loader stamps the block's label on it instead)
+        if "name" not in vars(cls):
+            cls.name = ""
 
     def __init__(self, params: Mapping | None = None, selector=None, **knobs):
         # held, never copied: what the climber resolved IS the policy's params.
@@ -182,9 +190,9 @@ class OperatorPolicy:
 
         known = self.defaults() if self.strict_params else None
         if known is not None:
-            from hillclimb.modules.selectors.base import SelectorPolicy
+            from hillclimb.modules.spec import SCHEDULE_KNOBS
 
-            moved = sorted(set(knobs) & set(SelectorPolicy.defaults()) - set(known))
+            moved = sorted(set(knobs) & set(SCHEDULE_KNOBS) - set(known))
             if moved:
                 raise TypeError(
                     f"{type(self).__name__} has no param {', '.join(map(repr, moved))}: the schedule is the "
@@ -228,23 +236,12 @@ class OperatorPolicy:
     def propose(self, state: SearchState, selection: Selection | None) -> Action | None:
         """The operator for what the selector chose, as an Action; None =
         hold (keep the slot empty until an in-flight result lands).
-        `selection` is None for a root step."""
-        if selection is None:
-            return self.draft_action(state)
-        if selection.combine:
-            if state.inflight:
-                return None  # drain: the inputs of a combination snapshot at launch
-            return Action(
-                operator="ensemble",
-                target_id=selection.target_id,
-                inspiration_ids=tuple(selection.inspiration_ids),
-                extra_prompt_context=selection.prompt_context,
-                climber_meta=dict(selection.meta),
-            )
-        node = state.journal.candidates[selection.target_id]
-        if node.status in ("failing", "buggy"):
-            return Action(operator="debug", target_id=node.candidate_id)
-        return self.expand_action(state, selection)
+        `selection` is None for a root step. The whole mapping is written in
+        the policy — see `Greedy.propose` in hillclimb/climbers/greedy/policy.py."""
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement propose(state, selection) — the reference is "
+            "hillclimb/climbers/greedy/policy.py:Greedy (subclass it, or `hillclimb climber get greedy` copies it)"
+        )
 
     def observe(self, state: SearchState, candidate: Candidate) -> None:
         """Called after every journaled terminal result (and replayed for
@@ -253,43 +250,6 @@ class OperatorPolicy:
         selector = self.selector
         if selector is not None:
             selector.sync(state)
-
-    # --- the moves, for a subclass to reuse ---
-
-    def draft_action(self, state: SearchState) -> Action:
-        """A root step: a fresh draft, with the complexity cue and whatever
-        the selector tags new roots with."""
-        selector = self.selector
-        return Action(
-            operator="draft",
-            args={"complexity": self.draft_complexity(state)},
-            climber_meta=selector.creation_meta(state) if selector is not None else {},
-        )
-
-    def expand_action(self, state: SearchState, selection: Selection, operator: str = "improve") -> Action:
-        """Build on the chosen node with a `refine` operator (`improve`)."""
-        return Action(
-            operator=operator,
-            target_id=selection.target_id,
-            inspiration_ids=tuple(selection.inspiration_ids),
-            extra_prompt_context=selection.prompt_context,
-            climber_meta=dict(selection.meta),
-        )
-
-    # --- journal questions ---
-
-    @staticmethod
-    def improvable(candidate: Candidate) -> bool:
-        """Can an attempt start from this candidate? (A declared floor —
-        `baseline: 0.5` — is scored but has no code.)"""
-        from hillclimb.modules.selectors.base import improvable
-
-        return improvable(candidate)
-
-    def draft_complexity(self, state: SearchState) -> str:
-        """The complexity cue for the next draft: it escalates per draft."""
-        index = len(state.journal.drafts()) + int(self.param("complexity_start"))
-        return "minimal" if index == 0 else "moderate" if index == 1 else "advanced"
 
 
 # the pre-0.7 name; one release of grace

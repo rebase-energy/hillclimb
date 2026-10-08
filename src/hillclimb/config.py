@@ -176,6 +176,21 @@ def current_setting(key: str) -> str:
     return key
 
 
+def _climber_from_override(key: str, value) -> ClimberSpec:
+    """`--set climber.<field>=…` on a folder that names no climber: naming
+    one (`operator_policy`, `loop`) starts the block; a knob alone has
+    nothing to land on, and the error says how to fetch a climber."""
+    from hillclimb.modules.refs import NoClimber
+
+    leaf = key.split(".", 1)[1]
+    if leaf in ("operator_policy", "loop"):
+        return ClimberSpec.model_validate({leaf: value})
+    raise NoClimber(
+        f"no climber to edit with `--set {key}=…`: name one first "
+        "(`hillclimb climber get greedy`, or `--climber <file.py>`)"
+    )
+
+
 class EvaluationConfig(BaseModel):
     """How a candidate is measured (the `evaluation:` block) — the harness's,
     never a climber's."""
@@ -459,8 +474,10 @@ class Config(BaseModel):
     routing: dict[str, RouteConfig] = Field(default_factory=dict)
     budget: BudgetConfig = BudgetConfig()
     # the climber: the SAME block a run spec entry takes (`modules/spec.py`);
-    # here it is the folder's default
-    climber: ClimberSpec = Field(default_factory=ClimberSpec)
+    # here it is the folder's default — and there is none until the folder
+    # names one (`hillclimb climber get greedy` pins the catalog's copy): the
+    # engine ships no climber of its own
+    climber: ClimberSpec | None = None
     evaluation: EvaluationConfig = EvaluationConfig()
     concurrency: ConcurrencyConfig = ConcurrencyConfig()
     holdout: HoldoutConfig = HoldoutConfig()
@@ -481,6 +498,9 @@ class Config(BaseModel):
     # in this process: it cannot be a block, so it rides beside the config
     # (in-process runs only — see `api.run`)
     _live_climber: Any = PrivateAttr(default=None)
+    # the block is a RECORD's (a resumed search from before snapshots): its
+    # pre-0.9 registry names resolve to the catalog's files
+    _climber_legacy_names: bool = PrivateAttr(default=False)
 
     @model_validator(mode="before")
     @classmethod
@@ -672,7 +692,7 @@ class Config(BaseModel):
                     # a climber is ONE block: the folder's replaces the user
                     # level's whole, never merges into it (its params belong
                     # to its policy, not to whichever policy ends up chosen).
-                    # A string names a preset, a file or a climber folder
+                    # A string names a file or a climber folder
                     # (looked for under the hillclimb dir); its refs stay
                     # relative, anchored at the hillclimb dir when used
                     data["climber"] = (
@@ -697,6 +717,9 @@ class Config(BaseModel):
             if not parents and leaf == "climber":
                 # a name, a file, a climber folder (under the hillclimb dir) or a block
                 value = ClimberSpec.model_validate(value, context={"base_dir": config.hillclimb_dir})
+            elif parents and parents[0] == "climber" and config.climber is None:
+                config.climber = _climber_from_override(key, value)
+                continue
             target: object = config
             for part in parents:
                 target = target[part] if isinstance(target, dict) else getattr(target, part)
@@ -723,9 +746,13 @@ class Config(BaseModel):
             key = current_setting(key)
             value = legacy_value(key, value)
             if key == "climber":
-                # naming a climber (a preset, a file, a folder, a whole block)
+                # naming a climber (a file, a folder, a whole block)
                 # replaces the block; later `climber.<field>` overrides then edit it
                 working.climber = ClimberSpec.model_validate(value, context={"base_dir": self.hillclimb_dir})
+                continue
+            if key.startswith("climber.") and working.climber is None:
+                # no climber to edit: naming one starts the block, a knob alone has nothing to land on
+                working.climber = _climber_from_override(key, value)
                 continue
             if key in ("climber.operator_policy", "climber.loop"):
                 # a climber has one or the other: naming one drops the other
@@ -765,8 +792,22 @@ class Config(BaseModel):
     def climber_block(self) -> dict:
         """The climber block as it travels — into a run's spec, to a child
         engine: every file ref absolute (relative ones resolve from the
-        hillclimb dir), so it means the same thing wherever it is read."""
+        hillclimb dir), so it means the same thing wherever it is read.
+        `NoClimber` when the folder names none."""
+        if self.climber is None:
+            from hillclimb.modules.refs import NO_CLIMBER_HINT, NoClimber
+
+            raise NoClimber(NO_CLIMBER_HINT)
         return self.climber.anchored(self.hillclimb_dir).block()
+
+    def climber_params(self, field: str) -> dict:
+        """One of the block's param maps (`tuner_params`, `operator_params`,
+        `memory_params`, …), `{}` when the folder names no climber: what the
+        harness reads without needing a climber to exist."""
+        return dict(getattr(self.climber, field) or {}) if self.climber is not None else {}
+
+    def climber_label(self) -> str | None:
+        return self.climber.label if self.climber is not None else None
 
     def _resolve_paths(self) -> None:
         """Anchor relative runs_dir/problems_dir at the hillclimb dir, so

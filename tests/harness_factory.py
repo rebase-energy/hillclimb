@@ -32,9 +32,10 @@ def make_harness(task, config, agent, *, name: str = "test-search", **kwargs):
 
 from hillclimb.harness.candidate import Candidate  # noqa: E402
 from hillclimb.harness.loop import PolicyLoop  # noqa: E402
-from hillclimb.modules.policies.greedy import Greedy  # noqa: E402
-from hillclimb.modules.selectors.best import Best  # noqa: E402
 from hillclimb.modules.policies.base import TUNE_ACTION, Action, OperatorPolicy  # noqa: E402
+from tests.catalog_fixture import greedy_classes  # noqa: E402
+
+Greedy, Best = greedy_classes()
 
 
 class LiveParams(dict):

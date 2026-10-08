@@ -1278,6 +1278,7 @@ def _new_search(
         config.holdout.enabled = False
     problem = load_problem(target, config)
     run_dir_is_new = run_id is None
+    climber_block = config.climber_block()  # before anything is written: no climber, no run folder
     if run_id is None:
         run_name = run_name or name or problem.problem_id
         run_id = new_run_id(run_name)
@@ -1298,7 +1299,7 @@ def _new_search(
     if run_dir_is_new:
         write_run_spec(run_dir, [spec_entry(
             target, budget=total_s, agent=config.agent, model=config.model,
-            climber=config.climber_block(), parallel_agents=config.concurrency.parallel_agents,
+            climber=climber_block, parallel_agents=config.concurrency.parallel_agents,
             n_replicates=config.evaluation.n_replicates, seed_from=seed_path, set=spec_set,
         )])
     search_dir = create_search(config, problem, run_dir, run_id, total_s, seed_from=seed_path)
@@ -1392,7 +1393,7 @@ def run(
         outcome.selected.val_score
 
     `problem` is a problem id, a path, a provider target or a `Problem`.
-    `climber` is a preset's name, a block, or a composed `hillclimb.Climber`
+    `climber` is a .py file, a block, or a composed `hillclimb.Climber`
     (None: the folder's `climber:` block). `budget` is a `Budget` — time,
     evaluations, tokens, cost — or just `"10m"` / `"2h"` / seconds for the
     clock (None: the problem's own); `max_evaluations=N` is short for
@@ -1574,7 +1575,7 @@ def create_problem_run(config: Config, run_name: str, target: str, problem_id: s
 
 def climber_argv(climber: Any) -> list[str]:
     """How a climber reaches a child engine, which gets nothing but argv: a
-    name (a preset, one .py file) as `--climber`, a block as a `--set
+    name (one .py file, a folder) as `--climber`, a block as a `--set
     climber=<json>` — it must come before the other `--set` pairs, which may
     edit its fields."""
     if climber is None:
@@ -1642,7 +1643,7 @@ def fleet_argv(
 @dataclass(frozen=True)
 class FleetEngine:
     """One engine of a mixed fleet: the experiment it is tagged as, the climber it
-    runs (a preset's name, one .py file, a block or a `ClimberSpec`), and the
+    runs (one .py file, a block or a `ClimberSpec`), and the
     `--set` overrides that apply to this engine only (after the fleet-wide
     ones, so they win). `climber=None` keeps the fleet-wide climber.
     Overrides are the one per-experiment knob — `concurrency.parallel_agents=1`

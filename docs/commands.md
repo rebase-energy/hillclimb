@@ -65,10 +65,10 @@ the run has a single search), or `latest` (the default).
 | `summit [problem] [--to DIR] [--plot]` | copy the best solution found so far across every run of a problem into your hillclimb dir (its `solution.py`, `params.json` and output files); works mid-climb; `--plot` then draws it with the problem's `plot.py` into `solution.png` |
 | `disconnect <claude\|codex\|pi\|openrouter> [--local]` | undo a connect on hillclimb's side: comment the pin out of the same config file, remove the staged homes under `~/.cache/hillclimb/`, drop an OpenRouter key from the `.env`; the coding agent's own login is never touched |
 | `smoke [problem]` | one real coding agent call end-to-end (auth / contract check) |
-| `climber list` | the climbers `run --climber` accepts: the presets and every folder or `.py` file under `climbers/` |
-| `climber get [PRESET] [--name NAME] [--no-default]` | copy a preset out as `climbers/<name>/` — `climber.yaml`, `policy.py`, `prompts/` with the templates its operators render and a README of what fills them — and make it this folder's climber |
-| `climber show [NAME]` | print a climber (a preset, a `.py` file, a climber folder, this folder's) as the block a run config takes |
-| `climber new <name> [--from NAME]` | copy a policy's source into `climbers/<name>.py` and print the block that runs it |
+| `climber list` | the climbers `run --climber` accepts: the catalog's and every folder or `.py` file under `climbers/` |
+| `climber get [NAME] [--name NAME] [--no-default]` | copy a catalog climber (`greedy`, `openevolve`, `gepa`) out as `climbers/<name>/` — `policy.py`, the whole climber as Python (the selector policy, the operator policy, their defaults, and the `Climber(...)` that wires them to operators, tuner, memory and prompts; no config file), and `prompts/` with the templates its operators render and a README of what fills them — and make it this folder's climber |
+| `climber show [REF]` | print a climber (a `.py` file, a climber folder, this folder's) as the block a run config takes |
+| `climber new <name> --from REF` | copy a catalog climber or a climber folder as `climbers/<name>/`, or any other climber's file into `climbers/<name>.py` with the block that runs it |
 | `climber check [--climber REF] [--set k=v] [--problem P] [--smoke] [--json]` | conformance check for a climber over the store's recorded journals; `--smoke` adds a dummy-coding-agent search |
 | `store searches [--problem KEY]` / `store sync` | list what the record store holds / import the folder's searches into the configured store |
 | `knowledge graph [--stats]` | interactive knowledge-graph TUI (or a text summary) |

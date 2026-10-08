@@ -15,7 +15,7 @@ import yaml
 from hillclimb.climber import (
     ClimberLoadError,
     ClimberSpec,
-    bundled_climbers,
+
     load_climber,
     load_snapshot,
     resolve_climber,
@@ -23,11 +23,15 @@ from hillclimb.climber import (
     tree_sha256,
 )
 from hillclimb.harness.loop import PolicyLoop, Loop
-from hillclimb.modules.policies.greedy import Greedy
+from tests.catalog_fixture import GREEDY, OPENEVOLVE, block, class_ref, greedy_classes
+
+Greedy, _Best = greedy_classes()
 from hillclimb.modules.policies.base import Action
 from tests.conftest import ok_script
 from tests.harness_factory import make_harness
+from tests.catalog_fixture import GEPA, class_ref
 
+from hillclimb import catalog
 POLICY_PY = '''\
 from hillclimb.sdk import Action
 
@@ -89,17 +93,22 @@ def write_climber(root: Path, *, manifest: str | None = None) -> Path:
 
 
 def test_the_bundled_climbers_load_and_name_their_modules():
-    assert bundled_climbers() == ["gepa", "greedy", "openevolve"]
-    greedy = load_climber("greedy")
+    from hillclimb import catalog
+
+    assert catalog.climber_names() == ("gepa", "greedy", "openevolve")
+    greedy = catalog.climber("greedy")
     loop = greedy.build_loop(params={"num_drafts": 1})
-    assert isinstance(loop, PolicyLoop) and isinstance(loop.policy, Greedy)
+    assert isinstance(loop, PolicyLoop) and type(loop.policy).__name__ == "Greedy"
     # the overlay's schedule knob reaches the selector; the rest keeps the class's default
     assert loop.policy.selector.param("num_drafts") == 1 and loop.policy.selector.param("ensemble_top_k") == 3
     assert greedy.operator_set().names() == ("draft", "debug", "improve", "ensemble")
     assert greedy.operator_set().get("draft").params == {}  # the operator's own defaults
-    # a preset is a complete block because the classes declare what they need
-    gepa = load_climber("gepa")
-    assert gepa.spec.block() == {"loop": "gepa", "tuner": "random", "memory": "files"}
+    # a catalog climber is a complete block because the classes declare what they need
+    gepa = catalog.climber("gepa")
+    assert gepa.spec.block() == {
+        "name": "gepa", "loop": f"{GEPA.parent / 'loop.py'}:GepaLoop", "tuner": "random", "memory": "files",
+        "prompts": str(GEPA.parent / "prompts"),
+    }
     assert gepa.is_loop and gepa.holdout_timing == "after"
     assert gepa.operator_set().names() == ("gepa-reflect",)
 
@@ -107,19 +116,17 @@ def test_the_bundled_climbers_load_and_name_their_modules():
 def test_a_block_is_a_climber(tmp_path):
     """The `climber:` block: a bare string is a preset or one file, a mapping
     names each module; with neither `operator_policy:` nor `loop:` it is greedy."""
-    assert ClimberSpec.model_validate("openevolve").block() == {
-        "name": "openevolve", "operator_policy": "greedy", "params": {"tune_budget": 0},
-        "selector_policy": "map-elites", "selector_params": {"ensemble": False}, "tuner": "random", "memory": "files",
-    }  # a preset is a composition: greedy over the MAP-Elites selector, without ensemble or tune
-    assert ClimberSpec.model_validate({"params": {"num_drafts": 5}}).operator_policy == "greedy"
+    assert ClimberSpec.model_validate(str(OPENEVOLVE)).block() == block("openevolve")  # a catalog file: the block its Climber(...) builds
+    with pytest.raises(ValueError, match="no climber named"):
+        ClimberSpec.model_validate({"params": {"num_drafts": 5}})  # knobs alone: nothing climbs
     spec = ClimberSpec.model_validate({"operator_policy": "mine.py:Mine", "operators": ["draft", {"ops.py:Cross": None}]})
-    assert spec.label == "mine" and spec.operator_items() == [("draft", {}), ("ops.py:Cross", {})]
+    assert spec.label == "Mine" and spec.operator_items() == [("draft", {}), ("ops.py:Cross", {})]
     assert ClimberSpec.model_validate({"name": "x", "operator_policy": "pkg.mod:Cls"}).label == "x"
     anchored = spec.anchored(tmp_path)
     assert anchored.operator_policy == f"{tmp_path / 'mine.py'}:Mine"
     assert anchored.operators == ["draft", {f"{tmp_path / 'ops.py'}:Cross": None}]
     assert [p.name for p in anchored.file_paths()] == ["mine.py", "ops.py"]
-    with pytest.raises(ValueError, match="Unknown climber: climbers/mine .*a folder holding climber.yaml"):
+    with pytest.raises(ValueError, match="Unknown climber: climbers/mine .*a folder holding policy.py"):
         ClimberSpec.model_validate("climbers/mine")  # no such folder here
 
 
@@ -177,17 +184,21 @@ COMPOSED_PY = """\
 from hillclimb import Climber
 from hillclimb.memory import FilesMemory
 from hillclimb.operators import Debug, Draft, Ensemble, Improve
-from hillclimb.sdk import OperatorPolicy, Selection, SelectorPolicy
+import hillclimb as hc
+Greedy = hc.catalog.module("greedy").Greedy
+from hillclimb.sdk import Selection
+import hillclimb as hc
+Best = hc.catalog.module("greedy").Best
 from hillclimb.tuners import RandomSearch
 
 
-class MySelectorPolicy(SelectorPolicy):
+class MySelectorPolicy(Best):
     def select(self, state, *, busy=frozenset()):
         best = state.journal.best_candidate(state.higher_is_better)
         return Selection(best.candidate_id) if best else None
 
 
-class MyOperatorPolicy(OperatorPolicy):
+class MyOperatorPolicy(Greedy):
     pass
 
 
@@ -231,7 +242,7 @@ def test_a_file_that_builds_a_climber_is_that_climber(tmp_path, monkeypatch):
 
 def test_a_file_that_builds_two_climbers_names_one(tmp_path):
     path = tmp_path / "two.py"
-    path.write_text(COMPOSED_PY.split("if __name__")[0] + "other = Climber(selector_policy=MySelectorPolicy())\n")
+    path.write_text(COMPOSED_PY.split("if __name__")[0] + "other = Climber(selector_policy=MySelectorPolicy(), operator_policy=MyOperatorPolicy())\n")
     with pytest.raises(ClimberLoadError, match="more than one Climber; name the one to run as two.py:<variable>"):
         load_climber(str(path))
     assert load_climber(f"{path}:climber").spec.tuner == "random"
@@ -309,11 +320,11 @@ def test_a_snapshot_is_the_climber_it_was_taken_of(tmp_path):
         ("policy: policy.py\nsimilarity: [api-calls]\n", "`similarity`: .*viewer's setting"),
         ("policy: policy.py\nholdout_timing: after\n", "`holdout_timing`: a loop declares it on its class"),
         ("policy: nope.py\n", "climber file not found: .*nope.py"),
-        ("policy: nonsense\n", r"unknown operator policy 'nonsense' \(available: greedy"),
-        ("policy: policy.py\nselect: nonsense\n", r"unknown selector policy 'nonsense' \(available: best, map-elites"),
-        ("policy: greedy\nparams: {num_draft: 2}\n", "greedy has no param 'num_draft'"),
+        ("policy: nonsense\n", r"unknown operator policy 'nonsense' \(available: none registered"),
+        ("policy: policy.py\nselect: nonsense\n", r"unknown selector policy 'nonsense' \(available: none registered"),
+        (f"policy: {GREEDY}:Greedy\nparams: {{num_draft: 2}}\n", "Greedy has no param 'num_draft'"),
         ("loop: gepa\nselect: best\n", "a `loop:` does its own selection"),
-        ("loop: nonsense\n", r"unknown loop 'nonsense' \(available: gepa"),
+        ("loop: nonsense\n", r"unknown loop 'nonsense' \(available: none registered"),
         ("policy: operators.py\n", "exactly one operator policy class"),
         ("policy: policy.py\noperators: [operators.py:Nope]\n", "defines no Nope"),
         ("policy: policy.py\noperators: [nope]\n", r"unknown operator 'nope' \(available: debug, draft, ensemble, improve"),
@@ -336,9 +347,9 @@ def test_a_bad_block_names_the_file_and_the_fix(tmp_path, block, message):
 
 
 def test_unknown_reference_lists_what_exists(tmp_path):
-    with pytest.raises(ClimberLoadError, match="bundled: gepa, greedy, openevolve"):
+    with pytest.raises(ClimberLoadError, match="Unknown climber: nope"):
         load_climber("nope")
-    with pytest.raises(ClimberLoadError, match="Unknown climber: nope .presets: gepa, greedy, openevolve"):
+    with pytest.raises(ClimberLoadError, match="Unknown climber: nope"):
         resolve_climber("nope")
     with pytest.raises(ClimberLoadError, match="holds no climber.yaml"):
         load_climber(str(tmp_path))
@@ -425,9 +436,9 @@ def test_a_run_folder_written_by_0_5_still_loads(tmp_path):
         "agent": "claude-code", "model": "sonnet", "metric": "m",
         "policy": "openevolve", "policy_params": {"random_seed": 42, "num_drafts": 2},
     })
-    assert old.climber_spec["selector_policy"] == "map-elites"
-    assert old.climber_spec["selector_params"] == {"random_seed": 42, "ensemble": False, "num_drafts": 2}
-    assert old.climber_spec["params"] == {"tune_budget": 0}
+    assert (old.climber_spec["operator_policy"], old.climber_spec["selector_policy"]) == ("openevolve", "map-elites")
+    assert old.climber_spec["selector_params"] == {"random_seed": 42, "num_drafts": 2}
+    assert old.climber_spec.get("params", {}) == {}  # ensemble off / tune off are the classes' defaults now
     # a 0.6 record is left as it is
     current = SearchMeta.model_validate({**meta.model_dump(), "climber_ref": None})
     assert current.climber_spec == block and current.climber_ref is None
@@ -452,7 +463,7 @@ def test_the_engine_uses_the_tuner_the_block_names(config, tmp_path):
     pytest.importorskip("optuna")
     from hillclimb.config import Config
 
-    explicit = Config.model_validate({"search": {"operator_policy": "greedy", "tuner": "optuna"}})  # the 0.3 spelling
+    explicit = Config.model_validate({"search": {"policy": class_ref("greedy", "Greedy"), "tuner": "optuna"}})  # the 0.3 spelling
     assert type(build_tuner(explicit)).__name__ == "Optuna"
 
 
@@ -497,8 +508,11 @@ def test_modernize_maps_only_what_moved():
     from hillclimb._moved import modernize
 
     # a module that moved AND a class that was renamed since: both hops
-    assert modernize("hillclimb.policies.greedy:GreedyPolicy") == "hillclimb.modules.policies.greedy:Greedy"
-    assert modernize("hillclimb.modules.policies.greedy:GreedyPolicy") == "hillclimb.modules.policies.greedy:Greedy"
+    assert modernize("hillclimb.policies.greedy:GreedyPolicy") == "hillclimb.climbers.greedy.policy:Greedy"
+    assert modernize("hillclimb.modules.policies.greedy:GreedyPolicy") == "hillclimb.climbers.greedy.policy:Greedy"
+    # 0.9 put each bundled climber in one file: the 0.6-0.8 paths of its classes
+    assert modernize("hillclimb.modules.policies.greedy:Greedy") == "hillclimb.climbers.greedy.policy:Greedy"
+    assert modernize("hillclimb.modules.selectors.best:Best") == "hillclimb.climbers.greedy.policy:Best"
     assert modernize("hillclimb.modules.policies.openevolve:OpenEvolvePolicy") == "hillclimb.modules.policies.compat:OpenEvolvePolicy"
     assert modernize("hillclimb.similarity_scores.builtin:ApiCalls") == "hillclimb.modules.similarity.builtin:ApiCalls"
     # 0.6 moved the gepa library out of integrations/: a search recorded before resumes
@@ -508,13 +522,11 @@ def test_modernize_maps_only_what_moved():
 
 
 def test_a_manifest_with_a_pre_move_ref_still_loads(tmp_path):
-    from hillclimb.modules.policies.greedy import Greedy
-
     root = tmp_path / "old"
     root.mkdir()
     (root / "climber.yaml").write_text("name: old\npolicy: hillclimb.policies.greedy:GreedyPolicy\n")
     loop = load_climber(str(root)).build_loop()
-    assert isinstance(loop.policy, Greedy)
+    assert type(loop.policy).__name__ == "Greedy"  # a record: the pre-0.9 path finds the catalog file
 
 
 def _legacy_snapshot(search_dir: Path, text: str) -> Path:
@@ -553,15 +565,13 @@ def test_a_pre_06_snapshot_of_a_bundled_climber_still_loads(tmp_path, name):
 def test_a_search_snapshot_with_a_pre_move_ref_still_resumes(tmp_path):
     """A run folder written before the package-layout move names the policy
     by the old module path, and resume loads that snapshot."""
-    from hillclimb.modules.policies.greedy import Greedy
-
     text = (LEGACY_SNAPSHOTS / "greedy.yaml").read_text().replace(
         "hillclimb.modules.policies.greedy:", "hillclimb.policies.greedy:"
     )
     assert "hillclimb.policies.greedy:GreedyPolicy" in text  # the old spelling is what we test
     _legacy_snapshot(tmp_path, text)
     loop = load_snapshot(tmp_path, name="greedy").build_loop()
-    assert isinstance(loop.policy, Greedy)
+    assert type(loop.policy).__name__ == "Greedy"  # a record: the pre-0.9 path finds the catalog file
 
 
 def test_a_pre_06_one_file_snapshot_still_loads(tmp_path):
@@ -579,7 +589,7 @@ def test_memory_is_files_and_the_old_spelling_still_loads(tmp_path):
     assert climber.spec.memory == "files"
     assert climber.spec.model_dump()["memory"] == "files"
     assert "memory: knowledge-graph" in (root / "climber.yaml").read_text()  # left as written
-    assert ClimberSpec.model_validate({"memory": "knowledge-graph"}).memory == "files"
+    assert ClimberSpec.model_validate({"operator_policy": class_ref("greedy", "Greedy"), "memory": "knowledge-graph"}).memory == "files"
     one_file = write_climber(tmp_path / "solo") / "policy.py"
     assert load_climber(str(one_file)).spec.memory == "files"  # the model default
 
@@ -626,7 +636,7 @@ def test_a_climber_brings_its_own_graph_module(task, config, tmp_path):
     from hillclimb import api
     from hillclimb.harness.run import RunMeta
 
-    assert load_climber("greedy").graph_module().name == "knowledge-graph"  # the default
+    assert catalog.climber("greedy").graph_module().name == "knowledge-graph"  # the default
     root = write_climber(tmp_path / "mine", manifest="policy: policy.py\ngraph: graph.py\n")
     (root / "graph.py").write_text(GRAPH_PY)
     block = {"operator_policy": "policy.py", "memory_params": {"graph": "graph.py"}}  # the graph module is a setting of the memory
@@ -656,23 +666,23 @@ def test_pre_07_spellings_of_the_two_decisions_still_load():
     from hillclimb.modules.spec import ClimberSpec
 
     old = ClimberSpec.model_validate(
-        {"policy": "greedy", "select": "map-elites", "select_params": {"num_islands": 2}}
+        {"policy": class_ref("greedy", "Greedy"), "select": class_ref("openevolve", "MapElites"), "select_params": {"num_islands": 2}}
     )
     new = ClimberSpec.model_validate(
-        {"operator_policy": "greedy", "selector_policy": "map-elites", "selector_params": {"num_islands": 2}}
+        {"operator_policy": class_ref("greedy", "Greedy"), "selector_policy": class_ref("openevolve", "MapElites"), "selector_params": {"num_islands": 2}}
     )
     assert old == new and "policy" not in old.block() and old.block()["selector_params"] == {"num_islands": 2}
     # the new spelling wins on a clash; dict-valued knobs merge
-    both = ClimberSpec.model_validate({"policy": "greedy", "select": "best", "selector_policy": "map-elites",
+    both = ClimberSpec.model_validate({"policy": class_ref("greedy", "Greedy"), "select": class_ref("greedy", "Best"), "selector_policy": class_ref("openevolve", "MapElites"),
                                        "select_params": {"a": 1}, "selector_params": {"b": 2}})
-    assert both.selector_policy == "map-elites" and both.selector_params == {"a": 1, "b": 2}
+    assert both.selector_policy == class_ref("openevolve", "MapElites") and both.selector_params == {"a": 1, "b": 2}
     assert current_setting("climber.select") == "climber.selector_policy"
     assert current_setting("climber.policy") == "climber.operator_policy"
     assert current_setting("climber.select_params.num_islands") == "climber.selector_params.num_islands"
     assert current_setting("climber.params.num_drafts") == "climber.selector_params.num_drafts"
     from hillclimb.climber import Climber
-    from hillclimb.policies import Greedy
-    from hillclimb.selectors import Best
+
+    Greedy, Best = greedy_classes()
 
     spelled_old = Climber(select=Best(num_drafts=3), policy=Greedy(), select_params={"debug": False})
     spelled_new = Climber(selector_policy=Best(num_drafts=3), operator_policy=Greedy(), selector_params={"debug": False})

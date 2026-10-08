@@ -157,14 +157,15 @@ uv run hillclimb paper add <pdf> --problem <t>  # distill a PDF paper into claim
 uv run hillclimb paper list                     # ingested papers with scope and claim counts
 uv run hillclimb experiment run <spec> [--dry-run] [--parallel]  # a study: experiments × problems × repeats (real searches; --dry-run lists jobs)
 uv run hillclimb experiment report [spec]       # compare the experiments on holdout, gap vs control judged against the noise floor (--json: gaps + verdicts as data)
-uv run hillclimb climber list                     # presets (greedy | openevolve | gepa), one-file climbers under climbers/, and the registered building blocks per slot
-uv run hillclimb climber show [NAME]              # a climber as the `climber:` block a run config takes (a preset, a .py file, this folder's; a pre-0.6 climber dir comes out as its block)
-uv run hillclimb climber new mine --from greedy   # copy greedy's source into climbers/mine.py and print the block that runs it
+uv run hillclimb climber get greedy               # fetch a catalog climber (greedy | openevolve | gepa) as climbers/greedy/ — policy.py IS the climber — and pin it; the engine ships no default
+uv run hillclimb climber list                     # the catalog, one-file climbers and folders under climbers/, and the registered building blocks per slot
+uv run hillclimb climber show [REF]               # a climber as the `climber:` block a run config takes (a .py file, a folder, this folder's; a pre-0.6 climber dir comes out as its block)
+uv run hillclimb climber new mine --from greedy   # copy the catalog's greedy as climbers/mine/ and say how to run it
 uv run hillclimb climber check [SPEC.yaml] [--climber NAME] [--set climber.params.k=v] [--problem P --smoke]  # resolve every module, then replay recorded journals through the policy (no agent): resume-determinism, dangling ids, writes, prompt lint; a spec checks every entry's climber; exit 1 on a breach
-uv run hillclimb run <problem> --climber climbers/mine.py  # a preset's name or one .py file (a Policy class, or POLICY=...); replaces the folder's `climber:` block. search.yaml records climber_sha256 and the block, and snapshots it
+uv run hillclimb run <problem> --climber climbers/mine/policy.py  # one .py file (a Climber(...), a Policy class, or POLICY=...) or a folder; replaces the folder's `climber:` block. search.yaml records climber_sha256 and the block, and snapshots it
 uv run hillclimb run run.yaml                     # a run spec: each entry's `climber:` block DEFINES that search's climber (policy/loop, select, operators, tuner, memory, params); a top-level `climber:` is the entries' default
-uv run hillclimb run <problem> --set climber=openevolve --set climber.selector_params.num_islands=3 --study S --experiment E  # one experiment by hand (counts in the report); `climber=` names the block, `climber.<field>` edits it
-uv run hillclimb run <problem> --climber greedy --climber openevolve --climber gepa --experiment-set gepa:concurrency.parallel_agents=1  # mixed fleet: one search per climber under one run; `experiment report <run-id>` compares
+uv run hillclimb run <problem> --set climber=climbers/openevolve/policy.py --set climber.selector_params.num_islands=3 --study S --experiment E  # one experiment by hand (counts in the report); `climber=` names the block, `climber.<field>` edits it
+uv run hillclimb run <problem> --climber climbers/greedy/policy.py --climber climbers/openevolve/policy.py --climber climbers/gepa/policy.py --experiment-set gepa:concurrency.parallel_agents=1  # mixed fleet: one search per climber under one run; `experiment report <run-id>` compares
 ```
 
 ## Rules

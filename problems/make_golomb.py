@@ -21,7 +21,6 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-DEMO_ROOT = ROOT.parent / "src" / "hillclimb" / "demo"
 DEFAULT_INSTANCES = (20, 27)
 
 # the score of an invalid submission; valid marks must stay below it
@@ -277,7 +276,7 @@ def stamp(root: Path, m: int) -> Path:
 def main(argv: list[str]) -> None:
     instances = [int(a) for a in argv] or list(DEFAULT_INSTANCES)
     for m in instances:
-        for root in (ROOT, DEMO_ROOT):
+        for root in (ROOT,):
             print(f"wrote {stamp(root, m)}")
 
 

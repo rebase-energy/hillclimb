@@ -24,7 +24,6 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-DEMO = ROOT.parent / "src" / "hillclimb" / "demo"
 DEFAULT_LEVELS = (40, 60)
 PENALTY = 100000.0
 
@@ -252,7 +251,7 @@ def stamp(root: Path, n: int) -> Path:
 def main(argv: list[str]) -> None:
     levels = [int(a) for a in argv] or list(DEFAULT_LEVELS)
     for n in levels:
-        for root in (ROOT, DEMO):
+        for root in (ROOT,):
             print(f"wrote {stamp(root, n)}")
 
 

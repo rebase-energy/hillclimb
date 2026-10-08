@@ -16,8 +16,6 @@ _LAZY = {
     "SelectorPolicy": ("hillclimb.modules.selectors.base", "SelectorPolicy"),
     "Selector": ("hillclimb.modules.selectors.base", "Selector"),  # the pre-0.7 name
     "Selection": ("hillclimb.modules.selectors.base", "Selection"),
-    "Best": ("hillclimb.modules.selectors.best", "Best"),
-    "MapElites": ("hillclimb.modules.selectors.map_elites", "MapElites"),
 }
 
 __all__ = sorted(_LAZY)

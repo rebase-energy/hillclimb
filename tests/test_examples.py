@@ -11,7 +11,7 @@ import pytest
 import hillclimb.agents
 from hillclimb import register_agent
 from hillclimb.agents import AgentResult
-from hillclimb.demo import install_demo_problem
+from hillclimb.catalog import install_problem
 
 EXAMPLES = sorted(Path("examples").glob("*.py"))
 EVALUATIONS = 4
@@ -22,7 +22,7 @@ def fresh_dir(tmp_path, monkeypatch) -> Path:
     """What `hillclimb init` + `hillclimb problem get fitness-landscape` leave:
     the examples find it the way a user's script would, through the folder."""
     (tmp_path / "hillclimb.yaml").write_text("model: sonnet\n")
-    install_demo_problem(tmp_path / "problems", "fitness-landscape")
+    install_problem(tmp_path / "problems", "fitness-landscape")
     monkeypatch.setenv("HILLCLIMB_DIR", str(tmp_path))
     # the problem's lean venv is the dev interpreter here: no test builds one
     monkeypatch.setattr("hillclimb.api.ensure_runtime_venv", lambda *a, **k: Path(sys.executable))

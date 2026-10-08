@@ -145,15 +145,10 @@ def test_a_fleet_refuses_an_agent_only_this_process_knows(registry, config):
         api.run_fleet("fitness-landscape", config=config, agent="mine")
 
 
-def test_the_bundled_problem_mirrors_the_repo_problem():
-    from hillclimb.demo import BUNDLED_PROBLEM_IDS
+def test_the_terrain_is_in_the_catalog():
+    from hillclimb.catalog import PROBLEM_IDS, problem_path
 
-    assert "fitness-landscape" in BUNDLED_PROBLEM_IDS
-    bundled = Path("src/hillclimb/demo/fitness-landscape")
-    names = {p.name for p in PROBLEM.iterdir() if p.is_file()}
-    assert names == {p.name for p in bundled.iterdir() if p.is_file()}
-    for name in names:
-        assert (bundled / name).read_bytes() == (PROBLEM / name).read_bytes(), f"{name} drifted"
+    assert "fitness-landscape" in PROBLEM_IDS and problem_path("fitness-landscape") == PROBLEM.resolve()
 
 
 def test_a_toy_search_climbs_and_its_spec_reruns_it(config, lean_runtime):

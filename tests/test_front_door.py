@@ -15,8 +15,10 @@ import hillclimb as hc
 from hillclimb.agents.fake import FakeAgent
 from hillclimb.climber import ClimberLoadError, NotPortableError, load_snapshot, resolve_climber
 from hillclimb.harness.run import load_search_meta
+from tests.catalog_fixture import GEPA, GREEDY, class_ref
 from tests.conftest import ok_script
 
+from hillclimb import catalog
 FACADES = ("policies", "selectors", "operators", "tuners", "memory", "loops")
 
 
@@ -36,14 +38,14 @@ def test_the_namespaces_are_lazy_windows_onto_the_modules():
             # `Policy` and `Selector` are the pre-0.7 names, kept as aliases for one release
             expected = {"Policy": "OperatorPolicy", "Selector": "SelectorPolicy"}.get(name, name)
             assert getattr(module, name).__name__ == expected
-    assert hc.policies.Greedy is resolve_climber("greedy").brain.target
+    assert hc.catalog.module("greedy").Greedy is catalog.climber("greedy").brain.target
     assert set(hc.__all__) >= {"Climber", "run", "run_spec", *FACADES}
 
 
 def test_a_composed_climber_is_the_block_a_run_config_takes():
     climber = hc.Climber(
-        select=hc.selectors.Best(num_drafts=3, ensemble=False),
-        policy=hc.policies.Greedy(tune_budget=4),
+        select=hc.catalog.module("greedy").Best(num_drafts=3, ensemble=False),
+        policy=hc.catalog.module("greedy").Greedy(tune_budget=4),
         operators=[hc.operators.Draft(retrieval=False), hc.operators.Debug(), hc.operators.Improve],
         tuner=hc.tuners.RandomSearch(seed=7),
         memory=hc.memory.FilesMemory(max_cards=1),
@@ -51,8 +53,8 @@ def test_a_composed_climber_is_the_block_a_run_config_takes():
     )
     block = climber.to_spec().block()
     assert block == {
-        "name": "mine", "operator_policy": "greedy", "params": {"tune_budget": 4},
-        "selector_policy": "best", "selector_params": {"num_drafts": 3, "ensemble": False},
+        "name": "mine", "operator_policy": class_ref("greedy", "Greedy"), "params": {"tune_budget": 4},
+        "selector_policy": class_ref("greedy", "Best"), "selector_params": {"num_drafts": 3, "ensemble": False},
         "operators": [{"draft": {"retrieval": False}}, "debug", "improve"],
         "tuner": "random", "tuner_params": {"seed": 7}, "memory": "files", "memory_params": {"max_cards": 1},
     }
@@ -62,14 +64,14 @@ def test_a_composed_climber_is_the_block_a_run_config_takes():
     loop = climber.build_loop()
     assert loop.policy.selector.param("num_drafts") == 3 and loop.policy is not climber.build_loop().policy  # built fresh
     # names work too, a loop instead of a policy, and a policy that brings its selector
-    assert hc.Climber(loop="gepa").is_loop and hc.Climber("openevolve").spec.selector_policy == "map-elites"
-    best_first = hc.Climber(policy=hc.policies.Greedy(selector=hc.selectors.Best()))
-    assert best_first.to_spec().selector_policy == "best"
+    assert hc.catalog.climber("gepa").is_loop and hc.catalog.climber("openevolve").spec.selector_policy.endswith(":MapElites")
+    best_first = hc.Climber(policy=hc.catalog.module("greedy").Greedy(selector=hc.catalog.module("greedy").Best()))
+    assert best_first.to_spec().selector_policy == class_ref("greedy", "Best")
     # a knob the class does not have fails where it is written
     with pytest.raises(TypeError, match="Greedy has no param 'num_draft'"):
-        hc.policies.Greedy(num_draft=3)
+        hc.catalog.module("greedy").Greedy(num_draft=3)
     with pytest.raises(ClimberLoadError, match="not both"):
-        hc.Climber(policy="greedy", loop="gepa")
+        hc.Climber(policy=str(GREEDY), loop=str(GEPA))
 
 
 MINE_PY = '''\
@@ -84,7 +86,7 @@ class Shake(Operator):
         return Attempt(prompt="Shake it." + self.params.get("how", ""), copy_parent=True)
 
 
-class DraftOnce(hc.policies.Greedy):
+class DraftOnce(hc.catalog.module("greedy").Greedy):
     """One draft, then shake the best."""
     name = "draft-once"
     DEFAULTS = {"tune_budget": 0}
@@ -127,7 +129,7 @@ def test_classes_from_a_file_are_written_down_as_that_file(runnable, config, tmp
     path.write_text(MINE_PY)
     mine = _import(path, "my_script_module")
     climber = hc.Climber(
-        select=hc.selectors.Best(num_drafts=1, ensemble=False), policy=mine.DraftOnce,
+        select=hc.catalog.module("greedy").Best(num_drafts=1, ensemble=False), policy=mine.DraftOnce,
         operators=["draft", mine.Shake(how=" Gently.")],
     )
     assert climber.to_spec().block()["operator_policy"] == f"{path.resolve()}:DraftOnce"
@@ -143,7 +145,8 @@ def test_classes_from_a_file_are_written_down_as_that_file(runnable, config, tmp
     meta = load_search_meta(outcome.search_dir)
     assert meta.climber_portable and meta.budget_s == 600 and meta.climber_sha256 == climber.sha256
     snapshot = load_snapshot(outcome.search_dir)
-    assert snapshot.sha256 == climber.sha256 and (outcome.search_dir / "climber" / "files" / "mine.py").is_file()
+    assert snapshot.sha256 == climber.sha256
+    assert any(p.name == "mine.py" for p in (outcome.search_dir / "climber" / "files").rglob("*.py"))  # one package per root: numbered dirs
     written = yaml.safe_load((outcome.run_dir / "spec.yaml").read_text())["problems"][0]["climber"]
     assert written == climber.to_spec().block()  # the run's own spec: the full block
 
@@ -155,7 +158,7 @@ def test_a_class_that_exists_only_here_still_runs_but_is_not_portable(runnable, 
     namespace: dict = {}
     exec(  # noqa: S102 — a class with no source file, as a notebook cell would define it
         "import hillclimb as hc\n"
-        "class DraftsOnly(hc.policies.Greedy):\n"
+        "class DraftsOnly(hc.catalog.module('greedy').Greedy):\n"
         "    name = 'drafts-only'\n"
         "    def propose(self, state, selection):\n"
         "        return self.draft_action(state)\n",
@@ -198,10 +201,10 @@ def test_a_class_that_exists_only_here_still_runs_but_is_not_portable(runnable, 
 def test_run_spec_runs_every_entry_here_under_one_run(runnable, config, tmp_path):
     spec = tmp_path / "run.yaml"
     spec.write_text(yaml.safe_dump({
-        "climber": {"operator_policy": "greedy", "params": {"num_drafts": 1, "ensemble": False, "tune_budget": 0}},
+        "climber": {"operator_policy": class_ref("greedy", "Greedy"), "params": {"num_drafts": 1, "ensemble": False, "tune_budget": 0}},
         "problems": [
             {"target": "a", "budget": "5m", "set": ["budget.max_evaluations=1"]},
-            {"target": "b", "climber": {"params": {"num_drafts": 2, "ensemble": False}}, "set": ["budget.max_evaluations=2"]},
+            {"target": "b", "climber": {"operator_policy": class_ref("greedy", "Greedy"), "params": {"num_drafts": 2, "ensemble": False}}, "set": ["budget.max_evaluations=2"]},
         ],
     }))
     for score in (0.5, 0.6, 0.7):
@@ -224,7 +227,7 @@ def test_a_script_that_runs_at_import_is_told_to_guard_it(tmp_path):
     script = tmp_path / "script.py"
     script.write_text(
         "import hillclimb as hc\n"
-        "class Mine(hc.policies.Greedy):\n    pass\n"
+        "class Mine(hc.catalog.module('greedy').Greedy):\n    pass\n"
         "hc.run('heilbronn-11', climber=hc.Climber(policy=Mine))\n"
     )
     with pytest.raises(ClimberLoadError, match='if __name__ == "__main__"'):
@@ -232,8 +235,8 @@ def test_a_script_that_runs_at_import_is_told_to_guard_it(tmp_path):
 
 
 def test_a_written_climber_is_a_block_file(tmp_path):
-    path = hc.Climber(policy="greedy", params={"num_drafts": 2}, tuner="random").write(tmp_path / "climber.yaml")
+    path = hc.Climber(policy=class_ref("greedy", "Greedy"), params={"num_drafts": 2}, tuner="random").write(tmp_path / "climber.yaml")
     text = yaml.safe_load(path.read_text())
     # a schedule knob written under `params` is the selector policy's: it lands as `selector_params`
-    assert text == {"climber": {"operator_policy": "greedy", "selector_params": {"num_drafts": 2}, "tuner": "random", "memory": "files"}}
+    assert text == {"climber": {"operator_policy": class_ref("greedy", "Greedy"), "selector_params": {"num_drafts": 2}, "tuner": "random", "memory": "files"}}
     assert resolve_climber(text["climber"]).build_loop().policy.selector.param("num_drafts") == 2

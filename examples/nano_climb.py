@@ -76,14 +76,23 @@ problem = Problem(
 # 2. The selector policy: π_sel. Which node does the next attempt start from?
 #
 # This is the first decision of every step. It reads the history and
-# answers with a node, or None for a root step. The base class carries the
-# schedule (a failing attempt is repaired first, nothing is built on until
-# `num_drafts` roots exist); `select` is the one choice left: the best so far.
+# answers with a node, or None for a root step. The whole schedule is here:
+# a failing attempt is revised first, nothing is built on until `num_drafts`
+# fresh attempts exist, then the best so far is built on.
 # ---------------------------------------------------------------------------
 
 
 class BestSoFar(SelectorPolicy):
     name = "best-so-far"
+    DEFAULTS = {"num_drafts": 2}  # its one knob: BestSoFar(num_drafts=...)
+
+    def schedule(self, state: SearchState, *, busy=frozenset()) -> Selection | None:
+        failing = [c for c in state.journal.candidates.values() if c.status in ("failing", "buggy")]
+        if failing and not state.journal.children(failing[-1].candidate_id):
+            return Selection(failing[-1].candidate_id)  # revise the newest failing attempt first
+        if len(state.journal.drafts()) < int(self.param("num_drafts")):
+            return None  # a root step: write a fresh attempt
+        return self.select(state, busy=busy)
 
     def select(self, state: SearchState, *, busy=frozenset()) -> Selection | None:
         scored = state.journal.scored_candidates()

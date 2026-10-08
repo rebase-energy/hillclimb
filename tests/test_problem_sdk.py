@@ -12,8 +12,9 @@ import yaml
 import hillclimb as hc
 from hillclimb import Climber, Problem, register_agent
 from hillclimb.agents import AgentResult
-from hillclimb.policies import Greedy
-from hillclimb.selectors import Best
+from tests.catalog_fixture import greedy_classes
+
+Greedy, Best = greedy_classes()
 
 QUIET = dict(log=lambda *_: None)
 

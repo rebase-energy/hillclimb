@@ -95,6 +95,11 @@ def _execute(
         say("\n[head]Stopped.[/]")
         say(f"Resume with: [cmd]hillclimb resume {_m(ref)}[/]")
         raise typer.Exit(2)
+    store = open_store(config)
+    try:
+        common.warn_if_none_passed(Journal(store.journal(key_for(search_dir))), ref, config.agent)
+    finally:
+        store.close()
     selected = outcome.selected
     best = search_dir / "best" / "solution.py"
     if not best.is_file():
@@ -320,16 +325,17 @@ def run(
     budget: str = typer.Option(None, help="Wall-clock budget, e.g. 2h / 30m"),
     agent: str = typer.Option(
         None, "--agent", "--backend",
-        help="The coding agent that runs the operators: claude-code | codex | pi | dummy (--backend is the old spelling)",
+        help="The coding agent that runs the operators: claude-code | codex | pi | dummy | toy (the last two need no LLM; --backend is the old spelling)",
     ),
     model: str = typer.Option(None, help="Model the coding agent runs, e.g. sonnet / opus"),
     climber: list[str] = typer.Option(
         None, "--climber",
         help=(
-            "The climber, by name: a preset (greedy | openevolve | gepa) or one .py file. It "
+            "The climber: a .py file, a climber folder, or package.module:Class (hillclimb "
+            "climber list shows the catalog's). It "
             "replaces the `climber:` block of hillclimb.yaml (or of the run spec); --set "
             "climber.params.k=v edits it. Repeat it "
-            "(--climber greedy --climber gepa) for a mixed fleet: one search per climber "
+            "(--climber climbers/greedy --climber climbers/gepa) for a mixed fleet: one search per climber "
             "on the problem, under one run, each tagged as an experiment"
         ),
     ),
@@ -440,6 +446,12 @@ def run(
     elif (study is None) != (experiment is None):
         raise typer.BadParameter("--study and --experiment go together")
     resolved = resolve_target(target, config)
+    if resolved.kind != "suite" and not mixed and config.climber is None:
+        # the engine ships no climber: say so here, in the terminal, not in a detached child's log
+        from hillclimb.modules.refs import NO_CLIMBER_HINT
+
+        fail(f"error: {_m(NO_CLIMBER_HINT)}")
+        raise typer.Exit(1)
     if resolved.kind == "suite":
         if mixed:
             raise typer.BadParameter("a spec takes one --climber; mixed fleets run on a single problem")
@@ -766,10 +778,11 @@ def resume(
         try:
             block = dict(meta.climber_spec)
             if not any(key in block for key in ("operator_policy", "policy", "loop")):
-                # the record names it without saying what it is: a preset, a file
-                block = {**as_spec(meta.climber_ref or meta.climber).block(), **block}
-            config.climber = as_spec(block)
-            resolve_climber(config.climber, climber_base_dir(config)).brain  # noqa: B018
+                # the record names it without saying what it is: a preset of before 0.9, a file
+                block = {**as_spec(meta.climber_ref or meta.climber, legacy=True).block(), **block}
+            config.climber = as_spec(block, legacy=True)
+            config._climber_legacy_names = True  # a record's names: the engine resolves them the same way
+            resolve_climber(config.climber, climber_base_dir(config), legacy_names=True).brain  # noqa: B018
         except ClimberLoadError as exc:
             raise typer.BadParameter(
                 f"climber {meta.climber} is gone and this search has no snapshot of it: {exc}"
@@ -842,7 +855,7 @@ def smoke(
     model: str = typer.Option(None),
     agent: str = typer.Option(
         None, "--agent", "--backend",
-        help="The coding agent that runs the operators: claude-code | codex | pi | dummy (--backend is the old spelling)",
+        help="The coding agent that runs the operators: claude-code | codex | pi | dummy | toy (the last two need no LLM; --backend is the old spelling)",
     ),
 ):
     """One real DRAFT call through the selected coding agent, end to end.
@@ -851,11 +864,11 @@ def smoke(
     the filesystem contract.
     """
     config = common.load_config(agent=agent, model=model)
-    from hillclimb.demo import BUNDLED_PROBLEM_IDS, install_demo_problem
+    from hillclimb.catalog import PROBLEM_IDS, install_problem
 
-    if target in BUNDLED_PROBLEM_IDS and not (config.paths.problems_dir / target / "problem.yaml").exists():
-        # a check of the agent, not of the folder: fetch the bundled problem it uses
-        problem_dir, _ = install_demo_problem(config.paths.problems_dir, target)
+    if target in PROBLEM_IDS and not (config.paths.problems_dir / target / "problem.yaml").exists():
+        # a check of the agent, not of the folder: fetch the catalog problem it uses
+        problem_dir, _ = install_problem(config.paths.problems_dir, target)
         say(f"fetched {_m(target)} for the check: [path]{_m(problem_dir)}[/]")
     problem = load_problem(target, config)
     _agent_preflight(config.agent)

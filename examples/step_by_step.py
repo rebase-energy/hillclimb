@@ -14,8 +14,11 @@ import sys
 
 from hillclimb import Action, Budget, Climber, Problem, SearchOutcome
 from hillclimb.operators import Debug, Draft, Improve
-from hillclimb.policies import Greedy
-from hillclimb.selectors import Best
+from hillclimb import catalog
+
+# the catalog's greedy climber (`hillclimb climber get greedy` copies the same file): its classes to compose with
+greedy = catalog.module("greedy")
+Greedy, Best = greedy.Greedy, greedy.Best
 
 
 def show(action: Action, outcome) -> None:

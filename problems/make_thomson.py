@@ -24,7 +24,6 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-DEMO_ROOT = ROOT.parent / "src" / "hillclimb" / "demo"
 DEFAULT_INSTANCES = (50, 100)
 RING_SIZE = 10  # points per latitude ring in the sample submission
 
@@ -259,7 +258,7 @@ def stamp(root: Path, n: int) -> Path:
 def main(argv: list[str]) -> None:
     instances = [int(a) for a in argv] or list(DEFAULT_INSTANCES)
     for n in instances:
-        for root in (ROOT, DEMO_ROOT):
+        for root in (ROOT,):
             print(f"wrote {stamp(root, n)}")
 
 

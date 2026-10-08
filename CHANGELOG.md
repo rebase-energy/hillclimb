@@ -1,8 +1,47 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- **The engine ships no problem and no climber: one catalog, fetched with `get`.** hillclimb is
+  the harness and the contracts; what to climb and how to climb it are the user's. What the
+  package ships is a *catalog* of examples — the repository's own `problems/` and `climbers/`
+  folders, bundled into the wheel as package data (`hillclimb/_catalog/`, by `hatch_build.py`)
+  and read in place from a checkout — and two commands that copy from it: `hillclimb problem get
+  <id>` (as before) and `hillclimb climber get <name>` (`greedy`, `openevolve`, `gepa`). The
+  second copy of the problems under `src/hillclimb/demo/` is gone; `problems/` is the one copy.
+- **No default climber.** `hillclimb run` on a folder that names none refuses — in the terminal,
+  before anything is written — and says how: `hillclimb climber get greedy`, or `--climber
+  <file.py>`. `hillclimb init` → `problem get` → `climber get` → `run`. `hc.run(...)` in a fresh
+  folder says the same (`hc.catalog.climber('greedy')` in Python). A `--set climber.params.*`
+  with no climber is an error too; `--set climber.operator_policy=…` starts the block.
+- **The whole climber is Python you can read.** `climber get greedy` copies the catalog's
+  `policy.py` byte for byte: the selector policy (`Best`, its `schedule` written out: a failing
+  tip first, the ensemble window, roots until `num_drafts`, then the best), the operator policy
+  (`Greedy`: draft, debug, ensemble, a tune trial, improve), every default as a `DEFAULTS` entry,
+  and at the end the `Climber(...)` that wires them to the operators, tuner and memory — no
+  config file (`climber: climbers/greedy/policy.py`; the folder names the same file). A
+  `prompts/` beside any climber file is its prompts dir without being named. `SelectorPolicy`
+  and `OperatorPolicy` are plumbing now (knobs, `param`, `resolved_params`, `observe`); their
+  `schedule`/`propose` raise and name the reference. A policy of your own subclasses
+  `hc.catalog.module("greedy").Greedy` / `.Best` and inherits the selector written beside its
+  base. `climber new mine --from greedy` copies the folder. gepa is a catalog folder of several
+  files (`climbers/gepa/`), loaded through `FileScope` like any climber.
+- **Old names survive only for records.** A search that recorded `greedy`, `best`,
+  `openevolve`, `map-elites`, `gepa` or the 0.6–0.8 module paths resumes and replays — its
+  record resolves them to the catalog's files, with the same `climber_sha256` — while a new
+  config or Python call naming them is refused with the fetch command. `hillclimb.policies` /
+  `hillclimb.selectors` keep only the contracts (`OperatorPolicy`, `SelectorPolicy`).
+- `FileScope`: files far apart on disk (a user's policy beside a catalog class installed in
+  site-packages) are one package each, rooted where they are, never one rooted at `/`; a
+  one-package scope hashes and numbers its files exactly as before, so every recorded identity
+  stands.
+- `Climber(prompts=...)` is `Climber(prompts_dir=...)`; the old keyword is refused by name.
+
 ## 0.8.0 — 2026-10-07
 
 ### Added
+- `--agent toy` is listed in `run --help` and `smoke --help` beside `dummy`.
 - **`hillclimb climber get greedy`: the default climber as a folder you can read.** Copies a
   preset out as `climbers/greedy/` — `climber.yaml` with every default spelled out, `policy.py`
   (which operator makes the next attempt) and `prompts/` with the six templates its operators
@@ -42,6 +81,18 @@
 ## 0.7.1 — 2026-10-05
 
 ### Fixed
+- **`experiment report` judges a gap against the spread across repeats too.** The verdict used
+  only the spec's `noise_floor` — the verifier's noise, 0 for a deterministic one — so a gap
+  inside the control's own repeat-to-repeat spread was called "better beyond noise". The
+  threshold is now the larger of the noise floor and either experiment's spread across repeats,
+  and the report says which (`within noise (0.131, the spread across repeats)`); `--json`
+  carries `threshold` and `threshold_source` per comparison.
+- **A search where no attempt passed says so.** `done` with every attempt buggy or failing only
+  means the budget ran out: the run summary, `hillclimb status` and `climber check --smoke` now
+  warn, name a candidate to `show`, and under `--agent dummy` explain that its canned solution
+  knows nothing of the problem.
+- **`uv sync` works in a fresh clone.** plotui comes from PyPI instead of a `../plotui` path
+  source; `CONTRIBUTING.md` (new) has the setup, the goldens and how to co-develop plotui.
 - **`hillclimb similarity` opens again.** Its app stored the run scope as `self.run`,
   shadowing Textual's `App.run()`, so every launch from the CLI died with "'NoneType' object
   is not callable" (tests drove the screens directly and never noticed).

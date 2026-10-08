@@ -20,6 +20,7 @@ from hillclimb.modules.memory.graph import (
     write_graph,
 )
 from hillclimb.modules.memory.knowledge import ApproachNote, KnowledgeCard, OperatorStat, write_card
+from tests.catalog_fixture import pinned
 
 
 def make_card(problem_id="spaceship-titanic", run_ref="r1/s1", finished_at="2026-07-01T00:00:00Z",
@@ -194,7 +195,7 @@ class TestRetrieval:
         from hillclimb.api import build_knowledge_context
         from hillclimb.config import Config
 
-        config = Config()
+        config = pinned()
         config.learning.dir = knowledge_dir
         problem = SimpleNamespace(
             problem_id="spaceship-titanic", metric_name="accuracy",

@@ -14,21 +14,22 @@
 │ --budget                                                   TEXT                  Wall-clock budget, e.g. 2h / 30m    │
 │ --agent,--backend                                          TEXT                  The coding agent that runs the      │
 │                                                                                  operators: claude-code | codex | pi │
-│                                                                                  | dummy (--backend is the old       │
-│                                                                                  spelling)                           │
+│                                                                                  | dummy | toy (the last two need no │
+│                                                                                  LLM; --backend is the old spelling) │
 │ --model                                                    TEXT                  Model the coding agent runs, e.g.   │
 │                                                                                  sonnet / opus                       │
-│ --climber                                                  TEXT                  The climber, by name: a preset      │
-│                                                                                  (greedy | openevolve | gepa) or one │
-│                                                                                  .py file. It replaces the           │
+│ --climber                                                  TEXT                  The climber: a .py file, a climber  │
+│                                                                                  folder, or package.module:Class     │
+│                                                                                  (hillclimb climber list shows the   │
+│                                                                                  catalog's). It replaces the         │
 │                                                                                  `climber:` block of hillclimb.yaml  │
 │                                                                                  (or of the run spec); --set         │
 │                                                                                  climber.params.k=v edits it. Repeat │
-│                                                                                  it (--climber greedy --climber      │
-│                                                                                  gepa) for a mixed fleet: one search │
-│                                                                                  per climber on the problem, under   │
-│                                                                                  one run, each tagged as an          │
-│                                                                                  experiment                          │
+│                                                                                  it (--climber climbers/greedy       │
+│                                                                                  --climber climbers/gepa) for a      │
+│                                                                                  mixed fleet: one search per climber │
+│                                                                                  on the problem, under one run, each │
+│                                                                                  tagged as an experiment             │
 │ --holdout                                 --no-holdout                           Hidden selection holdout            │
 │                                                                                  [default: holdout]                  │
 │ --learning                                --no-learning                          Cross-search memory (cards/claims   │

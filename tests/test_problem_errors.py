@@ -7,7 +7,7 @@ import pytest
 
 from hillclimb import cli
 from hillclimb.config import Config
-from hillclimb.demo import scaffold_problem
+from hillclimb.scaffold import scaffold_problem
 from hillclimb.problem import ProblemError, load_problem
 
 

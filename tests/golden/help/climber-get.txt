@@ -1,20 +1,26 @@
                                                                                                                         
  Usage: root climber get [OPTIONS] [PRESET]                                                                             
                                                                                                                         
- Copy a preset into climbers/<name>/: a folder you can read and edit.                                                   
+ Copy a catalog climber into climbers/<name>/: the whole climber as Python you can read and edit.                       
                                                                                                                         
- The folder IS the climber: climber.yaml with every default spelled out,                                                
- policy.py (which operator makes the next attempt), and prompts/ with the                                               
+ hillclimb ships no climber of its own — a catalog of examples to copy                                                  
+ from, like `problem get`. policy.py IS the climber: the selector policy                                                
+ (which candidate the next attempt starts from) and the operator policy                                                 
+ (which operator makes it), every decision and every default (`DEFAULTS`)                                               
+ written out, and at the end the `Climber(...)` that wires them to the                                                  
+ operators, tuner and memory — no config file; prompts/ holds the                                                       
  templates its operators render — the words the coding agents get — plus                                                
  a README of what the harness fills into each template's tokens. It                                                     
- becomes this folder's climber, so edit a template and the next                                                         
- `hillclimb run` climbs with it. An existing folder is never overwritten.                                               
+ becomes this folder's climber, so edit policy.py or a template and the                                                 
+ next `hillclimb run` climbs with it. An existing folder is never                                                       
+ overwritten.                                                                                                           
                                                                                                                         
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│   [preset]      TEXT  A preset to copy out: greedy | openevolve (see: hillclimb climber list) [default: greedy]      │
+│   [preset]      TEXT  A catalog climber to copy out: greedy | openevolve | gepa (see: hillclimb climber list)        │
+│                       [default: greedy]                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ --name                         TEXT  The folder's name under climbers/ (default: the preset's)                       │
+│ --name                         TEXT  The folder's name under climbers/ (default: the catalog's)                      │
 │ --default      --no-default          Make the copy this folder's climber (`climber:` in hillclimb.yaml), so          │
 │                                      `hillclimb run` uses it                                                         │
 │                                      [default: default]                                                              │

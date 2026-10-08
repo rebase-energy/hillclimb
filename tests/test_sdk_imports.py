@@ -17,14 +17,7 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "hillclimb"
 CLIMBER_MODULES = [
     # gepa: the loop, its operator, its scoring view (config.py / __init__.py
     # are the harness-side glue that reads Config until the manifest exists)
-    "climbers/gepa/loop.py",
-    "climbers/gepa/operator.py",
-    "climbers/gepa/evaluator.py",
-    "climbers/gepa/proposer.py",
     "modules/operators/builtin.py",
-    "modules/policies/greedy.py",
-    "modules/selectors/best.py",
-    "modules/selectors/map_elites.py",
     "modules/tuners/random_search.py",
     "modules/tuners/optuna.py",
     "modules/similarity/builtin.py",

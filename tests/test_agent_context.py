@@ -10,6 +10,7 @@ import pytest
 
 from hillclimb.config import Config
 from hillclimb.harness import agent_context
+from tests.catalog_fixture import pin
 
 
 def write_skill(root: Path, name: str, description: str, body: str = "Do the thing.\n") -> Path:
@@ -27,6 +28,7 @@ def layers(tmp_path, monkeypatch):
     hillclimb_dir = tmp_path / "energy"
     hillclimb_dir.mkdir()
     config = Config(hillclimb_dir=hillclimb_dir)
+    pin(config)  # the engine ships no climber
     glob, local = user / "agent", hillclimb_dir / "agent"
     write_skill(glob, "profile-first", "Use when code is slow.")
     write_skill(glob, "pinball-loss", "global version")

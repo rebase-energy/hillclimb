@@ -133,7 +133,7 @@ def knowledge_show(target: str = typer.Argument(..., help="Problem target, e.g. 
     from hillclimb.modules.memory.files import FilesMemory
 
     # as many cards as a search's prompts would show (the folder's memory_params)
-    max_cards = config.climber.memory_params.get("max_cards", FilesMemory.DEFAULTS["max_cards"])
+    max_cards = config.climber_params("memory_params").get("max_cards", FilesMemory.DEFAULTS["max_cards"])
     typer.echo(render_prior_experience(cards, max_cards=int(max_cards)))
 
 

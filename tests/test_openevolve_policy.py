@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from hillclimb import catalog
+from tests.catalog_fixture import OPENEVOLVE, class_ref
 pytest.importorskip("openevolve")
 
 from hillclimb.agents.fake import FakeAgent
@@ -19,8 +21,9 @@ from hillclimb.harness.candidate import Candidate
 from hillclimb.harness.dirs import create_search_dir
 from hillclimb.harness.journal import Journal
 from hillclimb.harness.loop import PolicyLoop
-from hillclimb.modules.policies.greedy import Greedy
-from hillclimb.modules.selectors.map_elites import MapElites
+from tests.catalog_fixture import openevolve_classes
+
+Greedy, MapElites = openevolve_classes()
 from tests.harness_factory import SearchRig
 from tests.conftest import local_executor, ok_script
 from tests.test_policy import make_view
@@ -33,7 +36,7 @@ def block(params: dict = PARAMS) -> dict:
     """The `openevolve` preset with `params` sorted into the two places they
     belong: the policy's schedule knobs, the selector's settings."""
     return {
-        "name": "openevolve", "operator_policy": "greedy", "selector_policy": "map-elites",
+        "name": "openevolve", "operator_policy": class_ref("greedy", "Greedy"), "selector_policy": class_ref("openevolve", "MapElites"),
         "params": {"ensemble": False, "tune_budget": 0, **{k: v for k, v in params.items() if k in SCHEDULE_KNOBS}},
         "selector_params": {k: v for k, v in params.items() if k not in SCHEDULE_KNOBS},
     }
@@ -72,7 +75,7 @@ def test_the_preset_is_greedy_over_map_elites(config):
     settings are `selector_params`."""
     from hillclimb.climber import ClimberLoadError, load_climber
 
-    preset = load_climber("openevolve")
+    preset = catalog.climber("openevolve")
     policy = preset.build_loop().policy
     assert preset.name == "openevolve" and type(policy) is Greedy and isinstance(policy.selector, MapElites)
     assert (policy.selector.param("ensemble"), policy.param("tune_budget")) == (False, 0)
@@ -81,13 +84,13 @@ def test_the_preset_is_greedy_over_map_elites(config):
     assert policy.selector.db_config.num_islands == 2
     assert policy.selector.feature_dimensions == ["complexity", "score"]
     # MAP-Elites' settings are the selector's: among the policy's params they are a mistake, said out loud
-    with pytest.raises(ClimberLoadError, match="greedy has no param 'num_islands'.*selector_params"):
-        make_policy("openevolve", {"num_islands": 2})
+    with pytest.raises(ClimberLoadError, match="has no param 'num_islands'.*selector_params"):
+        make_policy(str(OPENEVOLVE), {"num_islands": 2})
     with pytest.raises(ClimberLoadError, match="map-elites has no setting .'num_island'."):
         make_policy({**block(), "selector_params": {"num_island": 2}})
     # any policy's schedule can run over it — and greedy over another selector
-    assert isinstance(make_policy({"operator_policy": "greedy", "selector_policy": "map-elites"}).selector, MapElites)
-    assert type(make_policy({"operator_policy": "greedy"}).selector).__name__ == "Best"
+    assert type(make_policy({"operator_policy": class_ref("greedy", "Greedy"), "selector_policy": class_ref("openevolve", "MapElites")}).selector).__name__ == "MapElites"  # two files, one scope: its own package
+    assert type(make_policy({"operator_policy": class_ref("greedy", "Greedy")}).selector).__name__ == "Best"
 
 
 def test_drafts_until_population_seeded_then_evolves(config, tmp_path):

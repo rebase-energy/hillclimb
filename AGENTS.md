@@ -84,11 +84,17 @@ top level is the public surface only: `api` (incl. `run` / `run_spec` / `start` 
 `spaces` (byte-copied into runtime venvs, so it stays), the six facades `policies`,
 `selectors`, `operators`, `tuners`, `memory`, `loops` (lazy single modules:
 `hillclimb.policies.Greedy`; never packages — `_moved.py` owns the
-`hillclimb.policies.` prefix of pre-move refs), `sdk/`, `demo/`, `agents/`,
-`providers/` (emflow, mlebench, einsteinarena), `prompts/`, `runtime/`, `climbers/`
-(climber libraries that bring several modules: `gepa/`). `_moved.py` maps pre-move
-module prefixes (`MOVED`) and renamed classes (`RENAMED`) wherever a `module:Class`
-ref is imported.
+`hillclimb.policies.` prefix of pre-move refs), `sdk/`, `catalog.py` + `scaffold/`, `agents/`,
+`providers/` (emflow, mlebench, einsteinarena), `prompts/`, `runtime/`. The package
+holds NO climber: the repo-root `climbers/` is the catalog (`greedy/policy.py` = `Best` +
+`Greedy`, `openevolve/policy.py` = `MapElites` + `Greedy`, each ONE self-contained file
+holding both policies with every decision and default written out; `gepa/`, a folder
+that brings a loop), `climber get` copies a folder byte for byte and
+`tests/test_catalog.py` keeps the two `Greedy` copies from drifting; `src/hillclimb/
+climbers/` is an empty docstring package. `modules/policies/` and `modules/selectors/`
+hold only the bases, which decide nothing. `_moved.py` maps pre-move module prefixes
+(`MOVED`) and renamed classes (`RENAMED`, incl. the 0.6-0.8 `modules.policies.greedy:Greedy`
+/ `modules.selectors.best:Best` paths) wherever a `module:Class` ref is imported.
 
 - The hillclimb dir: any folder holding a `hillclimb.yaml` (the config and
   the marker), looked for in the CWD only (or the CWD's `hillclimb/` subfolder) — no upward search, so a hillclimb checkout beside a project is never taken for it; problems/, runs/, knowledge/,
@@ -116,7 +122,7 @@ ref is imported.
   Machine-scoped state (shared venvs, emflow cache, coding agent slots) lives in
   `~/.cache/hillclimb/`.
 - Tests: `uv run pytest`
-- New problem: `hillclimb problem new <id>` (scaffold from `demo/_scaffold/`, a two-step
+- New problem: `hillclimb problem new <id>` (scaffold from `scaffold/problem/`, a two-step
   run.py + score.py problem) or copy a bundled one (`hillclimb problem get <problem>`); check a
   verifier with `hillclimb verify <problem> --repeat 5` (the spread it prints
   is the noise floor — improvements below it are not real)
@@ -309,7 +315,7 @@ ref is imported.
 - The climber is a BLOCK in the run config (`modules/spec.py` `ClimberSpec`,
   `hillclimb/climber.py`; `docs/climbers.md`). There is no `climber.yaml`
   to point at and no reference/overlay split: `climber:` DEFINES it —
-  `operator_policy` xor `loop` (neither = greedy), `params`, `selector_policy` +
+  `operator_policy` xor `loop` (neither = refused), `params`, `selector_policy` +
   `selector_params` (0.7 names; `policy`, `select`, `select_params` still
   load), `operators` (names/refs, each optionally `- draft:
   {retrieval: true}`) + `operator_params` (by operator name), `tuner` +
@@ -322,23 +328,53 @@ ref is imported.
   default < entry < `--climber NAME`); `--set climber.<field>` and
   experiment overrides then EDIT the chosen block (`climber=<name|block>`
   replaces it; `climber.operator_policy`/`climber.loop` drop each other;
-  `climber.operators.<name>.<k>` addresses `operator_params`). A bare string
-  is a preset (`spec.PRESETS`: `greedy = {operator_policy: greedy}`, `gepa = {loop:
-  gepa}`, `openevolve = {operator_policy: greedy, selector_policy: map-elites, params:
-  {ensemble: false, tune_budget: 0}}`) or one `.py` file (its one policy or
-  Loop, plus the Operator subclasses in it; a file that BUILDS a
-  `Climber(...)` is that whole climber instead, `spec.composed_block`: its
-  classes written `file.py:Class`, imported only when the source calls
-  `Climber(`). Defaults live on the CLASSES
-  (`OperatorPolicy.DEFAULTS`, a loop's `operators` / `holdout_timing`), so a preset
-  is a one-line block. 0.5 shapes still load: `climber: {ref: X, ...}`,
-  `operators` as a mapping, `graph:`, `--set climber.ref=X`, and
-  `learning.<behaviour flag>` (→ `memory_params`); an openevolve `ref`'s
-  MAP-Elites settings are sorted into `selector_params`
-- Climber folders (`hillclimb climber get <preset>`, `cli/climber.py` + `climber.
-  write_climber_folder`): `climbers/<name>/` = `climber.yaml` (the block, defaults
-  spelled out, paths relative to the folder), `policy.py` (the operator policy's
-  source) and `prompts/` (the templates its operators render — `Operator.templates`
+  `climber.operators.<name>.<k>` addresses `operator_params`). There are NO
+  presets and NO default: a block names its `operator_policy:` or `loop:`
+  (`spec._one_brain` refuses a block of knobs alone; `Config.climber` is None until
+  the folder names one, `climber_block()` / `as_spec(None)` raise `NoClimber` with
+  the fetch hint, `cli/run.py` refuses before detaching, `api._new_search` before
+  writing a run folder). A bare string is one `.py` file (its one policy or Loop,
+  plus the Operator subclasses in it, and its own `SelectorPolicy` subclass —
+  `Climber._own_selector`, which a subclass of a catalog class inherits from the
+  file its base is written in; a file that BUILDS a `Climber(...)` is that whole
+  climber instead, `spec.composed_block`: its classes written `file.py:Class`,
+  imported only when the source calls `Climber(`) or a folder holding `policy.py`
+  (`spec.folder_block`). Defaults live on the CLASSES (`OperatorPolicy.DEFAULTS`,
+  a loop's `operators` / `holdout_timing`). 0.5 shapes still load: `climber:
+  {ref: X, ...}`, `operators` as a mapping, `graph:`, `--set climber.ref=X`, and
+  `learning.<behaviour flag>` (→ `memory_params`); the pre-0.9 registry names
+  (`greedy`, `best`, `openevolve`, `map-elites`, `gepa`) and the 0.6–0.8 module
+  paths resolve ONLY for a record (`refs.resolve_ref(legacy=True)` via
+  `catalog.RECORDED` / `RECORDED_MODULES` / `RECORDED_PRESETS`; set by
+  `load_snapshot`, `_load_climber_dir`, the no-snapshot resume and
+  `SearchMeta._from_older_schemas`; the block keeps its recorded spelling so
+  `climber_sha256` stands) — a new config naming them is told
+  `hillclimb climber get <name>`
+- The catalog (`catalog.py`, stdlib-only at the top; `hatch_build.py`): the engine
+  ships NO problem and NO climber — the repo-root `problems/` and `climbers/` ARE
+  the catalog, bundled into the wheel under `hillclimb/_catalog/` by the hatch hook
+  (per file: `catalog.PROBLEM_IDS` for problems, every `climbers/*/policy.py` folder;
+  nothing for an editable install) and found by `catalog.root()` (the bundle, else
+  this checkout). `install_problem` / `install_climber` copy an entry (never
+  overwriting; a climber folder without `prompts/` gets one generated,
+  `climber.write_prompts_folder`), `catalog.climber(name)` / `module(name)` are the
+  Python SDK's route (`hc.catalog.module("greedy").Greedy`). `scaffold/` holds
+  `problem new`'s template and the Windows verifier. `tests/test_catalog.py` holds
+  the wheel's file set, the import rule for every catalog `.py`, and the two
+  shipped `Greedy` copies / the `Best`-`MapElites` schedules to each other
+- Climber folders (`hillclimb climber get <name>`, `cli/climber.py` +
+  `catalog.install_climber`): `climbers/<name>/` = the catalog folder as it is —
+  `policy.py` (selector policy + operator policy, every default a `DEFAULTS` entry,
+  and the committed `Climber(selector_policy=Best(), operator_policy=Greedy(),
+  operators=[Draft(), …], tuner=RandomSearch(), memory=FilesMemory(), name=…)` that
+  makes the file the whole climber — no `prompts=`: `prompts/` beside ANY climber
+  file is its prompts dir unless the block or `Climber(prompts_dir=…)` says
+  otherwise (`spec._with_default_prompts`, applied where a file ref becomes a
+  block); NO climber.yaml — the folder is a way of naming that file:
+  `spec.folder_block` falls back to `<dir>/policy.py`, `load_climber` too, and `get`
+  pins `climber: climbers/<name>/policy.py`; `--name N` rewrites the file's
+  `name=`; gepa is a folder of several files with its own `prompts/gepa_reflect.md`;
+  a pre-0.9 folder's `climber.yaml` still loads) and `prompts/` (the templates its operators render — `Operator.templates`
   declares them — plus `README.md` from `climber.prompts_guide`, whose token table
   is `operators.builtin.TOKEN_GUIDE`; `tests/test_climber_get.py` holds both to the
   templates). A folder holding `climber.yaml` is a first-class ref
@@ -346,9 +382,9 @@ ref is imported.
   reads it with the folder as base; a `ClimberSpec` validated from a string looks a
   relative folder up under `context={"base_dir": …}`, the hillclimb dir for
   `hillclimb.yaml`, `--set climber=` and `--climber`). `get` pins `climber:
-  climbers/<name>` in hillclimb.yaml (`cli/climber.pin_climber`: a scalar line is
-  replaced, the commented `init` line uncommented, an active block left alone). A
-  loop (`gepa`) is refused; the copy is its own identity
+  climbers/<name>/policy.py` in hillclimb.yaml (`cli/climber.pin_climber`: a scalar line is
+  replaced, the commented `init` line uncommented, an active block left alone); `get
+  gepa` copies the loop folder like any; the copy is its own identity
 - Module refs (`modules/refs.py`): every slot is named the same three ways —
   a registry name, `file.py[:Class]` (relative to the file the block is
   written in; anchored absolute by `ClimberSpec.anchored` at each boundary),
@@ -366,7 +402,7 @@ ref is imported.
 - `Climber` (`hillclimb/climber.py`): `resolve_climber(block, base_dir)` /
   `Climber.from_spec` — or composed in Python, `Climber(selector_policy=…, operator_policy=…,
   operators=[…], tuner=…, memory=…)` (keywords in the order a step runs
-  them; the positional first argument is a preset name or a policy) from
+  them; the positional first argument is a policy, never a name) from
   names, classes or instances (an
   instance = its class + `.params`; written the most portable way:
   registry name > `module:Class` > `its_file.py:Class` > `live:Name`, the
@@ -380,7 +416,7 @@ ref is imported.
   block's params and are recorded in `SearchMeta.memory_priors` at first
   run), `.holdout_timing` (the loop class's). `sha256` (`identity`) = the
   block without `name` + the FileScope digest + `tree_sha256(prompts)`,
-  independent of where files are. `load_climber(str)` = preset | one file |
+  independent of where files are. `load_climber(str)` = one file | a folder holding `policy.py` |
   a pre-0.6 directory (read as the block it is — `hillclimb climber show
   <dir>` is the migration). `harness.glue.search_climber/build_loop/
   build_operators/build_tuner/build_memory/holdout_timing` are the glue
@@ -507,15 +543,23 @@ ref is imported.
   STEP IS TWO DECISIONS IN A FIXED ORDER (the RSI framework's π_sel then
   π_op; `PolicyLoop.propose(view)` = `selector.schedule(view, busy)` then
   `policy.propose(view, selection)`; `api.Search.select()/propose()` the
-  same for stepping). The `SelectorPolicy` base OWNS THE SCHEDULE: `schedule` =
-  failing tip (`debuggable_tip`) → combine window (`should_combine`,
-  `combine_candidates` = `top_distinct(..., skip_kind="combine")`,
-  `Selection(combine=True)`) → None while `prospective_branches <
-  num_drafts` (a root step) → `select(state, busy)`, the ONE method a subclass
-  writes (`Best.select`, `MapElites.select`; `pick`, its name for one day, is
-  aliased by `__init_subclass__`); its knobs (`num_drafts`, `debug`,
-  `max_debug_depth`, `ensemble*`) are `selector_params`, `DEFAULTS` merged over
-  the MRO, params held live like a policy's. `spec.SCHEDULE_KNOBS` +
+  same for stepping). The BASES DECIDE NOTHING (`SelectorPolicy.schedule/select`
+  and `OperatorPolicy.propose` raise, naming the reference): every decision is
+  written in the shipped climber file. `Best` (`climbers/greedy/policy.py`) OWNS THE
+  SCHEDULE: `schedule` = failing tip (`debuggable_tip`) → combine window
+  (`should_combine`, `combine_candidates` = `sdk.top_distinct(..., skip_kind=
+  "combine")`, `Selection(combine=True)`) → None while `prospective_branches <
+  num_drafts` (a root step) → `select(state, busy)`; `MapElites` carries the same
+  schedule (its `ensemble` default False) over OpenEvolve's database; a selector of
+  one's own subclasses `Best` to replace `select` (`pick`, its name for one day, is
+  aliased by `__init_subclass__`, which also blanks an undeclared `name`) or writes
+  its own `schedule`. The schedule knobs (`num_drafts`, `debug`, `max_debug_depth`,
+  `ensemble*`) are `Best.DEFAULTS`, set as `selector_params` (`DEFAULTS` merged
+  over the MRO, params held live like a policy's). A one-file climber's own
+  `SelectorPolicy` subclass (or `SELECTOR = …`) is its selector when the block names
+  none (`Climber._own_selector` / `_selector_ref`); `build_loop` routes a knob the
+  selector class declares from `params` to it, so `--set climber.params.<knob>` (a
+  meta tune trial) reaches either half. `spec.SCHEDULE_KNOBS` +
   `schedule_to_selector` move them out of `params` wherever a block is read
   (`ClimberSpec` before-validator, `block()`/`canonical()` for identity,
   `Climber.build_loop` for overlays, `config.current_setting` for `--set
@@ -645,7 +689,8 @@ ref is imported.
   `hillclimb.spaces`, the six facades, stdlib; `check_climber_source`, the v1 permissions
   rule) + `climber check`. Reference meta-problem `problems/meta-heilbronn/`
   (repo only, NOT in the bundled catalog; baseline `greedy.py` byte-identical
-  to `modules/policies/greedy.py`, `tests/test_meta.py` enforces).
+  to `climbers/greedy/policy.py` — both policies, so a candidate can change where
+  attempts start — `tests/test_meta.py` + `tests/test_catalog.py` enforce).
   Deferred: directory-shaped candidates, parallel inner runs, replay/ReplayHarness
 - Studies (`experiment.py`, run by `hillclimb experiment run|report`): a spec
   (`experiments/<name>.yaml`) is problems × named experiments (dotted config
@@ -756,10 +801,11 @@ ref is imported.
   opts out); `tui/similarity.py` pure layer with fingerprint caches,
   `tui/similarityview.py` the screens; no usable reference = prints why and
   returns), `graph` (knowledge graph)
-- Bundled problems in `src/hillclimb/demo/` (package data for `problem get`;
-  copies of `problems/`, circle-packing with a lean `requirements.txt`); keep
-  the two in sync. `fitness-landscape` is bundled beyond the starter set
-  (lean `requirements.txt` in both copies): the terrain the `toy` agent walks
+- Catalog problems: the repo-root `problems/` is the ONE copy (`catalog.PROBLEM_IDS`
+  lists what ships; `meta-heilbronn`, `bin-packing`, the `make_*.py` generators and
+  a developer's own problems never leave the repo); circle-packing is the lean
+  first-run edition (`requirements.txt`, a 60 s budget); `fitness-landscape` ships
+  beyond the starter set: the terrain the `toy` agent walks
 - Python SDK surface (`hillclimb/__init__.py`, lazy): `hc.run(...,
   max_evaluations=, learning=)` (both recorded as `set` pairs in the run's
   spec), `hc.Action`, `hc.register_agent`, `hc.open_search(ref)`.
@@ -781,9 +827,9 @@ ref is imported.
   coding agents resolved through PATHEXT, forward-slash `$HILLCLIMB_*` paths, and a
   UTF-8-mode relaunch of the CLI (`ensure_utf8_mode`). `problem get` writes the
   verifier for the fetching OS: verifier.py on Windows (the problem's own, else
-  `demo/windows_verifier.py`), verifier.sh elsewhere; `problem.windows_edition`
+  `scaffold/windows_verifier.py`), verifier.sh elsewhere; `problem.windows_edition`
   picks the `.py` sibling at load time; a `.sh`-only problem runs through Git
-  Bash. `tests/test_windows_verifier.py` holds every bundled verifier.sh
+  Bash. `tests/test_windows_verifier.py` holds every catalog verifier.sh
   without its own verifier.py to the standard shape and both editions to one
   score. `.github/workflows/quickstart.yml` walks the quickstart on
   ubuntu/macos/windows
@@ -818,11 +864,12 @@ keep `pos` byte-stable when touching layout code.
 
 ## plotui dependency
 
-The knowledge-graph viewer renders through `plotui`, an editable local path
-dep (`../plotui`, Rust core via maturin) in the `tui` extra and dev group —
-`uv sync` builds it and needs a Rust toolchain. After editing plotui's Rust
-source, run `uv sync --reinstall-package plotui` here (uv won't notice `.rs`
-changes on its own). Never override PlotWidget's Textual `on_*` handlers in
+The knowledge-graph viewer renders through `plotui` (Rust core via maturin),
+a core dependency that `uv sync` takes from PyPI, so a fresh clone syncs
+without a sibling checkout. Co-developing plotui: `uv pip install -e
+../plotui` with `UV_NO_SYNC=1` set (a plain `uv run` syncs the PyPI wheel
+back), and reinstall after editing its Rust source (uv won't notice `.rs`
+changes on its own); `CONTRIBUTING.md` has the steps. Never override PlotWidget's Textual `on_*` handlers in
 subclasses — Textual dispatches them per MRO class (both run); hook the
 `apply_zoom/apply_rotate/apply_pan/apply_reset/on_click_at` primitives
 instead. Direct mode (iTerm2) double-buffers frames across two Kitty image

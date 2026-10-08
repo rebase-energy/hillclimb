@@ -43,6 +43,7 @@ __all__ = [
     "register_benchmark_provider",
     "register_agent",
     "Action",
+    "catalog",
     "policies",
     "selectors",
     "operators",
@@ -72,8 +73,9 @@ _LAZY = {
         "register_benchmark_provider",
     ),
 }
-# the building blocks by name: each a lazy module of its own
-_FACADES = ("policies", "selectors", "operators", "tuners", "memory", "loops")
+# the building blocks by name, and the catalog of example problems and
+# climbers (`hc.catalog.climber("greedy")`): each a lazy module of its own
+_FACADES = ("catalog", "policies", "selectors", "operators", "tuners", "memory", "loops")
 
 
 def __getattr__(name: str):

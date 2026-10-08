@@ -19,7 +19,7 @@ from hillclimb.problem import load_problem
 
 REPO = Path(__file__).resolve().parent.parent
 INSTANCES = (50, 100)
-ROOTS = (REPO / "problems", REPO / "src" / "hillclimb" / "demo")
+ROOTS = (REPO / "problems",)
 
 
 def _load_module(path: Path, name: str):

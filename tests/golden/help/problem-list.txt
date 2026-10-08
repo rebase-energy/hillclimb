@@ -1,7 +1,7 @@
                                                                                                                         
  Usage: root problem list [OPTIONS]                                                                                     
                                                                                                                         
- List every problem bundled with hillclimb.                                                                             
+ List every problem in hillclimb's catalog.                                                                             
                                                                                                                         
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --help  -h        Show this message and exit.                                                                        │

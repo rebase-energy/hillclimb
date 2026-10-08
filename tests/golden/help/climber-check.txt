@@ -17,7 +17,7 @@
 │   [spec]      TEXT  A run spec: check the climber of every entry (default: this folder's `climber:` block)           │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ --climber               TEXT     A preset or one .py file, instead of the folder's block                             │
+│ --climber               TEXT     A .py file or climber folder, instead of the folder's block                         │
 │ --problem               TEXT     Replay only this problem's recorded searches (default: every search)                │
 │ --set                   TEXT     Config override, dotted: --set climber.params.num_drafts=1                          │
 │ --limit                 INTEGER  Newest recorded searches to replay [default: 20]                                    │

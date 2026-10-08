@@ -11,10 +11,13 @@ import pytest
 
 from hillclimb.harness.candidate import Candidate
 from hillclimb.harness.journal import Journal
-from hillclimb.modules.policies.greedy import Greedy
+from tests.catalog_fixture import GEPA, GREEDY, block, greedy_classes
+
+Greedy, Best = greedy_classes()
 from hillclimb.modules.policies.base import Action, SearchState
 from hillclimb.modules.policies.check import JournalCase, check_policy
 from tests.test_policy import add_candidate
+from tests.catalog_fixture import GREEDY, class_ref
 
 
 def _cases(tmp_path: Path) -> list[JournalCase]:
@@ -40,7 +43,7 @@ def _by_check(report, check: str, journal: str | None = None):
 
 
 def test_greedy_conforms(config, tmp_path):
-    report = check_policy(lambda: Greedy(), _cases(tmp_path), config)
+    report = check_policy(lambda: Greedy(selector=Best()), _cases(tmp_path), config)
     assert report.ok, report.render()
     assert report.policy == "greedy"
     checks = {f.check for f in report.findings}
@@ -284,7 +287,7 @@ def test_cli_replays_the_stores_journals(tmp_path, monkeypatch, capsys):
     from hillclimb.harness.run import RunMeta
     from tests.test_cli import write_problem
 
-    (tmp_path / "hillclimb.yaml").write_text("")
+    (tmp_path / "hillclimb.yaml").write_text(f"climber: {GREEDY}\n")  # the folder names its climber: the catalog file
     write_problem(tmp_path / "problems", "p")
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
@@ -307,7 +310,7 @@ def test_cli_replays_the_stores_journals(tmp_path, monkeypatch, capsys):
 
     # a climber that brings its own Loop is out of scope, and says so
     with pytest.raises(SystemExit) as exc:
-        cli_main(["climber", "check", "--climber", "gepa"])
+        cli_main(["climber", "check", "--climber", str(GEPA)])
     assert exc.value.code == 2
     assert "brings its own Loop" in capsys.readouterr().err
 
@@ -370,8 +373,8 @@ def test_climber_check_takes_a_run_spec_and_checks_every_entrys_climber(tmp_path
     monkeypatch.delenv("HILLCLIMB_DIR", raising=False)
     spec = tmp_path / "run.yaml"
     spec.write_text(yaml.safe_dump({"problems": [
-        {"target": "p", "climber": "greedy", "set": ["climber.params.num_drafts=1"]},
-        {"target": "p", "name": "again", "climber": {"operator_policy": "greedy", "params": {"num_drafts": 1}}},
+        {"target": "p", "climber": str(GREEDY), "set": ["climber.params.num_drafts=1"]},
+        {"target": "p", "name": "again", "climber": {**block("greedy"), "params": {"num_drafts": 1}}},
     ]}))
     with pytest.raises(SystemExit) as exc:
         cli_main(["climber", "check", "run.yaml", "--json"])
@@ -379,7 +382,7 @@ def test_climber_check_takes_a_run_spec_and_checks_every_entrys_climber(tmp_path
     (payload,) = json.loads(capsys.readouterr().out)  # two entries, one climber
     assert payload["ok"] and payload["resolved_params"]["num_drafts"] == 1 and payload["entry"].endswith("[1]")
 
-    spec.write_text(yaml.safe_dump({"climber": "greedy", "problems": ["p", {"target": "p", "climber": "stalls.py"}]}))
+    spec.write_text(yaml.safe_dump({"climber": str(GREEDY), "problems": ["p", {"target": "p", "climber": "stalls.py"}]}))
     with pytest.raises(SystemExit) as exc:
         cli_main(["climber", "check", "run.yaml"])
     assert exc.value.code == 1
@@ -410,6 +413,7 @@ def test_the_config_init_writes_shows_a_block_that_loads():
             break
         block.append(re.sub(r"^# ?", "", line))
     config = Config.model_validate(yaml.safe_load("\n".join(block)))
-    assert config.climber.operator_policy == "greedy" and config.climber.operators == ["draft", "debug", "improve", "ensemble"]
-    shorthand = next(line for line in lines if line.startswith("# climber: greedy"))
-    assert Config.model_validate(yaml.safe_load(shorthand[2:])).climber.operator_policy == "greedy"
+    assert config.climber.operator_policy == "climbers/greedy/policy.py:Greedy" and config.climber.operators == ["draft", "debug", "improve", "ensemble"]
+    shorthand = next(line for line in lines if line.startswith("# climber: climbers/greedy/policy.py"))
+    # from this checkout the file exists, so the name expands to the file's own block
+    assert Config.model_validate(yaml.safe_load(shorthand[2:])).climber.operator_policy.endswith("climbers/greedy/policy.py:Greedy")

@@ -15,6 +15,7 @@ from hillclimb.project import (
     machine_cache_dir,
     user_config_path,
 )
+from tests.catalog_fixture import GEPA, GREEDY, class_ref
 
 
 def make_hillclimb_dir(root: Path, config: dict | None = None) -> Path:
@@ -307,10 +308,10 @@ class TestRunSpecs:
         # lets a run's own spec.yaml say everything the launch said
         rich = tmp_path / "rich.yaml"
         rich.write_text(yaml.safe_dump({"problems": [
-            {"target": "emflow://gefcom2014:solar", "climber": "gepa", "set": ["budget.max_evaluations=3"]},
+            {"target": "emflow://gefcom2014:solar", "climber": str(GEPA), "set": ["budget.max_evaluations=3"]},
         ]}))
         entry = load_suite(rich, config).problems[0]
-        assert entry.climber["loop"] == "gepa" and entry.set == ["budget.max_evaluations=3"]
+        assert entry.climber["loop"].endswith("gepa/loop.py:GepaLoop") and entry.set == ["budget.max_evaluations=3"]
 
     def test_a_spec_defines_the_climber_of_each_search(self, tmp_path):
         """The run config is where the climber is defined: an entry's
@@ -329,23 +330,24 @@ class TestRunSpecs:
         )
         spec = specs / "run.yaml"
         spec.write_text(yaml.safe_dump({
-            "climber": {"operator_policy": "openevolve", "params": {"num_islands": 2}},
+            "climber": {"operator_policy": class_ref("openevolve", "Greedy"), "params": {"num_islands": 2}},
             "problems": [
                 "emflow://gefcom2014:wind",
-                {"target": "emflow://gefcom2014:solar", "climber": "gepa"},
+                {"target": "emflow://gefcom2014:solar", "climber": str(GEPA)},
                 {"target": "emflow://gefcom2014:solar",
                  "climber": {"operator_policy": "mine.py", "tuner": "optuna", "operators": ["draft"]}},
             ],
         }))
         suite = load_suite(spec, config)
         default, preset, inline = (entry.climber for entry in suite.problems)
-        assert (default["operator_policy"], default["params"]) == ("openevolve", {"num_islands": 2})
-        assert preset["loop"] == "gepa" and "policy" not in preset
+        assert (default["operator_policy"], default["params"]) == (class_ref("openevolve", "Greedy"), {"num_islands": 2})
+        assert preset["loop"].endswith("gepa/loop.py:GepaLoop") and "policy" not in preset
         assert inline["operator_policy"] == str(specs / "mine.py") and inline["tuner"] == "optuna"
         assert resolve_climber(inline).build_loop().policy.name == "mine"
         single = specs / "single.yaml"
-        single.write_text(yaml.safe_dump({"target": "emflow://gefcom2014:solar", "climber": {"loop": "gepa"}}))
-        assert load_suite(single, config).problems[0].climber["loop"] == "gepa"
+        gepa_loop = f"{GEPA.parent / 'loop.py'}:GepaLoop"
+        single.write_text(yaml.safe_dump({"target": "emflow://gefcom2014:solar", "climber": {"loop": gepa_loop}}))
+        assert load_suite(single, config).problems[0].climber["loop"] == gepa_loop
         spec.write_text(yaml.safe_dump({"problems": [{"target": "x", "climber": {"polcy": "greedy"}}]}))
         with pytest.raises(ValueError, match=r"run.yaml: problems\[1\].climber: .*polcy"):
             load_suite(spec, config)
@@ -359,10 +361,10 @@ class TestRunSpecs:
 
         (tmp_path / "seed.py").write_text("x = 1\n")
         entries = [
-            spec_entry("heilbronn-11", budget=600, agent="dummy", model="sonnet", climber="greedy",
+            spec_entry("heilbronn-11", budget=600, agent="dummy", model="sonnet", climber=str(GREEDY),
                        parallel_agents=2, n_replicates=None, seed_from=tmp_path / "seed.py",
                        set=["budget.max_evaluations=3"]),
-            spec_entry("heilbronn-11", name="gepa", budget="10m", climber="gepa"),
+            spec_entry("heilbronn-11", name="gepa", budget="10m", climber=str(GEPA)),
         ]
         path = write_run_spec(tmp_path / "run", entries, source="hillclimb/experiments/x.yaml") if (tmp_path / "run").mkdir() is None else None
         text = path.read_text()
@@ -376,8 +378,8 @@ class TestRunSpecs:
         assert (second.name, second.budget, second.set) == ("gepa", "10m", [])
         # a run's spec carries each climber as its FULL block, however it was named
         written = yaml.safe_load(text)["problems"]
-        assert written[0]["climber"] == first.climber and first.climber["operator_policy"] == "greedy"
-        assert written[1]["climber"]["loop"] == "gepa" and second.climber["tuner"] == "random"
+        assert written[0]["climber"] == first.climber and first.climber["operator_policy"] == class_ref("greedy", "Greedy")
+        assert written[1]["climber"]["loop"].endswith("gepa/loop.py:GepaLoop") and second.climber["tuner"] == "random"
 
 
 class TestVenvHashing:

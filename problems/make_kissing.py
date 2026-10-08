@@ -24,7 +24,6 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-DEMO_ROOT = ROOT.parent / "src" / "hillclimb" / "demo"
 DEFAULT_INSTANCES = (11,)
 
 # maximum rows the verifier accepts, and the coordinate bound that keeps every
@@ -280,7 +279,7 @@ def stamp(root: Path, d: int) -> Path:
 def main(argv: list[str]) -> None:
     instances = [int(a) for a in argv] or list(DEFAULT_INSTANCES)
     for d in instances:
-        for root in (ROOT, DEMO_ROOT):
+        for root in (ROOT,):
             print(f"wrote {stamp(root, d)}")
 
 

@@ -117,12 +117,13 @@ INIT_CONFIG = """\
 model: sonnet
 # agent: claude-code
 __STORE__
-# climber: greedy          # HOW to climb, this folder's default. A preset: greedy | openevolve | gepa,
-#                          # or one .py file. A run spec's own `climber:` replaces it
-# climber:                 # ...or the whole block (`hillclimb climber show greedy` prints one to edit)
-#   selector_policy: best  # which candidate to build on next: best | map-elites, or a file / package.module:Class
-#   selector_params: {num_drafts: 3}
-#   operator_policy: greedy  # which operator to use on it: a name, a file (mine.py or mine.py:Class) or package.module:Class
+# climber: climbers/greedy/policy.py   # HOW to climb, this folder's default: a climber `hillclimb climber get greedy`
+#                                      # fetched from the catalog (greedy | openevolve | gepa — the whole climber as
+#                                      # Python you can edit), or your own .py. A run spec's own `climber:` replaces it
+# climber:                 # ...or the whole block (`hillclimb climber show climbers/greedy` prints one to edit)
+#   selector_policy: climbers/greedy/policy.py:Best    # which candidate to build on next: a file:Class or package.module:Class
+#   operator_policy: climbers/greedy/policy.py:Greedy  # which operator to use on it
+#   selector_params: {num_drafts: 3}   # overrides of the classes' DEFAULTS (`params:` for the operator policy's)
 #   operators: [draft, debug, improve, ensemble]
 #   tuner: random          # random | optuna (parameter tuning of candidates that declare params.json)
 #   memory: files          # files | none

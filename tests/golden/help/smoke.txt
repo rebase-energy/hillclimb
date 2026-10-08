@@ -11,8 +11,8 @@
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --model                    TEXT                                                                                      │
-│ --agent,--backend          TEXT  The coding agent that runs the operators: claude-code | codex | pi | dummy          │
-│                                  (--backend is the old spelling)                                                     │
+│ --agent,--backend          TEXT  The coding agent that runs the operators: claude-code | codex | pi | dummy | toy    │
+│                                  (the last two need no LLM; --backend is the old spelling)                           │
 │ --help             -h            Show this message and exit.                                                         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 

@@ -23,8 +23,8 @@ all the same study with different experiments. A spec is a YAML file
       mine:                         # a whole `climber:` block, as a run spec takes it
         climber: {operator_policy: mine.py, tuner: optuna}
 
-An experiment's `climber` names or defines its climber — a preset, one .py
-file, or the block — and replaces the block whole; `climber.<field>` edits
+An experiment's `climber` names or defines its climber — one .py file, a
+climber folder, or the block — and replaces the block whole; `climber.<field>` edits
 the block it ends up with, whichever key came first.
 
 `expand` turns it into jobs in a fair order — round-robin over experiments
@@ -37,7 +37,8 @@ with the same flags counts too.
 
 Comparison is on the selected candidate's holdout score (val when holdout
 was off), per (problem, experiment): n, mean, median, spread, wins per repeat, and
-the gap to the first experiment (the control) judged against the noise floor.
+the gap to the first experiment (the control) judged against the noise floor or
+the spread across repeats, whichever is larger.
 Pure functions here; orchestration and printing live in the CLI.
 """
 
@@ -343,7 +344,12 @@ class Comparison:
     wins: int                  # repeats where experiment beat control
     losses: int
     ties: int
-    within_noise: bool | None  # None when no noise floor is known
+    within_noise: bool | None  # None when no threshold is known
+    # what the gap was judged against: the larger of the spec's noise floor
+    # (the verifier's own noise) and the spread across repeats of either side
+    # (the search's own noise, which a deterministic verifier's floor of 0 misses)
+    threshold: float | None = None
+    threshold_source: str | None = None  # "noise floor" | "repeat spread"
 
 
 @dataclass(frozen=True)
@@ -424,8 +430,11 @@ def summarize(
                     gap = stats.mean - ctrl.mean
                 else:
                     gap = None
-                within = abs(gap) < floor if gap is not None and floor is not None else None
-                comparisons.append(Comparison(stats.experiment, ctrl.experiment, gap, w, l, t, within))
+                threshold, source = _threshold(floor, ctrl.spread, stats.spread)
+                within = abs(gap) < threshold if gap is not None and threshold is not None else None
+                comparisons.append(
+                    Comparison(stats.experiment, ctrl.experiment, gap, w, l, t, within, threshold, source)
+                )
         summaries.append(StudySummary(
             study=study, problem_id=problem_id, problem_key=problem_key,
             higher_is_better=higher, experiments=experiments, comparisons=comparisons,
@@ -434,12 +443,27 @@ def summarize(
     return summaries
 
 
+def _threshold(
+    floor: float | None, *spreads: float | None
+) -> tuple[float | None, str | None]:
+    """The size a gap must exceed to count: the spec's noise floor or the
+    spread across repeats, whichever is larger — a verifier with no noise
+    of its own still sits under searches that land far apart."""
+    spread = max((s for s in spreads if s is not None), default=None)
+    if floor is None and spread is None:
+        return None, None
+    if spread is not None and (floor is None or spread > floor):
+        return spread, "repeat spread"
+    return floor, "noise floor"
+
+
 def summary_to_dict(summary: StudySummary) -> dict:
     """The summary as plain JSON-able data (`experiment report --json`):
     per experiment the scores and aggregates, per comparison the paired gap and
     its verdict — enough for a meta-verifier to read a score off without
     parsing the table. `verdict` is one of `better`, `worse`, `tie`,
-    `within-noise`, `unknown` (no scores or no noise floor)."""
+    `within-noise`, `unknown` (no scores, or neither a noise floor nor
+    two repeats to measure a spread from)."""
     experiments = []
     for stats in summary.experiments:
         experiments.append({
@@ -475,6 +499,8 @@ def summary_to_dict(summary: StudySummary) -> dict:
             "losses": cmp.losses,
             "ties": cmp.ties,
             "within_noise": cmp.within_noise,
+            "threshold": cmp.threshold,
+            "threshold_source": cmp.threshold_source,
             "verdict": verdict,
         })
     return {
@@ -507,10 +533,19 @@ def _fmt_tokens(value: float | None) -> str:
     return f"{value:.0f}"
 
 
+def _noise_label(cmp: Comparison) -> str:
+    if cmp.threshold is None:
+        return ""
+    if cmp.threshold_source == "repeat spread":
+        return f"{cmp.threshold:.3g}, the spread across repeats"
+    return f"{cmp.threshold:g}"
+
+
 def render_report(summaries: list[StudySummary]) -> str:
     """Markdown-ish text: one table per (study, problem) — the experiments
     with their n/mean/median/spread/wins/cost — then every experiment against
-    the control with the gap judged against the noise floor."""
+    the control with the gap judged against the noise floor or the spread
+    across repeats, whichever is larger."""
     if not summaries:
         return "no finished study searches found (run `hillclimb experiment run <spec>` first)"
     lines: list[str] = []
@@ -535,12 +570,13 @@ def render_report(summaries: list[StudySummary]) -> str:
                 sign = "+" if cmp.gap >= 0 else ""
                 improves = (cmp.gap > 0) == summary.higher_is_better and cmp.gap != 0
                 verdict = f"{sign}{cmp.gap:.4g} vs {cmp.control}"
+                noise = _noise_label(cmp)
                 if cmp.within_noise:
-                    verdict += f" — within noise ({summary.noise_floor:g}), not a result"
+                    verdict += f" — within noise ({noise}), not a result"
                 elif cmp.gap == 0:
                     verdict += " — tie"  # the same score is not "worse" (the --json verdict says so too)
                 elif cmp.within_noise is False:
-                    verdict += " — " + ("better" if improves else "worse") + f" beyond noise ({summary.noise_floor:g})"
+                    verdict += " — " + ("better" if improves else "worse") + f" beyond noise ({noise})"
                 else:
                     verdict += " — " + ("better" if improves else "worse") + " (no noise floor known)"
                 verdict += f"; wins {cmp.wins}, loses {cmp.losses}, ties {cmp.ties}"

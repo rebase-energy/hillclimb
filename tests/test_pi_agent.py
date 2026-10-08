@@ -17,6 +17,7 @@ from hillclimb.agents.pi_cli import PiCliAgent, pi_env
 from hillclimb.agents.base import AgentResult
 from hillclimb.config import Config
 from hillclimb.harness.routing import AgentPool, Router
+from tests.catalog_fixture import pin
 
 
 CATALOGUE = {
@@ -328,6 +329,7 @@ def test_preflight_deduplicates_model_sampling_routes(tmp_path: Path):
             "improve": {"sampling": {"temperature": 0.9}},
         },
     )
+    pin(config)  # the engine ships no climber; the preflight builds the block's operators
     agent = _PreflightPi()
     pool = AgentPool()
     pool.seed("pi", "subscription", agent)
@@ -346,6 +348,7 @@ def test_preflight_surfaces_provider_rejection(tmp_path: Path):
         agent="pi",
         routing={"default": {"sampling": {"temperature": 0.9}}},
     )
+    pin(config)  # the engine ships no climber; the preflight builds the block's operators
     agent = _PreflightPi(
         AgentResult(
             ok=False,
@@ -368,6 +371,7 @@ def test_preflight_checks_every_pool_model_and_auth(tmp_path):
         "draft": {"model": "c"},
         "debug": {"agent_auth": "api-key"},
     })
+    pin(config)  # the engine ships no climber; the preflight builds the block's operators
     subscribed, billed = _PreflightPi(), _PreflightPi()
     pool = AgentPool()
     pool.seed("pi", "subscription", subscribed)

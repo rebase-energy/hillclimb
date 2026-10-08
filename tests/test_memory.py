@@ -13,7 +13,9 @@ from hillclimb.harness.glue import build_memory, effective_memory
 from hillclimb.modules.memory.base import Memory, MemoryEnv, Retrieved
 from hillclimb.modules.memory.files import FilesMemory, NoMemory, get_memory
 from tests.conftest import ok_script
+from tests.catalog_fixture import GREEDY, class_ref, pin
 
+from hillclimb import catalog
 NOTEBOOK_PY = '''\
 from pathlib import Path
 
@@ -48,35 +50,37 @@ class Notebook(Memory):
 
 
 def test_the_block_names_the_memory_and_sets_its_behaviour():
-    default = resolve_climber("greedy").memory()
+    default = catalog.climber("greedy").memory()
     assert isinstance(default, FilesMemory) and default.param("max_cards") == 3 and default.param("claims") is True
-    tuned = resolve_climber({"memory_params": {"max_cards": 1, "claims": False, "skills": False}}).memory()
+    tuned = resolve_climber({"operator_policy": class_ref("greedy", "Greedy"), "memory_params": {"max_cards": 1, "claims": False, "skills": False}}).memory()
     assert (tuned.param("max_cards"), tuned.agent_passes()) == (1, ())  # no distill pass to route
     assert default.agent_passes() == ("distill",)
-    assert isinstance(resolve_climber({"memory": "none"}).memory(), NoMemory)
+    assert isinstance(resolve_climber({"operator_policy": class_ref("greedy", "Greedy"), "memory": "none"}).memory(), NoMemory)
     # a setting the memory does not have is an error before anything runs
     with pytest.raises(ClimberLoadError, match="memory files has no setting .'max_card'. .it has: .*max_cards"):
-        resolve_climber({"memory_params": {"max_card": 1}}).memory()
+        resolve_climber({"operator_policy": class_ref("greedy", "Greedy"), "memory_params": {"max_card": 1}}).memory()
     with pytest.raises(ClimberLoadError, match="unknown memory 'sqlite' .available: files, none"):
-        resolve_climber({"memory": "sqlite"}).memory()
+        resolve_climber({"operator_policy": class_ref("greedy", "Greedy"), "memory": "sqlite"}).memory()
 
 
 def test_the_user_keeps_the_switch():
     config = Config()
+    pin(config)
     assert effective_memory(config) == "files" and isinstance(build_memory(config), FilesMemory)
     config.learning.enabled = False  # `learning.enabled: false`, `--no-learning`
     assert effective_memory(config) == "none" and isinstance(build_memory(config), NoMemory)
-    config = Config.model_validate({"climber": {"memory": "none"}})
+    config = Config.model_validate({"climber": {"operator_policy": class_ref("greedy", "Greedy"), "memory": "none"}})
     assert effective_memory(config) == "none"  # ...and a climber may simply not use one
 
 
 def test_the_0_5_learning_settings_are_the_memorys_params():
     """How memory behaves was the user's `learning:` block; it is the
     climber's `memory_params` now. Old configs and `--set` keys still load."""
-    config = Config.model_validate({"learning": {"max_cards": 5, "claims": False, "tool": False, "dir": "kb"}})
+    config = Config.model_validate({"climber": str(GREEDY), "learning": {"max_cards": 5, "claims": False, "tool": False, "dir": "kb"}})
     assert config.climber.memory_params == {"max_cards": 5, "claims": False}
     assert (config.learning.tool, str(config.learning.dir)) == (False, "kb")  # the user's stay where they were
     config = Config()
+    pin(config)  # the flags are the climber's memory_params: there has to be a climber
     config.apply_overrides(parse_set_overrides(["learning.skills=false", "learning.complexity_prior=true"]))
     assert config.climber.memory_params == {"skills": False, "complexity_prior": True}
     assert build_memory(config).param("skills") is False
@@ -95,7 +99,7 @@ def test_a_climber_brings_its_own_memory(task, config, tmp_path, monkeypatch):
     notes = tmp_path / "notes.txt"
     notes.write_text("Last time the best was 0.4.\n")
     config.apply_overrides({"climber": {
-        "operator_policy": "greedy", "params": {"num_drafts": 1, "tune_budget": 0, "ensemble": False},
+        "operator_policy": class_ref("greedy", "Greedy"), "params": {"num_drafts": 1, "tune_budget": 0, "ensemble": False},
         "memory": str(tmp_path / "notebook.py"), "memory_params": {"where": str(notes), "shout": True},
     }})
     agent = FakeAgent()
@@ -106,7 +110,7 @@ def test_a_climber_brings_its_own_memory(task, config, tmp_path, monkeypatch):
     config.budget.max_evaluations = 2
     run_dir = api.create_run(config, RunMeta(run_id="r1", name="r1", kind="problem", target="t", problem_ids=[task.problem_id]))
     search_dir = api.create_search(config, task, run_dir, "r1", 600)
-    assert (search_dir / "climber" / "files" / "notebook.py").is_file()
+    assert any(p.name == "notebook.py" for p in (search_dir / "climber" / "files").rglob("*.py"))  # beside the catalog file, its own root
     meta = load_search_meta(search_dir)
     assert meta.learning_enabled and meta.climber_spec["memory_params"] == {"where": str(notes), "shout": True}
 
@@ -130,7 +134,7 @@ def test_no_memory_still_leaves_the_search_its_own_card(task, config, tmp_path, 
     from hillclimb.harness.run import RunMeta, load_search_meta
     from hillclimb.modules.memory.knowledge import CARD_FILENAME
 
-    config.apply_overrides({"climber": {"memory": "none"}})
+    config.apply_overrides({"climber": {"operator_policy": class_ref("greedy", "Greedy"), "memory": "none"}})
     config.learning.dir = tmp_path / "knowledge"
     agent = FakeAgent()
     agent.queue(script=ok_script(0.6), notes="d\n")

@@ -1,4 +1,4 @@
-"""The `climber:` block — `ClimberSpec` — and the presets a bare name stands for.
+"""The `climber:` block — `ClimberSpec` — and the block a bare string stands for.
 
 Kept apart from `hillclimb.climber` (which resolves a block into classes) so
 the config schema can hold one without importing the harness: this module
@@ -17,19 +17,6 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validat
 from hillclimb.modules import refs
 from hillclimb.modules.memory.base import MemoryKind
 
-DEFAULT_POLICY = "greedy"
-
-# a bare name stands for one of these blocks
-PRESETS: dict[str, dict[str, Any]] = {
-    "greedy": {"operator_policy": "greedy"},
-    # quality-diversity search: greedy's schedule over the MAP-Elites
-    # selector policy, without the moves OpenEvolve has no counterpart for
-    "openevolve": {
-        "name": "openevolve", "operator_policy": "greedy", "selector_policy": "map-elites",
-        "selector_params": {"ensemble": False}, "params": {"tune_budget": 0},
-    },
-    "gepa": {"loop": "gepa"},
-}
 
 # The two decisions were `policy:` and `select:` (its knobs `select_params:`)
 # until 0.7; they are named after the RSI framework now — the selector policy
@@ -96,11 +83,13 @@ def schedule_to_selector(data: dict) -> dict:
     return data
 
 
-def block_from_05(data: dict) -> dict:
+def block_from_05(data: dict, legacy: bool = False) -> dict:
     """The `climber:` block hillclimb.yaml held in 0.4/0.5 named a climber
     (`ref:`) and what the user laid over it; `operators:` was that overlay,
     a mapping by operator name; `graph:` sat beside `memory:`. Same settings,
-    older shape: the `ref` is expanded and the rest laid over it."""
+    older shape: the `ref` is expanded and the rest laid over it. `legacy`:
+    the data is a RECORD (a run folder), so a preset name from before 0.9
+    still expands."""
     if "graph" in data:
         # the graph module is a setting of the memory it indexes
         data = dict(data)
@@ -111,7 +100,7 @@ def block_from_05(data: dict) -> dict:
         return data
     data = dict(data)
     ref = data.pop("ref", None)
-    base = expand_name(ref) if ref is not None else {}
+    base = expand_name(ref, legacy=legacy) if ref is not None else {}
     overlay = data.pop("operators", None)
     merged = dict(base)
     for key, value in data.items():
@@ -122,7 +111,7 @@ def block_from_05(data: dict) -> dict:
         # 0.5's openevolve policy kept MAP-Elites' settings among its own
         # params; they are the selector policy's now
         theirs = {k: v for k, v in data["params"].items() if k not in _OPENEVOLVE_SCHEDULE_KNOBS}
-        merged["params"] = {k: v for k, v in merged["params"].items() if k not in theirs}
+        merged["params"] = {k: v for k, v in merged.get("params", {}).items() if k not in theirs}
         merged["selector_params"] = {**theirs, **(merged.get("selector_params") or {})}
     if isinstance(overlay, dict):
         if overlay:
@@ -133,52 +122,81 @@ def block_from_05(data: dict) -> dict:
 
 
 def climber_label(ref: str) -> str:
-    """A short display name for a climber named by a string: a preset's name
-    as it is, a one-file climber's stem."""
+    """A short display name for a climber named by a string: a registry
+    name as it is, a one-file climber's stem — or the class the ref names
+    after the colon (one file may hold both policies, so the stem says
+    nothing)."""
     if refs.is_file_ref(ref):
-        return Path(refs.split_file_ref(ref)[0]).stem
+        file, attr = refs.split_file_ref(ref)
+        return attr or Path(file).stem
     if refs.is_module_ref(ref):
         return ref.rpartition(":")[2]
     return Path(ref).name if "/" in ref or "\\" in ref else ref  # a climber folder, by its name
 
 
-def presets() -> list[str]:
-    return sorted(PRESETS)
+FOLDER_POLICY = "policy.py"  # what makes a folder a climber: the file `hillclimb climber get` writes
+DEFAULT_PROMPTS = "prompts"  # a climber file's prompts dir, when one sits beside it
+FOLDER_MANIFEST = "climber.yaml"  # what made one before 0.9 (a block); still read
 
 
-FOLDER_MANIFEST = "climber.yaml"  # what makes a folder a climber (`hillclimb climber get` writes one)
-
-
-def expand_name(ref: str, base_dir: Path | None = None) -> dict[str, Any]:
-    """The block a bare string stands for: a preset, a climber folder (a
-    directory holding `climber.yaml`: its block, with the folder's files and
-    prompts named relative to where the ref was written), a file that puts a
+def expand_name(ref: str, base_dir: Path | None = None, legacy: bool = False) -> dict[str, Any]:
+    """The block a bare string stands for: a climber folder (a directory
+    holding `policy.py`, or a pre-0.9 `climber.yaml`: its block, with the
+    folder's files and prompts named relative to where the ref was written), a file that puts a
     whole `Climber(...)` together, or one file / one class (an operator
     policy). A relative folder is looked for under `base_dir` when given,
     else the current directory."""
-    if ref in PRESETS:
-        return json.loads(json.dumps(PRESETS[ref]))  # a copy nobody can edit the preset through
+    if legacy:
+        from hillclimb.catalog import RECORDED_PRESETS
+
+        if ref in RECORDED_PRESETS:  # a record from before 0.9 names the block by its preset name
+            return json.loads(json.dumps(RECORDED_PRESETS[ref]))
     folder = folder_block(ref, base_dir)
     if folder is not None:
         return folder
     if refs.is_file_ref(ref):
-        composed = composed_block(ref)
-        if composed is not None:
-            return composed
-    if refs.is_file_ref(ref) or refs.is_module_ref(ref):
-        return {"operator_policy": ref}  # a file that defines a Loop is recognised when it is resolved
+        composed = composed_block(ref, base_dir)
+        # a file that defines a Loop is recognised when it is resolved
+        return _with_default_prompts(composed if composed is not None else {"operator_policy": ref}, ref, base_dir)
+    if refs.is_module_ref(ref):
+        return {"operator_policy": ref}
+    from hillclimb.catalog import RECORDED_PRESETS, climber_names
+
+    if ref in RECORDED_PRESETS or ref in climber_names():
+        raise ValueError(
+            f"Unknown climber: {ref} — {ref!r} is a catalog climber, not a name the engine knows: "
+            f"`hillclimb climber get {ref}` (CLI) or `hc.catalog.climber({ref!r})` (Python)"
+        )
     raise ValueError(
-        f"Unknown climber: {ref} (presets: {', '.join(presets())}; or one .py file; or a folder "
-        f"holding {FOLDER_MANIFEST} — `hillclimb climber get greedy` writes one; or a full `climber:` block)"
+        f"Unknown climber: {ref} (one .py file; a folder holding {FOLDER_POLICY}; or a full `climber:` block — "
+        f"the catalog's: {', '.join(climber_names()) or 'none'}, fetched with `hillclimb climber get <name>`)"
     )
+
+
+def _with_default_prompts(block: dict[str, Any], ref: str, base_dir: Path | None) -> dict[str, Any]:
+    """A climber file's prompts live in `prompts/` beside it: that directory
+    is the block's `prompts` unless the file says otherwise (`Climber(
+    prompts_dir=…)`), so a folder `climber get` wrote needs no path in its code. Written
+    relative to how the ref was, like a folder's refs."""
+    if block.get("prompts"):
+        return block
+    path_str, _ = refs.split_file_ref(ref)
+    path = Path(path_str).expanduser()
+    located = path if path.is_absolute() or base_dir is None else Path(base_dir) / path
+    if (located.parent / DEFAULT_PROMPTS).is_dir():
+        return {**block, "prompts": (path.parent / DEFAULT_PROMPTS).as_posix()}
+    return block
 
 
 def folder_block(ref: str, base_dir: Path | None = None) -> dict[str, Any] | None:
     """The block of a climber folder, or None when `ref` names no folder
-    holding `climber.yaml`. The manifest's file refs and `prompts:` are
-    relative to the folder; they come back prefixed with `ref` itself, so
-    they are relative to whatever the ref was — the same anchoring applies
-    to both. The folder's name is the climber's unless the manifest names it."""
+    holding `policy.py` (what `hillclimb climber get` writes: the file IS the
+    climber, `policy.py` builds a `Climber(...)` — the folder is a way of
+    naming that file) or a pre-0.9 `climber.yaml`. A manifest's file refs
+    and `prompts:` are relative to the folder; they come back prefixed with
+    `ref` itself, so they are relative to whatever the ref was — the same
+    anchoring applies to both. The folder's name is the climber's unless the
+    manifest names it."""
     if refs.is_file_ref(ref) or refs.is_module_ref(ref):
         return None
     path = Path(ref).expanduser()
@@ -186,6 +204,8 @@ def folder_block(ref: str, base_dir: Path | None = None) -> dict[str, Any] | Non
         path = Path(base_dir) / path
     manifest = path / FOLDER_MANIFEST
     if not manifest.is_file():
+        if (path / FOLDER_POLICY).is_file():  # the folder names its policy.py: the same block as the file ref
+            return expand_name((Path(ref) / FOLDER_POLICY).as_posix(), base_dir)
         return None
     import yaml
 
@@ -295,8 +315,10 @@ class ClimberSpec(BaseModel):
     def _shorthand_and_refusals(cls, data, info: ValidationInfo):
         if isinstance(data, str):
             # a relative climber folder is looked for where the string was
-            # written: `ClimberSpec.model_validate(ref, context={"base_dir": dir})`
-            return expand_name(data, (info.context or {}).get("base_dir"))
+            # written: `ClimberSpec.model_validate(ref, context={"base_dir": dir})`;
+            # `context={"legacy": True}` for a name a record holds from before 0.9
+            context = info.context or {}
+            return expand_name(data, context.get("base_dir"), legacy=bool(context.get("legacy")))
         if not isinstance(data, dict):
             return data
         if "routing" in data:
@@ -317,7 +339,10 @@ class ClimberSpec(BaseModel):
                 "(the whole control flow), not both"
             )
         if self.operator_policy is None and self.loop is None:
-            self.operator_policy = DEFAULT_POLICY
+            raise ValueError(
+                "no climber named: a block needs `operator_policy:` or `loop:` — "
+                "a folder's is fetched with `hillclimb climber get greedy`"
+            )
         if self.loop is not None and (self.selector_policy is not None or self.selector_params):
             raise ValueError(
                 "`selector_policy:` picks what an operator policy expands; a `loop:` does its own selection"

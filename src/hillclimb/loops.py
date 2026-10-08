@@ -15,7 +15,6 @@ from __future__ import annotations
 _LAZY = {
     "Loop": ("hillclimb.harness.loop", "Loop"),
     "PolicyLoop": ("hillclimb.harness.loop", "PolicyLoop"),
-    "GepaLoop": ("hillclimb.climbers.gepa.loop", "GepaLoop"),
 }
 
 __all__ = sorted(_LAZY)

@@ -20,7 +20,7 @@ defaults:
   backend_auth: openrouter
   model: openrouter/deepseek/deepseek-v3.2
   learning.enabled: false
-  climber: greedy
+  climber: climbers/greedy/policy.py
   climber.params: {tune_budget: 0}
   concurrency.parallel_agents: 1
   evaluation.n_replicates: 1

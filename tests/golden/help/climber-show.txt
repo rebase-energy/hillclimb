@@ -8,7 +8,7 @@
  climber.yaml comes out as its block too — this is how one is migrated.                                                 
                                                                                                                         
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│   [ref]      TEXT  A preset, a .py file, or a pre-0.6 climber directory (default: this folder's climber)             │
+│   [ref]      TEXT  A .py file, a climber folder, or a pre-0.6 climber directory (default: this folder's climber)     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --help  -h        Show this message and exit.                                                                        │

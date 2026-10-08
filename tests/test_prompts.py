@@ -3,6 +3,7 @@ from hillclimb.prompts.render import render
 import pytest
 
 
+from tests.catalog_fixture import class_ref
 def test_render_replaces_tokens():
     text = render(
         "contract_verifier",
@@ -165,7 +166,7 @@ def test_search_record_pins_the_climber_and_snapshots_it(config, tmp_path):
     climber_dir = tmp_path / "mine"
     (climber_dir / "prompts").mkdir(parents=True)
     (climber_dir / "prompts" / "improve.md").write_text("tighter improve prompt: {{best_score}}\n\n{{contract}}\n")
-    block = {"name": "mine", "operator_policy": "greedy", "params": {"num_drafts": 1}, "prompts": str(climber_dir / "prompts")}
+    block = {"name": "mine", "operator_policy": class_ref("greedy", "Greedy"), "params": {"num_drafts": 1}, "prompts": str(climber_dir / "prompts")}
     config.apply_overrides({"climber": block})
     search_dir = create_search(config, load_problem("p", config), run_dir, "r1", 60)
     meta = load_search_meta(search_dir)
@@ -196,7 +197,7 @@ def test_a_search_refuses_to_start_on_a_climber_whose_prompts_do_not_lint(config
     climber = tmp_path / "mine"
     (climber / "prompts").mkdir(parents=True)
     (climber / "prompts" / "draft.md").write_text("{{typo_token}}\n")
-    config.apply_overrides({"climber": {"operator_policy": "greedy", "prompts": str(climber / "prompts")}})
+    config.apply_overrides({"climber": {"operator_policy": class_ref("greedy", "Greedy"), "prompts": str(climber / "prompts")}})
     with pytest.raises(ValueError, match="typo_token"):
         create_search(config, load_problem("p", config), run_dir, "r1", 60)
     assert not list((run_dir / "searches").glob("*"))  # nothing was allocated

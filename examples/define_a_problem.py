@@ -16,8 +16,11 @@ from pathlib import Path
 from hillclimb import Budget, Climber, Problem, SearchOutcome, register_agent
 from hillclimb.agents import AgentRequest, AgentResult
 from hillclimb.operators import Draft, Improve
-from hillclimb.policies import Greedy
-from hillclimb.selectors import Best
+from hillclimb import catalog
+
+# the catalog's greedy climber (`hillclimb climber get greedy` copies the same file): its classes to compose with
+greedy = catalog.module("greedy")
+Greedy, Best = greedy.Greedy, greedy.Best
 
 
 def closeness_to_pi(run_dir: Path) -> float:
