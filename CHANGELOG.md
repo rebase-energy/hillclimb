@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.2 — 2026-10-08
+
+### Fixed
+- `hillclimb --version` (and the `hillclimb_version` a search records) said 0.8.0 in 0.8.1: the
+  package's `__version__` was not bumped with `pyproject.toml`. A test now holds the two together.
+
 ## 0.8.1 — 2026-10-08
 
 ### Changed
