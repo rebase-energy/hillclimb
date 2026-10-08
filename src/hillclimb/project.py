@@ -156,6 +156,7 @@ model: sonnet
 #   deadline: graceful     # `hard` aborts in-flight operators when total_s runs out
 #   max_evaluations: 0     # verifier trials the climber may spend (0 = unlimited)
 #   max_cost_usd: 0        # coding-agent spend that parks the search (0 = no ceiling)
+#   patience: 0            # end after this many attempts in a row without a new best (0 = off)
 
 # concurrency:              # see docs.hillclimb.sh/parallelism
 #   parallel_agents: 1     # coding agents (attempts in flight) per search

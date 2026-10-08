@@ -146,6 +146,7 @@ def test_the_two_selectors_share_the_schedule():
     greedy, openevolve = _modules()
     assert _method_sources(greedy.Best, SCHEDULE_METHODS) == _method_sources(openevolve.MapElites, SCHEDULE_METHODS)
     best, elites = greedy.Best.defaults(), openevolve.MapElites.defaults()
+    best.pop("max_stale_children")  # greedy's `select` sets a stale candidate aside; MAP-Elites samples its archive
     assert set(best) <= set(elites)
     assert {k: v for k, v in best.items() if k != "ensemble"} == {k: elites[k] for k in best if k != "ensemble"}
     assert (best["ensemble"], elites["ensemble"]) == (True, False)

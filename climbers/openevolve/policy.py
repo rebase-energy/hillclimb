@@ -241,7 +241,11 @@ class MapElites(SelectorPolicy):
             if any(c.status in ("pending", "passing", "failing", "buggy") for c in children):
                 continue
             chain = journal.debug_chain(candidate.candidate_id)
-            depth = sum(1 for c in chain if c.operator == "debug")
+            # a fix that came back as the same code (abandoned, never scored)
+            # was a debug attempt too: it counts toward the depth
+            depth = sum(1 for c in chain if c.operator == "debug") + sum(
+                1 for c in children if c.operator == "debug" and c.status == "abandoned"
+            )
             if depth < int(self.param("max_debug_depth")):
                 return candidate
         return None

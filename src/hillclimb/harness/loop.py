@@ -77,6 +77,7 @@ class Outcome:
     # agent_failed the coding agent call failed · no_solution it wrote no solution
     # aborted      stopped mid-attempt · parked the coding agent hit a limit
     # unchanged    the coding agent left the parent's solution as it was (`require_change`)
+    # duplicate    its code is a candidate's the search scored already: not scored again
     # crashed      the harness's own worker failed · rejected nothing was started
     kind: str
     candidate: Candidate | None

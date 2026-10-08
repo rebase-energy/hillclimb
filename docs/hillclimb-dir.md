@@ -154,7 +154,9 @@ instead; they are journaled `abandoned` ("cut off at the budget deadline").
 
 The clock is one dimension of the budget: `budget.max_evaluations` (verifier
 trials the climber may spend), `budget.max_tokens` and `budget.max_cost_usd`
-cap the others (`0` = no limit). There is no hidden cap on the number of
+cap the others (`0` = no limit). `budget.patience: N` ends a search after N
+finished attempts in a row without a new best; attempts that came back as
+copies of scored code count, and five copies in a row end a search anyway. There is no hidden cap on the number of
 candidates.
 
 ## How runs and searches are laid out

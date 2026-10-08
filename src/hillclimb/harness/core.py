@@ -10,7 +10,7 @@ from pathlib import Path
 
 from hillclimb.agents.base import Agent, AgentRequest, AgentResult
 from hillclimb.harness.baseline import write_baseline
-from hillclimb.harness.budget import BudgetManager, Spend, journal_spend
+from hillclimb.harness.budget import FLOOR_OPERATORS, BudgetManager, Spend, journal_spend
 from hillclimb.harness.candidate import AgentInfo, Candidate, notes_summary, read_solution, source_hash, utcnow
 from hillclimb.config import Config
 from hillclimb.harness.control import ControlCommand, apply_prune, drain_commands_dir, resync_best
@@ -127,12 +127,16 @@ class Job:
         return self.candidate.candidate_id
 
 
+# attempts in a row that come back as copies before a search ends (done)
+COPIES_IN_A_ROW = 5
+
+
 @dataclass
 class OutcomeMsg:
     """Terminal report from a worker; consumed by _commit on the scheduler."""
 
     job: Job
-    kind: str  # parked | aborted | agent_failed | no_solution | unchanged | executed | tuned
+    kind: str  # parked | aborted | agent_failed | no_solution | unchanged | duplicate | executed | tuned
     result: AgentResult | None = None
     all_ok: bool = False  # every replicate passed AND (when scored) the hidden split did too
     # the verifier ran under a timeout clamped by the search's remaining
@@ -255,6 +259,9 @@ class Harness:
         self.router = router  # None: everything routes to `agent` + config.model
         self.agents = agents
         self._consecutive_failures = 0
+        # attempts in a row whose code was a copy (unchanged, or already
+        # scored): never scored, so no evaluation cap ever counts them
+        self._consecutive_copies = 0
         self._consecutive_crashes = 0  # operators whose worker died: a code error, not a flaky call
         # Concurrency contract: the Journal and everything below is touched
         # only by the scheduler (the thread running run()/run_operator),
@@ -385,7 +392,19 @@ class Harness:
                 return "evaluation budget spent"
             if limits.max_tokens and spend.tokens >= limits.max_tokens:
                 return "token budget spent"
+        if limits.patience and self._attempts_since_best() >= limits.patience:
+            return f"no new best in {limits.patience} attempts (budget.patience)"
         return None
+
+    def _attempts_since_best(self) -> int:
+        """Finished attempts since the last new best (the floor excluded)."""
+        count = 0
+        for candidate in reversed(list(self.journal.candidates.values())):
+            if candidate.is_best:
+                break
+            if candidate.operator not in FLOOR_OPERATORS and candidate.status != "pending":
+                count += 1
+        return count
 
     @property
     def closed_reason(self) -> str | None:
@@ -1068,6 +1087,27 @@ class Harness:
             ),
         )
 
+    def _same_code_as(self, candidate: Candidate, candidate_dir: Path) -> Candidate | None:
+        """A candidate the search has already scored with exactly this code:
+        the same solution.py and the same params.json (or neither)."""
+        def params(folder: Path) -> bytes | None:
+            path = Path(folder) / "params.json"
+            return path.read_bytes() if path.is_file() else None
+
+        mine = None
+        for other in list(self.journal.candidates.values()):
+            if (
+                other.candidate_id == candidate.candidate_id
+                or other.solution_sha256 != candidate.solution_sha256
+                or other.status not in ("passing", "failing", "buggy")
+            ):
+                continue
+            if mine is None:
+                mine = (params(candidate_dir),)
+            if params(Path(other.candidate_dir)) == mine[0]:
+                return other
+        return None
+
     def _operator(self, name: str) -> Operator:
         """The operator `name` names, configured from this search's config
         (resolved per call: the config block is the live source of truth)."""
@@ -1204,6 +1244,13 @@ class Harness:
         candidate.solution_sha256 = source_hash(solution.read_text(errors="replace"))
         if job.unchanged_hash is not None and candidate.solution_sha256 == job.unchanged_hash:
             return OutcomeMsg(job=job, kind="unchanged", result=result)
+        twin = self._same_code_as(candidate, job.candidate_dir)
+        if twin is not None:
+            # code the search has scored already scores the same again: say
+            # so instead of spending a verifier run on it
+            score = f", val {twin.val_score:.6g}" if twin.val_score is not None else ""
+            candidate.summary = f"same code as {twin.candidate_id}{score}: not scored again"
+            return OutcomeMsg(job=job, kind="duplicate", result=result)
 
         exec_timeout = min(
             self.config.budget.exec_timeout_s, max(60, int(self.budget.remaining() - 30))
@@ -1285,12 +1332,20 @@ class Harness:
                     return candidate
                 self._consecutive_failures = 0
 
-                if msg.kind == "unchanged":
+                if msg.kind in ("unchanged", "duplicate"):
                     candidate.status = "abandoned"
-                    candidate.summary = "agent returned the parent source unchanged"
+                    if msg.kind == "unchanged":  # a duplicate's summary names its twin
+                        candidate.summary = "agent returned the parent source unchanged"
                     candidate.finished_at = utcnow()
                     self._record_result(candidate)
+                    self._consecutive_copies += 1
+                    if self._consecutive_copies >= COPIES_IN_A_ROW and self._finished is None:
+                        # the coding agents keep handing back code the search
+                        # has scored: more attempts would only spend more
+                        self._finished = f"{COPIES_IN_A_ROW} attempts in a row brought no new code"
+                        self.log(f"  {self._finished}: ending the search")
                     return candidate
+                self._consecutive_copies = 0
 
                 if msg.kind == "no_solution":
                     candidate.status = "abandoned"

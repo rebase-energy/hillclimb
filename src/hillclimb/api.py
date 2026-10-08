@@ -344,7 +344,7 @@ RUN_SPEC_FILE = "spec.yaml"
 # with them, runs/<id>/spec.yaml reruns the run even after the folder's run
 # defaults have changed.
 _RECORDED_RUN_SETTINGS = (
-    ("budget", ("deadline", "max_evaluations", "max_tokens", "max_cost_usd", "stop_margin_s",
+    ("budget", ("deadline", "max_evaluations", "max_tokens", "max_cost_usd", "patience", "stop_margin_s",
                 "agent_timeout_s", "exec_timeout_s")),
     ("concurrency", ("parallel_replicates", "solution_cpus")),
     ("learning", ("enabled", "tool", "claims_timeout_s")),

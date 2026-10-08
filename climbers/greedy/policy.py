@@ -72,6 +72,10 @@ class Best(SelectorPolicy):
         "ensemble_reserve_fraction": 0.2,
         "ensemble_top_k": 3,
         "ensemble_max_attempts": 2,
+        # a candidate whose last N children all came back as copies (its own
+        # code untouched, or code already scored) is set aside: the next
+        # attempt builds on another, or drafts afresh. 0 = never
+        "max_stale_children": 3,
     }
 
     # --- the schedule: which node(s) the next attempt starts from ---
@@ -98,11 +102,15 @@ class Best(SelectorPolicy):
     def select(self, state: SearchState, *, busy: frozenset[str] | set[str] = frozenset()) -> Selection | None:
         """The scored candidate to build on now. With several attempts in
         flight this spreads them over the top candidates instead of piling
-        onto one; when every scored candidate is busy, the best gets another."""
+        onto one; when every scored candidate is busy, the best gets another.
+        On a tie (a plateau) the one built on least goes first, so the search
+        does not keep asking the same candidate for an improvement it has
+        stopped finding."""
         direction = -1 if state.higher_is_better else 1
+        journal = state.journal
         ranked = sorted(
-            (c for c in state.journal.scored_candidates() if improvable(c)),
-            key=lambda c: direction * c.val_score,
+            (c for c in journal.scored_candidates() if improvable(c) and not self.stale(journal, c)),
+            key=lambda c: (direction * c.val_score, len(journal.children(c.candidate_id, include_pruned=True))),
         )
         if not ranked:
             return None
@@ -112,6 +120,19 @@ class Best(SelectorPolicy):
         return Selection(ranked[0].candidate_id)
 
     # --- the schedule's questions ---
+
+    def stale(self, journal, candidate: Candidate) -> bool:
+        """Have its last `max_stale_children` children all come back as
+        copies: abandoned with code the search has scored already (its own,
+        untouched, or another candidate's)?"""
+        limit = int(self.param("max_stale_children"))
+        if limit <= 0:
+            return False
+        recent = journal.children(candidate.candidate_id, include_pruned=True)[-limit:]
+        if len(recent) < limit:
+            return False
+        scored = {c.solution_sha256 for c in journal.scored_candidates()}
+        return all(c.status == "abandoned" and c.solution_sha256 in scored for c in recent)
 
     def debuggable_tip(self, state: SearchState) -> Candidate | None:
         """Newest failing/buggy candidate with no active child and chain depth
@@ -127,7 +148,11 @@ class Best(SelectorPolicy):
             if any(c.status in ("pending", "passing", "failing", "buggy") for c in children):
                 continue
             chain = journal.debug_chain(candidate.candidate_id)
-            depth = sum(1 for c in chain if c.operator == "debug")
+            # a fix that came back as the same code (abandoned, never scored)
+            # was a debug attempt too: it counts toward the depth
+            depth = sum(1 for c in chain if c.operator == "debug") + sum(
+                1 for c in children if c.operator == "debug" and c.status == "abandoned"
+            )
             if depth < int(self.param("max_debug_depth")):
                 return candidate
         return None

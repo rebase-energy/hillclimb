@@ -275,6 +275,7 @@ def test_every_knob_is_one_dict_with_defaults(config):
     assert set(Best.defaults()) == {
         "num_drafts", "debug", "max_debug_depth",
         "ensemble", "ensemble_reserve_fraction", "ensemble_top_k", "ensemble_max_attempts",
+        "max_stale_children",
     }
 
 

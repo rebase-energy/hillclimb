@@ -57,11 +57,12 @@ class Budget:
     evaluations: int | None = None     # scored attempts: one per attempt, one per tune trial
     tokens: int | None = None          # tokens the coding agent calls consume, all kinds summed
     cost_usd: float | None = None      # the coding agents' bill, where the agent reports one
+    patience: int | None = None        # finished attempts in a row without a new best before it ends
 
     def __post_init__(self) -> None:
         if self.wall_clock is not None:
             parse_budget(self.wall_clock)  # a budget nobody can read fails here, not at the first search
-        for name in ("evaluations", "tokens"):
+        for name in ("evaluations", "tokens", "patience"):
             value = getattr(self, name)
             if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 1):
                 raise ValueError(f"Budget({name}=...) takes a positive whole number, not {value!r}")
@@ -96,6 +97,9 @@ class Budget:
         if self.cost_usd is not None:
             config.budget.max_cost_usd = float(self.cost_usd)
             pairs.append(f"budget.max_cost_usd={self.cost_usd}")
+        if self.patience is not None:
+            config.budget.patience = self.patience
+            pairs.append(f"budget.patience={self.patience}")
         return pairs
 
     def __repr__(self) -> str:

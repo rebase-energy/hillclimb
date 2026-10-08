@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Changed
+- **A plateau costs as little as possible.** `improve` and `debug` attempts that hand back the
+  parent's code untouched are not scored (`require_change`, as GEPA's operator already did);
+  code the search has scored already (same `solution.py` and `params.json`) is not scored
+  again but abandoned as "same code as cNNN". Five such copies in a row end the search (they
+  never count toward an evaluation cap). The greedy selector breaks ties by the candidate built
+  on least, sets aside one whose last `max_stale_children` (3) children were all copies
+  (building on the next, or drafting afresh), and counts unchanged fixes toward
+  `max_debug_depth`. New `budget.patience: N` (and `Budget(patience=N)`) ends a search after N
+  finished attempts in a row without a new best.
 - **A run needs a budget someone chose; a problem has none.** `time_budget_s` is gone from
   `problem.yaml` (ignored with a warning that says where the budget went) and from
   `hillclimb.Problem`. The budget comes from `--budget` (or a run spec's / study's `budget:`),

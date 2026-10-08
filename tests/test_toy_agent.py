@@ -232,7 +232,12 @@ def test_a_registered_agent_runs_a_search_in_this_process(registry, config, lean
     )
     assert outcome.state == "done"
     journal = Journal(outcome.search_dir / "journal.jsonl")
-    assert [c.metrics for c in journal.candidates.values() if c.operator == "draft"] == [{"x": 4.0, "y": 4.0}] * 2
+    drafts = [c for c in journal.candidates.values() if c.operator == "draft"]
+    assert drafts[0].metrics == {"x": 4.0, "y": 4.0}
+    # the same corner again is the same code: never scored twice, and five
+    # copies in a row end the search (the evaluation cap would never count them)
+    copies = drafts[1:]
+    assert len(copies) == 5 and all(c.status == "abandoned" and c.summary.startswith("same code as") for c in copies)
 
 
 def test_ctrl_c_stops_a_python_script_instead_of_moving_on(registry, config, lean_runtime):

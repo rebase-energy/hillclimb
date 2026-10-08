@@ -146,6 +146,10 @@ class BudgetConfig(BaseModel):
     #   max_tokens       tokens its coding agent calls consumed, all kinds summed
     max_evaluations: int = 0
     max_tokens: int = 0
+    # patience: end the search (done) after this many finished attempts in a
+    # row without a new best — a plateau the climber has stopped climbing off
+    # spends nothing more. Unchanged and duplicate attempts count. 0 = off
+    patience: int = 0
 
 
 def default_machine_max_agents() -> int:

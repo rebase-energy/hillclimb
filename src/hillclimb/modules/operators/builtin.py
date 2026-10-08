@@ -112,7 +112,8 @@ class Debug(Operator):
             ),
             debug_history=ctx.summaries(attempts) or "(none — this is the first fix attempt)",
         )
-        return Attempt(prompt=prompt, copy_parent=True, inherit_params=True, fork_session=True)
+        # a "fix" that hands the failing code back untouched fixed nothing: not scored
+        return Attempt(prompt=prompt, copy_parent=True, inherit_params=True, fork_session=True, require_change=True)
 
 
 class Improve(Operator):
@@ -150,7 +151,8 @@ class Improve(Operator):
             prior_ablations=self._prior_ablations(ctx) if ablation else "",
             ablation_cue=ctx.render("ablation_cue").rstrip() + "\n" if ablation else "",
         )
-        return Attempt(prompt=prompt, copy_parent=True, inherit_params=True)
+        # an "improvement" that hands the parent back untouched is not scored again
+        return Attempt(prompt=prompt, copy_parent=True, inherit_params=True, require_change=True)
 
     @staticmethod
     def _prior_ablations(ctx: OperatorContext) -> str:

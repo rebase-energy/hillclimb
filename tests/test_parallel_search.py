@@ -231,7 +231,7 @@ def _drafts_then_improve(agent):
 
 def _debug_chain(agent):
     agent.queue(script=CRASH, notes="buggy draft\n")
-    agent.queue(script=CRASH, notes="failed fix\n")
+    agent.queue(script=CRASH + "# another try\n", notes="failed fix\n")  # new code, still failing
     agent.queue(script=ok_script(0.6), notes="fixed\n")
     agent.queue(script=ok_script(0.7), notes="draft two\n")
     agent.queue(script=ok_script(0.5), notes="draft three\n")
@@ -696,8 +696,8 @@ class TestIncumbentSeeding:
         seed = tmp_path / "incumbent.py"
         seed.write_text(ok_script(0.9))
         agent = FakeAgent()
-        for _ in range(3):  # drafts all weaker than the incumbent
-            agent.queue(script=ok_script(0.5), notes="d\n")
+        for index in range(3):  # drafts all weaker than the incumbent (and each its own code)
+            agent.queue(script=ok_script(0.5) + f"# draft {index}\n", notes="d\n")
         agent.queue(script=ok_script(0.95), notes="improved incumbent\n")
         config.climber.params["num_drafts"] = 3
         searcher, journal, _ = make_searcher(task, config, agent, seed_solution=seed)
