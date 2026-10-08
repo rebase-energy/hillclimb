@@ -46,6 +46,8 @@ The harness is fixed. The **climber** — what to try next and how each attempt
 is prompted — is a block you can swap, edit and share, so two methods can be
 compared on the same problem under the same budget.
 
+<img alt="hillclimb watch: the candidate tree growing as coding agents draft, improve and ensemble solutions" src="https://raw.githubusercontent.com/rebase-energy/hillclimb/main/docs/assets/hillclimb-watch.gif" width="100%">
+
 ## Quickstart
 
 ```bash
