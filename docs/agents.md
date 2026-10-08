@@ -162,9 +162,9 @@ that coding agent's login inside its operator home (`~/.cache/hillclimb/claude-h
 with one tool-free coding agent call — which is where a model the account cannot use
 fails, in seconds instead of mid-search — and pins `agent`/`agent_auth` in
 `~/.config/hillclimb/config.yaml`: the user level, every folder on the machine,
-so `connect` works before `hillclimb init`. A folder's own `hillclimb.yaml`
-overrides it, and `--local` writes there instead — the override for that folder
-alone. It leaves a config that already pins a coding agent alone unless you pass
+so `connect` works before `hillclimb init`. A folder's own run defaults
+(`runs/config.yaml`) override it, and `--local` pins the coding agent there instead
+— the override for that folder alone — with the login in its `hillclimb.yaml`. It leaves a config that already pins a coding agent alone unless you pass
 `--default`. `--no-probe` skips the ping, `--auth api-key|openrouter` picks a
 different bill.
 
@@ -196,6 +196,9 @@ stays: hillclimb never touches it.
 `hillclimb smoke` is the next step up: a whole DRAFT on a real problem.
 
 ## Cheap operators through OpenRouter
+
+In `runs/config.yaml` (the run defaults; `hillclimb connect codex --auth openrouter
+--local` writes the same):
 
 ```yaml
 agent: codex
@@ -231,7 +234,8 @@ To compare models head to head, give a study one experiment per model
 Install pi and select a provider-qualified model. Subscription mode copies
 the credentials from pi's own `/login` (`~/.pi/agent/auth.json`); `api-key`
 uses provider environment variables such as `ANTHROPIC_API_KEY`. OpenRouter
-requires `OPENROUTER_API_KEY` in the environment or `.env` beside `hillclimb.yaml`:
+requires `OPENROUTER_API_KEY` in the environment or `.env` beside `hillclimb.yaml`.
+In `runs/config.yaml`:
 
 ```yaml
 agent: pi

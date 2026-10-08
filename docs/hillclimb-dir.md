@@ -29,8 +29,8 @@ what marks it as hillclimb's: a folder of the same name without one is yours,
 and hillclimb never deletes it.
 
 `hillclimb climber get greedy` adds `climbers/greedy/` beside them — the
-default climber as a folder to read and edit, its whole policy in
-`policy.py` — and `hillclimb climber new <name>` a one-file
+catalog's climber as a folder to read and edit, its whole policy in
+`policy.py`, pinned as this folder's run default — and `hillclimb climber new <name>` a one-file
 `climbers/<name>.py` (see [climbers.md](climbers.md));
 learning writes `knowledge/`, experiments live in `experiments/`.
 

@@ -21,6 +21,7 @@ problems/my-problem/
 ```bash
 hillclimb problem new my-problem          # problems/my-problem/, a working example
 hillclimb verify my-problem --repeat 3    # scores its baseline; run it after every edit
+hillclimb climber get greedy              # a climber to climb with (once per folder)
 hillclimb run my-problem --budget 10m     # then climb
 ```
 

@@ -46,7 +46,7 @@ git-versionable: it lives in your hillclimb dir, under `knowledge/`. How it
 behaves is `memory_params` in the block (the settings in backticks below);
 where it lives (`learning.dir`), whether coding agents get the lookup tool
 (`learning.tool`) and the master switch (`learning.enabled`, `--no-learning`)
-are yours, in `hillclimb.yaml`:
+are yours, in the run defaults, `runs/config.yaml`:
 
 ```yaml
 climber:

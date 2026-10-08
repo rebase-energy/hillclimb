@@ -45,7 +45,9 @@ docs.hillclimb.sh/problems.
 
 ## Lifecycle
 
-**Start** (long-running — always run in the background and poll):
+**Start** (long-running — always run in the background and poll). The engine ships no
+default climber: once per folder, `uv run hillclimb climber get greedy` first (it pins the
+climber in `runs/config.yaml`), or every `run` is refused with that line.
 
 ```bash
 uv run hillclimb run <problem> --name "Run name" --budget 2h
@@ -54,11 +56,11 @@ uv run hillclimb run emflow://gefcom2014:solar --budget 2h   # emflow problem (a
 uv run hillclimb run emflow://gefcom2014 --budget 2h         # virtual suite: all variants
 uv run hillclimb run mlebench://spaceship-titanic --budget 2h  # MLE-bench comp (graded once, post-search)
 uv run hillclimb run mlebench://lite --budget 4h             # virtual suite: MLE-bench Lite (22 comps)
-uv run hillclimb run <problem> --backend dummy   # fast no-agent backend for testing
+uv run hillclimb run <problem> --agent dummy --budget 2m  # fast no-agent coding agent for testing the loop
 ```
 
 Before the first real run on a machine, `uv run hillclimb connect --json` says
-which backends have a working credential (checked through the same environment
+which coding agents have a working credential (checked through the same environment
 an operator gets) and which one is the default; `hillclimb connect <claude|
 codex|pi|openrouter>` sets one up. A dead credential there is why a search
 would otherwise fail on its first operator call.
@@ -172,7 +174,7 @@ uv run hillclimb run <problem> --climber climbers/greedy/policy.py --climber cli
 
 - Pi routes support `routing.<op>.sampling: {temperature: 0.7}` and
   `pi.models_file` for local providers. OpenRouter uses
-  `backend: pi`, `backend_auth: openrouter`, a provider-qualified model
+  `agent: pi`, `agent_auth: openrouter` (in `runs/config.yaml`), a provider-qualified model
   such as `openrouter/deepseek/deepseek-v3.2`, and `OPENROUTER_API_KEY` in
   the environment or `.env` beside hillclimb.yaml. Search startup runs cheap
   no-tools preflights; a failed preflight means fix that model/sampling

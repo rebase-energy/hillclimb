@@ -83,7 +83,7 @@ climber get <name>` copies one into your `climbers/`, like `problem get`:
 | catalog | what it is |
 |---|---|
 | `greedy` | `Best` over `Greedy`, both in one file: debug the newest failing tip > ensemble in the final budget window > draft until `num_drafts` branches are scored > tune > improve the best |
-| `openevolve` | the same schedule, ensemble and tune off, over [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve)'s MAP-Elites archive: a population kept diverse over feature dimensions, on islands with migration. `pip install 'hillclimb[openevolve]'` |
+| `openevolve` | the same schedule, ensemble and tune off, over [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve)'s MAP-Elites archive: a population kept diverse over feature dimensions, on islands with migration; its `requirements.txt` names the `openevolve` library |
 | `gepa` | [GEPA](https://github.com/gepa-ai/gepa) owns the whole loop (see below): a folder of several files; its `requirements.txt` names the `gepa` library |
 
 In Python the same files are `hc.catalog.climber("greedy")` (a `Climber`, read
@@ -433,7 +433,7 @@ becomes `greedy-2`):
 
 ```bash
 uv run hillclimb run circle-packing --budget 30m \
-  --climber greedy --climber openevolve --climber gepa \
+  --climber climbers/greedy --climber climbers/openevolve --climber climbers/gepa \
   --seed-from experiments/seeds/circle-packing.py \
   --experiment-set gepa:concurrency.parallel_agents=1 \
   --experiment-set gepa:climber.params.max_metric_calls=60
@@ -474,7 +474,7 @@ if __name__ == "__main__":
     budget = Budget(wall_clock="10m", evaluations=40)
     climber.search(problem, budget=budget)   # one search, here
     print(climber.best.val_score)
-    climber.write("climber.yaml")     # the same climber, as the block
+    climber.write("my-climber.yaml")  # the same climber as a `climber:` block, for a run spec
     run_spec("run.yaml")              # every entry of a spec, one after the other
 ```
 

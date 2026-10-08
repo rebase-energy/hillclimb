@@ -76,8 +76,8 @@ folder, to read and edit; the other three are built in or a file of your own.
 | `tuner` | which parameter values to try on a candidate | `random`, `optuna` |
 | `memory` | what carries over from one search to the next | `files`, `none` |
 
-Together they are one block of config, in a run spec or as the folder's default
-in `hillclimb.yaml`:
+Together they are one block of config, in a run spec or as the folder's run
+default in `runs/config.yaml` (`hillclimb climber get` pins one there):
 
 ```yaml
 climber:
