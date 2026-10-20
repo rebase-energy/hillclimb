@@ -5,6 +5,7 @@ construction scoring what the paper reports."""
 
 from __future__ import annotations
 
+import csv
 import importlib.util
 import sys
 from pathlib import Path
@@ -89,6 +90,17 @@ def _csv(rows) -> str:
     return "id,x,y,r\n" + "".join(f"{i},{x!r},{y!r},{r!r}\n" for i, (x, y, r) in enumerate(rows))
 
 
+def _rows_by_id(csv_text: str) -> list[tuple[int, float, float, float]]:
+    """(id, x, y, r) per row, each keeping its own id."""
+    reader = csv.DictReader(csv_text.strip().splitlines())
+    return [(int(row["id"]), float(row["x"]), float(row["y"]), float(row["r"])) for row in reader]
+
+
+def _csv_with_ids(rows) -> str:
+    """`id,x,y,r` with every row keeping its own id — the rows may be in any order."""
+    return "id,x,y,r\n" + "".join(f"{i},{x!r},{y!r},{r!r}\n" for i, x, y, r in rows)
+
+
 def test_committed_dirs_match_the_generator(generator, tmp_path):
     """Rerun the generator after editing a template; both copies are committed."""
     heilbronn_verifier = (REPO / "problems" / "heilbronn-11" / "verifier.sh").read_text()
@@ -138,6 +150,25 @@ def test_invalid_submissions_score_the_floor(config: Config, tmp_path, generator
         result = _score(spec, tmp_path / name, text)
         assert result.val_score == 0.0, name
         assert "INVALID" in Path(result.stdout_path).read_text(), name
+
+
+def test_per_circle_scores_are_keyed_by_id_not_by_row_order(config: Config, tmp_path):
+    """The per-circle breakdown is keyed by the circle's id, not by the row it
+    happened to be written in: the same 26 circles, written in a different row
+    order, must report the same per-circle radii — the engine compares
+    candidates per key, so a key that names a different circle each time
+    compares the wrong circles."""
+    spec = load_problem("circle-packing", config)
+    rows = _rows_by_id((spec.problem_dir / "sample_submission.csv").read_text())
+
+    ordered = _score(spec, tmp_path / "ordered", _csv_with_ids(rows))
+    reversed_rows = _score(spec, tmp_path / "reversed", _csv_with_ids(list(reversed(rows))))
+
+    assert ordered.val_score == reversed_rows.val_score
+    assert ordered.instance_scores == reversed_rows.instance_scores
+    # circle 0 is the big one: the key that holds it is its id, not a row index
+    assert ordered.instance_scores["circle-00"] == pytest.approx(0.5)
+    assert reversed_rows.instance_scores["circle-00"] == pytest.approx(0.5)
 
 
 def test_alphaevolve_construction_scores_as_published(config: Config, tmp_path):

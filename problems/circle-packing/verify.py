@@ -59,6 +59,10 @@ def main() -> None:
             fail(f"missing column {col!r}")
     if len(df) != N or sorted(df["id"].tolist()) != list(range(N)):
         fail(f"need exactly {N} rows with id 0..{N - 1}")
+    # the id is the circle's identity: order by it, so the per-circle
+    # breakdown below names circles by their id and not by the row they
+    # happened to be written in (the n = 32 problem does the same)
+    df = df.sort_values("id")
     x = df["x"].to_numpy(float)
     y = df["y"].to_numpy(float)
     r = df["r"].to_numpy(float)

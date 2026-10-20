@@ -28,6 +28,13 @@
   claims in them), skills and credit records, then rebuilds the graph. An older card names no
   agents; `--agent` then reads its search's record in `runs/`.
 
+### Fixed
+- **The circle-packing verifier named circles by their row, not by their id.** The per-circle
+  breakdown it writes to the reserved `instances` key (and the weakest circles in the report's
+  `zones`) was keyed by the order the rows happened to be written in, so the same circle carried
+  a different key in every candidate and the engine compared different circles against each
+  other. The rows are now ordered by `id` first, as the n = 32 problem already did.
+
 ## 0.8.2 — 2026-10-08
 
 ### Fixed
